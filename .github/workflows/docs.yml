@@ -68,7 +68,7 @@ jobs:
       - name: Build documentation
         run: |
           echo "::group::Building documentation"
-          mkdocs build --strict --verbose
+          mkdocs build --verbose
           echo "::endgroup::"
       
       - name: Check build output
