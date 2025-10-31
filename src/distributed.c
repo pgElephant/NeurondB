@@ -21,6 +21,7 @@
 #include "fmgr.h"
 #include "funcapi.h"
 #include "utils/builtins.h"
+#include "utils/typcache.h"
 #include "executor/spi.h"
 #include "utils/array.h"
 #include "utils/elog.h"
