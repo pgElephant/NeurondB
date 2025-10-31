@@ -65,22 +65,25 @@ distributed_knn_search(PG_FUNCTION_ARGS)
 
 	if (SRF_IS_FIRSTCALL())
 	{
-		Vector	   *query_vector = (Vector *) PG_GETARG_POINTER(0);
-		int32		k = PG_GETARG_INT32(1);
-		text	   *shard_list = PG_GETARG_TEXT_PP(2);
-		char	   *shards_cstr = text_to_cstring(shard_list);
+		int32		k;
+		text	   *shard_list;
+		char	   *shards_cstr;
 		char	  **shard_names = NULL;
 		int			nshards = 0;
 		StringInfoData sql;
-		ArrayType  **partial_results;
-		int			i, total_candidates = 0;
-		Oid			arr_oid = INT8ARRAYOID;
+		int			i;
+		int			total_candidates = 0;
 		Datum	   *candidate_ids = NULL;
 		Datum	   *candidate_dists = NULL;
 		bool	   *candidate_nulls = NULL;
+		char	   *token;
+
+		k = PG_GETARG_INT32(1);
+		shard_list = PG_GETARG_TEXT_PP(2);
+		shards_cstr = text_to_cstring(shard_list);
 
 		/* Parse the comma-separated shard list into an array of names */
-		char *token = strtok(shards_cstr, ",");
+		token = strtok(shards_cstr, ",");
 		while (token)
 		{
 			shard_names = (char **) repalloc(shard_names, sizeof(char *) * (nshards + 1));
@@ -110,89 +113,129 @@ distributed_knn_search(PG_FUNCTION_ARGS)
 
 		/* Dispatch query to each shard and collect candidates
 		 * (In real system, use FDW or RPC; here, simulate via SPI for each "shard" by name.) */
-		int cidx = 0;
-		for (i = 0; i < nshards; i++)
 		{
-			initStringInfo(&sql);
-			/* This is a placeholder: in reality, would pass down query_vector as needed to each shard 
-			 * and likely use a foreign table reference or FDW call.
-			 * Here, we simulate results per-shard table. */
-			appendStringInfo(&sql,
-				"SELECT id, distance FROM %s_ann_index ORDER BY distance ASC LIMIT %d",
-				shard_names[i], k);
+			int			cidx = 0;
+			int			ret;
+			TupleDesc	spi_tupdesc;
+			SPITupleTable *tuptable;
+			int			nrows;
+			int			row;
 
-			int ret = SPI_connect();
+			for (i = 0; i < nshards; i++)
+			{
+				initStringInfo(&sql);
+				/* This is a placeholder: in reality, would pass down query_vector as needed to each shard 
+				 * and likely use a foreign table reference or FDW call.
+				 * Here, we simulate results per-shard table. */
+				appendStringInfo(&sql,
+					"SELECT id, distance FROM %s_ann_index ORDER BY distance ASC LIMIT %d",
+					shard_names[i], k);
+
+				ret = SPI_connect();
 			if (ret != SPI_OK_CONNECT)
 				elog(ERROR, "SPI_connect failed (shard %s): %d", shard_names[i], ret);
 
-			ret = SPI_execute(sql.data, true, 0);
-			if (ret != SPI_OK_SELECT)
-				elog(ERROR, "SPI query failed on shard %s: %s", shard_names[i], sql.data);
+				ret = SPI_execute(sql.data, true, 0);
+				if (ret != SPI_OK_SELECT)
+					elog(ERROR, "SPI query failed on shard %s: %s", shard_names[i], sql.data);
 
-			TupleDesc spi_tupdesc = SPI_tuptable->tupdesc;
-			SPITupleTable *tuptable = SPI_tuptable;
-			int nrows = SPI_processed;
+				spi_tupdesc = SPI_tuptable->tupdesc;
+				tuptable = SPI_tuptable;
+				nrows = (int)SPI_processed;
 
-			for (int row=0; row<nrows && cidx < total_candidates; row++)
-			{
-				HeapTuple tuple = tuptable->vals[row];
-				bool isnull1=false, isnull2=false;
-				Datum id = SPI_getbinval(tuple, spi_tupdesc, 1, &isnull1);
-				Datum dist = SPI_getbinval(tuple, spi_tupdesc, 2, &isnull2);
-				candidate_ids[cidx] = id;
-				candidate_dists[cidx] = dist;
-				candidate_nulls[cidx] = (isnull1 || isnull2);
-				cidx++;
+				for (row = 0; row < nrows && cidx < total_candidates; row++)
+				{
+					HeapTuple	tuple;
+					bool		isnull1 = false;
+					bool		isnull2 = false;
+					Datum		id;
+					Datum		dist;
+
+					tuple = tuptable->vals[row];
+					id = SPI_getbinval(tuple, spi_tupdesc, 1, &isnull1);
+					dist = SPI_getbinval(tuple, spi_tupdesc, 2, &isnull2);
+					candidate_ids[cidx] = id;
+					candidate_dists[cidx] = dist;
+					candidate_nulls[cidx] = (isnull1 || isnull2);
+					cidx++;
+				}
+				SPI_finish();
+				pfree(sql.data);
 			}
-			SPI_finish();
-			pfree(sql.data);
-		}
-		/* Sort all collected results globally for top-k selection. */
-		int result_count = cidx < total_candidates ? cidx : total_candidates;
-		/* Build array of indices to sort */
-		int *indices = (int *) palloc(sizeof(int) * result_count);
-		for (i=0; i<result_count; i++) indices[i] = i;
 
-		/* Sort by distance ascending using stable merge sort for production quality */
-		for (i=0; i<result_count-1; i++) {
-			int min_idx = i;
-			float4 min_dist = DatumGetFloat4(candidate_dists[indices[i]]);
-			for (int j=i+1; j<result_count; j++) {
-				float4 this_dist = DatumGetFloat4(candidate_dists[indices[j]]);
-				if (this_dist < min_dist) {
-					min_dist = this_dist;
-					min_idx = j;
+			/* Sort all collected results globally for top-k selection. */
+			{
+				int			result_count;
+				int		   *indices;
+
+				result_count = cidx < total_candidates ? cidx : total_candidates;
+				/* Build array of indices to sort */
+				indices = (int *) palloc(sizeof(int) * result_count);
+				for (i = 0; i < result_count; i++)
+					indices[i] = i;
+
+				/* Sort by distance ascending using stable merge sort for production quality */
+				for (i = 0; i < result_count - 1; i++)
+				{
+					int		min_idx;
+					float4	min_dist;
+					int		j;
+
+					min_idx = i;
+					min_dist = DatumGetFloat4(candidate_dists[indices[i]]);
+					for (j = i + 1; j < result_count; j++)
+					{
+						float4 this_dist;
+
+						this_dist = DatumGetFloat4(candidate_dists[indices[j]]);
+						if (this_dist < min_dist)
+						{
+							min_dist = this_dist;
+							min_idx = j;
+						}
+					}
+					if (min_idx != i)
+					{
+						int tmp;
+
+						tmp = indices[i];
+						indices[i] = indices[min_idx];
+						indices[min_idx] = tmp;
+					}
+				}
+
+				/* Prepare FuncCallContext for SRF: store state for multi-call (row/total, top-k arrays) */
+				{
+					DistKNNResultCtx *sctx;
+					int				idx;
+
+					sctx = (DistKNNResultCtx *) palloc(sizeof(DistKNNResultCtx));
+					sctx->cur = 0;
+					sctx->max = (result_count < k) ? result_count : k;
+					sctx->ids = (Datum *) palloc(sizeof(Datum) * sctx->max);
+					sctx->dists = (Datum *) palloc(sizeof(Datum) * sctx->max);
+					sctx->nulls = (bool *) palloc(sizeof(bool) * sctx->max);
+
+					for (i = 0; i < sctx->max; i++)
+					{
+						idx = indices[i];
+						sctx->ids[i] = candidate_ids[idx];
+						sctx->dists[i] = candidate_dists[idx];
+						sctx->nulls[i] = candidate_nulls[idx];
+					}
+					funcctx->user_fctx = sctx;
+
+					MemoryContextSwitchTo(oldcontext);
 				}
 			}
-			if (min_idx != i) {
-				int tmp = indices[i];
-				indices[i] = indices[min_idx];
-				indices[min_idx] = tmp;
-			}
 		}
-
-		/* Prepare FuncCallContext for SRF: store state for multi-call (row/total, top-k arrays) */
-		DistKNNResultCtx *sctx = (DistKNNResultCtx *) palloc(sizeof(DistKNNResultCtx));
-		sctx->cur = 0;
-		sctx->max = (result_count < k) ? result_count : k;
-		sctx->ids = (Datum *) palloc(sizeof(Datum) * sctx->max);
-		sctx->dists = (Datum *) palloc(sizeof(Datum) * sctx->max);
-		sctx->nulls = (bool *) palloc(sizeof(bool) * sctx->max);
-
-		for (i=0; i<sctx->max; i++) {
-			int idx = indices[i];
-			sctx->ids[i] = candidate_ids[idx];
-			sctx->dists[i] = candidate_dists[idx];
-			sctx->nulls[i] = candidate_nulls[idx];
-		}
-		funcctx->user_fctx = sctx;
-
-		MemoryContextSwitchTo(oldcontext);
 	}
 
 	/* Per-call: Yield one tuple at a time until k results returned. */
 	funcctx = SRF_PERCALL_SETUP();
-	DistKNNResultCtx *sctx = (DistKNNResultCtx *) funcctx->user_fctx;
+	{
+		DistKNNResultCtx *sctx;
+		sctx = (DistKNNResultCtx *) funcctx->user_fctx;
 
 	if (sctx->cur < sctx->max) {
 		Datum		values[2];
@@ -230,13 +273,18 @@ PG_FUNCTION_INFO_V1(merge_distributed_results);
 Datum
 merge_distributed_results(PG_FUNCTION_ARGS)
 {
-	ArrayType  *shard_results = PG_GETARG_ARRAYTYPE_P(0);
-	int32		k = PG_GETARG_INT32(1);
-	int			num_shards, i, j, total_candidates = 0;
-
+	ArrayType  *shard_results;
+	int32		k;
+	int			num_shards;
+	int			i;
+	int			j;
+	int			total_candidates = 0;
 	Datum	   *subarrays;
 	bool	   *nulls;
 	int			nelems;
+
+	shard_results = PG_GETARG_ARRAYTYPE_P(0);
+	k = PG_GETARG_INT32(1);
 
 	/* Deconstruct outer array (one candidate array per shard) */
 	deconstruct_array(shard_results, ANYARRAYOID, -1, false, 'd', &subarrays, &nulls, &nelems);
@@ -423,17 +471,6 @@ sync_index_async(PG_FUNCTION_ARGS)
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"CREATE TABLE IF NOT EXISTS neurondb_index_sync_metadata ("
-		"  index_name text PRIMARY KEY, "
-		"  replica_url text NOT NULL, "
-		"  slot_name text NOT NULL, "
-		"  publication_name text NOT NULL, "
-		"  sync_status text DEFAULT 'initializing', "
-		"  last_sync_lsn pg_lsn, "
-		"  sync_lag_bytes bigint, "
-		"  started_at timestamptz DEFAULT now(), "
-		"  last_updated timestamptz DEFAULT now() "
-		")");
 
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)

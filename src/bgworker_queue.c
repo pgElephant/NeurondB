@@ -34,6 +34,8 @@
 #include "pgstat.h"
 #include "tcop/utility.h"
 
+#include "neurondb_bgworkers.h"
+
 /* GUC variables */
 static int neuranq_naptime = 1000;			/* milliseconds */
 static int neuranq_queue_depth = 10000;	/* max queue size */

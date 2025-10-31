@@ -32,6 +32,8 @@
 #include "access/xact.h"
 #include "commands/vacuum.h"
 
+#include "neurondb_bgworkers.h"
+
 /* GUC variables */
 static int neurandefrag_naptime = 300000;		/* 5 minutes */
 static int neurandefrag_compact_threshold = 10000;	/* edges before compact */
@@ -77,6 +79,7 @@ static void
 neurandefrag_sigterm(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
+	(void) postgres_signal_arg;  /* Unused */
 
 	got_sigterm = true;
 	SetLatch(MyLatch);
@@ -88,6 +91,7 @@ static void
 neurandefrag_sighup(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
+	(void) postgres_signal_arg;  /* Unused */
 
 	got_sighup = true;
 	SetLatch(MyLatch);
@@ -192,6 +196,8 @@ neurandefrag_shmem_init(void)
 PGDLLEXPORT void
 neurandefrag_main(Datum main_arg)
 {
+	(void) main_arg;  /* Unused */
+
 	/* Establish signal handlers */
 	pqsignal(SIGTERM, neurandefrag_sigterm);
 	pqsignal(SIGHUP, neurandefrag_sighup);
@@ -328,7 +334,7 @@ perform_index_maintenance(void)
 	{
 		int		i;
 
-		for (i = 0; i < SPI_processed; i++)
+		for (i = 0; i < (int)SPI_processed; i++)
 		{
 			char	   *index_name;
 			int64		num_edges;
@@ -390,7 +396,7 @@ compact_hnsw_graph(const char *index_name)
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 		"SELECT COALESCE(num_nodes, 0) FROM neurondb_index_metadata "
-		"WHERE index_name = %L",
+		"WHERE index_name = '%s'",
 		index_name);
 
 	if (SPI_execute(sql.data, true, 1) == SPI_OK_SELECT && SPI_processed > 0)
@@ -407,7 +413,7 @@ compact_hnsw_graph(const char *index_name)
 		"UPDATE neurondb_index_metadata "
 		"SET last_rebalance = now(), "
 		"    balance_factor = LEAST(balance_factor + 0.1, 1.0) "
-		"WHERE index_name = %L",
+		"WHERE index_name = '%s'",
 		index_name);
 
 	SPI_execute(sql.data, false, 0);
@@ -419,7 +425,7 @@ compact_hnsw_graph(const char *index_name)
 		"(index_name, index_type, num_edges, last_compaction) "
 		"SELECT index_name, index_type, num_nodes, now() "
 		"FROM neurondb_index_metadata "
-		"WHERE index_name = %L "
+		"WHERE index_name = '%s' "
 		"ON CONFLICT (index_name) DO UPDATE SET "
 		"  last_compaction = now(), "
 		"  fragmentation_ratio = GREATEST(fragmentation_ratio - 0.05, 0.0)",
@@ -462,7 +468,7 @@ cleanup_orphan_edges(const char *index_name)
 		"      WHEN num_nodes > 1 THEN avg_edges_per_node * (num_nodes::float / (num_nodes + 1)::float) "
 		"      ELSE avg_edges_per_node "
 		"    END "
-		"WHERE index_name = %L "
+		"WHERE index_name = '%s' "
 		"  AND num_nodes > 0",
 		index_name);
 
@@ -479,7 +485,7 @@ cleanup_orphan_edges(const char *index_name)
 			"      WHEN num_edges > 0 THEN (num_tombstones - 1)::float / num_edges::float "
 			"      ELSE 0.0 "
 			"    END "
-			"WHERE index_name = %L",
+			"WHERE index_name = '%s'",
 			index_name);
 
 		SPI_execute(sql.data, false, 0);
@@ -520,7 +526,7 @@ rebalance_levels(const char *index_name)
 		"      ELSE num_layers "
 		"    END, "
 		"    balance_factor = LEAST(balance_factor + 0.1, 1.0) "
-		"WHERE index_name = %L",
+		"WHERE index_name = '%s'",
 		index_name);
 
 	SPI_execute(sql.data, false, 0);
@@ -531,7 +537,7 @@ rebalance_levels(const char *index_name)
 		"UPDATE neurondb_index_maintenance "
 		"SET last_rebalance = now(), "
 		"    fragmentation_ratio = GREATEST(fragmentation_ratio - 0.1, 0.0) "
-		"WHERE index_name = %L",
+		"WHERE index_name = '%s'",
 		index_name);
 
 	SPI_execute(sql.data, false, 0);
@@ -567,7 +573,7 @@ prune_tombstones(const char *index_name)
 		"        GREATEST((num_tombstones - LEAST(num_tombstones, GREATEST(num_tombstones / 10, 1)))::float / num_edges::float, 0.0) "
 		"      ELSE 0.0 "
 		"    END "
-		"WHERE index_name = %L "
+		"WHERE index_name = '%s' "
 		"  AND num_tombstones > 0",
 		index_name);
 

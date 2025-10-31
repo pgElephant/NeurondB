@@ -32,6 +32,8 @@
 #include "catalog/pg_type.h"
 #include "access/xact.h"
 
+#include "neurondb_bgworkers.h"
+
 /* GUC variables */
 static int neuranmon_naptime = 60000;		/* 1 minute */
 static int neuranmon_sample_size = 1000;	/* queries to sample */
@@ -74,6 +76,7 @@ static void
 neuranmon_sigterm(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
+	(void) postgres_signal_arg;  /* Unused */
 
 	got_sigterm = true;
 	SetLatch(MyLatch);
@@ -85,6 +88,7 @@ static void
 neuranmon_sighup(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
+	(void) postgres_signal_arg;  /* Unused */
 
 	got_sighup = true;
 	SetLatch(MyLatch);
@@ -189,6 +193,8 @@ neuranmon_shmem_init(void)
 PGDLLEXPORT void
 neuranmon_main(Datum main_arg)
 {
+	(void) main_arg;  /* Unused */
+
 	/* Establish signal handlers */
 	pqsignal(SIGTERM, neuranmon_sigterm);
 	pqsignal(SIGHUP, neuranmon_sighup);
@@ -457,6 +463,7 @@ PG_FUNCTION_INFO_V1(neuranmon_sample);
 Datum
 neuranmon_sample(PG_FUNCTION_ARGS)
 {
+	(void) fcinfo;  /* Unused */
 	elog(NOTICE, "neurondb: manually triggering neuranmon sampling");
 
 	/* Function is called from user session, already in transaction */
