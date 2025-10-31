@@ -209,7 +209,7 @@ neuranq_shmem_init(void)
 /*
  * Main entry point for queue worker
  */
-PGDLLEXPORT void
+void
 neuranq_main(Datum main_arg)
 {
 	StringInfoData	log_msg;

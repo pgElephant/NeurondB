@@ -248,11 +248,20 @@ jobs:
             exit 1
           fi
           
-          $INITDB -D ./pgdata -U runner -A trust
-          
-          # Start PostgreSQL and check for errors
-          echo "Starting PostgreSQL server..."
-          $PG_CTL -D ./pgdata -l ./pgdata/logfile start || true
+          # Create postgres user if running as root (Rocky Linux)
+          if [ "$(id -u)" = "0" ]; then
+            echo "Running as root, creating postgres user..."
+            useradd -m -s /bin/bash postgres 2>/dev/null || true
+            chown -R postgres:postgres .
+            su - postgres -c "cd $PWD && $INITDB -D ./pgdata -U postgres -A trust"
+            echo "unix_socket_directories = '$PWD/pgdata'" >> ./pgdata/postgresql.conf
+            chown -R postgres:postgres ./pgdata
+            su - postgres -c "cd $PWD && $PG_CTL -D ./pgdata -l ./pgdata/logfile start" || true
+          else
+            $INITDB -D ./pgdata -U runner -A trust
+            echo "unix_socket_directories = '$PWD/pgdata'" >> ./pgdata/postgresql.conf
+            $PG_CTL -D ./pgdata -l ./pgdata/logfile start || true
+          fi
           
           # Wait for server to start (with timeout)
           for i in {1..10}; do

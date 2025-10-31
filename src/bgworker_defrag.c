@@ -194,7 +194,7 @@ neurandefrag_shmem_init(void)
 /*
  * Main entry point for defrag worker
  */
-PGDLLEXPORT void
+void
 neurandefrag_main(Datum main_arg)
 {
 	(void) main_arg;  /* Unused */

@@ -191,7 +191,7 @@ neuranmon_shmem_init(void)
 /*
  * Main entry point for tuner worker
  */
-PGDLLEXPORT void
+void
 neuranmon_main(Datum main_arg)
 {
 	(void) main_arg;  /* Unused */
