@@ -252,7 +252,7 @@ jobs:
           
           # Start PostgreSQL and check for errors
           echo "Starting PostgreSQL server..."
-          $PG_CTL -D ./pgdata -l ./pgdata/logfile start
+          $PG_CTL -D ./pgdata -l ./pgdata/logfile start || true
           
           # Wait for server to start (with timeout)
           for i in {1..10}; do
@@ -263,7 +263,10 @@ jobs:
             if [ $i -eq 10 ]; then
               echo "::error::PostgreSQL server failed to start"
               echo "=== PostgreSQL log file ==="
-              cat ./pgdata/logfile || echo "Log file not found"
+              cat ./pgdata/logfile 2>/dev/null || echo "Log file not found"
+              echo ""
+              echo "=== PostgreSQL data directory ==="
+              ls -la ./pgdata/ 2>/dev/null || true
               exit 1
             fi
             echo "Waiting for server... ($i/10)"
