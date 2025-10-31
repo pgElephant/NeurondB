@@ -465,3 +465,92 @@ COMMENT ON FUNCTION vector_to_array IS 'Convert vector to float array';
 -- ============================================================================
 
 COMMENT ON EXTENSION neurondb IS 'NeurondB: Advanced AI Database - 100+ functions for vector search, ML inference, hybrid search, RAG, and analytics';
+
+-- ============================================================================
+-- GPU ACCELERATION SUPPORT
+-- ============================================================================
+
+-- GPU control and info functions
+CREATE FUNCTION neurondb_gpu_enable(enabled boolean) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_gpu_enable'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb_gpu_enable IS 'Enable or disable GPU acceleration dynamically';
+
+CREATE FUNCTION neurondb_gpu_info() 
+    RETURNS TABLE(device_id int, name text, total_memory_mb bigint, 
+                  free_memory_mb bigint, compute_major int, compute_minor int, is_available boolean)
+    AS 'MODULE_PATHNAME', 'neurondb_gpu_info'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_gpu_info IS 'Returns GPU device information';
+
+CREATE FUNCTION neurondb_gpu_stats() 
+    RETURNS TABLE(queries_executed bigint, fallback_count bigint, 
+                  total_gpu_time_ms double precision, total_cpu_time_ms double precision,
+                  avg_latency_ms double precision, last_reset timestamptz)
+    AS 'MODULE_PATHNAME', 'neurondb_gpu_stats'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_gpu_stats IS 'Returns GPU runtime statistics';
+
+CREATE FUNCTION neurondb_gpu_stats_reset() RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_gpu_reset_stats_func'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb_gpu_stats_reset IS 'Reset GPU statistics counters';
+
+-- GPU statistics view
+CREATE VIEW pg_stat_neurondb_gpu AS
+    SELECT * FROM neurondb_gpu_stats();
+COMMENT ON VIEW pg_stat_neurondb_gpu IS 'GPU runtime statistics and monitoring';
+
+-- GPU distance function overrides
+CREATE FUNCTION vector_l2_distance_gpu(vector, vector) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_l2_distance_gpu'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_l2_distance_gpu IS 'GPU-accelerated L2 distance (with CPU fallback)';
+
+CREATE FUNCTION vector_cosine_distance_gpu(vector, vector) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_cosine_distance_gpu'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_cosine_distance_gpu IS 'GPU-accelerated cosine distance (with CPU fallback)';
+
+CREATE FUNCTION vector_inner_product_gpu(vector, vector) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_inner_product_gpu'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_inner_product_gpu IS 'GPU-accelerated inner product (with CPU fallback)';
+
+-- GPU ANN search functions
+CREATE FUNCTION hnsw_knn_search_gpu(query vector, k int, ef_search int DEFAULT 100)
+    RETURNS TABLE(id bigint, distance real)
+    AS 'MODULE_PATHNAME', 'hnsw_knn_search_gpu'
+    LANGUAGE C STABLE PARALLEL RESTRICTED;
+COMMENT ON FUNCTION hnsw_knn_search_gpu IS 'GPU-accelerated HNSW k-NN search';
+
+CREATE FUNCTION ivf_knn_search_gpu(query vector, k int, nprobe int DEFAULT 10)
+    RETURNS TABLE(id bigint, distance real)
+    AS 'MODULE_PATHNAME', 'ivf_knn_search_gpu'
+    LANGUAGE C STABLE PARALLEL RESTRICTED;
+COMMENT ON FUNCTION ivf_knn_search_gpu IS 'GPU-accelerated IVF k-NN search';
+
+-- GPU quantization functions
+CREATE FUNCTION vector_to_int8_gpu(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_int8_gpu'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_to_int8_gpu IS 'GPU-accelerated INT8 quantization';
+
+CREATE FUNCTION vector_to_fp16_gpu(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_fp16_gpu'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_to_fp16_gpu IS 'GPU-accelerated FP16 quantization';
+
+CREATE FUNCTION vector_to_binary_gpu(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_binary_gpu'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_to_binary_gpu IS 'GPU-accelerated binary quantization';
+
+-- GPU clustering functions
+CREATE FUNCTION cluster_kmeans_gpu(table_name text, vector_col text, k int, max_iters int DEFAULT 100)
+    RETURNS TABLE(id bigint, cluster int)
+    AS 'MODULE_PATHNAME', 'cluster_kmeans_gpu'
+    LANGUAGE C STABLE PARALLEL RESTRICTED;
+COMMENT ON FUNCTION cluster_kmeans_gpu IS 'GPU-accelerated K-means clustering';
+
+-- End of NeurondB extension

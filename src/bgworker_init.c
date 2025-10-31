@@ -39,6 +39,10 @@ extern void neurandefrag_init_guc(void);
 extern Size neurandefrag_shmem_size(void);
 extern void neurandefrag_shmem_init(void);
 
+/* GPU module declarations */
+extern void neurondb_gpu_init_guc(void);
+extern void neurondb_gpu_init(void);
+
 /* Module initialization */
 void _PG_init(void);
 void _PG_fini(void);
@@ -69,6 +73,9 @@ _PG_init(void)
 	neuranq_init_guc();
 	neuranmon_init_guc();
 	neurandefrag_init_guc();
+	
+	/* Initialize GPU GUC variables */
+	neurondb_gpu_init_guc();
 
 	/* Install shared memory request hook */
 	prev_shmem_request_hook = shmem_request_hook;

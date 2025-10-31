@@ -60,6 +60,15 @@ NeuronDB transforms PostgreSQL into a comprehensive AI database platform. Built 
 
 ### Installation
 
+**Using build.sh (Recommended):**
+```bash
+git clone https://github.com/pgElephant/NeurondB.git
+cd NeurondB
+./build.sh                    # CPU-only build
+./build.sh --with-gpu         # With GPU support (CUDA/ROCm auto-detected)
+./build.sh --with-gpu --test  # Build with GPU and run tests
+```
+
 **Ubuntu/Debian:**
 ```bash
 sudo apt-get install -y postgresql-17 postgresql-server-dev-17 \
@@ -226,6 +235,7 @@ All tests pass on PostgreSQL 16, 17, 18 across Ubuntu, macOS, and Rocky Linux.
 ## Documentation
 
 - **[Full Documentation](https://pgelephant.com/neurondb)** - Comprehensive guides and API reference
+- **[GPU Acceleration Guide](GPU.md)** - CUDA/ROCm GPU support documentation
 - **[Features List](FEATURES.md)** - Complete feature catalog
 - **[Contributing Guide](CONTRIBUTING.md)** - Development workflow
 - **[Security Policy](SECURITY.md)** - Security best practices

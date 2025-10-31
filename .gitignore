@@ -4,6 +4,10 @@
 *.dylib
 *.a
 *.bc
+*.pc
+
+# Auto-generated configuration
+include/neurondb_config.h
 
 # Backup and temporary files
 *.bak
