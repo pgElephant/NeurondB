@@ -7,7 +7,7 @@
  * search), hybrid_rank (learnable weights), vec_window (window functions),
  * and vec_route (shard routing by centroid).
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  src/operators.c

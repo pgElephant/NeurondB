@@ -6,7 +6,7 @@
  * Defines structures for job queue (neuranq), auto-tuner (neuranmon),
  * and HNSW defragmentation (neurandefrag) background workers.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  include/neurondb_workers.h

@@ -7,7 +7,7 @@
  * including type I/O functions, vector construction, normalization,
  * arithmetic operations, and array conversions.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  contrib/neurondb/neurondb.c

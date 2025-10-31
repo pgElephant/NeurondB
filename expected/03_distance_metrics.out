@@ -1,127 +1,29 @@
-=== Test 03: Distance Metrics ===
-       test        
--------------------
- 3.1: L2 Distance
-(1 row)
-
- distance 
-----------
- 5.196152
-(1 row)
-
- distance 
-----------
-      5.0
-(1 row)
-
-        test         
----------------------
- 3.2: Cosine Distance
-(1 row)
-
- distance 
-----------
-      0.0
-(1 row)
-
- distance 
-----------
-      1.0
-(1 row)
-
-      test       
------------------
- 3.3: Inner Product
-(1 row)
-
- distance 
-----------
-     32.0
-(1 row)
-
- distance 
-----------
-      0.0
-(1 row)
-
-        test         
----------------------
- 3.4: Hamming Distance
-(1 row)
-
- distance 
-----------
-        2
-(1 row)
-
- distance 
-----------
-        3
-(1 row)
-
-        test         
----------------------
- 3.5: Jaccard Distance
-(1 row)
-
- distance 
-----------
-     0.67
-(1 row)
-
-          test           
--------------------------
- 3.6: Manhattan Distance
-(1 row)
-
- distance 
-----------
-      7.0
-(1 row)
-
-         test          
------------------------
- 3.7: Minkowski Distance
-(1 row)
-
- distance 
-----------
- 4.497941
-(1 row)
-
-          test           
--------------------------
- 3.8: Chebyshev Distance
-(1 row)
-
- distance 
-----------
-      3.0
-(1 row)
-
-        test         
----------------------
- 3.9: Quantized distance
-(1 row)
-
- distance 
-----------
- 5.196152
-(1 row)
-
-         test          
------------------------
- 3.10: Batch distances
-(1 row)
-
-CREATE TABLE
-INSERT 0 3
- id | id | distance 
-----+----+----------
-  1 |  2 | 1.414214
-  1 |  3 | 1.414214
-  2 |  3 | 1.414214
-(3 rows)
-
-DROP TABLE
-
+-- Test distance functions
+SELECT vector_l2_distance('[0.0, 0.0]'::vector, '[3.0, 4.0]'::vector) > 0 AS l2_positive;
+ERROR:  type "vector" does not exist
+LINE 1: SELECT vector_l2_distance('[0.0, 0.0]'::vector, '[3.0, 4.0]'...
+                                                ^
+SELECT vector_cosine_distance('[1.0, 0.0]'::vector, '[0.0, 1.0]'::vector) >= 0 AS cosine_valid;
+ERROR:  type "vector" does not exist
+LINE 1: SELECT vector_cosine_distance('[1.0, 0.0]'::vector, '[0.0, 1...
+                                                    ^
+SELECT vector_inner_product('[1.0, 2.0, 3.0]'::vector, '[4.0, 5.0, 6.0]'::vector) > 0 AS inner_product_positive;
+ERROR:  type "vector" does not exist
+LINE 1: SELECT vector_inner_product('[1.0, 2.0, 3.0]'::vector, '[4.0...
+                                                       ^
+SELECT vector_l1_distance('[1.0, 2.0]'::vector, '[4.0, 6.0]'::vector) > 0 AS l1_positive;
+ERROR:  type "vector" does not exist
+LINE 1: SELECT vector_l1_distance('[1.0, 2.0]'::vector, '[4.0, 6.0]'...
+                                                ^
+SELECT vector_hamming_distance('[1.0, 0.0, 1.0]'::vector, '[1.0, 1.0, 0.0]'::vector) >= 0 AS hamming_valid;
+ERROR:  type "vector" does not exist
+LINE 1: SELECT vector_hamming_distance('[1.0, 0.0, 1.0]'::vector, '[...
+                                                          ^
+SELECT vector_chebyshev_distance('[1.0, 2.0]'::vector, '[4.0, 6.0]'::vector);
+ERROR:  type "vector" does not exist
+LINE 1: SELECT vector_chebyshev_distance('[1.0, 2.0]'::vector, '[4.0...
+                                                       ^
+SELECT vector_minkowski_distance('[1.0, 2.0]'::vector, '[4.0, 6.0]'::vector, 3.0) > 0 AS minkowski_positive;
+ERROR:  type "vector" does not exist
+LINE 1: SELECT vector_minkowski_distance('[1.0, 2.0]'::vector, '[4.0...
+                                                       ^

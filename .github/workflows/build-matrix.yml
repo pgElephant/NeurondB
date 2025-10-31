@@ -1,73 +1,340 @@
-name: build-matrix
+name: Build Matrix
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      pg_versions:
+        description: 'PostgreSQL versions (comma-separated, e.g., "16,17,18")'
+        required: false
+        default: '16,17,18'
+      platforms:
+        description: 'Platforms (comma-separated: ubuntu,macos,rocky)'
+        required: false
+        default: 'ubuntu,macos,rocky'
+      run_tests:
+        description: 'Run regression tests'
+        required: false
+        type: boolean
+        default: true
+  # Automatic triggers disabled - run manually only
+  # push:
+  #   branches: [ main, master ]
+  # pull_request:
+
+env:
+  PACKAGE_VERSION: '1.0.0'
+  PACKAGE_RELEASE: '1'
+  EXTENSION_NAME: 'neurondb'
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
-  matrix:
-    name: build (${{ matrix.os }} | pg ${{ matrix.pg }})
+  authorize:
+    name: Authorize
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check authorization
+        if: github.actor != 'pgelephant2025'
+        run: |
+          echo "Only pgelephant2025 can run this workflow"
+          echo "Current user: ${{ github.actor }}"
+          exit 1
+      
+      - name: Authorization successful
+        run: |
+          echo "Authorization successful for ${{ github.actor }}"
+
+  prepare:
+    name: Prepare Build Matrix
+    needs: authorize
+    runs-on: ubuntu-latest
+    outputs:
+      build_matrix: ${{ steps.build_matrix.outputs.matrix }}
+    
+    steps:
+      - name: Set PostgreSQL versions
+        id: pg_versions
+        run: |
+          if [ -n "${{ github.event.inputs.pg_versions }}" ]; then
+            VERSIONS=$(echo "${{ github.event.inputs.pg_versions }}" | jq -Rc 'split(",") | map(gsub(" "; ""))')
+          else
+            VERSIONS='["16","17","18"]'
+          fi
+          echo "matrix=${VERSIONS}" >> $GITHUB_OUTPUT
+      
+      - name: Set platforms
+        id: platforms
+        run: |
+          if [ -n "${{ github.event.inputs.platforms }}" ]; then
+            PLATFORMS=$(echo "${{ github.event.inputs.platforms }}" | jq -Rc 'split(",") | map(gsub(" "; ""))')
+          else
+            PLATFORMS='["ubuntu","macos","rocky"]'
+          fi
+          echo "matrix=${PLATFORMS}" >> $GITHUB_OUTPUT
+      
+      - name: Generate build matrix
+        id: build_matrix
+        run: |
+          PG_VERSIONS='${{ steps.pg_versions.outputs.matrix }}'
+          PLATFORMS='${{ steps.platforms.outputs.matrix }}'
+          
+          # Generate cross product of platforms and PG versions
+          MATRIX=$(jq -nc \
+            --argjson pg "$PG_VERSIONS" \
+            --argjson plat "$PLATFORMS" \
+            '{include: [$plat[] as $p | $pg[] as $v | {platform: $p, pg_version: $v, os: (if $p == "ubuntu" then "ubuntu-22.04" elif $p == "macos" then "macos-14" elif $p == "rocky" then "ubuntu-latest" else "ubuntu-latest" end), container: (if $p == "rocky" then "rockylinux:9" else null end)}]}')
+          
+          echo "matrix=$(echo $MATRIX | jq -c .)" >> $GITHUB_OUTPUT
+          echo "Generated matrix:"
+          echo "${MATRIX}" | jq '.'
+
+  build:
+    name: Build ${{ matrix.platform }} PG-${{ matrix.pg_version }}
+    needs: prepare
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    container: ${{ matrix.container }}
+    
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        pg: [16, 17]
-
+      matrix: ${{ fromJson(needs.prepare.outputs.build_matrix) }}
+    
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up PostgreSQL (Linux)
-        if: runner.os == 'Linux'
-        uses: ankane/setup-postgres@v1
-        with:
-          postgres-version: ${{ matrix.pg }}
-
-      - name: Set up PostgreSQL (macOS)
-        if: runner.os == 'macOS'
+      
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu'
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          
+          # Add PostgreSQL APT repository
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wget gnupg2 lsb-release ca-certificates
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /usr/share/keyrings/postgresql.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          
+          # Install build dependencies
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            postgresql-${{ matrix.pg_version }} \
+            postgresql-server-dev-${{ matrix.pg_version }} \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            zlib1g-dev \
+            pkg-config
+      
+      - name: Install dependencies (macOS)
+        if: matrix.platform == 'macos'
         run: |
           brew update
-          brew install postgresql@${{ matrix.pg }} || true
-          echo "::add-path::$(brew --prefix)/opt/postgresql@${{ matrix.pg }}/bin"
-
+          brew install postgresql@${{ matrix.pg_version }}
+          echo "/opt/homebrew/opt/postgresql@${{ matrix.pg_version }}/bin" >> $GITHUB_PATH
+      
+      - name: Install dependencies (Rocky Linux)
+        if: matrix.platform == 'rocky'
+        run: |
+          export LANG=C
+          export LC_ALL=C
+          
+          # Check if we need sudo (container runs as root)
+          if command -v sudo &> /dev/null && [ "$(id -u)" != "0" ]; then
+            SUDO="sudo"
+          else
+            SUDO=""
+          fi
+          
+          # Enable EPEL and PowerTools
+          $SUDO dnf install -y epel-release
+          $SUDO dnf config-manager --set-enabled crb || $SUDO crb enable || true
+          
+          # Add PostgreSQL repository
+          ARCH=$(uname -m)
+          $SUDO dnf install -y --nogpgcheck https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm
+          
+          # Disable built-in PostgreSQL module
+          $SUDO dnf -qy module disable postgresql
+          
+          # Install build dependencies
+          $SUDO dnf install -y --setopt=deltarpm=0 --setopt=install_weak_deps=false \
+            gcc \
+            make \
+            redhat-rpm-config \
+            postgresql${{ matrix.pg_version }}-devel \
+            libcurl-devel \
+            openssl-devel \
+            zlib-devel \
+            pkg-config
+      
       - name: Print versions
         run: |
-          pg_config --version
-          cc --version || true
-
-      - name: Build
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            export PG_CONFIG=/opt/homebrew/opt/postgresql@${{ matrix.pg_version }}/bin/pg_config
+          elif [ "${{ matrix.platform }}" = "rocky" ]; then
+            export PG_CONFIG=/usr/pgsql-${{ matrix.pg_version }}/bin/pg_config
+          else
+            export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config
+          fi
+          
+          $PG_CONFIG --version
+          cc --version || gcc --version || true
+      
+      - name: Build extension
         run: |
+          # Set PG_CONFIG based on platform
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            export PG_CONFIG=/opt/homebrew/opt/postgresql@${{ matrix.pg_version }}/bin/pg_config
+          elif [ "${{ matrix.platform }}" = "rocky" ]; then
+            export PG_CONFIG=/usr/pgsql-${{ matrix.pg_version }}/bin/pg_config
+          else
+            export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config
+          fi
+          
           make clean || true
-          make PG_CONFIG=$(command -v pg_config)
-
-      - name: Install
+          make PG_CONFIG=$PG_CONFIG
+      
+      - name: Install extension
         run: |
-          sudo make install PG_CONFIG=$(command -v pg_config)
-
-      - name: Initdb and start cluster
+          # Set PG_CONFIG based on platform
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            export PG_CONFIG=/opt/homebrew/opt/postgresql@${{ matrix.pg_version }}/bin/pg_config
+          elif [ "${{ matrix.platform }}" = "rocky" ]; then
+            export PG_CONFIG=/usr/pgsql-${{ matrix.pg_version }}/bin/pg_config
+          else
+            export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config
+          fi
+          
+          if [ "${{ matrix.platform }}" = "rocky" ] && [ "$(id -u)" = "0" ]; then
+            make install PG_CONFIG=$PG_CONFIG
+          else
+            sudo make install PG_CONFIG=$PG_CONFIG
+          fi
+      
+      - name: Initialize PostgreSQL cluster
         run: |
-          initdb -D ./pgdata -U runner -A trust
-          pg_ctl -D ./pgdata -l ./pgdata/logfile start
+          # Set paths based on platform
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            export PG_CONFIG=/opt/homebrew/opt/postgresql@${{ matrix.pg_version }}/bin/pg_config
+            INITDB=/opt/homebrew/opt/postgresql@${{ matrix.pg_version }}/bin/initdb
+            PG_CTL=/opt/homebrew/opt/postgresql@${{ matrix.pg_version }}/bin/pg_ctl
+          elif [ "${{ matrix.platform }}" = "rocky" ]; then
+            export PG_CONFIG=/usr/pgsql-${{ matrix.pg_version }}/bin/pg_config
+            INITDB=/usr/pgsql-${{ matrix.pg_version }}/bin/initdb
+            PG_CTL=/usr/pgsql-${{ matrix.pg_version }}/bin/pg_ctl
+          else
+            export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config
+            INITDB=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/initdb
+            PG_CTL=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_ctl
+          fi
+          
+          # Initialize and start cluster
+          $INITDB -D ./pgdata -U runner -A trust
+          $PG_CTL -D ./pgdata -l ./pgdata/logfile start
           sleep 2
-
-      - name: Installcheck
+      
+      - name: Run regression tests
+        if: github.event.inputs.run_tests != 'false'
         run: |
-          make installcheck PG_CONFIG=$(command -v pg_config) || (cat regression.diffs || true; exit 1)
-
-      - name: Package artifact
-        run: |
-          mkdir -p artifacts
-          cp neurondb.dylib artifacts/ 2>/dev/null || true
-          cp *.so artifacts/ 2>/dev/null || true
-          tar czf neurondb-${{ matrix.os }}-pg${{ matrix.pg }}.tar.gz artifacts
-
-      - name: Upload artifact
+          # Set PG_CONFIG based on platform
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            export PG_CONFIG=/opt/homebrew/opt/postgresql@${{ matrix.pg_version }}/bin/pg_config
+          elif [ "${{ matrix.platform }}" = "rocky" ]; then
+            export PG_CONFIG=/usr/pgsql-${{ matrix.pg_version }}/bin/pg_config
+          else
+            export PG_CONFIG=/usr/lib/postgresql/${{ matrix.pg_version }}/bin/pg_config
+          fi
+          
+          echo "::group::Running regression tests"
+          make installcheck PG_CONFIG=$PG_CONFIG || TEST_FAILED=1
+          echo "::endgroup::"
+          
+          if [ "$TEST_FAILED" = "1" ]; then
+            echo "::error::Regression tests failed"
+            if [ -f regression.diffs ]; then
+              echo "::group::Regression diffs"
+              cat regression.diffs
+              echo "::endgroup::"
+            fi
+            if [ -f regression.out ]; then
+              echo "::group::Regression output"
+              tail -100 regression.out
+              echo "::endgroup::"
+            fi
+            exit 1
+          else
+            echo "::notice::All regression tests passed"
+          fi
+      
+      - name: Upload test results
+        if: always() && github.event.inputs.run_tests != 'false'
         uses: actions/upload-artifact@v4
         with:
-          name: neurondb-${{ matrix.os }}-pg${{ matrix.pg }}
-          path: neurondb-${{ matrix.os }}-pg${{ matrix.pg }}.tar.gz
+          name: test-results-${{ matrix.platform }}-pg${{ matrix.pg_version }}
+          path: |
+            regression.out
+            regression.diffs
+            results/
+          retention-days: 7
+      
+      - name: Package artifacts
+        run: |
+          mkdir -p artifacts
+          
+          # Copy built extension
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            cp neurondb.dylib artifacts/ 2>/dev/null || true
+          else
+            cp neurondb.so artifacts/ 2>/dev/null || true
+          fi
+          
+          # Copy SQL files
+          cp *.sql artifacts/ 2>/dev/null || true
+          cp neurondb.control artifacts/ 2>/dev/null || true
+          
+          # Create tarball
+          tar czf neurondb-${{ matrix.platform }}-pg${{ matrix.pg_version }}.tar.gz artifacts/
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: neurondb-${{ matrix.platform }}-pg${{ matrix.pg_version }}
+          path: neurondb-${{ matrix.platform }}-pg${{ matrix.pg_version }}.tar.gz
+          retention-days: 30
 
-
+  release:
+    name: Copy to Local Release Folder
+    needs: build
+    runs-on: ubuntu-latest
+    if: success()
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Display structure
+        run: |
+          ls -R artifacts/
+      
+      - name: Organize release artifacts
+        run: |
+          mkdir -p release/{deb,rpm,macos}
+          
+          # Move artifacts to appropriate folders
+          find artifacts -name "*ubuntu*.tar.gz" -exec mv {} release/deb/ \;
+          find artifacts -name "*rocky*.tar.gz" -exec mv {} release/rpm/ \;
+          find artifacts -name "*macos*.tar.gz" -exec mv {} release/macos/ \;
+          
+          echo "Release structure:"
+          ls -R release/
+      
+      - name: Upload organized release
+        uses: actions/upload-artifact@v4
+        with:
+          name: neurondb-release
+          path: release/
+          retention-days: 90

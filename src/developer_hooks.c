@@ -8,7 +8,7 @@
  * planner extension API, logical replication plugin, FDW for vectors,
  * and SQL-based unit test framework.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  src/developer_hooks.c
@@ -86,11 +86,16 @@ create_vector_fdw(PG_FUNCTION_ARGS)
 	type_str = text_to_cstring(remote_type);
 	conn_str = text_to_cstring(connection_string);
 	
-	elog(NOTICE, "neurondb: creating %s FDW '%s'", type_str, name_str);
+	elog(NOTICE, "neurondb: creating %s FDW '%s' with connection '%s'", 
+		 type_str, name_str, conn_str);
 	
 	/* Register FDW handlers */
 	/* Map remote vector store operations to PostgreSQL */
 	/* Support: FAISS, Milvus, Weaviate, Pinecone */
+	
+	pfree(name_str);
+	pfree(type_str);
+	pfree(conn_str);
 	
 	PG_RETURN_BOOL(true);
 }

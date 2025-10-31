@@ -6,7 +6,7 @@
  * This file implements pg_stat_neurondb view showing ANN latency
  * histograms, recall@K metrics, and performance statistics.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  src/pg_stat_neurondb.c

@@ -2,15 +2,15 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
+| Version | Supported |
+| ------- | --------- |
+| 1.0.x   | Yes       |
 
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in NeuronDB, please report it by emailing:
 
-**security@neurondb.org**
+**admin@pgelephant.com**
 
 ### What to Include
 

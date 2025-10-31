@@ -8,7 +8,7 @@
  * and binary quantization (32x compression). Includes optimized
  * Hamming distance for binary vectors.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  contrib/neurondb/quantization.c

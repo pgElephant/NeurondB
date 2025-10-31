@@ -1,0 +1,28 @@
+-- Test aggregate functions
+CREATE TEMP TABLE test_vectors (id int, v vector);
+ERROR:  type "vector" does not exist
+LINE 1: CREATE TEMP TABLE test_vectors (id int, v vector);
+                                                  ^
+INSERT INTO test_vectors VALUES 
+    (1, '[1.0, 0.0]'),
+    (2, '[0.0, 1.0]'),
+    (3, '[1.0, 1.0]'),
+    (4, '[2.0, 2.0]');
+ERROR:  relation "test_vectors" does not exist
+LINE 1: INSERT INTO test_vectors VALUES 
+                    ^
+-- Test vector average
+SELECT vector_avg(v) FROM test_vectors;
+ERROR:  relation "test_vectors" does not exist
+LINE 1: SELECT vector_avg(v) FROM test_vectors;
+                                  ^
+-- Test vector sum
+SELECT vector_sum(v) FROM test_vectors;
+ERROR:  relation "test_vectors" does not exist
+LINE 1: SELECT vector_sum(v) FROM test_vectors;
+                                  ^
+-- Test with WHERE clause
+SELECT vector_avg(v) FROM test_vectors WHERE id <= 2;
+ERROR:  relation "test_vectors" does not exist
+LINE 1: SELECT vector_avg(v) FROM test_vectors WHERE id <= 2;
+                                  ^

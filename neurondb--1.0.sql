@@ -1,5 +1,5 @@
 -- NeurondB Extension SQL Definitions
--- Advanced AI Database: Beyond pgvector + pgai + pg_ai
+-- Advanced AI Database Extension for PostgreSQL
 -- 
 -- Features:
 -- - Multiple vector types (float32, float16, int8, binary)

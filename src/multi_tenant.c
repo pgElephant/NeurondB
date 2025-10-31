@@ -7,7 +7,7 @@
  * background workers, usage metering (pg_stat_tenant), policy engine,
  * and immutable audit logging.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  src/multi_tenant.c
@@ -31,9 +31,10 @@ create_tenant_worker(PG_FUNCTION_ARGS)
 	text	   *tenant_id = PG_GETARG_TEXT_PP(0);
 	text	   *worker_type = PG_GETARG_TEXT_PP(1);
 	text	   *config = PG_GETARG_TEXT_PP(2);
-	(void) config;
 	char	   *tid_str;
 	char	   *type_str;
+	
+	(void) config;
 	
 	tid_str = text_to_cstring(tenant_id);
 	type_str = text_to_cstring(worker_type);

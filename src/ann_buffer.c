@@ -5,7 +5,7 @@
  * Provides a shared memory buffer for caching hot centroids and
  * frequently accessed vectors to improve ANN search performance.
  *
- * Copyright (c) 2025, NeuronDB Development Group
+ * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
  */
 
 #include "postgres.h"

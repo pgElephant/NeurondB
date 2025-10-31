@@ -1,19 +1,20 @@
-# PostgreSQL Extension Build Artifacts
+# Build artifacts
 *.o
 *.so
 *.dylib
-*.bc
 *.a
-*.pc
-*.sql.in
+*.bc
 
-# Extension shared library
-neurondb.so
-neurondb.dylib
-libneurondb.a
-libneurondb.pc
+# Backup and temporary files
+*.bak
+*.bak[0-9]
+*.old
+*~
+*.tmp
+*.swp
+*.swo
 
-# Regression test outputs
+# Regression test results
 results/
 regression.diffs
 regression.out
@@ -22,78 +23,22 @@ tmp_check_iso/
 log/
 output_iso/
 
-# TAP test outputs
-tmp_check_*/
-*.log
+# Build directories
+build/
+releases/
 
-# PostgreSQL data directories
-pgdata/
-data/
-pg17data/
-
-# Build logs
-build.log
-compile.log
-*.log
-
-# Backup files
-*~
-*.bak
-*.backup
-*.swp
-*.swo
-.*.swp
-
-# OS-specific
+# Mac OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
 
 # Editor files
 .vscode/
 .idea/
 *.sublime-*
-.editorconfig
 
-# Temporary files
-*.tmp
-*.temp
-/tmp/
-
-# Package files
-*.tar.gz
-*.zip
-*.deb
-*.rpm
-
-# Python (if any utility scripts)
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-
-# Documentation build artifacts
-site/
-docs/_build/
-*.pdf
-
-# Release artifacts
-releases/
-artifacts/
-
-# Local configuration
-local.conf
+# Configuration files (local)
 *.local
 
-# Core dumps
-core
-core.*
-vgcore.*
-
-# Compiled documentation
-*.html
-*.fo
+# Compiled binaries
+neurondb.dylib
+libneurondb.a
+libneurondb.pc

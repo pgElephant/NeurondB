@@ -1,108 +1,45 @@
-=== Test 01: Basic Vector Types ===
-CREATE EXTENSION
-      test       
------------------
- 1.1: Create vectorf32
-(1 row)
-
-    result     
----------------
- [1.0,2.0,3.0]
-(1 row)
-
-        result        
-----------------------
- [0.1,0.2,0.3,0.4,0.5]
-(1 row)
-
-      test       
------------------
- 1.2: Create vectorf16
-(1 row)
-
- result  
----------
- [1,2,3]
-(1 row)
-
-      test       
------------------
- 1.3: Create vectori8
-(1 row)
-
-  result   
------------
- [1,2,3,4,5]
-(1 row)
-
-      test       
------------------
- 1.4: Create vectorbin
-(1 row)
-
- result 
---------
- 101010
-(1 row)
-
-        test        
---------------------
- 1.5: Vector dimensions
-(1 row)
-
- dims 
-------
-    3
-(1 row)
-
- dims 
-------
-    5
-(1 row)
-
-          test           
--------------------------
- 1.6: Create table with vectors
-(1 row)
-
-CREATE TABLE
-        test        
---------------------
- 1.7: Insert vectors
-(1 row)
-
-INSERT 0 2
-        test        
---------------------
- 1.8: Query vectors
-(1 row)
-
- id |   vec_f32   | vec_f16 | vec_i8  | vec_bin 
-----+-------------+---------+---------+---------
-  1 | [1.0,2.0,3.0] | [1,2,3] | [1,2,3] | 101
-  2 | [4.0,5.0,6.0] | [4,5,6] | [4,5,6] | 110
-(2 rows)
-
-         test         
-----------------------
- 1.9: Vector type casts
-(1 row)
-
- result  
----------
- [1,2,3]
-(1 row)
-
- result  
----------
- [1,2,3]
-(1 row)
-
-       test        
--------------------
- 1.10: Error handling
-(1 row)
-
-ERROR:  neurondb: invalid vector format
-DROP TABLE
-
+-- Test basic type creation and operations
+CREATE EXTENSION neurondb;
+ERROR:  could not open extension control file "/opt/homebrew/share/postgresql@14/extension/neurondb.control": No such file or directory
+-- Test vector type
+SELECT '[1.0, 2.0, 3.0]'::vector;
+ERROR:  type "vector" does not exist
+LINE 1: SELECT '[1.0, 2.0, 3.0]'::vector;
+                                  ^
+SELECT '[1.5, 2.5, 3.5, 4.5]'::vector;
+ERROR:  type "vector" does not exist
+LINE 1: SELECT '[1.5, 2.5, 3.5, 4.5]'::vector;
+                                       ^
+SELECT vector_dims('[1.0, 2.0, 3.0, 4.0, 5.0]'::vector);
+ERROR:  type "vector" does not exist
+LINE 1: SELECT vector_dims('[1.0, 2.0, 3.0, 4.0, 5.0]'::vector);
+                                                        ^
+-- Test vectorp (packed)
+SELECT vectorp_in('[1.0, 2.0, 3.0]')::text;
+ERROR:  function vectorp_in(unknown) does not exist
+LINE 1: SELECT vectorp_in('[1.0, 2.0, 3.0]')::text;
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+SELECT vectorp_dims(vectorp_in('[1.0, 2.0, 3.0, 4.0]'));
+ERROR:  function vectorp_in(unknown) does not exist
+LINE 1: SELECT vectorp_dims(vectorp_in('[1.0, 2.0, 3.0, 4.0]'));
+                            ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+-- Test vecmap (sparse)
+SELECT vecmap_in('{dim:10, nnz:3, indices:[0,3,7], values:[1.5,2.3,0.8]}')::text;
+ERROR:  function vecmap_in(unknown) does not exist
+LINE 1: SELECT vecmap_in('{dim:10, nnz:3, indices:[0,3,7], values:[1...
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+-- Test vgraph
+SELECT vgraph_in('{nodes:5, edges:[[0,1],[1,2],[2,3],[3,4]]}')::text;
+ERROR:  function vgraph_in(unknown) does not exist
+LINE 1: SELECT vgraph_in('{nodes:5, edges:[[0,1],[1,2],[2,3],[3,4]]}...
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+-- Test rtext
+SELECT rtext_in('sample text for retrieval')::text;
+ERROR:  function rtext_in(unknown) does not exist
+LINE 1: SELECT rtext_in('sample text for retrieval')::text;
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.

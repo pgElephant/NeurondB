@@ -7,7 +7,7 @@
  * and function declarations for the NeurondB extension including
  * vector types, distance metrics, indexing, and ML operations.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  contrib/neurondb/neurondb.h

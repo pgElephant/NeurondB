@@ -7,7 +7,7 @@
  * lists for hot queries, enabling zero round trips to heap for
  * reranking operations.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  src/index_rerank.c

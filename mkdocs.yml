@@ -1,0 +1,262 @@
+# NeurondB Documentation Configuration
+# Advanced AI Database Extension for PostgreSQL
+# Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+
+site_name: NeurondB Documentation
+site_description: Advanced AI Database Extension for PostgreSQL - Vector Search, ML Inference, and Hybrid Search
+site_author: pgElephant, Inc.
+site_url: https://pgelephant.com/neurondb
+copyright: Copyright &copy; 2024-2025 pgElephant, Inc.
+
+# Repository
+repo_name: pgElephant/NeurondB
+repo_url: https://github.com/pgElephant/NeurondB
+edit_uri: edit/main/docs/
+
+# Theme Configuration
+theme:
+  name: material
+  language: en
+  palette:
+    # Light mode
+    - scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  
+  font:
+    text: Roboto
+    code: Roboto Mono
+  
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - search.share
+    - header.autohide
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+    - toc.integrate
+  
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/database-lightning
+    
+  favicon: assets/favicon.ico
+
+# Navigation Structure
+nav:
+  - Home: index.md
+  
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+    - First Steps: getting-started/first-steps.md
+  
+  - Core Features:
+    - Vector Types: features/vector-types.md
+    - Distance Metrics: features/distance-metrics.md
+    - Indexing: features/indexing.md
+    - Quantization: features/quantization.md
+  
+  - ML & Embeddings:
+    - Model Inference: ml/inference.md
+    - Embedding Generation: ml/embeddings.md
+    - Model Management: ml/model-management.md
+    - Fine-tuning: ml/finetuning.md
+  
+  - Hybrid Search:
+    - Overview: hybrid/overview.md
+    - Vector + Text: hybrid/vector-text.md
+    - Multi-Vector: hybrid/multi-vector.md
+    - Faceted Search: hybrid/faceted.md
+    - Temporal Search: hybrid/temporal.md
+  
+  - Reranking:
+    - Cross-Encoder: reranking/cross-encoder.md
+    - LLM Reranking: reranking/llm.md
+    - ColBERT: reranking/colbert.md
+    - Ensemble: reranking/ensemble.md
+  
+  - RAG Pipeline:
+    - Overview: rag/overview.md
+    - Document Processing: rag/documents.md
+    - Retrieval: rag/retrieval.md
+    - Generation: rag/generation.md
+    - Best Practices: rag/best-practices.md
+  
+  - Analytics:
+    - Clustering: analytics/clustering.md
+    - Dimensionality Reduction: analytics/dimensionality.md
+    - Outlier Detection: analytics/outliers.md
+    - Quality Metrics: analytics/quality.md
+  
+  - Background Workers:
+    - Overview: workers/overview.md
+    - Queue Worker: workers/neuranq.md
+    - Auto-Tuner: workers/neuranmon.md
+    - Index Maintenance: workers/neurandefrag.md
+    - Configuration: workers/configuration.md
+  
+  - Performance:
+    - Optimization: performance/optimization.md
+    - Query Planning: performance/planning.md
+    - Indexing Strategies: performance/indexing.md
+    - Monitoring: performance/monitoring.md
+  
+  - Security:
+    - Overview: security/overview.md
+    - Encryption: security/encryption.md
+    - Access Control: security/access-control.md
+    - Audit Logging: security/audit.md
+  
+  - API Reference:
+    - SQL Functions: api/functions.md
+    - Data Types: api/types.md
+    - Operators: api/operators.md
+    - Aggregates: api/aggregates.md
+    - Configuration: api/configuration.md
+  
+  - Development:
+    - Architecture: development/architecture.md
+    - Contributing: development/contributing.md
+    - Building: development/building.md
+    - Testing: development/testing.md
+  
+  - Deployment:
+    - Production Setup: deployment/production.md
+    - Docker: deployment/docker.md
+    - Kubernetes: deployment/kubernetes.md
+    - Cloud Platforms: deployment/cloud.md
+  
+  - Examples:
+    - Basic Usage: examples/basic.md
+    - Semantic Search: examples/semantic-search.md
+    - Image Search: examples/image-search.md
+    - RAG Application: examples/rag-app.md
+    - Multi-Tenant: examples/multi-tenant.md
+  
+  - Troubleshooting:
+    - Common Issues: troubleshooting/common-issues.md
+    - Performance Issues: troubleshooting/performance.md
+    - Error Messages: troubleshooting/errors.md
+    - FAQ: troubleshooting/faq.md
+  
+  - About:
+    - Release Notes: about/releases.md
+    - Roadmap: about/roadmap.md
+    - License: about/license.md
+    - Contact: about/contact.md
+
+# Plugins
+plugins:
+  - search:
+      lang: en
+      separator: '[\s\-\.]+'
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+      htmlmin_opts:
+        remove_comments: true
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+
+# Extensions
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  
+  # Python Markdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Extra Configuration
+extra:
+  version:
+    provider: mike
+  
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/pgelephant2025
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/pgelephant
+    - icon: fontawesome/brands/linkedin
+      link: https://linkedin.com/company/pgelephant
+    - icon: fontawesome/solid/envelope
+      link: mailto:admin@pgelephant.com
+  
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
+  
+  generator: false
+
+# Extra CSS
+extra_css:
+  - stylesheets/extra.css
+
+# Extra JavaScript
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+

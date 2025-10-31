@@ -5,7 +5,7 @@
  * Provides delta encoding and compression for vector updates in WAL
  * to reduce replication bandwidth and storage overhead.
  *
- * Copyright (c) 2025, NeuronDB Development Group
+ * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
  */
 
 #include "postgres.h"

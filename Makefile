@@ -35,12 +35,21 @@ OBJS = \
 	src/model_runtime.o \
 	src/ann_buffer.o \
 	src/vector_wal.o \
-	src/vector_config.o
+	src/vector_config.o \
+	src/bgworker_queue.o \
+	src/bgworker_tuner.o \
+	src/bgworker_defrag.o \
+	src/bgworker_init.o
 
 REGRESS = \
 	01_types_basic \
 	02_types_operations \
-	03_distance_metrics
+	03_distance_metrics \
+	04_aggregates \
+	05_catalog_tables \
+	06_worker_functions \
+	07_data_management \
+	08_advanced_features
 
 PGFILEDESC = "neurondb - Advanced AI Database with ML Integration"
 

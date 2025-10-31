@@ -5,7 +5,7 @@
  * Provides SQL interface to view and modify NeuronDB configuration
  * including index parameters, search settings, and performance tuning.
  *
- * Copyright (c) 2025, NeuronDB Development Group
+ * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
  */
 
 #include "postgres.h"

@@ -9,7 +9,7 @@
  * statistical functions (mean, variance, stddev, min, max), vector
  * comparison, clipping, standardization, and normalization methods.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  contrib/neurondb/vector_ops.c

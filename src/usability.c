@@ -6,7 +6,7 @@
  * This file implements user-friendly syntax for NeuronDB operations
  * including model management, index creation, and configuration display.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  src/usability.c

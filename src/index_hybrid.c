@@ -7,7 +7,7 @@
  * full-text search in one index structure, enabling single plan node
  * and single heap walk for optimal performance.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  src/index_hybrid.c

@@ -1,31 +1,234 @@
-name: docs
+name: Documentation
 
 on:
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'docs/**'
-      - '.github/workflows/docs.yml'
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy to GitHub Pages'
+        required: false
+        type: boolean
+        default: false
+  # Automatic triggers disabled - run manually only
+  # push:
+  #   branches: [ main, master ]
+  #   paths:
+  #     - 'docs/**'
+  #     - 'mkdocs.yml'
+  #     - '.github/workflows/docs.yml'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
 jobs:
-  build:
+  authorize:
+    name: Authorize
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Python
+      - name: Check authorization
+        if: github.actor != 'pgelephant2025'
+        run: |
+          echo "::error::Only pgelephant2025 can run this workflow"
+          echo "Current user: ${{ github.actor }}"
+          exit 1
+      
+      - name: Authorization successful
+        run: |
+          echo "::notice::Authorization successful for ${{ github.actor }}"
+
+  build:
+    name: Build Documentation
+    needs: authorize
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for git-revision-date plugin
+      
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
-      - name: Install mkdocs
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
         run: |
-          pip install mkdocs mkdocs-material
-      - name: Build and deploy
+          python -m pip install --upgrade pip
+          pip install -r docs-requirements.txt
+      
+      - name: Verify MkDocs installation
         run: |
-          mkdocs build --strict
-      - name: Upload site artifact
+          mkdocs --version
+          python -c "import material; print('Material theme:', material.__version__)"
+      
+      - name: Build documentation
+        run: |
+          echo "::group::Building documentation"
+          mkdocs build --strict --verbose
+          echo "::endgroup::"
+      
+      - name: Check build output
+        run: |
+          echo "::group::Build output structure"
+          ls -lah site/
+          du -sh site/
+          echo "::endgroup::"
+      
+      - name: Validate HTML
+        run: |
+          echo "::group::Validating HTML files"
+          find site -name "*.html" | wc -l
+          echo "HTML files generated successfully"
+          echo "::endgroup::"
+      
+      - name: Upload documentation artifact
         uses: actions/upload-artifact@v4
         with:
-          name: site
+          name: documentation
           path: site/
+          retention-days: 30
+      
+      - name: Create documentation archive
+        run: |
+          cd site
+          tar czf ../neurondb-docs.tar.gz .
+          cd ..
+          echo "::notice::Documentation archive created: $(ls -lh neurondb-docs.tar.gz | awk '{print $5}')"
+      
+      - name: Upload documentation archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: neurondb-docs-archive
+          path: neurondb-docs.tar.gz
+          retention-days: 90
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event.inputs.deploy == 'true' || github.ref == 'refs/heads/main'
+    
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: Download documentation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation
+          path: site
+      
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v4
+      
+      - name: Upload to GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+      
+      - name: Deployment success
+        run: |
+          echo "::notice::Documentation deployed successfully"
+          echo "::notice::URL: ${{ steps.deployment.outputs.page_url }}"
+
+  test:
+    name: Test Documentation Links
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Download documentation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation
+          path: site
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install link checker
+        run: |
+          pip install linkchecker
+      
+      - name: Start local server
+        run: |
+          cd site
+          python -m http.server 8000 &
+          sleep 3
+          echo "::notice::Local server started on port 8000"
+      
+      - name: Check links
+        continue-on-error: true
+        run: |
+          linkchecker --no-warnings --ignore-url="^https?://(www\.)?github\.com" http://localhost:8000
+      
+      - name: Stop server
+        if: always()
+        run: |
+          pkill -f "python -m http.server" || true
+
+  summary:
+    name: Build Summary
+    needs: [build, deploy, test]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Download documentation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation
+          path: site
+      
+      - name: Generate summary
+        run: |
+          echo "# 📚 Documentation Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow**: ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Statistics" >> $GITHUB_STEP_SUMMARY
+          HTML_COUNT=$(find site -name "*.html" | wc -l)
+          SITE_SIZE=$(du -sh site/ | awk '{print $1}')
+          echo "- **HTML Pages**: $HTML_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total Size**: $SITE_SIZE" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Status" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.build.result }}" == "success" ]; then
+            echo "✅ Build: **Success**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Build: **Failed**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.deploy.result }}" == "success" ]; then
+            echo "✅ Deploy: **Success**" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.deploy.result }}" == "skipped" ]; then
+            echo "⏭️ Deploy: **Skipped**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Deploy: **Failed**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.test.result }}" == "success" ]; then
+            echo "✅ Link Check: **Success**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Link Check: **Issues Found**" >> $GITHUB_STEP_SUMMARY
+          fi
 

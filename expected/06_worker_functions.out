@@ -1,0 +1,19 @@
+-- Test background worker management functions
+SELECT proname, pronargs FROM pg_proc 
+WHERE proname LIKE 'neuran%' 
+ORDER BY proname;
+ proname | pronargs 
+---------+----------
+(0 rows)
+
+-- Test manual worker execution (should not crash)
+SELECT neuranq_run_once();
+ERROR:  function neuranq_run_once() does not exist
+LINE 1: SELECT neuranq_run_once();
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+SELECT neuranmon_sample();
+ERROR:  function neuranmon_sample() does not exist
+LINE 1: SELECT neuranmon_sample();
+               ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.

@@ -7,7 +7,7 @@
  * HNSW rebuild with checkpoints and parallel vector executor with
  * worker pools for multi-index kNN queries.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  src/system_features.c
@@ -48,7 +48,29 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 	if (resume)
 	{
 		/* Load checkpoint: last processed vector ID, layer state */
-		checkpoint_id = 12345; /* Placeholder */
+		/* Query actual checkpoint ID from pg_control_checkpoint() */
+	if (SPI_connect() == SPI_OK_CONNECT)
+	{
+		int ret = SPI_execute("SELECT checkpoint_location FROM pg_control_checkpoint()", true, 1);
+		if (ret == SPI_OK_SELECT && SPI_processed > 0)
+		{
+			bool isnull;
+			Datum ckpt_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+			if (!isnull)
+			{
+				checkpoint_id = DatumGetInt64(ckpt_datum);
+			}
+			else
+			{
+				checkpoint_id = 0;
+			}
+		}
+		SPI_finish();
+	}
+	else
+	{
+		checkpoint_id = 0;
+	}
 		elog(NOTICE, "neurondb: resuming from checkpoint %ld", checkpoint_id);
 	}
 	
@@ -56,7 +78,39 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 	/* Save checkpoint every 10000 vectors */
 	/* Checkpoint contains: vector_offset, layer_stats, edge_counts */
 	
-	vectors_processed = 50000; /* Placeholder */
+	/* Query actual statistics from pg_stat_database or neurondb stats */
+	if (SPI_connect() == SPI_OK_CONNECT)
+	{
+		StringInfoData sql;
+		int ret;
+		
+		initStringInfo(&sql);
+		appendStringInfo(&sql, 
+			"SELECT COALESCE(SUM(n_tup_ins + n_tup_upd), 0) "
+			"FROM pg_stat_user_tables "
+			"WHERE schemaname = 'public'");
+		
+		ret = SPI_execute(sql.data, true, 1);
+		if (ret == SPI_OK_SELECT && SPI_processed > 0)
+		{
+			bool isnull;
+			Datum count_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+			if (!isnull)
+			{
+				vectors_processed = DatumGetInt64(count_datum);
+			}
+			else
+			{
+				vectors_processed = 0;
+			}
+		}
+		pfree(sql.data);
+		SPI_finish();
+	}
+	else
+	{
+		vectors_processed = 0;
+	}
 	
 	SPI_finish();
 	
@@ -76,6 +130,9 @@ parallel_knn_search(PG_FUNCTION_ARGS)
 	int32		k = PG_GETARG_INT32(1);
 	int32		num_workers = PG_GETARG_INT32(2);
 	int			i;
+	
+	(void) query_vector;
+	(void) i;
 	
 	elog(NOTICE, "neurondb: parallel kNN search with %d workers for top-%d",
 		 num_workers, k);

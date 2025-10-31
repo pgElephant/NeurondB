@@ -7,7 +7,7 @@
  * capabilities. Supports multiple model formats (ONNX, TensorFlow,
  * PyTorch) and provides batch inference for optimal performance.
  *
- * Copyright (c) 2024-2025, NeuronDB Development Group
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
  *	  contrib/neurondb/ml_inference.c
