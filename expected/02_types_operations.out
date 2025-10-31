@@ -1,0 +1,111 @@
+=== Test 02: Vector Type Operations ===
+         test          
+-----------------------
+ 2.1: Vector addition
+(1 row)
+
+    result     
+---------------
+ [2.0,3.0,4.0]
+(1 row)
+
+          test           
+-------------------------
+ 2.2: Vector subtraction
+(1 row)
+
+    result     
+---------------
+ [4.0,3.0,2.0]
+(1 row)
+
+           test            
+---------------------------
+ 2.3: Scalar multiplication
+(1 row)
+
+    result     
+---------------
+ [2.0,4.0,6.0]
+(1 row)
+
+       test        
+-------------------
+ 2.4: Normalization
+(1 row)
+
+  result   
+-----------
+ [0.6,0.8]
+(1 row)
+
+        test        
+--------------------
+ 2.5: Concatenation
+(1 row)
+
+      result       
+-------------------
+ [1.0,2.0,3.0,4.0]
+(1 row)
+
+   test    
+-----------
+ 2.6: Slice
+(1 row)
+
+   result    
+-------------
+ [2.0,3.0,4.0]
+(1 row)
+
+      test       
+-----------------
+ 2.7: Dot product
+(1 row)
+
+ result 
+--------
+   32.0
+(1 row)
+
+     test      
+---------------
+ 2.8: Magnitude
+(1 row)
+
+ result 
+--------
+    5.0
+(1 row)
+
+      test       
+-----------------
+ 2.9: Comparison
+(1 row)
+
+ equal 
+-------
+ t
+(1 row)
+
+ not_equal 
+-----------
+ t
+(1 row)
+
+         test          
+-----------------------
+ 2.10: Batch operations
+(1 row)
+
+CREATE TABLE
+INSERT 0 2
+ id |     sum      
+----+--------------
+  1 | [1.0,1.0,0]
+  2 | [2.0,2.0,0]
+(2 rows)
+
+DROP TABLE
+

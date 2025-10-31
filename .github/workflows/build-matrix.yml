@@ -1,0 +1,73 @@
+name: build-matrix
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  matrix:
+    name: build (${{ matrix.os }} | pg ${{ matrix.pg }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        pg: [16, 17]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PostgreSQL (Linux)
+        if: runner.os == 'Linux'
+        uses: ankane/setup-postgres@v1
+        with:
+          postgres-version: ${{ matrix.pg }}
+
+      - name: Set up PostgreSQL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install postgresql@${{ matrix.pg }} || true
+          echo "::add-path::$(brew --prefix)/opt/postgresql@${{ matrix.pg }}/bin"
+
+      - name: Print versions
+        run: |
+          pg_config --version
+          cc --version || true
+
+      - name: Build
+        run: |
+          make clean || true
+          make PG_CONFIG=$(command -v pg_config)
+
+      - name: Install
+        run: |
+          sudo make install PG_CONFIG=$(command -v pg_config)
+
+      - name: Initdb and start cluster
+        run: |
+          initdb -D ./pgdata -U runner -A trust
+          pg_ctl -D ./pgdata -l ./pgdata/logfile start
+          sleep 2
+
+      - name: Installcheck
+        run: |
+          make installcheck PG_CONFIG=$(command -v pg_config) || (cat regression.diffs || true; exit 1)
+
+      - name: Package artifact
+        run: |
+          mkdir -p artifacts
+          cp neurondb.dylib artifacts/ 2>/dev/null || true
+          cp *.so artifacts/ 2>/dev/null || true
+          tar czf neurondb-${{ matrix.os }}-pg${{ matrix.pg }}.tar.gz artifacts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: neurondb-${{ matrix.os }}-pg${{ matrix.pg }}
+          path: neurondb-${{ matrix.os }}-pg${{ matrix.pg }}.tar.gz
+
+

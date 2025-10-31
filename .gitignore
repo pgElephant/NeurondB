@@ -1,55 +1,99 @@
-# Prerequisites
-*.d
-
-# Object files
+# PostgreSQL Extension Build Artifacts
 *.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
 *.so
-*.so.*
 *.dylib
+*.bc
+*.a
+*.pc
+*.sql.in
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+# Extension shared library
+neurondb.so
+neurondb.dylib
+libneurondb.a
+libneurondb.pc
 
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
+# Regression test outputs
+results/
+regression.diffs
+regression.out
+tmp_check/
+tmp_check_iso/
+log/
+output_iso/
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# TAP test outputs
+tmp_check_*/
+*.log
 
-# debug information files
-*.dwo
+# PostgreSQL data directories
+pgdata/
+data/
+pg17data/
+
+# Build logs
+build.log
+compile.log
+*.log
+
+# Backup files
+*~
+*.bak
+*.backup
+*.swp
+*.swo
+.*.swp
+
+# OS-specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-*
+.editorconfig
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+# Package files
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+
+# Python (if any utility scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Documentation build artifacts
+site/
+docs/_build/
+*.pdf
+
+# Release artifacts
+releases/
+artifacts/
+
+# Local configuration
+local.conf
+*.local
+
+# Core dumps
+core
+core.*
+vgcore.*
+
+# Compiled documentation
+*.html
+*.fo

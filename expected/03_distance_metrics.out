@@ -1,0 +1,127 @@
+=== Test 03: Distance Metrics ===
+       test        
+-------------------
+ 3.1: L2 Distance
+(1 row)
+
+ distance 
+----------
+ 5.196152
+(1 row)
+
+ distance 
+----------
+      5.0
+(1 row)
+
+        test         
+---------------------
+ 3.2: Cosine Distance
+(1 row)
+
+ distance 
+----------
+      0.0
+(1 row)
+
+ distance 
+----------
+      1.0
+(1 row)
+
+      test       
+-----------------
+ 3.3: Inner Product
+(1 row)
+
+ distance 
+----------
+     32.0
+(1 row)
+
+ distance 
+----------
+      0.0
+(1 row)
+
+        test         
+---------------------
+ 3.4: Hamming Distance
+(1 row)
+
+ distance 
+----------
+        2
+(1 row)
+
+ distance 
+----------
+        3
+(1 row)
+
+        test         
+---------------------
+ 3.5: Jaccard Distance
+(1 row)
+
+ distance 
+----------
+     0.67
+(1 row)
+
+          test           
+-------------------------
+ 3.6: Manhattan Distance
+(1 row)
+
+ distance 
+----------
+      7.0
+(1 row)
+
+         test          
+-----------------------
+ 3.7: Minkowski Distance
+(1 row)
+
+ distance 
+----------
+ 4.497941
+(1 row)
+
+          test           
+-------------------------
+ 3.8: Chebyshev Distance
+(1 row)
+
+ distance 
+----------
+      3.0
+(1 row)
+
+        test         
+---------------------
+ 3.9: Quantized distance
+(1 row)
+
+ distance 
+----------
+ 5.196152
+(1 row)
+
+         test          
+-----------------------
+ 3.10: Batch distances
+(1 row)
+
+CREATE TABLE
+INSERT 0 3
+ id | id | distance 
+----+----+----------
+  1 |  2 | 1.414214
+  1 |  3 | 1.414214
+  2 |  3 | 1.414214
+(3 rows)
+
+DROP TABLE
+

@@ -1,0 +1,108 @@
+=== Test 01: Basic Vector Types ===
+CREATE EXTENSION
+      test       
+-----------------
+ 1.1: Create vectorf32
+(1 row)
+
+    result     
+---------------
+ [1.0,2.0,3.0]
+(1 row)
+
+        result        
+----------------------
+ [0.1,0.2,0.3,0.4,0.5]
+(1 row)
+
+      test       
+-----------------
+ 1.2: Create vectorf16
+(1 row)
+
+ result  
+---------
+ [1,2,3]
+(1 row)
+
+      test       
+-----------------
+ 1.3: Create vectori8
+(1 row)
+
+  result   
+-----------
+ [1,2,3,4,5]
+(1 row)
+
+      test       
+-----------------
+ 1.4: Create vectorbin
+(1 row)
+
+ result 
+--------
+ 101010
+(1 row)
+
+        test        
+--------------------
+ 1.5: Vector dimensions
+(1 row)
+
+ dims 
+------
+    3
+(1 row)
+
+ dims 
+------
+    5
+(1 row)
+
+          test           
+-------------------------
+ 1.6: Create table with vectors
+(1 row)
+
+CREATE TABLE
+        test        
+--------------------
+ 1.7: Insert vectors
+(1 row)
+
+INSERT 0 2
+        test        
+--------------------
+ 1.8: Query vectors
+(1 row)
+
+ id |   vec_f32   | vec_f16 | vec_i8  | vec_bin 
+----+-------------+---------+---------+---------
+  1 | [1.0,2.0,3.0] | [1,2,3] | [1,2,3] | 101
+  2 | [4.0,5.0,6.0] | [4,5,6] | [4,5,6] | 110
+(2 rows)
+
+         test         
+----------------------
+ 1.9: Vector type casts
+(1 row)
+
+ result  
+---------
+ [1,2,3]
+(1 row)
+
+ result  
+---------
+ [1,2,3]
+(1 row)
+
+       test        
+-------------------
+ 1.10: Error handling
+(1 row)
+
+ERROR:  neurondb: invalid vector format
+DROP TABLE
+
