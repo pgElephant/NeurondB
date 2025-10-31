@@ -28,9 +28,10 @@
 #include "utils/guc.h"
 #include "utils/timestamp.h"
 #include "utils/builtins.h"
+#include "utils/snapmgr.h"
+#include "access/xact.h"
 #include "lib/stringinfo.h"
 #include "catalog/pg_type.h"
-#include "access/xact.h"
 #include "pgstat.h"
 #include "tcop/utility.h"
 

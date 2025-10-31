@@ -249,8 +249,26 @@ jobs:
           fi
           
           $INITDB -D ./pgdata -U runner -A trust
+          
+          # Start PostgreSQL and check for errors
+          echo "Starting PostgreSQL server..."
           $PG_CTL -D ./pgdata -l ./pgdata/logfile start
-          sleep 2
+          
+          # Wait for server to start (with timeout)
+          for i in {1..10}; do
+            if $PG_CTL -D ./pgdata status > /dev/null 2>&1; then
+              echo "PostgreSQL server started successfully"
+              break
+            fi
+            if [ $i -eq 10 ]; then
+              echo "::error::PostgreSQL server failed to start"
+              echo "=== PostgreSQL log file ==="
+              cat ./pgdata/logfile || echo "Log file not found"
+              exit 1
+            fi
+            echo "Waiting for server... ($i/10)"
+            sleep 1
+          done
       
       - name: Run regression tests
         if: github.event.inputs.run_tests != 'false'

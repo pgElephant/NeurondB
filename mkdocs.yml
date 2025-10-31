@@ -59,7 +59,7 @@ theme:
   
   icon:
     repo: fontawesome/brands/github
-    logo: material/database-lightning
+    logo: material/brain
     
   favicon: assets/favicon.ico
 
