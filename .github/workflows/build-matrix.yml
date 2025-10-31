@@ -158,16 +158,24 @@ jobs:
           # Disable built-in PostgreSQL module
           $SUDO dnf -qy module disable postgresql
           
-          # Install build dependencies
+          # Install PostgreSQL and build dependencies
           $SUDO dnf install -y --setopt=deltarpm=0 --setopt=install_weak_deps=false \
             gcc \
             make \
             redhat-rpm-config \
+            postgresql${{ matrix.pg_version }}-server \
             postgresql${{ matrix.pg_version }}-devel \
+            postgresql${{ matrix.pg_version }}-contrib \
             libcurl-devel \
             openssl-devel \
             zlib-devel \
             pkg-config
+          
+          # Verify PostgreSQL binaries are installed
+          echo "::group::PostgreSQL installation verification"
+          ls -la /usr/pgsql-${{ matrix.pg_version }}/bin/ || echo "::error::PostgreSQL binaries not found"
+          /usr/pgsql-${{ matrix.pg_version }}/bin/postgres --version || echo "::error::postgres binary not executable"
+          echo "::endgroup::"
       
       - name: Print versions
         run: |
@@ -231,6 +239,15 @@ jobs:
           fi
           
           # Initialize and start cluster
+          # Check if initdb exists
+          if [ ! -f "$INITDB" ]; then
+            echo "::error::initdb not found at $INITDB"
+            echo "Searching for PostgreSQL binaries:"
+            find /usr -name "initdb" 2>/dev/null || true
+            find /opt -name "initdb" 2>/dev/null || true
+            exit 1
+          fi
+          
           $INITDB -D ./pgdata -U runner -A trust
           $PG_CTL -D ./pgdata -l ./pgdata/logfile start
           sleep 2
