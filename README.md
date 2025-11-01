@@ -232,6 +232,9 @@ All tests pass on PostgreSQL 16, 17, 18 across Ubuntu, macOS, and Rocky Linux.
 | 17.x | ✅ Supported | Ubuntu, Debian, Rocky, macOS |
 | 18.x | ✅ Supported | Ubuntu, Debian, Rocky, macOS |
 
+> Note: NeurondB supports only PostgreSQL 16, 17, and 18. Older or newer
+> major versions are not supported by the build system and will fail fast.
+
 ## Documentation
 
 - **[Full Documentation](https://pgelephant.com/neurondb)** - Comprehensive guides and API reference

@@ -19,6 +19,7 @@
 #define NEURONDB_GPU_H
 
 #include "postgres.h"
+#include "utils/timestamp.h"
 
 /* GPU backend types */
 typedef enum GPUBackend

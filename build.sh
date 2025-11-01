@@ -254,6 +254,31 @@ build_neurondb() {
     
     log_info "Using pg_config: $PG_CONFIG"
     
+    # Detect pg_config and PostgreSQL version
+    PG_CONFIG_BIN=${PG_CONFIG:-$(command -v pg_config || true)}
+    if [ -z "$PG_CONFIG_BIN" ]; then
+        echo "[ERROR] pg_config not found. Install PostgreSQL 16/17/18 first." >&2
+        exit 1
+    fi
+
+    PG_VERSION_STR=$($PG_CONFIG_BIN --version 2>/dev/null || echo "")
+    PG_MAJOR=$(echo "$PG_VERSION_STR" | sed -n 's/.* \([0-9][0-9]*\)\..*/\1/p')
+    if [ -z "$PG_MAJOR" ]; then
+        echo "[ERROR] Unable to parse PostgreSQL version from: $PG_VERSION_STR" >&2
+        exit 1
+    fi
+
+    case "$PG_MAJOR" in
+        16|17|18)
+            : # supported
+            ;;
+        *)
+            echo "[ERROR] Unsupported PostgreSQL major version: $PG_MAJOR" >&2
+            echo "        NeurondB supports only PostgreSQL 16, 17, and 18." >&2
+            exit 1
+            ;;
+    esac
+    
     # Set GPU paths if enabled
     if [ "$WITH_GPU" = "yes" ]; then
         # Build make arguments for GPU

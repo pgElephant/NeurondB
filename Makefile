@@ -45,7 +45,8 @@ OBJS = \
 	src/gpu_batch.o \
 	src/gpu_quantization.o \
 	src/gpu_clustering.o \
-	src/gpu_inference.o
+	src/gpu_inference.o \
+	src/gpu_sql.o
 
 REGRESS = \
 	01_types_basic \
@@ -56,7 +57,10 @@ REGRESS = \
 	06_worker_functions \
 	07_data_management \
 	08_advanced_features \
-	09_gpu_features
+	09_gpu_features \
+	10_gpu_distance_wrappers \
+	11_quantization_detail \
+	12_catalog_presence
 
 PGFILEDESC = "neurondb - Advanced AI Database with ML Integration"
 

@@ -14,6 +14,7 @@
 #include "storage/lwlock.h"
 #include "utils/builtins.h"
 #include "utils/timestamp.h"
+#include "lib/stringinfo.h"
 
 /*
  * Shared memory structure for ANN buffer

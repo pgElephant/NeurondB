@@ -24,6 +24,11 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 
+/* PostgreSQL version support: 16/17/18 only */
+#if PG_VERSION_NUM < 160000 || PG_VERSION_NUM >= 190000
+#error "NeurondB supports only PostgreSQL 16, 17, and 18"
+#endif
+
 /* ========== Vector Type Definitions ========== */
 
 /* Main vector type (float32) */

@@ -1,3 +1,162 @@
+# NeurondB Features
+
+A production-grade AI/Vector extension for PostgreSQL focused on performance, safety, and operational excellence.
+
+## Supported PostgreSQL Versions
+
+- 16.x (supported)
+- 17.x (supported)
+- 18.x (supported)
+
+Note: Builds fail fast on unsupported versions.
+
+## Core Capabilities
+
+### Vector Types
+- float32 dense vectors (`vector`)
+- float16 packed vectors (`VectorF16`)
+- int8 quantized vectors (`VectorI8`)
+- binary vectors (`VectorBinary`)
+- packed/sparse/advanced types for specialized storage (`types_core.c`)
+
+### Distance Metrics
+- L2 (Euclidean)
+- Cosine distance
+- Inner product (negative dot for similarity ordering)
+- L1 (Manhattan)
+- Chebyshev
+- Minkowski (general p-norm)
+
+### Indexing & Search
+- HNSW index with tunable parameters (M, ef_build, ef_search)
+- IVF index with centroid probing (nlist, nprobe)
+- Hybrid search: combine vector similarity + FTS + metadata filters
+- Multi-vector use-cases (support in hybrid layer)
+
+### Quantization & Compression
+- FP16 (2x memory reduction)
+- INT8 (8x memory reduction)
+- Binary packing (up to 32x)
+- CPU paths always available; GPU acceleration optional
+
+### Analytics
+- K-Means clustering (GPU/CPU)
+- DBSCAN (CPU; GPU hooks present)
+- PCA (CPU; GPU hooks present)
+
+### ML / Inference
+- ONNX Runtime integration (CPU baseline; GPU provider optional)
+- Embedding/reranking entry points via SQL API
+
+## GPU Acceleration (Optional)
+
+GPU support is off by default and automatically falls back to CPU when unavailable or disabled.
+
+- Backends: CUDA (NVIDIA), ROCm (AMD)
+- Initialization: lazy per-backend; no shared GPU contexts across backends
+- Memory: device buffer pool with pinned host buffers
+- Parallelism: multi-stream copy/compute overlap
+- Error policy: fail-open by default (warnings + fallback)
+
+### GPU GUCs
+- `neurondb.gpu_enabled` (boolean, default off)
+- `neurondb.gpu_device` (int, default 0)
+- `neurondb.gpu_batch_size` (int, default 8192)
+- `neurondb.gpu_streams` (int, default 2)
+- `neurondb.gpu_memory_pool_mb` (int, default 512)
+- `neurondb.gpu_fail_open` (boolean, default on)
+- `neurondb.gpu_kernels` (text list, default: l2,cosine,ip)
+- `neurondb.gpu_timeout_ms` (int, default 30000)
+
+### GPU SQL API
+- Control/Info:
+  - `neurondb_gpu_enable(boolean)`
+  - `neurondb_gpu_info()`
+  - `neurondb_gpu_stats()` / `neurondb_gpu_stats_reset()`
+  - View: `pg_stat_neurondb_gpu`
+- Distance (explicit GPU overrides):
+  - `vector_l2_distance_gpu(vector, vector) returns real`
+  - `vector_cosine_distance_gpu(vector, vector) returns real`
+  - `vector_inner_product_gpu(vector, vector) returns real`
+- Quantization:
+  - `vector_to_int8_gpu(vector) returns bytea`
+  - `vector_to_fp16_gpu(vector) returns bytea`
+  - `vector_to_binary_gpu(vector) returns bytea`
+- ANN entry points (stubs for now; explicit error if called):
+  - `hnsw_knn_search_gpu(vector, int, int default 100)`
+  - `ivf_knn_search_gpu(vector, int, int default 10)`
+
+## Background Workers
+
+Three safe-by-default workers for async work; all controlled via GUCs and registered with `shared_preload_libraries`.
+
+- `neuranq` (Queue executor): job queue with SKIP LOCKED; rate limits, retries, poison job handling
+- `neuranmon` (Auto-tuner): adjusts search params from SLOs; rotates caches; records recall@k
+- `neurandefrag` (Index care): compacts graphs, re-levels, prunes tombstones, schedules rebuilds
+
+Operational notes:
+- Dynamic shared memory for queues/stats; protected by LWLocks
+- Per-tenant lanes with QPS/token/cost budgets
+- Structured JSON logging with `neurondb:` prefix
+
+## Observability & Admin
+
+- `pg_stat_neurondb` views (core stats)
+- `pg_stat_neurondb_gpu` view (device_id, backend_pid, queries, batches, avg_batch_rows, avg_latency_ms, fallback_count, oom_count, last_error)
+- Worker heartbeats and watchdog views (tuner/queue/defrag)
+
+## Security & Governance
+
+- CPU/GPU functions run as normal user functions (no SECURITY DEFINER)
+- Designed to work with RLS and tenant isolation patterns
+- No long-held locks in GPU paths; no SPI during GPU kernels
+- Configurable fail-open/fail-closed behavior for GPU
+
+## SQL Highlights (non-exhaustive)
+
+Distance:
+- `vector_l2_distance(a, b)`
+- `vector_cosine_distance(a, b)`
+- `vector_inner_product(a, b)`
+
+Hybrid & Rerank:
+- `hybrid_search(table, vec, query_text, filters, weight, limit)`
+- `rerank_cross_encoder(query, docs[], model, top_n)`
+
+Quantization:
+- `quantize_vector_i8(vector)` / `quantize_vector_f16(vector)` / `quantize_vector_binary(vector)`
+- GPU variants as above
+
+Analytics:
+- `cluster_kmeans(table, col, k, iters)`
+- `cluster_kmeans_gpu(table, col, k, iters)`
+
+Admin/Stats:
+- `neurondb_gpu_enable(bool)`
+- `neurondb_gpu_info()` / `neurondb_gpu_stats()` / `neurondb_gpu_stats_reset()`
+
+## Configuration Summary
+
+General:
+- Worker enable/disable and tunables
+- Index creation parameters (HNSW/IVF)
+- Hybrid weights and thresholds
+
+GPU (optional): see GPU GUCs above
+
+## Build & Compatibility
+
+- PostgreSQL 16/17/18 only
+- CPU-only by default
+- Optional GPU build via `./build.sh --with-gpu` (auto-detects CUDA/ROCm)
+- No hard-coded paths; uses `pg_config`
+
+## Roadmap (Highlights)
+
+- Planner integration for GPU paths (CustomScan & cost-based selection)
+- GPU ANN paths for HNSW/IVF when candidates exceed thresholds
+- Extended analytics (UMAP, t-SNE) and advanced quantization
+
 # NeuronDB Features
 
 **Status:** Development - Core functionality implemented, advanced features in progress

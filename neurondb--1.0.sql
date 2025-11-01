@@ -46,16 +46,36 @@ CREATE FUNCTION vector_send(vector) RETURNS bytea
     AS 'MODULE_PATHNAME', 'vector_send'
     LANGUAGE C IMMUTABLE STRICT;
 
+-- Typmod I/O for vector(dim)
+CREATE FUNCTION vector_typmod_in(cstring[]) RETURNS integer
+    AS 'MODULE_PATHNAME', 'vector_typmod_in'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION vector_typmod_out(integer) RETURNS cstring
+    AS 'MODULE_PATHNAME', 'vector_typmod_out'
+    LANGUAGE C IMMUTABLE STRICT;
+
 CREATE TYPE vector (
     INPUT = vector_in,
     OUTPUT = vector_out,
     RECEIVE = vector_recv,
     SEND = vector_send,
+    TYPMOD_IN = vector_typmod_in,
+    TYPMOD_OUT = vector_typmod_out,
     STORAGE = extended,
     CATEGORY = 'U'
 );
 
 COMMENT ON TYPE vector IS 'NeurondB vector type (float32 array)';
+
+-- Convenient casts between vector and real[]
+CREATE CAST (real[] AS vector)
+    WITH FUNCTION array_to_vector(real[])
+    AS ASSIGNMENT;
+
+CREATE CAST (vector AS real[])
+    WITH FUNCTION vector_to_array(vector)
+    AS ASSIGNMENT;
 
 -- ============================================================================
 -- BASIC VECTOR FUNCTIONS

@@ -20,10 +20,12 @@
 #include "libpq/pqformat.h"
 #include "utils/builtins.h"
 #include "utils/array.h"
-#include "varatt.h"
+#include "utils/varlena.h"
 #include "neurondb.h"
 #include "neurondb_types.h"
 #include <zlib.h>
+#include <ctype.h>
+#include <string.h>
 
 /*
  * vectorp_in: Parse vectorp from text

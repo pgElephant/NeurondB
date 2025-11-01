@@ -48,8 +48,10 @@ void _PG_init(void);
 void _PG_fini(void);
 
 /* Shared memory hooks */
+#if PG_VERSION_NUM >= 150000
 static shmem_request_hook_type prev_shmem_request_hook = NULL;
 static void neurondb_shmem_request(void);
+#endif
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static void neurondb_shmem_startup(void);
 
@@ -77,9 +79,19 @@ _PG_init(void)
 	/* Initialize GPU GUC variables */
 	neurondb_gpu_init_guc();
 
-	/* Install shared memory request hook */
-	prev_shmem_request_hook = shmem_request_hook;
-	shmem_request_hook = neurondb_shmem_request;
+    /* Install shared memory request hook or request directly (older PG) */
+#if PG_VERSION_NUM >= 150000
+    prev_shmem_request_hook = shmem_request_hook;
+    shmem_request_hook = neurondb_shmem_request;
+#else
+    /* Request shared memory and LWLocks directly for older versions */
+    RequestAddinShmemSpace(neuranq_shmem_size() +
+                           neuranmon_shmem_size() +
+                           neurandefrag_shmem_size());
+    RequestNamedLWLockTranche("neurondb_queue", 1);
+    RequestNamedLWLockTranche("neurondb_tuner", 1);
+    RequestNamedLWLockTranche("neurondb_defrag", 1);
+#endif
 
 	/* Install shared memory startup hook */
 	prev_shmem_startup_hook = shmem_startup_hook;
@@ -150,33 +162,37 @@ _PG_init(void)
 void
 _PG_fini(void)
 {
-	/* Restore previous hooks */
-	shmem_request_hook = prev_shmem_request_hook;
+    /* Restore previous hooks */
+#if PG_VERSION_NUM >= 150000
+    shmem_request_hook = prev_shmem_request_hook;
+#endif
 	shmem_startup_hook = prev_shmem_startup_hook;
 
 	elog(LOG, "neurondb: background workers shutting down");
 }
 
+#if PG_VERSION_NUM >= 150000
 /*
- * Shared memory request hook
+ * Shared memory request hook (PG15+)
  */
 static void
 neurondb_shmem_request(void)
 {
-	/* Call previous hook if any */
-	if (prev_shmem_request_hook)
-		prev_shmem_request_hook();
+    /* Call previous hook if any */
+    if (prev_shmem_request_hook)
+        prev_shmem_request_hook();
 
-	/* Request shared memory */
-	RequestAddinShmemSpace(neuranq_shmem_size() + 
-						   neuranmon_shmem_size() + 
-						   neurandefrag_shmem_size());
+    /* Request shared memory */
+    RequestAddinShmemSpace(neuranq_shmem_size() +
+                           neuranmon_shmem_size() +
+                           neurandefrag_shmem_size());
 
-	/* Request LWLocks */
-	RequestNamedLWLockTranche("neurondb_queue", 1);
-	RequestNamedLWLockTranche("neurondb_tuner", 1);
-	RequestNamedLWLockTranche("neurondb_defrag", 1);
+    /* Request LWLocks */
+    RequestNamedLWLockTranche("neurondb_queue", 1);
+    RequestNamedLWLockTranche("neurondb_tuner", 1);
+    RequestNamedLWLockTranche("neurondb_defrag", 1);
 }
+#endif
 
 /*
  * Shared memory startup hook
