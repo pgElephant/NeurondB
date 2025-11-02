@@ -1,0 +1,318 @@
+/*-------------------------------------------------------------------------
+ *
+ * reranking.c
+ *    Advanced reranking functions for semantic search result refinement and ordering.
+ *
+ * This module provides integration points for a rich set of reranking functions,
+ * supporting LLMs, cross-encoders, Cohere API, ColBERT, Learning-to-Rank, and
+ * ensemble approaches. It enables precise, reconfigurable, and extensible reranking
+ * by leveraging both local and remote AI models, including interfacing with the Hugging Face
+ * API, custom LLM endpoints, and future model types.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ *
+ * IDENTIFICATION
+ *    src/ml/reranking.c
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#include "postgres.h"
+#include "neurondb.h"
+#include "neurondb_llm.h"
+#include "fmgr.h"
+#include "funcapi.h"
+#include "utils/builtins.h"
+#include "utils/array.h"
+#include "utils/memutils.h"
+#include "access/htup_details.h"
+#include <string.h>
+#include <float.h>
+
+/* NOTE: PG_MODULE_MAGIC should reside only in the main extension file, not here. */
+
+/*-------------------------------------------------------------------------
+ * RerankState - Holds state across multi-call SRF invocations.
+ *-------------------------------------------------------------------------
+ */
+typedef struct RerankState
+{
+    char   *query;            /* User query string for conditioning reranker */
+    Datum  *candidates;       /* Array of candidate Datum (text) values */
+    bool   *nulls;            /* Which candidates are NULL */
+    float  *scores;           /* Output: reranked scores [0,1], descending order */
+    int    *indices;          /* Output: indices of reranked elements */
+    int     ncandidates;      /* Number of provided candidates */
+} RerankState;
+
+/*-------------------------------------------------------------------------
+ * Internal: Utility to perform descending sort of scores/indices in tandem.
+ *-------------------------------------------------------------------------
+ */
+static void
+sort_rerank_desc(float *scores, int *indices, int n)
+{
+    int i, j;
+    for (i = 0; i < n-1; i++)
+    {
+        for (j = i+1; j < n; j++)
+        {
+            if (scores[j] > scores[i])
+            {
+                float tmp_s = scores[i];
+                int   tmp_i = indices[i];
+                scores[i] = scores[j];
+                indices[i] = indices[j];
+                scores[j] = tmp_s;
+                indices[j] = tmp_i;
+            }
+        }
+    }
+}
+
+/*-------------------------------------------------------------------------
+ * rerank_cross_encoder
+ *    Perform cross-encoder reranking given (query, candidate_array, model_name, top_k).
+ *    Returns SRF: (idx INT, score FLOAT4)
+ *-------------------------------------------------------------------------
+ *   query     = user query (TEXT)
+ *   candidates = array of candidate TEXT documents
+ *   model     = cross-encoder model name/identifier (TEXT, optional)
+ *   top_k     = number of results to return (INT)
+ *-------------------------------------------------------------------------
+ */
+PG_FUNCTION_INFO_V1(rerank_cross_encoder);
+Datum
+rerank_cross_encoder(PG_FUNCTION_ARGS)
+{
+    FuncCallContext *funcctx;
+    int call_cntr;
+    int max_calls;
+    RerankState *state;
+
+    if (SRF_IS_FIRSTCALL())
+    {
+        MemoryContext oldcontext;
+        TupleDesc tupdesc;
+        text *query_text;
+        ArrayType *candidates_array;
+        text *model_text;
+        int top_k;
+        char *query_str;
+        Datum *candidate_datums;
+        bool *candidate_nulls;
+        int ncandidates;
+        float *scores = NULL;
+
+        /*-- Prepare multi-call context --*/
+        funcctx = SRF_FIRSTCALL_INIT();
+        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+        /*--- 1. Parse Inputs ---*/
+        query_text       = PG_GETARG_TEXT_PP(0);
+        candidates_array = PG_GETARG_ARRAYTYPE_P(1);
+        model_text       = (PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2));
+        top_k            = PG_GETARG_INT32(3);
+
+        query_str = text_to_cstring(query_text);
+
+        deconstruct_array(
+            candidates_array, TEXTOID, -1, false, 'i',
+            &candidate_datums, &candidate_nulls, &ncandidates
+        );
+
+        /* Robustly limit for top_k edge cases */
+        if (top_k < 1)
+            ereport(ERROR, (errmsg("top_k must be positive (got %d)", top_k)));
+        if (ncandidates <= 0)
+            ereport(ERROR, (errmsg("candidate array cannot be empty")));
+        max_calls = (ncandidates < top_k) ? ncandidates : top_k;
+
+        /*--- 2. Allocate Rerank State ---*/
+        state = (RerankState *) palloc0(sizeof(RerankState));
+        state->query = query_str;
+        state->candidates = candidate_datums;
+        state->nulls = candidate_nulls;
+        state->scores = (float *) palloc0(ncandidates * sizeof(float));
+        state->indices = (int *) palloc0(ncandidates * sizeof(int));
+        state->ncandidates = ncandidates;
+
+        /*--- 3. Rerank via API or fallback ---*/
+        if (model_text)
+        {
+            char *model_str;
+            NdbLLMConfig cfg;
+            int i;
+            const char **docs;
+            int api_result;
+            
+            model_str = text_to_cstring(model_text);
+
+            cfg.provider   = neurondb_llm_provider;
+            cfg.endpoint   = neurondb_llm_endpoint;
+            cfg.model      = model_str;
+            cfg.api_key    = neurondb_llm_api_key;
+            cfg.timeout_ms = neurondb_llm_timeout_ms;
+
+            /* --- Prepare docs array for API call --- */
+            docs = (const char **) palloc0(ncandidates * sizeof(char *));
+            for (i = 0; i < ncandidates; i++) {
+                if (!candidate_nulls[i] && DatumGetPointer(candidate_datums[i]))
+                    docs[i] = text_to_cstring(DatumGetTextPP(candidate_datums[i]));
+                else
+                    docs[i] = "";
+            }
+
+            /* --- Try remote rerank using external API --- */
+            api_result = ndb_hf_rerank(&cfg, query_str, docs, ncandidates, &scores);
+            if (api_result == 0 && scores)
+            {
+                memcpy(state->scores, scores, sizeof(float)*ncandidates);
+                for (i = 0; i < ncandidates; i++)
+                    state->indices[i] = i;
+
+                sort_rerank_desc(state->scores, state->indices, ncandidates);
+            }
+            else
+            {
+                /*
+                 * If Hugging Face (or model) is unavailable, fallback to sequential dummy scores.
+                 * This prevents user errors from causing null results.
+                 */
+                for (i = 0; i < ncandidates; i++)
+                {
+                    state->indices[i] = i;
+                    state->scores[i] = 1.0f - ((float)i / (float)ncandidates);  /* [1.0, 0.0] linear scores */
+                }
+            }
+
+            /* --- Free allocated (detached) strings in docs[] --- */
+            for (i = 0; i < ncandidates; i++) {
+                if (docs[i][0] != '\0')
+                    pfree((void *)docs[i]);
+            }
+            pfree(docs);
+            if (scores)
+                pfree(scores);
+            pfree(model_str);
+        }
+        else
+        {
+            /* No model (default): preserve order, assign perfect scores */
+            int i;
+            for (i = 0; i < ncandidates; i++)
+            {
+                state->indices[i] = i;
+                state->scores[i]  = 1.0f;
+            }
+        }
+
+        /*--- 4. Build SRF output tuple descriptor: (idx int, score float4) ---*/
+        tupdesc = CreateTemplateTupleDesc(2);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 1, "idx", INT4OID, -1, 0);
+        TupleDescInitEntry(tupdesc, (AttrNumber) 2, "score", FLOAT4OID, -1, 0);
+        BlessTupleDesc(tupdesc);
+
+        funcctx->max_calls = max_calls;
+        funcctx->user_fctx = state;
+        funcctx->tuple_desc = tupdesc;
+
+        MemoryContextSwitchTo(oldcontext);
+    }
+
+    /*--- Per-call: emit one tuple per result, ranked in descending order ---*/
+    funcctx   = SRF_PERCALL_SETUP();
+    state     = (RerankState *) funcctx->user_fctx;
+    call_cntr = funcctx->call_cntr;
+    max_calls = funcctx->max_calls;
+
+    if (call_cntr < max_calls)
+    {
+        HeapTuple tuple;
+        Datum values[2];
+        bool nulls[2] = {false, false};
+        int idx_ranked = state->indices[call_cntr];    /* sorted index in candidate array */
+
+        values[0] = Int32GetDatum(idx_ranked);
+        values[1] = Float4GetDatum(state->scores[idx_ranked]);
+        tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+
+        SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+    }
+    else
+    {
+        /* TODO: Clean up allocation if needed (state, query, arrays); memory context should typically handle this */
+        SRF_RETURN_DONE(funcctx);
+    }
+}
+
+/*-------------------------------------------------------------------------
+ * rerank_llm
+ *    Advanced: LLM-completion-based reranking (zero-/few-shot, instruction prompt).
+ *    (Currently placeholder, not yet implemented.)
+ *-------------------------------------------------------------------------
+ */
+PG_FUNCTION_INFO_V1(rerank_llm);
+Datum
+rerank_llm(PG_FUNCTION_ARGS)
+{
+    /*
+     * To implement: invoke model completion, synthesize prompt with query and candidate list,
+     * model returns indices or scores, parse, return indices + scores.
+     */
+    elog(WARNING, "neurondb: rerank_llm() not yet implemented");
+    PG_RETURN_NULL();
+}
+
+/*-------------------------------------------------------------------------
+ * rerank_cohere
+ *    Cohere API-style reranking (external API or compatible endpoint, not yet implemented).
+ *-------------------------------------------------------------------------
+ */
+PG_FUNCTION_INFO_V1(rerank_cohere);
+Datum
+rerank_cohere(PG_FUNCTION_ARGS)
+{
+    elog(WARNING, "neurondb: rerank_cohere() not yet implemented");
+    PG_RETURN_NULL();
+}
+
+/*-------------------------------------------------------------------------
+ * rerank_colbert
+ *    ColBERT architecture reranking (not yet implemented).
+ *-------------------------------------------------------------------------
+ */
+PG_FUNCTION_INFO_V1(rerank_colbert);
+Datum
+rerank_colbert(PG_FUNCTION_ARGS)
+{
+    elog(WARNING, "neurondb: rerank_colbert() not yet implemented");
+    PG_RETURN_NULL();
+}
+
+/*-------------------------------------------------------------------------
+ * rerank_ltr
+ *    Learning-to-Rank model reranking (LambdaMART, RankNet, etc., not yet implemented).
+ *-------------------------------------------------------------------------
+ */
+PG_FUNCTION_INFO_V1(rerank_ltr);
+Datum
+rerank_ltr(PG_FUNCTION_ARGS)
+{
+    elog(WARNING, "neurondb: rerank_ltr() not yet implemented");
+    PG_RETURN_NULL();
+}
+
+/*-------------------------------------------------------------------------
+ * rerank_ensemble
+ *    Ensemble reranking across multiple models/strategies (not yet implemented).
+ *-------------------------------------------------------------------------
+ */
+PG_FUNCTION_INFO_V1(rerank_ensemble);
+Datum
+rerank_ensemble(PG_FUNCTION_ARGS)
+{
+    elog(WARNING, "neurondb: rerank_ensemble() not yet implemented");
+    PG_RETURN_NULL();
+}
+

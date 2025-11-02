@@ -1,27 +1,35 @@
+-- ============================================================================
 -- NeurondB Extension SQL Definitions
 -- Advanced AI Database Extension for PostgreSQL
 -- 
+-- Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+-- 
 -- Features:
--- - Multiple vector types (float32, float16, int8, binary)
--- - 10+ distance metrics
--- - HNSW and IVF indexing
--- - ML model inference
--- - Embedding generation
+-- - Vector types with multiple precisions (float32, float16, int8, binary)
+-- - 10+ distance metrics (L2, Cosine, Inner Product, etc.)
+-- - HNSW and IVF Index Access Methods
+-- - ML model inference and fine-tuning
+-- - Embedding generation (text, image, multimodal)
 -- - Hybrid search (vector + FTS + metadata)
 -- - Reranking (cross-encoder, LLM, ColBERT)
--- - RAG support
+-- - RAG support with LLM integration
 -- - Analytics (clustering, PCA, UMAP, outliers)
--- - pg_stat_neurondb statistics view
--- - Vector WAL compression
--- - In-memory ANN buffer
--- - SHOW VECTOR CONFIG command
+-- - Row-Level Security (RLS) integration
+-- - Multi-tenant quotas and isolation
+-- - Prometheus metrics and observability
+-- - Distributed query support
+-- - GPU acceleration (optional)
+-- ============================================================================
 
--- Include all feature modules
-\i sql/neurondb_types.sql
-\i sql/pg_stat_neurondb.sql
-\i sql/vector_config.sql
+\echo Use "CREATE EXTENSION neurondb" to load this extension. \quit
 
-\echo Use "CREATE EXTENSION neurondb" to load this file. \quit
+-- ============================================================================
+-- SCHEMA SETUP
+-- ============================================================================
+
+-- Create schema for internal tables
+CREATE SCHEMA IF NOT EXISTS neurondb;
+COMMENT ON SCHEMA neurondb IS 'NeurondB internal schema for catalog tables and metadata';
 
 -- ============================================================================
 -- VECTOR TYPE DEFINITIONS
@@ -68,14 +76,87 @@ CREATE TYPE vector (
 
 COMMENT ON TYPE vector IS 'NeurondB vector type (float32 array)';
 
--- Convenient casts between vector and real[]
-CREATE CAST (real[] AS vector)
-    WITH FUNCTION array_to_vector(real[])
-    AS ASSIGNMENT;
+-- ============================================================================
+-- CORE CONFIGURATION TABLES (neurondb schema)
+-- ============================================================================
 
-CREATE CAST (vector AS real[])
-    WITH FUNCTION vector_to_array(vector)
-    AS ASSIGNMENT;
+-- Table to store Hugging Face API configuration
+CREATE TABLE IF NOT EXISTS neurondb.llm_config (
+    api_base text NOT NULL,
+    api_key text NOT NULL,
+    default_model text NOT NULL,
+    updated_at timestamptz DEFAULT now()
+);
+
+COMMENT ON TABLE neurondb.llm_config IS 'Hugging Face API configuration for LLM/vector integration';
+
+-- Function: set_llm_config
+CREATE OR REPLACE FUNCTION set_llm_config(
+    api_base text,
+    api_key text,
+    default_model text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM neurondb_llm_config) THEN
+        UPDATE neurondb_llm_config
+        SET api_base = set_llm_config.api_base,
+            api_key = set_llm_config.api_key,
+            default_model = set_llm_config.default_model,
+            updated_at = now();
+    ELSE
+        INSERT INTO neurondb_llm_config(api_base, api_key, default_model)
+        VALUES (set_llm_config.api_base, set_llm_config.api_key, set_llm_config.default_model);
+    END IF;
+END;
+$$;
+
+COMMENT ON FUNCTION set_llm_config IS 'Set Hugging Face LLM API base url, key, and default model';
+
+-- Function: get_llm_config
+CREATE OR REPLACE FUNCTION get_llm_config()
+RETURNS TABLE (
+    api_base text,
+    api_key text,
+    default_model text,
+    updated_at timestamptz
+)
+LANGUAGE sql
+AS $$
+    SELECT api_base, api_key, default_model, updated_at FROM neurondb_llm_config LIMIT 1
+$$;
+
+COMMENT ON FUNCTION get_llm_config IS 'Get Hugging Face LLM API configuration row';
+
+
+-- Main embedding inference function (calls Hugging Face Inference API via C extension)
+-- TODO: Implement hf_embed() in src/llm/
+-- CREATE FUNCTION hf_embed(text, model text DEFAULT NULL) RETURNS vector
+--     AS 'MODULE_PATHNAME', 'hf_embed'
+--     LANGUAGE C STRICT;
+-- COMMENT ON FUNCTION hf_embed(text, model text) IS
+--     'Call Hugging Face sentence embedding API and return vector';
+
+-- Main LLM completion function (calls Hugging Face Inference API via C extension)
+-- TODO: Implement hf_llm_complete() in src/llm/
+-- CREATE FUNCTION hf_llm_complete(
+--     prompt text,
+--     model text DEFAULT NULL,
+--     max_tokens integer DEFAULT 256,
+--     temperature real DEFAULT 1.0
+-- ) RETURNS text
+--     AS 'MODULE_PATHNAME', 'hf_llm_complete'
+--     LANGUAGE C STRICT;
+-- COMMENT ON FUNCTION hf_llm_complete IS
+--     'Call Hugging Face text-generation API for LLM completion';
+
+-- Convenience SQL wrappers depend on hf_embed/hf_llm_complete
+-- TODO: Uncomment when base functions are implemented
+-- CREATE OR REPLACE FUNCTION llm_embed(text) RETURNS vector ...
+-- CREATE OR REPLACE FUNCTION llm_complete(prompt text, ...) RETURNS text ...
+
 
 -- ============================================================================
 -- BASIC VECTOR FUNCTIONS
@@ -232,32 +313,13 @@ COMMENT ON FUNCTION binary_hamming_distance IS 'Hamming distance for binary vect
 -- INDEXING FUNCTIONS
 -- ============================================================================
 
--- HNSW Index
-CREATE FUNCTION hnsw_create_index(regclass, text, text, integer DEFAULT 16, integer DEFAULT 200) RETURNS boolean
-    AS 'MODULE_PATHNAME', 'hnsw_create_index'
-    LANGUAGE C VOLATILE;
-COMMENT ON FUNCTION hnsw_create_index IS 'Create HNSW index: (table, column, index_name, m, ef_construction)';
+-- Note: Use standard CREATE INDEX syntax with HNSW/IVF access methods
+-- Example: CREATE INDEX ON table USING hnsw (vector_column);
 
-CREATE FUNCTION hnsw_knn_search(vector, integer, integer DEFAULT 100) RETURNS TABLE(id bigint, distance real)
-    AS 'MODULE_PATHNAME', 'hnsw_knn_search'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION hnsw_knn_search IS 'HNSW K-NN search: (query, k, ef_search)';
-
-CREATE FUNCTION hnsw_index_stats(text) RETURNS text
-    AS 'MODULE_PATHNAME', 'hnsw_index_stats'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION hnsw_index_stats IS 'Get HNSW index statistics';
-
--- IVF Index
-CREATE FUNCTION ivf_knn_search(vector, integer, integer DEFAULT 10) RETURNS TABLE(id bigint, distance real)
-    AS 'MODULE_PATHNAME', 'ivf_knn_search'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION ivf_knn_search IS 'IVF K-NN search: (query, k, nprobe)';
-
-CREATE FUNCTION kmeans_cluster(vector[], integer, integer DEFAULT 100) RETURNS vector[]
-    AS 'MODULE_PATHNAME', 'kmeans_cluster'
-    LANGUAGE C IMMUTABLE;
-COMMENT ON FUNCTION kmeans_cluster IS 'K-means clustering: (vectors, k, max_iters)';
+-- TODO: Implement helper functions
+-- CREATE FUNCTION hnsw_create_index(...) - Helper not yet implemented
+-- CREATE FUNCTION hnsw_knn_search(...) - Use index scans instead
+-- CREATE FUNCTION ivf_knn_search(...) - Use index scans instead
 
 -- ============================================================================
 -- ML MODEL INFERENCE
@@ -422,49 +484,300 @@ CREATE FUNCTION cluster_kmeans(text, text, integer, integer DEFAULT 100)
     LANGUAGE C STABLE;
 COMMENT ON FUNCTION cluster_kmeans IS 'K-means clustering: (table, vector_col, num_clusters, max_iters)';
 
+-- TODO: Implement remaining analytics functions
 CREATE FUNCTION cluster_dbscan(text, text, double precision, integer DEFAULT 5)
-    RETURNS TABLE(id bigint, cluster integer)
+    RETURNS integer[]
     AS 'MODULE_PATHNAME', 'cluster_dbscan'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION cluster_dbscan IS 'DBSCAN clustering: (table, vector_col, eps, min_pts)';
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION cluster_dbscan IS 'DBSCAN clustering: (table, vector_col, eps, min_pts) returns cluster labels (-1=noise)';
 
-CREATE FUNCTION reduce_pca(vector, integer, text DEFAULT 'default_pca') RETURNS vector
+CREATE FUNCTION reduce_pca(text, text, integer)
+    RETURNS real[][]
     AS 'MODULE_PATHNAME', 'reduce_pca'
-    LANGUAGE C IMMUTABLE;
-COMMENT ON FUNCTION reduce_pca IS 'PCA dimensionality reduction: (input, target_dims, model_name)';
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION reduce_pca IS 'PCA dimensionality reduction: (table, vector_col, n_components) returns reduced vectors';
 
-CREATE FUNCTION reduce_umap(vector, integer DEFAULT 2) RETURNS vector
-    AS 'MODULE_PATHNAME', 'reduce_umap'
-    LANGUAGE C IMMUTABLE;
-COMMENT ON FUNCTION reduce_umap IS 'UMAP dimensionality reduction: (input, target_dims)';
+-- CREATE FUNCTION reduce_umap(vector, integer DEFAULT 2) RETURNS vector
+--     AS 'MODULE_PATHNAME', 'reduce_umap'
+--     LANGUAGE C IMMUTABLE;
+-- COMMENT ON FUNCTION reduce_umap IS 'UMAP dimensionality reduction: (input, target_dims)';
 
-CREATE FUNCTION detect_outliers(text, text, text DEFAULT 'isolation_forest', double precision DEFAULT 0.1)
-    RETURNS TABLE(id bigint, outlier_score real)
+CREATE FUNCTION detect_outliers(text, text, integer DEFAULT 100, real DEFAULT 0.1)
+    RETURNS real[]
     AS 'MODULE_PATHNAME', 'detect_outliers'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION detect_outliers IS 'Outlier detection: (table, vector_col, method, contamination)';
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION detect_outliers IS 'Isolation Forest outlier detection: (table, vector_col, n_trees, contamination) returns anomaly scores';
 
-CREATE FUNCTION compute_embedding_quality(text, text, text DEFAULT NULL) RETURNS text
+CREATE FUNCTION compute_embedding_quality(text, text, text)
+    RETURNS double precision
     AS 'MODULE_PATHNAME', 'compute_embedding_quality'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION compute_embedding_quality IS 'Compute embedding quality metrics: (table, vector_col, label_col)';
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION compute_embedding_quality IS 'Compute silhouette score: (table, vector_col, cluster_col) returns quality [-1, 1]';
 
 CREATE FUNCTION build_knn_graph(text, text, integer DEFAULT 10)
-    RETURNS TABLE(node_id bigint, neighbor_id bigint, distance real)
+    RETURNS real[]
     AS 'MODULE_PATHNAME', 'build_knn_graph'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION build_knn_graph IS 'Build k-NN graph: (table, vector_col, k)';
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION build_knn_graph IS 'Build KNN graph: (table, vector_col, k) returns [source, target, distance] triples';
 
-CREATE FUNCTION similarity_distribution(text, text, integer DEFAULT 1000) RETURNS text
-    AS 'MODULE_PATHNAME', 'similarity_distribution'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION similarity_distribution IS 'Compute similarity distribution: (table, vector_col, num_samples)';
+-- =============================================================================
+-- Product Quantization for ANN Compression
+-- =============================================================================
 
-CREATE FUNCTION discover_topics(text, text, integer DEFAULT 10)
-    RETURNS TABLE(topic_id integer, keywords text, size integer)
-    AS 'MODULE_PATHNAME', 'discover_topics'
+CREATE FUNCTION train_pq_codebook(text, text, integer, integer DEFAULT 256)
+    RETURNS bytea
+    AS 'MODULE_PATHNAME', 'train_pq_codebook'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION train_pq_codebook IS 'Train PQ codebook: (table, vector_col, m_subspaces, k_centroids) returns codebook';
+
+CREATE FUNCTION pq_encode_vector(real[], bytea)
+    RETURNS int2[]
+    AS 'MODULE_PATHNAME', 'pq_encode_vector'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION pq_encode_vector IS 'Encode vector using PQ codebook: (vector, codebook) returns PQ codes';
+
+CREATE FUNCTION pq_asymmetric_distance(real[], int2[], bytea)
+    RETURNS real
+    AS 'MODULE_PATHNAME', 'pq_asymmetric_distance'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION pq_asymmetric_distance IS 'Compute asymmetric PQ distance: (query_vector, pq_codes, codebook) returns distance';
+
+-- =============================================================================
+-- MMR (Maximal Marginal Relevance) for Diverse Reranking
+-- =============================================================================
+
+CREATE FUNCTION mmr_rerank(real[], real[][], real DEFAULT 0.5, integer DEFAULT 10)
+    RETURNS integer[]
+    AS 'MODULE_PATHNAME', 'mmr_rerank'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION mmr_rerank IS 'MMR reranking: (query, candidates, lambda, top_k) returns reranked indices';
+
+CREATE FUNCTION mmr_rerank_with_scores(real[], real[][], real DEFAULT 0.5, integer DEFAULT 10)
+    RETURNS real[]
+    AS 'MODULE_PATHNAME', 'mmr_rerank_with_scores'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION mmr_rerank_with_scores IS 'MMR reranking with scores: (query, candidates, lambda, top_k) returns [idx, score] pairs';
+
+-- (Note: RRF functions already defined in hybrid_search section)
+
+-- =============================================================================
+-- Mini-batch K-Means for Large-Scale Clustering
+-- =============================================================================
+
+CREATE FUNCTION cluster_minibatch_kmeans(text, text, integer, integer DEFAULT 100, integer DEFAULT 100)
+    RETURNS integer[]
+    AS 'MODULE_PATHNAME', 'cluster_minibatch_kmeans'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION cluster_minibatch_kmeans IS 'Mini-batch K-means: (table, vector_col, k, batch_size, max_iters) faster for large datasets';
+
+-- =============================================================================
+-- Cluster Quality Metrics
+-- =============================================================================
+
+CREATE FUNCTION davies_bouldin_index(text, text, text)
+    RETURNS double precision
+    AS 'MODULE_PATHNAME', 'davies_bouldin_index'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION davies_bouldin_index IS 'Davies-Bouldin Index: (table, vector_col, cluster_col) cluster validation (lower=better)';
+
+-- =============================================================================
+-- Outlier Detection for Drift Monitoring
+-- =============================================================================
+
+CREATE FUNCTION detect_outliers_zscore(text, text, double precision DEFAULT 3.0, text DEFAULT 'zscore')
+    RETURNS boolean[]
+    AS 'MODULE_PATHNAME', 'detect_outliers_zscore'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION detect_outliers_zscore IS 'Z-score outlier detection: (table, vector_col, threshold, method) methods: zscore, modified_zscore, iqr';
+
+CREATE FUNCTION compute_outlier_scores(text, text, text DEFAULT 'zscore')
+    RETURNS double precision[]
+    AS 'MODULE_PATHNAME', 'compute_outlier_scores'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION compute_outlier_scores IS 'Compute outlier scores: (table, vector_col, method) returns numeric scores';
+
+-- =============================================================================
+-- PCA Whitening for Embedding Normalization
+-- =============================================================================
+
+CREATE FUNCTION whiten_embeddings(text, text, double precision DEFAULT 1e-5)
+    RETURNS real[][]
+    AS 'MODULE_PATHNAME', 'whiten_embeddings'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION whiten_embeddings IS 'PCA whitening: (table, vector_col, epsilon) normalizes to identity covariance';
+
+-- =============================================================================
+-- Recall@K and Search Quality Metrics
+-- =============================================================================
+
+CREATE FUNCTION recall_at_k(integer[], integer[], integer DEFAULT NULL)
+    RETURNS double precision
+    AS 'MODULE_PATHNAME', 'recall_at_k'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION recall_at_k IS 'Recall@K: (retrieved_ids, relevant_ids, k) fraction of relevant items found';
+
+CREATE FUNCTION precision_at_k(integer[], integer[], integer DEFAULT NULL)
+    RETURNS double precision
+    AS 'MODULE_PATHNAME', 'precision_at_k'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION precision_at_k IS 'Precision@K: (retrieved_ids, relevant_ids, k) fraction of retrieved that are relevant';
+
+CREATE FUNCTION f1_at_k(integer[], integer[], integer DEFAULT NULL)
+    RETURNS double precision
+    AS 'MODULE_PATHNAME', 'f1_at_k'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION f1_at_k IS 'F1@K: (retrieved_ids, relevant_ids, k) harmonic mean of precision and recall';
+
+CREATE FUNCTION mean_reciprocal_rank(integer[][], integer[][])
+    RETURNS double precision
+    AS 'MODULE_PATHNAME', 'mean_reciprocal_rank'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION mean_reciprocal_rank IS 'MRR: (retrieved_lists, relevant_lists) mean reciprocal rank across queries';
+
+-- =============================================================================
+-- Drift Detection for Model Health Monitoring
+-- =============================================================================
+
+CREATE FUNCTION detect_centroid_drift(text, text, text, text)
+    RETURNS RECORD
+    AS 'MODULE_PATHNAME', 'detect_centroid_drift'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION detect_centroid_drift IS 'Centroid drift: (baseline_table, baseline_col, current_table, current_col) returns (distance, normalized, significant)';
+
+CREATE FUNCTION compute_distribution_divergence(text, text, text, text)
+    RETURNS double precision
+    AS 'MODULE_PATHNAME', 'compute_distribution_divergence'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION compute_distribution_divergence IS 'KL divergence (approx): (baseline_table, baseline_col, current_table, current_col)';
+
+-- =============================================================================
+-- Advanced Clustering Algorithms
+-- =============================================================================
+
+CREATE FUNCTION cluster_gmm(text, text, integer, integer DEFAULT 100)
+    RETURNS float8[][]
+    AS 'MODULE_PATHNAME', 'cluster_gmm'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION cluster_gmm IS 'GMM (EM): (table, vector_col, k_components, max_iters) returns soft cluster assignments';
+
+CREATE FUNCTION cluster_hierarchical(text, text, integer, text DEFAULT 'average')
+    RETURNS integer[]
+    AS 'MODULE_PATHNAME', 'cluster_hierarchical'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION cluster_hierarchical IS 'Hierarchical clustering: (table, vector_col, k, linkage) linkages: average, complete, single';
+
+-- =============================================================================
+-- Distance Distribution & Analytics
+-- =============================================================================
+
+CREATE FUNCTION similarity_histogram(text, text, integer DEFAULT 1000)
+    RETURNS RECORD
+    AS 'MODULE_PATHNAME', 'similarity_histogram'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION similarity_histogram IS 'Distance distribution: (table, vector_col, num_samples) returns (min, max, mean, stddev, p50, p90, p95, p99, samples)';
+
+-- =============================================================================
+-- Ensemble Reranking
+-- =============================================================================
+
+CREATE FUNCTION rerank_ensemble_weighted(integer[], float8[][], float8[] DEFAULT NULL, boolean DEFAULT true)
+    RETURNS integer[]
+    AS 'MODULE_PATHNAME', 'rerank_ensemble_weighted'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION rerank_ensemble_weighted IS 'Ensemble rerank: (doc_ids, score_matrix, weights, normalize) combines multiple ranking systems';
+
+CREATE FUNCTION rerank_ensemble_borda(integer[][])
+    RETURNS integer[]
+    AS 'MODULE_PATHNAME', 'rerank_ensemble_borda'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION rerank_ensemble_borda IS 'Borda count: (ranked_lists) rank-based voting ensemble';
+
+-- =============================================================================
+-- Learning to Rank (LTR)
+-- =============================================================================
+
+CREATE FUNCTION ltr_rerank_pointwise(integer[], float8[][], float8[], float8 DEFAULT 0.0)
+    RETURNS integer[]
+    AS 'MODULE_PATHNAME', 'ltr_rerank_pointwise'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION ltr_rerank_pointwise IS 'LTR pointwise: (doc_ids, features, weights, bias) linear ranking model';
+
+CREATE FUNCTION ltr_score_features(float8[][], float8[], float8 DEFAULT 0.0)
+    RETURNS float8[]
+    AS 'MODULE_PATHNAME', 'ltr_score_features'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION ltr_score_features IS 'LTR scoring: (features, weights, bias) returns scores without ranking';
+
+-- =============================================================================
+-- Hybrid Search (Lexical + Semantic)
+-- =============================================================================
+
+CREATE FUNCTION hybrid_search_fusion(integer[], float8[], float8[], float8 DEFAULT 0.5, boolean DEFAULT true)
+    RETURNS integer[]
+    AS 'MODULE_PATHNAME', 'hybrid_search_fusion'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION hybrid_search_fusion IS 'Hybrid search: (doc_ids, semantic_scores, lexical_scores, semantic_weight, normalize) combines BM25 + vector';
+
+-- =============================================================================
+-- Topic Discovery & Temporal Drift
+-- =============================================================================
+
+CREATE FUNCTION discover_topics_simple(text, text, integer DEFAULT 10, integer DEFAULT 50)
+    RETURNS integer[]
+    AS 'MODULE_PATHNAME', 'discover_topics_simple'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION discover_topics_simple IS 'Topic discovery: (table, vector_col, num_topics, max_iters) K-means-based topic assignment';
+
+CREATE FUNCTION monitor_drift_timeseries(text, text, text, interval)
+    RETURNS void
+    AS 'MODULE_PATHNAME', 'monitor_drift_timeseries'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION discover_topics IS 'Topic modeling: (table, vector_col, num_topics)';
+COMMENT ON FUNCTION monitor_drift_timeseries IS 'Temporal drift: (table, vector_col, timestamp_col, window) tracks drift over time';
+
+-- =============================================================================
+-- Optimized Product Quantization (OPQ)
+-- =============================================================================
+
+CREATE FUNCTION train_opq_rotation(text, text, integer DEFAULT 8)
+    RETURNS float8[]
+    AS 'MODULE_PATHNAME', 'train_opq_rotation'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION train_opq_rotation IS 'OPQ rotation: (table, vector_col, num_subspaces) learns rotation matrix';
+
+CREATE FUNCTION apply_opq_rotation(float8[], float8[])
+    RETURNS float8[]
+    AS 'MODULE_PATHNAME', 'apply_opq_rotation'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION apply_opq_rotation IS 'OPQ apply: (vector, rotation_matrix) rotates vector for quantization';
+
+-- =============================================================================
+-- Complex ML Algorithms (External Recommended)
+-- =============================================================================
+
+-- HNSW Graph Construction:
+--   Already implemented as PostgreSQL index. Use:
+--   CREATE INDEX ON table USING hnsw (vector_col vector_l2_ops);
+--
+-- UMAP Dimensionality Reduction:
+--   Complex non-linear manifold learning. Recommended:
+--   - Use Python: umap-learn library
+--   - Train externally, store reduced vectors
+--   - Example: df['umap'] = UMAP(n_components=2).fit_transform(df['embedding'])
+--
+-- Spectral Clustering:
+--   Requires eigendecomposition of affinity matrix. Recommended:
+--   - Use Python: sklearn.cluster.SpectralClustering
+--   - For graph-based clustering on precomputed similarities
+--   - Example: SpectralClustering(n_clusters=5, affinity='precomputed')
+--
+-- Note: These algorithms are computationally intensive and benefit from
+-- optimized linear algebra libraries (BLAS/LAPACK) available in Python/R.
+
+-- CREATE FUNCTION discover_topics(text, text, integer DEFAULT 10)
+--     RETURNS TABLE(topic_id integer, keywords text, size integer)
+--     AS 'MODULE_PATHNAME', 'discover_topics'
+--     LANGUAGE C STABLE;
+-- COMMENT ON FUNCTION discover_topics IS 'Topic modeling: (table, vector_col, num_topics)';
 
 -- ============================================================================
 -- UTILITY FUNCTIONS
@@ -480,6 +793,15 @@ CREATE FUNCTION vector_to_array(vector) RETURNS real[]
     LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION vector_to_array IS 'Convert vector to float array';
 
+-- Casts between vector and real[]
+CREATE CAST (real[] AS vector)
+    WITH FUNCTION array_to_vector(real[])
+    AS ASSIGNMENT;
+
+CREATE CAST (vector AS real[])
+    WITH FUNCTION vector_to_array(vector)
+    AS ASSIGNMENT;
+
 -- ============================================================================
 -- SUMMARY
 -- ============================================================================
@@ -490,36 +812,36 @@ COMMENT ON EXTENSION neurondb IS 'NeurondB: Advanced AI Database - 100+ function
 -- GPU ACCELERATION SUPPORT
 -- ============================================================================
 
--- GPU control and info functions
-CREATE FUNCTION neurondb_gpu_enable(enabled boolean) RETURNS boolean
-    AS 'MODULE_PATHNAME', 'neurondb_gpu_enable'
-    LANGUAGE C STRICT;
-COMMENT ON FUNCTION neurondb_gpu_enable IS 'Enable or disable GPU acceleration dynamically';
+-- GPU control and info functions (TODO: implement in gpu_sql.c)
+-- CREATE FUNCTION neurondb_gpu_enable(enabled boolean) RETURNS boolean
+--     AS 'MODULE_PATHNAME', 'neurondb_gpu_enable'
+--     LANGUAGE C STRICT;
+-- COMMENT ON FUNCTION neurondb_gpu_enable IS 'Enable or disable GPU acceleration dynamically';
 
-CREATE FUNCTION neurondb_gpu_info() 
-    RETURNS TABLE(device_id int, name text, total_memory_mb bigint, 
-                  free_memory_mb bigint, compute_major int, compute_minor int, is_available boolean)
-    AS 'MODULE_PATHNAME', 'neurondb_gpu_info'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION neurondb_gpu_info IS 'Returns GPU device information';
+-- CREATE FUNCTION neurondb_gpu_info() 
+--     RETURNS TABLE(device_id int, name text, total_memory_mb bigint, 
+--                   free_memory_mb bigint, compute_major int, compute_minor int, is_available boolean)
+--     AS 'MODULE_PATHNAME', 'neurondb_gpu_info'
+--     LANGUAGE C STABLE;
+-- COMMENT ON FUNCTION neurondb_gpu_info IS 'Returns GPU device information';
 
-CREATE FUNCTION neurondb_gpu_stats() 
-    RETURNS TABLE(queries_executed bigint, fallback_count bigint, 
-                  total_gpu_time_ms double precision, total_cpu_time_ms double precision,
-                  avg_latency_ms double precision, last_reset timestamptz)
-    AS 'MODULE_PATHNAME', 'neurondb_gpu_stats'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION neurondb_gpu_stats IS 'Returns GPU runtime statistics';
+-- CREATE FUNCTION neurondb_gpu_stats() 
+--     RETURNS TABLE(queries_executed bigint, fallback_count bigint, 
+--                   total_gpu_time_ms double precision, total_cpu_time_ms double precision,
+--                   avg_latency_ms double precision, last_reset timestamptz)
+--     AS 'MODULE_PATHNAME', 'neurondb_gpu_stats'
+--     LANGUAGE C STABLE;
+-- COMMENT ON FUNCTION neurondb_gpu_stats IS 'Returns GPU runtime statistics';
 
-CREATE FUNCTION neurondb_gpu_stats_reset() RETURNS boolean
-    AS 'MODULE_PATHNAME', 'neurondb_gpu_reset_stats_func'
-    LANGUAGE C STRICT;
-COMMENT ON FUNCTION neurondb_gpu_stats_reset IS 'Reset GPU statistics counters';
+-- CREATE FUNCTION neurondb_gpu_stats_reset() RETURNS boolean
+--     AS 'MODULE_PATHNAME', 'neurondb_gpu_reset_stats_func'
+--     LANGUAGE C STRICT;
+-- COMMENT ON FUNCTION neurondb_gpu_stats_reset IS 'Reset GPU statistics counters';
 
--- GPU statistics view
-CREATE VIEW pg_stat_neurondb_gpu AS
-    SELECT * FROM neurondb_gpu_stats();
-COMMENT ON VIEW pg_stat_neurondb_gpu IS 'GPU runtime statistics and monitoring';
+-- GPU statistics view (TODO: uncomment when stats functions are implemented)
+-- CREATE VIEW pg_stat_neurondb_gpu AS
+--     SELECT * FROM neurondb_gpu_stats();
+-- COMMENT ON VIEW pg_stat_neurondb_gpu IS 'GPU runtime statistics and monitoring';
 
 -- GPU distance function overrides
 CREATE FUNCTION vector_l2_distance_gpu(vector, vector) RETURNS real
@@ -566,11 +888,1348 @@ CREATE FUNCTION vector_to_binary_gpu(vector) RETURNS bytea
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION vector_to_binary_gpu IS 'GPU-accelerated binary quantization';
 
--- GPU clustering functions
-CREATE FUNCTION cluster_kmeans_gpu(table_name text, vector_col text, k int, max_iters int DEFAULT 100)
-    RETURNS TABLE(id bigint, cluster int)
-    AS 'MODULE_PATHNAME', 'cluster_kmeans_gpu'
-    LANGUAGE C STABLE PARALLEL RESTRICTED;
-COMMENT ON FUNCTION cluster_kmeans_gpu IS 'GPU-accelerated K-means clustering';
+-- GPU clustering functions (TODO: implement in gpu_clustering.c)
+-- CREATE FUNCTION cluster_kmeans_gpu(table_name text, vector_col text, k int, max_iters int DEFAULT 100)
+--     RETURNS TABLE(id bigint, cluster int)
+--     AS 'MODULE_PATHNAME', 'cluster_kmeans_gpu'
+--     LANGUAGE C STABLE PARALLEL RESTRICTED;
+-- COMMENT ON FUNCTION cluster_kmeans_gpu IS 'GPU-accelerated K-means clustering';
+
+-- ============================================================================
+-- INDEX VALIDATION AND DIAGNOSTICS
+-- ============================================================================
+
+-- Validate index integrity
+CREATE FUNCTION neurondb_validate(index_oid regclass)
+    RETURNS TABLE(
+        valid boolean,
+        errors integer,
+        warnings integer,
+        messages text,
+        validated_at timestamptz
+    )
+    AS 'MODULE_PATHNAME', 'neurondb_validate'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_validate IS 'Validate NeurondB index integrity (graph connectivity, dead tuples)';
+
+-- Get index diagnostics
+CREATE FUNCTION neurondb_diag(index_oid regclass)
+    RETURNS TABLE(
+        index_name text,
+        index_type text,
+        total_tuples bigint,
+        dead_tuples bigint,
+        orphan_nodes bigint,
+        avg_connectivity real,
+        fragmentation real,
+        size_bytes bigint,
+        health_status text
+    )
+    AS 'MODULE_PATHNAME', 'neurondb_diag'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_diag IS 'Get comprehensive index diagnostics and health metrics';
+
+-- Rebuild index with optimization
+CREATE FUNCTION neurondb_rebuild_index(index_oid regclass) RETURNS void
+    AS 'MODULE_PATHNAME', 'neurondb_rebuild_index'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION neurondb_rebuild_index IS 'Rebuild index with optimization (compaction, rebalancing)';
+
+-- ============================================================================
+-- INDEX ACCESS METHODS (HNSW, IVF)
+-- ============================================================================
+
+-- HNSW Index Access Method handler
+CREATE FUNCTION hnsw_handler(internal) RETURNS index_am_handler
+    AS 'MODULE_PATHNAME', 'hnsw_handler'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION hnsw_handler IS 'HNSW Index Access Method handler';
+
+-- IVF Index Access Method handler
+CREATE FUNCTION ivf_handler(internal) RETURNS index_am_handler
+    AS 'MODULE_PATHNAME', 'ivf_handler'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION ivf_handler IS 'IVF Index Access Method handler with KMeans clustering';
+
+-- Create HNSW access method
+CREATE ACCESS METHOD hnsw TYPE INDEX HANDLER hnsw_handler;
+COMMENT ON ACCESS METHOD hnsw IS 'HNSW (Hierarchical Navigable Small World) index for approximate nearest neighbor search';
+
+-- Create IVF access method
+CREATE ACCESS METHOD ivf TYPE INDEX HANDLER ivf_handler;
+COMMENT ON ACCESS METHOD ivf IS 'IVF (Inverted File) index with KMeans clustering for ANN search';
+
+-- ============================================================================
+-- OPERATOR CLASSES FOR DISTANCE OPERATORS
+-- ============================================================================
+
+-- Operator class support functions
+CREATE FUNCTION vector_l2_distance_op(vector, vector) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_l2_distance_op'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION vector_cosine_distance_op(vector, vector) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_cosine_distance_op'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION vector_inner_product_distance_op(vector, vector) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_inner_product_distance_op'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+-- Operator class comparison functions
+CREATE FUNCTION vector_l2_less(vector, vector, vector) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'vector_l2_less'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION vector_l2_less_equal(vector, vector, vector) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'vector_l2_less_equal'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION vector_l2_equal(vector, vector, vector) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'vector_l2_equal'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION vector_l2_greater(vector, vector, vector) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'vector_l2_greater'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION vector_l2_greater_equal(vector, vector, vector) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'vector_l2_greater_equal'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+-- Check if operator class exists
+CREATE FUNCTION neurondb_has_opclass(opclass_name text) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_has_opclass'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_has_opclass IS 'Check if NeurondB operator class exists';
+
+-- ============================================================================
+-- ROW-LEVEL SECURITY (RLS) INTEGRATION
+-- ============================================================================
+
+-- Test RLS enforcement
+CREATE FUNCTION neurondb_test_rls(relation_oid regclass) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_test_rls'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_test_rls IS 'Test if relation has RLS policies enabled';
+
+-- Create tenant isolation policy helper
+CREATE FUNCTION neurondb_create_tenant_policy(table_name text, tenant_column text) RETURNS void
+    AS 'MODULE_PATHNAME', 'neurondb_create_tenant_policy'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION neurondb_create_tenant_policy IS 'Helper to create tenant isolation RLS policy';
+
+-- ============================================================================
+-- QUOTA MANAGEMENT
+-- ============================================================================
+
+-- Quota tracking table
+CREATE TABLE IF NOT EXISTS neurondb.tenant_usage (
+    tenant_id text NOT NULL,
+    index_oid oid NOT NULL,
+    vector_count bigint DEFAULT 0,
+    storage_bytes bigint DEFAULT 0,
+    last_updated timestamptz DEFAULT now(),
+    PRIMARY KEY (tenant_id, index_oid)
+);
+COMMENT ON TABLE neurondb.tenant_usage IS 'Per-tenant resource usage tracking';
+
+-- Check quota
+CREATE FUNCTION neurondb_check_quota(tenant_id text, index_oid oid, additional_vectors bigint) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_check_quota'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_check_quota IS 'Check if operation would exceed tenant quota';
+
+-- Get quota usage
+CREATE FUNCTION neurondb_get_quota_usage(tenant_id text, index_oid oid)
+    RETURNS TABLE(
+        vector_count bigint,
+        max_vectors bigint,
+        storage_bytes bigint,
+        max_storage bigint,
+        current_qps integer,
+        max_qps integer
+    )
+    AS 'MODULE_PATHNAME', 'neurondb_get_quota_usage'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_get_quota_usage IS 'Get current quota usage and limits for tenant';
+
+-- Reset quota (for testing)
+CREATE FUNCTION neurondb_reset_quota(tenant_id text) RETURNS void
+    AS 'MODULE_PATHNAME', 'neurondb_reset_quota'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION neurondb_reset_quota IS 'Reset quota tracking for tenant (testing only)';
+
+-- ============================================================================
+-- TENANT QUOTAS TABLE (for quota enforcement)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS neurondb.tenant_quotas (
+    tenant_id text PRIMARY KEY,
+    max_vectors bigint DEFAULT 1000000,
+    max_storage_mb bigint DEFAULT 10000,
+    max_qps bigint DEFAULT 1000,
+    created_at timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now()
+);
+COMMENT ON TABLE neurondb.tenant_quotas IS 'Per-tenant resource quota limits';
+
+-- ============================================================================
+-- ROW-LEVEL SECURITY POLICIES TABLE
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS neurondb.rls_policies (
+    policy_id serial PRIMARY KEY,
+    table_name text NOT NULL,
+    policy_name text NOT NULL,
+    policy_expression text NOT NULL,
+    role_name text,
+    enabled boolean DEFAULT true,
+    created_at timestamptz DEFAULT now(),
+    UNIQUE(table_name, policy_name)
+);
+COMMENT ON TABLE neurondb.rls_policies IS 'Row-level security policy definitions for vector tables';
+
+-- ============================================================================
+-- INDEX METADATA TABLE (for validation and health tracking)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS neurondb.index_metadata (
+    index_oid oid PRIMARY KEY,
+    index_type text NOT NULL,  -- 'hnsw', 'ivf', etc.
+    parameters jsonb,
+    stats jsonb,
+    last_validated timestamptz,
+    health_status text DEFAULT 'unknown',
+    validation_errors text[]
+);
+COMMENT ON TABLE neurondb.index_metadata IS 'Index metadata, validation status, and health tracking';
+
+-- ============================================================================
+-- HNSW ENTRYPOINT CACHE
+-- ============================================================================
+
+-- Clear entrypoint cache
+CREATE FUNCTION neurondb_clear_entrypoint_cache() RETURNS void
+    AS 'MODULE_PATHNAME', 'neurondb_clear_entrypoint_cache'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION neurondb_clear_entrypoint_cache IS 'Clear HNSW entrypoint cache (LRU)';
+
+-- Get cache statistics
+CREATE FUNCTION neurondb_entrypoint_cache_stats()
+    RETURNS TABLE(
+        max_entries integer,
+        current_entries integer,
+        valid_entries integer
+    )
+    AS 'MODULE_PATHNAME', 'neurondb_entrypoint_cache_stats'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_entrypoint_cache_stats IS 'Get HNSW entrypoint cache statistics';
+
+-- ============================================================================
+-- TEMPORAL SCORING
+-- ============================================================================
+
+-- Compute temporal hybrid score
+CREATE FUNCTION neurondb_temporal_score(
+    vector_distance real,
+    doc_timestamp timestamptz,
+    decay_rate real,
+    recency_weight real
+) RETURNS real
+    AS 'MODULE_PATHNAME', 'neurondb_temporal_score'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION neurondb_temporal_score IS 'Compute hybrid score with exponential time decay';
+
+-- Temporal window filter
+CREATE FUNCTION neurondb_temporal_filter(doc_timestamp timestamptz, time_window interval) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_temporal_filter'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION neurondb_temporal_filter IS 'Check if document is within time window';
+
+-- ============================================================================
+-- PROMETHEUS METRICS
+-- ============================================================================
+
+-- Get Prometheus metrics
+CREATE FUNCTION neurondb_prometheus_metrics()
+    RETURNS TABLE(
+        queries_total bigint,
+        queries_success bigint,
+        queries_error bigint,
+        query_duration_sum double precision,
+        vectors_total bigint,
+        cache_hits bigint,
+        cache_misses bigint,
+        workers_active integer
+    )
+    AS 'MODULE_PATHNAME', 'neurondb_prometheus_metrics'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_prometheus_metrics IS 'Get Prometheus-compatible metrics (also available via HTTP on port 9187)';
+
+-- ============================================================================
+-- BACKGROUND WORKER MANUAL TRIGGERS
+-- ============================================================================
+
+-- Manually run queue worker once
+CREATE FUNCTION neuranq_run_once() RETURNS void
+    AS 'MODULE_PATHNAME', 'neuranq_run_once'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION neuranq_run_once IS 'Manually trigger neuranq worker execution (for testing)';
+
+-- Manually run defrag worker
+CREATE FUNCTION neurandefrag_run(index_oid regclass) RETURNS void
+    AS 'MODULE_PATHNAME', 'neurandefrag_run'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION neurandefrag_run IS 'Manually trigger index defragmentation';
+
+-- Manually run tuner sample
+CREATE FUNCTION neuranmon_sample() RETURNS void
+    AS 'MODULE_PATHNAME', 'neuranmon_sample'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION neuranmon_sample IS 'Manually trigger tuner sampling';
+
+-- ============================================================================
+-- WORKER CATALOG TABLES
+-- ============================================================================
+
+-- Queue worker job table
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_job_queue (
+    job_id bigserial PRIMARY KEY,
+    tenant_id integer DEFAULT 0,
+    job_type text NOT NULL,
+    payload jsonb NOT NULL,
+    status text DEFAULT 'pending',
+    retry_count integer DEFAULT 0,
+    max_retries integer DEFAULT 3,
+    backoff_until timestamptz,
+    error_message text,
+    created_at timestamptz DEFAULT now(),
+    started_at timestamptz,
+    completed_at timestamptz
+);
+COMMENT ON TABLE neurondb.neurondb_job_queue IS 'Background job queue processed by neuranq worker';
+
+CREATE INDEX IF NOT EXISTS idx_job_queue_status ON neurondb.neurondb_job_queue(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_job_queue_tenant ON neurondb.neurondb_job_queue(tenant_id, created_at);
+
+-- Query metrics table for tuner
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_query_metrics (
+    metric_id bigserial PRIMARY KEY,
+    query_hash text,
+    query_type text,
+    latency_ms real,
+    recall_at_k real,
+    timestamp timestamptz DEFAULT now(),
+    index_name text,
+    ef_search integer,
+    hybrid_weight real
+);
+COMMENT ON TABLE neurondb.neurondb_query_metrics IS 'Query performance metrics for auto-tuning';
+
+CREATE INDEX IF NOT EXISTS idx_query_metrics_timestamp ON neurondb.neurondb_query_metrics(timestamp);
+CREATE INDEX IF NOT EXISTS idx_query_metrics_hash ON neurondb.neurondb_query_metrics(query_hash);
+
+-- Index maintenance metadata for defrag worker
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_index_maintenance (
+    index_name text PRIMARY KEY,
+    index_type text,
+    num_nodes bigint DEFAULT 0,
+    num_edges bigint DEFAULT 0,
+    num_tombstones bigint DEFAULT 0,
+    fragmentation_ratio real DEFAULT 0.0,
+    last_compaction timestamptz,
+    last_rebuild timestamptz,
+    last_stats_refresh timestamptz DEFAULT now()
+);
+COMMENT ON TABLE neurondb.neurondb_index_maintenance IS 'Index maintenance metadata for neurandefrag worker';
+
+-- Embedding cache table
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_embedding_cache (
+    cache_key text PRIMARY KEY,
+    model_name text NOT NULL,
+    embedding vector,
+    created_at timestamptz DEFAULT now(),
+    last_accessed timestamptz DEFAULT now(),
+    access_count bigint DEFAULT 1
+);
+COMMENT ON TABLE neurondb.neurondb_embedding_cache IS 'Cached embeddings for performance';
+
+CREATE INDEX IF NOT EXISTS idx_embedding_cache_accessed ON neurondb.neurondb_embedding_cache(last_accessed);
+CREATE INDEX IF NOT EXISTS idx_embedding_cache_model ON neurondb.neurondb_embedding_cache(model_name);
+
+-- Histogram table for metrics distribution
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_histograms (
+    metric_name text NOT NULL,
+    bucket_start real NOT NULL,
+    bucket_end real NOT NULL,
+    count bigint DEFAULT 0,
+    last_updated timestamptz DEFAULT now(),
+    PRIMARY KEY (metric_name, bucket_start)
+);
+COMMENT ON TABLE neurondb.neurondb_histograms IS 'Performance metric histograms for monitoring';
+
+CREATE INDEX IF NOT EXISTS idx_histograms_metric ON neurondb.neurondb_histograms(metric_name, last_updated);
+
+-- Prometheus metrics staging table
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_prometheus_metrics (
+    metric_name text PRIMARY KEY,
+    metric_value real NOT NULL,
+    last_updated timestamptz DEFAULT now()
+);
+COMMENT ON TABLE neurondb.neurondb_prometheus_metrics IS 'Staging table for Prometheus metrics export';
+
+-- ============================================================================
+-- LLM / HUGGING FACE INTEGRATION (Extended)
+-- ============================================================================
+
+-- LLM cache table
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_llm_cache (
+    cache_key text PRIMARY KEY,
+    model_name text NOT NULL,
+    operation text NOT NULL,
+    request_hash text NOT NULL,
+    response_text text,
+    response_vector vector,
+    created_at timestamptz DEFAULT now(),
+    accessed_at timestamptz DEFAULT now(),
+    access_count bigint DEFAULT 1
+);
+COMMENT ON TABLE neurondb.neurondb_llm_cache IS 'LLM response cache with automatic expiration';
+
+CREATE INDEX IF NOT EXISTS idx_llm_cache_model ON neurondb.neurondb_llm_cache(model_name, created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_cache_accessed ON neurondb.neurondb_llm_cache(accessed_at);
+
+-- LLM job queue table
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_llm_jobs (
+    job_id bigserial PRIMARY KEY,
+    tenant_id text,
+    operation text NOT NULL,
+    model_name text NOT NULL,
+    input_text text,
+    input_vector vector,
+    status text DEFAULT 'pending',
+    result_text text,
+    result_vector vector,
+    error_message text,
+    created_at timestamptz DEFAULT now(),
+    started_at timestamptz,
+    completed_at timestamptz,
+    retry_count integer DEFAULT 0
+);
+COMMENT ON TABLE neurondb.neurondb_llm_jobs IS 'Asynchronous LLM job queue processed by neuranllm worker';
+
+CREATE INDEX IF NOT EXISTS idx_llm_jobs_status ON neurondb.neurondb_llm_jobs(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_jobs_tenant ON neurondb.neurondb_llm_jobs(tenant_id, created_at);
+
+-- LLM statistics table
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_llm_stats (
+    model_name text PRIMARY KEY,
+    total_requests bigint DEFAULT 0,
+    successful_requests bigint DEFAULT 0,
+    failed_requests bigint DEFAULT 0,
+    cache_hits bigint DEFAULT 0,
+    total_latency_ms bigint DEFAULT 0,
+    total_tokens bigint DEFAULT 0,
+    last_request_at timestamptz,
+    last_updated timestamptz DEFAULT now()
+);
+COMMENT ON TABLE neurondb.neurondb_llm_stats IS 'LLM usage statistics per model';
+
+-- C-backed LLM functions
+CREATE FUNCTION ndb_llm_complete(prompt text, model text, max_tokens integer, temperature real) RETURNS text
+    AS 'MODULE_PATHNAME', 'ndb_llm_complete'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION ndb_llm_complete IS 'Direct LLM completion via C extension';
+
+CREATE FUNCTION ndb_llm_embed(text_input text, model text) RETURNS vector
+    AS 'MODULE_PATHNAME', 'ndb_llm_embed'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION ndb_llm_embed IS 'Direct LLM embedding via C extension';
+
+CREATE FUNCTION ndb_llm_rerank(query text, documents text[], model text, top_k integer) RETURNS TABLE(idx integer, score real)
+    AS 'MODULE_PATHNAME', 'ndb_llm_rerank'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION ndb_llm_rerank IS 'LLM-based reranking via C extension';
+
+CREATE FUNCTION ndb_llm_enqueue(operation text, model text, input_text text, tenant_id text) RETURNS bigint
+    AS 'MODULE_PATHNAME', 'ndb_llm_enqueue'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION ndb_llm_enqueue IS 'Enqueue asynchronous LLM job';
+
+-- ============================================================================
+-- DISTRIBUTED QUERY FUNCTIONS
+-- ============================================================================
+
+CREATE FUNCTION distributed_knn_search(
+    query vector,
+    k integer,
+    replicas text[],
+    merge_strategy text DEFAULT 'balanced'
+) RETURNS TABLE(id bigint, distance real, node text)
+    AS 'MODULE_PATHNAME', 'distributed_knn_search'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION distributed_knn_search IS 'Distributed k-NN search across replicas';
+
+CREATE FUNCTION merge_distributed_results(
+    results jsonb,
+    k integer,
+    strategy text DEFAULT 'min_distance'
+) RETURNS TABLE(id bigint, distance real, source_node text)
+    AS 'MODULE_PATHNAME', 'merge_distributed_results'
+    LANGUAGE C IMMUTABLE;
+COMMENT ON FUNCTION merge_distributed_results IS 'Merge results from distributed search';
+
+CREATE FUNCTION select_optimal_replica(
+    query_hash text,
+    replicas text[],
+    strategy text DEFAULT 'latency'
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'select_optimal_replica'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION select_optimal_replica IS 'Select optimal replica for query routing';
+
+CREATE FUNCTION sync_index_async(
+    source_index regclass,
+    target_connection text,
+    batch_size integer DEFAULT 1000
+) RETURNS bigint
+    AS 'MODULE_PATHNAME', 'sync_index_async'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION sync_index_async IS 'Asynchronously sync index to remote node';
+
+-- ============================================================================
+-- DATA MANAGEMENT FUNCTIONS
+-- ============================================================================
+
+CREATE FUNCTION vector_time_travel(
+    table_name text,
+    vector_col text,
+    timestamp_point timestamptz
+) RETURNS TABLE(id bigint, vector_snapshot vector)
+    AS 'MODULE_PATHNAME', 'vector_time_travel'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION vector_time_travel IS 'Time-travel query for vector data';
+
+CREATE FUNCTION compress_cold_tier(
+    table_name text,
+    vector_col text,
+    age_threshold interval,
+    compression_method text DEFAULT 'int8'
+) RETURNS bigint
+    AS 'MODULE_PATHNAME', 'compress_cold_tier'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION compress_cold_tier IS 'Compress vectors in cold tier storage';
+
+CREATE FUNCTION vacuum_vectors(
+    table_name text,
+    aggressive boolean DEFAULT false
+) RETURNS TABLE(reclaimed_bytes bigint, duration_ms bigint)
+    AS 'MODULE_PATHNAME', 'vacuum_vectors'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION vacuum_vectors IS 'Vacuum vector table with index maintenance';
+
+CREATE FUNCTION rebalance_index(
+    index_name regclass,
+    target_balance_ratio real DEFAULT 0.9
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'rebalance_index'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION rebalance_index IS 'Rebalance index for optimal performance';
+
+-- ============================================================================
+-- PLANNER AND OPTIMIZATION
+-- ============================================================================
+
+CREATE FUNCTION auto_route_query(
+    query_text text,
+    context jsonb DEFAULT '{}'
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'auto_route_query'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION auto_route_query IS 'Automatically route query to optimal execution path';
+
+CREATE FUNCTION learn_from_query(
+    query_plan text,
+    actual_cost real,
+    estimated_cost real
+) RETURNS void
+    AS 'MODULE_PATHNAME', 'learn_from_query'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION learn_from_query IS 'Learn from query execution for cost model tuning';
+
+CREATE FUNCTION scale_precision(
+    workload_type text,
+    target_latency_ms real
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'scale_precision'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION scale_precision IS 'Scale precision based on workload and latency requirements';
+
+CREATE FUNCTION prefetch_entry_points(
+    index_name regclass,
+    query_patterns text[]
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'prefetch_entry_points'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION prefetch_entry_points IS 'Prefetch HNSW entry points based on query patterns';
+
+-- ============================================================================
+-- STORAGE AND BUFFER MANAGEMENT
+-- ============================================================================
+
+CREATE FUNCTION rebuild_hnsw_safe(
+    index_name regclass,
+    checkpoint_interval integer DEFAULT 10000
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'rebuild_hnsw_safe'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION rebuild_hnsw_safe IS 'Safely rebuild HNSW index with checkpointing';
+
+CREATE FUNCTION parallel_knn_search(
+    query vector,
+    k integer,
+    parallel_degree integer DEFAULT 4
+) RETURNS TABLE(id bigint, distance real)
+    AS 'MODULE_PATHNAME', 'parallel_knn_search'
+    LANGUAGE C STABLE PARALLEL SAFE;
+COMMENT ON FUNCTION parallel_knn_search IS 'Parallel k-NN search with work distribution';
+
+CREATE FUNCTION save_rebuild_checkpoint(
+    index_name regclass,
+    checkpoint_data bytea
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'save_rebuild_checkpoint'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION save_rebuild_checkpoint IS 'Save checkpoint during index rebuild';
+
+CREATE FUNCTION load_rebuild_checkpoint(
+    index_name regclass
+) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'load_rebuild_checkpoint'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION load_rebuild_checkpoint IS 'Load checkpoint for index rebuild recovery';
+
+-- ============================================================================
+-- ANN BUFFER MANAGEMENT
+-- ============================================================================
+
+CREATE FUNCTION neurondb_ann_buffer_get_centroid(centroid_id integer) RETURNS vector
+    AS 'MODULE_PATHNAME', 'neurondb_ann_buffer_get_centroid'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_ann_buffer_get_centroid IS 'Get centroid from in-memory ANN buffer';
+
+CREATE FUNCTION neurondb_ann_buffer_put_centroid(centroid_id integer, centroid vector) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_ann_buffer_put_centroid'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION neurondb_ann_buffer_put_centroid IS 'Store centroid in in-memory ANN buffer';
+
+CREATE FUNCTION neurondb_ann_buffer_get_stats()
+    RETURNS TABLE(
+        total_entries integer,
+        memory_used_bytes bigint,
+        hit_rate real,
+        evictions bigint
+    )
+    AS 'MODULE_PATHNAME', 'neurondb_ann_buffer_get_stats'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_ann_buffer_get_stats IS 'Get ANN buffer cache statistics';
+
+CREATE FUNCTION neurondb_ann_buffer_clear() RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_ann_buffer_clear'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION neurondb_ann_buffer_clear IS 'Clear ANN buffer cache';
+
+-- ============================================================================
+-- UTILITY VIEWS (neurondb schema)
+-- ============================================================================
+
+-- View: Combined vector statistics across all indexes
+CREATE VIEW neurondb.vector_stats AS
+SELECT 
+    'Total Vectors' as metric,
+    COALESCE(SUM(vector_count), 0) as value,
+    'vectors' as unit
+FROM neurondb.tenant_usage
+UNION ALL
+SELECT 
+    'Total Storage',
+    COALESCE(SUM(storage_bytes) / 1024.0 / 1024.0, 0),
+    'MB'
+FROM neurondb.tenant_usage
+UNION ALL
+SELECT 
+    'Active Tenants',
+    COUNT(DISTINCT tenant_id)::bigint,
+    'tenants'
+FROM neurondb.tenant_usage
+WHERE vector_count > 0;
+
+COMMENT ON VIEW neurondb.vector_stats IS 'Aggregate statistics across all vector indexes';
+
+-- View: Index health monitoring
+CREATE VIEW neurondb.index_health AS
+SELECT 
+    im.index_oid::regclass::text as index_name,
+    im.index_type,
+    im.health_status,
+    im.last_validated,
+    array_length(im.validation_errors, 1) as error_count,
+    CASE 
+        WHEN im.health_status = 'healthy' THEN '✅'
+        WHEN im.health_status = 'degraded' THEN '⚠️'
+        WHEN im.health_status = 'critical' THEN '❌'
+        ELSE '❓'
+    END as status_icon
+FROM neurondb.index_metadata im
+ORDER BY 
+    CASE im.health_status
+        WHEN 'critical' THEN 1
+        WHEN 'degraded' THEN 2
+        WHEN 'healthy' THEN 3
+        ELSE 4
+    END,
+    im.last_validated DESC NULLS LAST;
+
+COMMENT ON VIEW neurondb.index_health IS 'Index health status dashboard';
+
+-- View: Tenant quota usage with percentages
+CREATE VIEW neurondb.tenant_quota_usage AS
+SELECT 
+    tu.tenant_id,
+    tu.vector_count,
+    tq.max_vectors,
+    ROUND(100.0 * tu.vector_count / NULLIF(tq.max_vectors, 0), 2) as vectors_pct,
+    ROUND(tu.storage_bytes / 1024.0 / 1024.0, 2) as storage_mb,
+    tq.max_storage_mb,
+    ROUND(100.0 * (tu.storage_bytes / 1024.0 / 1024.0) / NULLIF(tq.max_storage_mb, 0), 2) as storage_pct,
+    tq.max_qps,
+    CASE 
+        WHEN tu.vector_count >= tq.max_vectors * 0.9 THEN 'WARNING: Near vector limit'
+        WHEN (tu.storage_bytes / 1024.0 / 1024.0) >= tq.max_storage_mb * 0.9 THEN 'WARNING: Near storage limit'
+        ELSE 'OK'
+    END as status
+FROM neurondb.tenant_usage tu
+LEFT JOIN neurondb.tenant_quotas tq ON tu.tenant_id = tq.tenant_id
+ORDER BY vectors_pct DESC NULLS LAST;
+
+COMMENT ON VIEW neurondb.tenant_quota_usage IS 'Tenant quota usage with warnings';
+
+-- View: LLM job status summary
+CREATE VIEW neurondb.llm_job_status AS
+SELECT 
+    status,
+    COUNT(*) as job_count,
+    COUNT(*) FILTER (WHERE job_type = 'embed') as embed_jobs,
+    COUNT(*) FILTER (WHERE job_type = 'complete') as completion_jobs,
+    MIN(created_at) as oldest_job,
+    MAX(updated_at) as latest_update
+FROM neurondb.neurondb_llm_jobs
+GROUP BY status
+ORDER BY 
+    CASE status
+        WHEN 'failed' THEN 1
+        WHEN 'processing' THEN 2
+        WHEN 'queued' THEN 3
+        WHEN 'done' THEN 4
+        ELSE 5
+    END;
+
+COMMENT ON VIEW neurondb.llm_job_status IS 'LLM job queue status summary';
+
+-- View: Query performance metrics
+CREATE VIEW neurondb.query_performance AS
+SELECT 
+    query_type,
+    COUNT(*) as total_queries,
+    ROUND(AVG(execution_time_ms), 2) as avg_time_ms,
+    ROUND(MIN(execution_time_ms), 2) as min_time_ms,
+    ROUND(MAX(execution_time_ms), 2) as max_time_ms,
+    ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY execution_time_ms), 2) as p95_time_ms,
+    SUM(rows_returned) as total_rows,
+    ROUND(AVG(rows_returned), 2) as avg_rows
+FROM neurondb.neurondb_query_metrics
+WHERE executed_at > NOW() - INTERVAL '24 hours'
+GROUP BY query_type
+ORDER BY total_queries DESC;
+
+COMMENT ON VIEW neurondb.query_performance IS 'Query performance metrics (last 24h)';
+
+-- View: Index maintenance status
+CREATE VIEW neurondb.index_maintenance_status AS
+SELECT 
+    index_name,
+    operation,
+    status,
+    started_at,
+    CASE 
+        WHEN completed_at IS NOT NULL THEN 
+            EXTRACT(EPOCH FROM (completed_at - started_at))::integer
+        WHEN status = 'running' THEN
+            EXTRACT(EPOCH FROM (NOW() - started_at))::integer
+        ELSE NULL
+    END as duration_seconds,
+    error_message
+FROM neurondb.neurondb_index_maintenance
+WHERE started_at > NOW() - INTERVAL '7 days'
+ORDER BY started_at DESC
+LIMIT 100;
+
+COMMENT ON VIEW neurondb.index_maintenance_status IS 'Recent index maintenance operations';
+
+-- View: Prometheus metrics summary
+CREATE VIEW neurondb.metrics_summary AS
+SELECT 
+    metric_name,
+    metric_value,
+    labels,
+    last_updated,
+    EXTRACT(EPOCH FROM (NOW() - last_updated))::integer as seconds_stale
+FROM neurondb.neurondb_prometheus_metrics
+WHERE last_updated > NOW() - INTERVAL '1 hour'
+ORDER BY metric_name, last_updated DESC;
+
+COMMENT ON VIEW neurondb.metrics_summary IS 'Recent Prometheus metrics';
+
+-- ============================================================================
+-- HIGH-PRIORITY MISSING FUNCTIONS
+-- ============================================================================
+
+-- Tenant-aware HNSW functions
+CREATE FUNCTION hnsw_tenant_create(
+    table_name text,
+    column_name text,
+    tenant_column text,
+    ef_construction integer DEFAULT 200,
+    m integer DEFAULT 16
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'hnsw_tenant_create'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION hnsw_tenant_create IS 'Create tenant-aware HNSW index';
+
+CREATE FUNCTION hnsw_tenant_search(
+    table_name text,
+    query_vector vector,
+    k integer,
+    tenant_id text
+) RETURNS TABLE(id bigint, distance real)
+    AS 'MODULE_PATHNAME', 'hnsw_tenant_search'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION hnsw_tenant_search IS 'Search tenant-aware HNSW index';
+
+CREATE FUNCTION hnsw_tenant_quota(
+    tenant_id text
+) RETURNS TABLE(
+    vectors_used bigint,
+    vectors_limit bigint,
+    storage_mb real,
+    storage_limit_mb bigint
+)
+    AS 'MODULE_PATHNAME', 'hnsw_tenant_quota'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION hnsw_tenant_quota IS 'Get tenant quota usage for HNSW indexes';
+
+-- Hybrid index functions
+CREATE FUNCTION hybrid_index_create(
+    table_name text,
+    vector_column text,
+    text_column text,
+    options jsonb DEFAULT '{}'
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'hybrid_index_create'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION hybrid_index_create IS 'Create hybrid vector+FTS index';
+
+CREATE FUNCTION hybrid_index_search(
+    index_name text,
+    query_vector vector,
+    query_text text,
+    k integer DEFAULT 10,
+    alpha real DEFAULT 0.5
+) RETURNS TABLE(id bigint, score real)
+    AS 'MODULE_PATHNAME', 'hybrid_index_search'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION hybrid_index_search IS 'Search hybrid index with vector and text query';
+
+-- Temporal index functions
+CREATE FUNCTION temporal_index_create(
+    table_name text,
+    vector_column text,
+    timestamp_column text
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'temporal_index_create'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION temporal_index_create IS 'Create temporal-aware vector index';
+
+CREATE FUNCTION temporal_knn_search(
+    index_name text,
+    query_vector vector,
+    k integer,
+    time_filter tstzrange DEFAULT NULL
+) RETURNS TABLE(id bigint, distance real, timestamp timestamptz)
+    AS 'MODULE_PATHNAME', 'temporal_knn_search'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION temporal_knn_search IS 'Time-aware k-NN search';
+
+CREATE FUNCTION temporal_score(
+    distance real,
+    timestamp_val timestamptz,
+    decay_rate real DEFAULT 0.1
+) RETURNS real
+    AS 'MODULE_PATHNAME', 'temporal_score'
+    LANGUAGE C IMMUTABLE;
+COMMENT ON FUNCTION temporal_score IS 'Compute temporal-weighted score';
+
+-- Consistency index functions
+CREATE FUNCTION consistent_index_create(
+    table_name text,
+    vector_column text
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'consistent_index_create'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION consistent_index_create IS 'Create eventually-consistent distributed vector index';
+
+CREATE FUNCTION consistent_knn_search(
+    index_name text,
+    query_vector vector,
+    k integer,
+    consistency_level text DEFAULT 'eventual'
+) RETURNS TABLE(id bigint, distance real)
+    AS 'MODULE_PATHNAME', 'consistent_knn_search'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION consistent_knn_search IS 'Search with configurable consistency guarantees';
+
+-- Rerank index functions
+CREATE FUNCTION rerank_index_create(
+    base_index_name text,
+    rerank_model text DEFAULT 'cross-encoder/ms-marco-MiniLM-L-6-v2'
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'rerank_index_create'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION rerank_index_create IS 'Create reranking cache index';
+
+CREATE FUNCTION rerank_get_candidates(
+    base_index_name text,
+    query_vector vector,
+    k integer,
+    fetch_factor integer DEFAULT 10
+) RETURNS TABLE(id bigint, distance real, cached_score real)
+    AS 'MODULE_PATHNAME', 'rerank_get_candidates'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION rerank_get_candidates IS 'Get candidates from base index for reranking';
+
+CREATE FUNCTION rerank_index_warm(
+    index_name text,
+    sample_queries vector[],
+    top_k integer DEFAULT 100
+) RETURNS integer
+    AS 'MODULE_PATHNAME', 'rerank_index_warm'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION rerank_index_warm IS 'Warm up reranking cache with sample queries';
+
+-- Configuration functions
+CREATE FUNCTION get_vector_config(
+    parameter_name text DEFAULT NULL
+) RETURNS TABLE(name text, value text, description text)
+    AS 'MODULE_PATHNAME', 'get_vector_config'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION get_vector_config IS 'Get vector configuration parameters';
+
+CREATE FUNCTION set_vector_config(
+    parameter_name text,
+    parameter_value text
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'set_vector_config'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION set_vector_config IS 'Set vector configuration parameter';
+
+CREATE FUNCTION show_vector_config() RETURNS TABLE(name text, value text)
+    AS 'MODULE_PATHNAME', 'show_vector_config'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION show_vector_config IS 'Show all vector configuration';
+
+CREATE FUNCTION reset_vector_config() RETURNS void
+    AS 'MODULE_PATHNAME', 'reset_vector_config'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION reset_vector_config IS 'Reset all vector configuration to defaults';
+
+-- Model management functions
+CREATE FUNCTION mdl_http(
+    endpoint text,
+    payload jsonb
+) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'mdl_http'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION mdl_http IS 'Send HTTP request to model endpoint';
+
+CREATE FUNCTION mdl_llm(
+    model_name text,
+    prompt text,
+    options jsonb DEFAULT '{}'
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'mdl_llm'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION mdl_llm IS 'Call LLM model endpoint';
+
+CREATE FUNCTION mdl_cache(
+    operation text,
+    key text DEFAULT NULL,
+    value text DEFAULT NULL
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'mdl_cache'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION mdl_cache IS 'Model cache operations (get/set/clear)';
+
+CREATE FUNCTION mdl_trace(
+    model_name text,
+    operation text,
+    details jsonb DEFAULT '{}'
+) RETURNS void
+    AS 'MODULE_PATHNAME', 'mdl_trace'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION mdl_trace IS 'Trace model operations for observability';
+
+CREATE FUNCTION create_model(
+    model_name text,
+    model_type text,
+    model_path text,
+    options jsonb DEFAULT '{}'
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'create_model'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION create_model IS 'Register custom model for inference';
+
+CREATE FUNCTION drop_model(
+    model_name text
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'drop_model'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION drop_model IS 'Unregister custom model';
+
+-- Utility and testing functions
+CREATE FUNCTION assert_recall(
+    ground_truth bigint[],
+    results bigint[],
+    k integer
+) RETURNS real
+    AS 'MODULE_PATHNAME', 'assert_recall'
+    LANGUAGE C IMMUTABLE;
+COMMENT ON FUNCTION assert_recall IS 'Assert recall@k metric for testing';
+
+CREATE FUNCTION assert_vector_equal(
+    vec1 vector,
+    vec2 vector,
+    tolerance real DEFAULT 0.0001
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'assert_vector_equal'
+    LANGUAGE C IMMUTABLE;
+COMMENT ON FUNCTION assert_vector_equal IS 'Assert vectors are equal within tolerance';
+
+CREATE FUNCTION explain_vector_query(
+    query_text text
+) RETURNS TABLE(
+    step_num integer,
+    operation text,
+    index_used text,
+    estimated_cost real,
+    description text
+)
+    AS 'MODULE_PATHNAME', 'explain_vector_query'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION explain_vector_query IS 'Explain vector query execution plan';
+
+-- Statistics functions
+CREATE FUNCTION pg_stat_neurondb()
+    RETURNS TABLE(
+        vectors_indexed bigint,
+        queries_total bigint,
+        cache_hits bigint,
+        cache_misses bigint,
+        avg_query_time_ms real
+    )
+    AS 'MODULE_PATHNAME', 'pg_stat_neurondb'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION pg_stat_neurondb IS 'Get NeurondB statistics';
+
+CREATE FUNCTION pg_neurondb_stat_reset() RETURNS void
+    AS 'MODULE_PATHNAME', 'pg_neurondb_stat_reset'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION pg_neurondb_stat_reset IS 'Reset NeurondB statistics';
+
+-- Advanced search functions
+CREATE FUNCTION graph_knn(
+    graph_table text,
+    start_node bigint,
+    query_vector vector,
+    k integer,
+    max_hops integer DEFAULT 3
+) RETURNS TABLE(node_id bigint, distance real, hops integer)
+    AS 'MODULE_PATHNAME', 'graph_knn'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION graph_knn IS 'Graph-aware k-NN search';
+
+CREATE FUNCTION vec_join(
+    left_table text,
+    right_table text,
+    left_vector_col text,
+    right_vector_col text,
+    k integer DEFAULT 1,
+    distance_metric text DEFAULT 'l2'
+) RETURNS TABLE(left_id bigint, right_id bigint, distance real)
+    AS 'MODULE_PATHNAME', 'vec_join'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION vec_join IS 'Vector similarity join between two tables';
+
+CREATE FUNCTION hybrid_rank(
+    vector_score real,
+    text_score real,
+    metadata_score real DEFAULT 0,
+    weights real[] DEFAULT ARRAY[0.5, 0.3, 0.2]
+) RETURNS real
+    AS 'MODULE_PATHNAME', 'hybrid_rank'
+    LANGUAGE C IMMUTABLE;
+COMMENT ON FUNCTION hybrid_rank IS 'Compute weighted hybrid ranking score';
+
+-- Tenant and security functions
+CREATE FUNCTION create_tenant_worker(
+    tenant_id text,
+    worker_type text DEFAULT 'all'
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'create_tenant_worker'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION create_tenant_worker IS 'Create dedicated background worker for tenant';
+
+CREATE FUNCTION get_tenant_stats(
+    tenant_id text
+) RETURNS TABLE(
+    vectors bigint,
+    storage_mb real,
+    qps real,
+    indexes integer
+)
+    AS 'MODULE_PATHNAME', 'get_tenant_stats'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION get_tenant_stats IS 'Get tenant resource usage statistics';
+
+CREATE FUNCTION create_policy(
+    policy_name text,
+    table_name text,
+    expression text,
+    role_name text DEFAULT NULL
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'create_policy'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION create_policy IS 'Create row-level security policy for vector table';
+
+-- Distributed functions
+CREATE FUNCTION federated_vector_query(
+    remote_servers text[],
+    query_vector vector,
+    k integer,
+    combine_method text DEFAULT 'merge'
+) RETURNS TABLE(server text, id bigint, distance real)
+    AS 'MODULE_PATHNAME', 'federated_vector_query'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION federated_vector_query IS 'Execute federated vector query across multiple servers';
+
+CREATE FUNCTION enable_vector_replication(
+    table_name text,
+    replication_mode text DEFAULT 'async'
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'enable_vector_replication'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION enable_vector_replication IS 'Enable vector data replication';
+
+CREATE FUNCTION create_vector_fdw(
+    server_name text,
+    server_options jsonb DEFAULT '{}'
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'create_vector_fdw'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION create_vector_fdw IS 'Create foreign data wrapper for remote vector tables';
+
+-- Security functions
+CREATE FUNCTION encrypt_postquantum(
+    data vector
+) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'encrypt_postquantum'
+    LANGUAGE C IMMUTABLE;
+COMMENT ON FUNCTION encrypt_postquantum IS 'Encrypt vector using post-quantum cryptography';
+
+CREATE FUNCTION enable_confidential_compute(
+    table_name text,
+    encryption_key bytea
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'enable_confidential_compute'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION enable_confidential_compute IS 'Enable confidential computing for vector table';
+
+CREATE FUNCTION set_access_mask(
+    tenant_id text,
+    mask_vector vector
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'set_access_mask'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION set_access_mask IS 'Set access control mask for tenant';
+
+-- Feedback and ML lifecycle
+CREATE FUNCTION feedback_loop_integrate(
+    query_id bigint,
+    relevant_ids bigint[],
+    feedback_type text DEFAULT 'click'
+) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'feedback_loop_integrate'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION feedback_loop_integrate IS 'Integrate user feedback for query improvement';
+
+-- Internal/worker functions (exposed for advanced use)
+CREATE FUNCTION hnsw_search_layer(
+    index_oid oid,
+    query_vector vector,
+    ef_search integer,
+    k integer
+) RETURNS TABLE(block_number bigint, distance real)
+    AS 'MODULE_PATHNAME', 'hnsw_search_layer'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION hnsw_search_layer IS 'Low-level HNSW layer search (internal)';
+
+CREATE FUNCTION create_hybrid_scan_path(
+    table_name text,
+    vector_column text,
+    text_column text
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'create_hybrid_scan_path'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION create_hybrid_scan_path IS 'Create custom scan path for hybrid search (internal)';
+
+-- Audit and testing
+CREATE FUNCTION audit_log_query(
+    query_text text,
+    tenant_id text,
+    metadata jsonb DEFAULT '{}'
+) RETURNS bigint
+    AS 'MODULE_PATHNAME', 'audit_log_query'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION audit_log_query IS 'Log query for audit trail';
+
+CREATE FUNCTION ndb_llm_cache_test() RETURNS boolean
+    AS 'MODULE_PATHNAME', 'ndb_llm_cache_test'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION ndb_llm_cache_test IS 'Test LLM cache functionality';
+
+-- Create ANN index (generic wrapper)
+CREATE FUNCTION create_ann_index(
+    table_name text,
+    column_name text,
+    index_type text DEFAULT 'hnsw',
+    options jsonb DEFAULT '{}'
+) RETURNS text
+    AS 'MODULE_PATHNAME', 'create_ann_index'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION create_ann_index IS 'Create generic ANN index (hnsw/ivf/hybrid)';
+
+-- ============================================================================
+-- PERMISSIONS AND GRANTS
+-- ============================================================================
+
+-- Grant usage on neurondb schema to public
+GRANT USAGE ON SCHEMA neurondb TO PUBLIC;
+
+-- Grant select on all views to public (read-only access)
+GRANT SELECT ON neurondb.vector_stats TO PUBLIC;
+GRANT SELECT ON neurondb.index_health TO PUBLIC;
+GRANT SELECT ON neurondb.tenant_quota_usage TO PUBLIC;
+GRANT SELECT ON neurondb.llm_job_status TO PUBLIC;
+GRANT SELECT ON neurondb.query_performance TO PUBLIC;
+GRANT SELECT ON neurondb.index_maintenance_status TO PUBLIC;
+GRANT SELECT ON neurondb.metrics_summary TO PUBLIC;
+
+-- Grant select on configuration and statistics tables to public
+GRANT SELECT ON neurondb.llm_config TO PUBLIC;
+GRANT SELECT ON neurondb.tenant_usage TO PUBLIC;
+GRANT SELECT ON neurondb.tenant_quotas TO PUBLIC;
+GRANT SELECT ON neurondb.neurondb_query_metrics TO PUBLIC;
+GRANT SELECT ON neurondb.neurondb_prometheus_metrics TO PUBLIC;
+GRANT SELECT ON neurondb.neurondb_llm_stats TO PUBLIC;
+
+-- Grant select/insert/update on cache tables to public
+GRANT SELECT, INSERT, UPDATE, DELETE ON neurondb.neurondb_embedding_cache TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON neurondb.neurondb_llm_cache TO PUBLIC;
+
+-- Grant select/insert/update on job tables to public
+GRANT SELECT, INSERT, UPDATE ON neurondb.neurondb_job_queue TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE ON neurondb.neurondb_llm_jobs TO PUBLIC;
+
+-- Grant select on metadata tables (restricted write)
+GRANT SELECT ON neurondb.index_metadata TO PUBLIC;
+GRANT SELECT ON neurondb.neurondb_index_maintenance TO PUBLIC;
+GRANT SELECT ON neurondb.neurondb_histograms TO PUBLIC;
+
+-- Restricted tables (select only, insert/update via functions)
+GRANT SELECT ON neurondb.rls_policies TO PUBLIC;
+
+-- Grant execute on all public functions (C functions)
+-- Note: Individual GRANT EXECUTE statements would be too verbose for 180+ functions
+-- PostgreSQL allows functions to be executable by PUBLIC by default for LANGUAGE C
+-- For security-sensitive functions, we revoke and grant selectively:
+
+-- Revoke execute from public on administrative functions
+REVOKE EXECUTE ON FUNCTION neurondb_rebuild_index(regclass, boolean) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION neurondb_reset_quota(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION neurondb_clear_entrypoint_cache() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION neurondb_ann_buffer_clear() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION pg_neurondb_stat_reset() FROM PUBLIC;
+
+-- Grant execute on administrative functions to superuser/admin roles only
+-- (In production, replace with specific role names like 'neurondb_admin')
+-- GRANT EXECUTE ON FUNCTION neurondb_rebuild_index(regclass, boolean) TO neurondb_admin;
+-- GRANT EXECUTE ON FUNCTION neurondb_reset_quota(text) TO neurondb_admin;
+-- GRANT EXECUTE ON FUNCTION neurondb_clear_entrypoint_cache() TO neurondb_admin;
+-- GRANT EXECUTE ON FUNCTION neurondb_ann_buffer_clear() TO neurondb_admin;
+-- GRANT EXECUTE ON FUNCTION pg_neurondb_stat_reset() TO neurondb_admin;
+
+-- Grant execute on schema helper functions
+GRANT EXECUTE ON FUNCTION neurondb.set_llm_config(text, text, text) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.get_llm_config() TO PUBLIC;
+
+-- Revoke write access on sensitive tables from public
+REVOKE INSERT, UPDATE, DELETE ON neurondb.tenant_quotas FROM PUBLIC;
+REVOKE INSERT, UPDATE, DELETE ON neurondb.rls_policies FROM PUBLIC;
+REVOKE INSERT, UPDATE, DELETE ON neurondb.index_metadata FROM PUBLIC;
+
+-- Grant sequence usage for serial columns
+GRANT USAGE, SELECT ON SEQUENCE neurondb.rls_policies_policy_id_seq TO PUBLIC;
+
+-- ============================================================================
+-- COMMENTS ON SCHEMA
+-- ============================================================================
+
+COMMENT ON SCHEMA neurondb IS 'NeurondB extension schema - contains all application tables, views, and metadata';
+
+-- ============================================================================
+-- SECURITY LABELS (Optional - for Enhanced Security)
+-- ============================================================================
+
+-- Security labels can be added for additional access control
+-- SECURITY LABEL FOR sepgsql ON SCHEMA neurondb IS 'system_u:object_r:sepgsql_schema_t:s0';
+-- SECURITY LABEL FOR sepgsql ON TABLE neurondb.llm_config IS 'system_u:object_r:sepgsql_table_t:s0';
+
+-- ============================================================================
+-- DEFAULT PRIVILEGES (for future objects)
+-- ============================================================================
+
+-- Set default privileges for any future tables created in neurondb schema
+ALTER DEFAULT PRIVILEGES IN SCHEMA neurondb GRANT SELECT ON TABLES TO PUBLIC;
+
+-- Set default privileges for future views
+ALTER DEFAULT PRIVILEGES IN SCHEMA neurondb GRANT SELECT ON TABLES TO PUBLIC;
+
+-- ============================================================================
+-- EXTENSION METADATA
+-- ============================================================================
+
+-- Extension is now fully initialized and secured
+-- All objects are properly organized in the neurondb schema
+-- Type system objects remain in public schema (PostgreSQL requirement)
 
 -- End of NeurondB extension

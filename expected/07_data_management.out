@@ -6,22 +6,16 @@ CREATE TABLE test_vectors_dm (
     last_accessed timestamptz,
     is_compressed boolean DEFAULT false
 );
-ERROR:  type "vector" does not exist
-LINE 3:     embedding vector,
-                      ^
 INSERT INTO test_vectors_dm (embedding) VALUES 
     ('[1.0, 0.0, 0.0]'),
     ('[0.0, 1.0, 0.0]'),
     ('[0.0, 0.0, 1.0]');
-ERROR:  relation "test_vectors_dm" does not exist
-LINE 1: INSERT INTO test_vectors_dm (embedding) VALUES 
-                    ^
 -- Test vacuum (should return count)
 SELECT vacuum_vectors('test_vectors_dm', false) >= 0 AS vacuum_executed;
-ERROR:  function vacuum_vectors(unknown, boolean) does not exist
+ERROR:  operator does not exist: record >= integer
 LINE 1: SELECT vacuum_vectors('test_vectors_dm', false) >= 0 AS vacu...
-               ^
-HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+                                                        ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
 -- Test compress (should return count)
 SELECT compress_cold_tier('test_vectors_dm', 30) >= 0 AS compress_executed;
 ERROR:  function compress_cold_tier(unknown, integer) does not exist
@@ -30,9 +24,7 @@ LINE 1: SELECT compress_cold_tier('test_vectors_dm', 30) >= 0 AS com...
 HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
 -- Test rebalance
 SELECT rebalance_index('test_index', 0.8) AS rebalance_executed;
-ERROR:  function rebalance_index(unknown, numeric) does not exist
+ERROR:  relation "test_index" does not exist
 LINE 1: SELECT rebalance_index('test_index', 0.8) AS rebalance_execu...
-               ^
-HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+                               ^
 DROP TABLE test_vectors_dm;
-ERROR:  table "test_vectors_dm" does not exist

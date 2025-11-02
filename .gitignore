@@ -46,3 +46,35 @@ releases/
 neurondb.dylib
 libneurondb.a
 libneurondb.pc
+
+# Test and temporary files
+/tmp/
+*.log
+test_*.sql
+
+# Documentation build
+site/
+docs/_build/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+venv/
+env/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Database data directories
+pg_data*/
+neurondb_data*/
+*data[0-9]*/
+
+# macOS specific
+*.dSYM/
+
+# Extension build artifacts
+*.sql.in
+*.control.in

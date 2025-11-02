@@ -2,18 +2,25 @@
 SELECT proname, pronargs FROM pg_proc 
 WHERE proname LIKE 'neuran%' 
 ORDER BY proname;
- proname | pronargs 
----------+----------
-(0 rows)
+     proname      | pronargs 
+------------------+----------
+ neurandefrag_run |        1
+ neuranmon_sample |        0
+ neuranq_run_once |        0
+(3 rows)
 
 -- Test manual worker execution (should not crash)
 SELECT neuranq_run_once();
-ERROR:  function neuranq_run_once() does not exist
-LINE 1: SELECT neuranq_run_once();
-               ^
-HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+NOTICE:  neurondb: manually triggering neuranq batch processing
+ neuranq_run_once 
+------------------
+ 
+(1 row)
+
 SELECT neuranmon_sample();
-ERROR:  function neuranmon_sample() does not exist
-LINE 1: SELECT neuranmon_sample();
-               ^
-HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+NOTICE:  neurondb: manually triggering neuranmon sampling
+ neuranmon_sample 
+------------------
+ 
+(1 row)
+

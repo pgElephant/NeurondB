@@ -12,4 +12,3 @@ SELECT COUNT(*) FROM pg_proc WHERE proname IN (
      6
 (1 row)
 
-

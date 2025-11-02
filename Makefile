@@ -6,49 +6,127 @@ EXTENSION = neurondb
 DATA = neurondb--1.0.sql
 DOCS = README.md
 
-# Source files in src/ directory
+# Source files organized by subdirectory
+# Core vector types and operations
 OBJS = \
-	src/neurondb.o \
-	src/distance.o \
-	src/quantization.o \
-	src/ml_inference.o \
-	src/hybrid_search.o \
-	src/vector_ops.o \
-	src/aggregates.o \
-	src/types_core.o \
-	src/index_hnsw_tenant.o \
-	src/index_hybrid.o \
-	src/index_temporal.o \
-	src/index_consistent.o \
-	src/index_rerank.o \
-	src/operators.o \
-	src/pg_stat_neurondb.o \
-	src/usability.o \
-	src/data_management.o \
-	src/multi_tenant.o \
-	src/planner.o \
-	src/security.o \
-	src/developer_hooks.o \
-	src/distributed.o \
-	src/analytics.o \
-	src/buffer.o \
-	src/model_runtime.o \
-	src/ann_buffer.o \
-	src/vector_wal.o \
-	src/vector_config.o \
-	src/bgworker_queue.o \
-	src/bgworker_tuner.o \
-	src/bgworker_defrag.o \
-	src/bgworker_init.o \
-	src/gpu_core.o \
-	src/gpu_distance.o \
-	src/gpu_batch.o \
-	src/gpu_quantization.o \
-	src/gpu_clustering.o \
-	src/gpu_inference.o \
-	src/gpu_sql.o
+	src/core/neurondb.o \
+	src/core/distance.o \
+	src/core/types_core.o \
+	src/core/operators.o \
+	src/core/vector_ops.o
+
+# Index access methods
+OBJS += \
+	src/index/index_hnsw_tenant.o \
+	src/index/index_hybrid.o \
+	src/index/index_temporal.o \
+	src/index/index_consistent.o \
+	src/index/index_rerank.o \
+	src/index/hnsw_am.o \
+	src/index/ivf_am.o \
+	src/index/opclass.o \
+	src/index/index_validator.o \
+	src/index/index_cache.o
+
+# Scan nodes
+OBJS += \
+	src/scan/hnsw_scan.o \
+	src/scan/custom_hybrid_scan.o \
+	src/scan/scan_rls.o \
+	src/scan/scan_quota.o
+
+# Background workers
+OBJS += \
+	src/worker/worker_queue.o \
+	src/worker/worker_tuner.o \
+	src/worker/worker_defrag.o \
+	src/worker/worker_init.o \
+	src/worker/worker_llm.o
+
+# LLM/Hugging Face integration
+OBJS += \
+	src/llm/llm_runtime.o \
+	src/llm/llm_cache.o \
+	src/llm/llm_jobs.o \
+	src/llm/hf_http.o
+
+# GPU acceleration
+OBJS += \
+	src/gpu/gpu_core.o \
+	src/gpu/gpu_distance.o \
+	src/gpu/gpu_batch.o \
+	src/gpu/gpu_quantization.o \
+	src/gpu/gpu_clustering.o \
+	src/gpu/gpu_inference.o \
+	src/gpu/gpu_sql.o
+
+# Types and operations
+OBJS += \
+	src/types/quantization.o \
+	src/types/aggregates.o
+
+# Machine learning
+OBJS += \
+	src/ml/ml_utils.o \
+	src/ml/ml_kmeans.o \
+	src/ml/ml_minibatch_kmeans.o \
+	src/ml/ml_product_quantization.o \
+	src/ml/ml_mmr.o \
+	src/ml/ml_davies_bouldin.o \
+	src/ml/ml_outlier_detection.o \
+	src/ml/ml_pca_whitening.o \
+	src/ml/ml_recall_metrics.o \
+	src/ml/ml_drift_detection.o \
+	src/ml/ml_gmm.o \
+	src/ml/ml_hierarchical.o \
+	src/ml/ml_histogram.o \
+	src/ml/ml_rerank_ensemble.o \
+	src/ml/ml_ltr.o \
+	src/ml/ml_hybrid_search.o \
+	src/ml/ml_topic_discovery.o \
+	src/ml/ml_drift_time.o \
+	src/ml/ml_opq.o \
+	src/ml/ml_inference.o \
+	src/ml/analytics.o \
+	src/ml/model_runtime.o \
+	src/ml/embeddings.o \
+	src/ml/reranking.o
+
+# Metrics and observability
+OBJS += \
+	src/metrics/pg_stat_neurondb.o \
+	src/metrics/prometheus.o
+
+# Search algorithms
+OBJS += \
+	src/search/hybrid_search.o \
+	src/search/temporal_integration.o
+
+# Storage and memory
+OBJS += \
+	src/storage/ann_buffer.o \
+	src/storage/vector_wal.o \
+	src/storage/buffer.o
+
+# Multi-tenancy
+OBJS += \
+	src/tenant/multi_tenant.o
+
+# Query planning
+OBJS += \
+	src/planner/planner.o
+
+# Utilities
+OBJS += \
+	src/util/config.o \
+	src/util/security.o \
+	src/util/hooks.o \
+	src/util/distributed.o \
+	src/util/usability.o \
+	src/util/data_management.o
 
 REGRESS = \
+	00_create \
 	01_types_basic \
 	02_types_operations \
 	03_distance_metrics \
@@ -60,7 +138,16 @@ REGRESS = \
 	09_gpu_features \
 	10_gpu_distance_wrappers \
 	11_quantization_detail \
-	12_catalog_presence
+	12_catalog_presence \
+	99_cleanup
+
+# GPU-only tests
+REGRESS_GPU = \
+	00_create \
+	09_gpu_features \
+	10_gpu_distance_wrappers \
+	11_quantization_detail \
+	99_cleanup
 
 PGFILEDESC = "neurondb - Advanced AI Database with ML Integration"
 
@@ -136,13 +223,52 @@ ifdef GPU_OBJS
 	OBJS += $(GPU_OBJS)
 endif
 
-# Optimization flags for production
-PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -march=native -O3 -Wall -Wextra
-SHLIB_LINK += -lm -lz -lcrypto -lcurl
+# Optimization flags for production with SIMD
+PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -march=native -O3 -Wall -Wextra \
+               -fno-math-errno -fstrict-aliasing -funroll-loops \
+               -fomit-frame-pointer -ffp-contract=fast -fopenmp-simd \
+               -mtune=native -fno-trapping-math \
+               -Wno-unused-parameter -Wno-missing-field-initializers
 
-PG_CONFIG = pg_config
+# Check if compiler supports -fno-signaling-nans (GCC supports it, clang doesn't)
+# Test by compiling empty file - if it fails with "unsupported", don't use the flag
+# Check if compiler is clang (which warns about -fno-signaling-nans)
+# Use $(CC) from PostgreSQL, check if it's actually clang
+IS_CLANG := $(shell $(CC) --version 2>&1 | head -1 | grep -qi "clang" && echo yes || echo no)
+ifeq ($(IS_CLANG),yes)
+	# clang - skip -fno-signaling-nans to avoid warnings
+else
+	# GCC - safe to use
+	PG_CPPFLAGS += -fno-signaling-nans
+endif
+
+# Detect architecture and add appropriate SIMD flags
+ARCH := $(shell uname -m)
+ifeq ($(ARCH),x86_64)
+	# x86_64: Enable AVX2
+	PG_CPPFLAGS += -mavx2 -mfma -DUSE_AVX2
+	
+	# Detect AVX512
+	HAS_AVX512 := $(shell $(CC) -march=native -dM -E - < /dev/null 2>/dev/null | grep -q AVX512F && echo yes || echo no)
+	ifeq ($(HAS_AVX512),yes)
+		PG_CPPFLAGS += -mavx512f -mavx512vl -mavx512bw -DUSE_AVX512
+	endif
+else ifeq ($(ARCH),arm64)
+	# ARM64: Enable NEON (always available on ARM64)
+	PG_CPPFLAGS += -DUSE_NEON
+else ifeq ($(ARCH),aarch64)
+	# ARM64: Enable NEON (Linux naming)
+	PG_CPPFLAGS += -DUSE_NEON
+endif
+SHLIB_LINK += -lm -lz -lcrypto -lcurl -lssl
+
+PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+
+# Custom target for GPU-only tests
+installcheck-gpu:
+	$(pg_regress_installcheck) $(REGRESS_OPTS) $(REGRESS_GPU)
 
 # Custom rule for CUDA kernel compilation
 ifdef NVCC

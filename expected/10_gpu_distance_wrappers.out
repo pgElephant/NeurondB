@@ -22,4 +22,3 @@ SELECT vector_inner_product_gpu('[1,2]'::vector, '[3,4]'::vector);
                       -11
 (1 row)
 
-

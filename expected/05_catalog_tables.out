@@ -2,9 +2,19 @@
 SELECT tablename FROM pg_tables 
 WHERE tablename LIKE 'neurondb_%' 
 ORDER BY tablename;
- tablename 
------------
-(0 rows)
+          tablename          
+-----------------------------
+ neurondb_embedding_cache
+ neurondb_histograms
+ neurondb_index_maintenance
+ neurondb_job_queue
+ neurondb_llm_cache
+ neurondb_llm_config
+ neurondb_llm_jobs
+ neurondb_llm_stats
+ neurondb_prometheus_metrics
+ neurondb_query_metrics
+(10 rows)
 
 -- Test job queue table
 INSERT INTO neurondb_job_queue (job_type, payload, tenant_id) 
@@ -40,6 +50,6 @@ LINE 1: SELECT cache_key, model_name FROM neurondb_embedding_cache;
 SELECT COUNT(*) AS catalog_table_count FROM pg_tables WHERE tablename LIKE 'neurondb_%';
  catalog_table_count 
 ---------------------
-                   0
+                  10
 (1 row)
 
