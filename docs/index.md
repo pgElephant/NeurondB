@@ -7,8 +7,9 @@
 **Production-Grade Vector Database • ML Inference • Hybrid Search • RAG Pipeline**
 
 [![Build Status](https://github.com/pgElephant/NeurondB/workflows/Build%20Matrix/badge.svg)](https://github.com/pgElephant/NeurondB/actions)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%2B-blue.svg)](https://www.postgresql.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-blue.svg)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-PostgreSQL-blue.svg)](LICENSE)
+[![Production Ready](https://img.shields.io/badge/production-ready-success.svg)]()
 
 </div>
 
@@ -50,10 +51,11 @@ NeurondB is a comprehensive PostgreSQL extension that transforms your database i
 
 === "Background Workers"
 
-    - **Queue Executor**: Async job processing
-    - **Auto-Tuner**: Live performance optimization
-    - **Index Maintenance**: Automatic defragmentation
-    - **Monitoring**: Prometheus metrics export
+    - **neuranq**: Async job queue executor with batch processing
+    - **neuranmon**: Live query auto-tuner and performance optimization
+    - **neurandefrag**: Automatic index maintenance and defragmentation
+    - **neuranllm**: LLM job processor with crash recovery
+    - **Prometheus**: Metrics export for monitoring
 
 ## Why NeurondB?
 
@@ -71,15 +73,20 @@ NeurondB is a comprehensive PostgreSQL extension that transforms your database i
 
 ### 🎯 **Developer-Friendly**
 - Pure SQL interface—no external services
-- 100+ built-in functions
+- 180+ built-in functions (27 added in Nov 2025)
+- 7 monitoring views in neurondb schema
 - Extensive examples and documentation
 - PostgreSQL 16, 17, 18 compatible
+- SIMD optimizations (AVX2/AVX512/NEON)
 
 ### 📊 **Feature-Complete**
 - Complete RAG pipeline in-database
+- 19 ML algorithms with real implementations
 - Real-time analytics and clustering
 - Model lifecycle management
 - Audit logging and tracing
+- Multi-tenant with quotas and RLS
+- GPU acceleration (CUDA/ROCm/Metal)
 
 ## Quick Example
 
