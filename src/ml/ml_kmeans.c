@@ -38,50 +38,25 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 	double *dist;
 	int		c, i, d;
 
-	elog(DEBUG1, "neurondb: kmeanspp_init starting (nvec=%d, dim=%d, k=%d)", nvec, dim, k);
-
 	selected = (bool *) palloc0(sizeof(bool) * nvec);
 	dist = (double *) palloc(sizeof(double) * nvec);
 
 	/* Pick first centroid randomly */
 	centroids[0] = rand() % nvec;
 	selected[centroids[0]] = true;
-	
-	elog(DEBUG1, "neurondb: first centroid selected: %d", centroids[0]);
 
-	/* Validate data pointers */
-	if (!data || !data[centroids[0]])
-		elog(ERROR, "neurondb: invalid data pointers in kmeanspp_init");
-
-	elog(DEBUG1, "neurondb: calculating initial distances, centroid[0]=%d", centroids[0]);
-	
-	/* Test access to centroid vector first */
-	{
-		float test_val;
-		test_val = data[centroids[0]][0];
-		elog(DEBUG1, "neurondb: centroid[0][0] = %f", test_val);
-	}
-	
+	/* Compute initial distances from first centroid */
 	for (i = 0; i < nvec; i++)
 	{
 		double	acc = 0.0;
 
-		if (!data[i])
-			elog(ERROR, "neurondb: data[%d] is NULL", i);
-
 		for (d = 0; d < dim; d++)
 		{
-			float val_i = data[i][d];
-			float val_c = data[centroids[0]][d];
-			float diff = val_i - val_c;
+			float diff = data[i][d] - data[centroids[0]][d];
 			acc += diff * diff;
 		}
 		dist[i] = acc;
-		
-		if (i % 1000 == 0)
-			elog(DEBUG1, "neurondb: processed %d distances", i);
 	}
-	elog(DEBUG1, "neurondb: initial distances calculated");
 
 	/* Pick remaining centroids */
 	for (c = 1; c < k; c++)
@@ -182,28 +157,19 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 	if (max_iters < 1)
 		max_iters = 100;
 
-	elog(DEBUG1, "neurondb: fetching vectors from %s.%s", tbl_str, col_str);
 	data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
-	
-	elog(DEBUG1, "neurondb: fetched %d vectors of dimension %d", nvec, dim);
 
 	if (!data || nvec < num_clusters)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("not enough vectors for cluster count (need >= %d, have %d)",
 						num_clusters, nvec)));
-	
-	elog(DEBUG1, "neurondb: data pointer=%p, nvec=%d, dim=%d", data, nvec, dim);
-	
-	/* Skip validation for now - crashes happening here */
-	elog(DEBUG1, "neurondb: skipping data validation, proceeding to k-means");
 
 	assignments = (int *) palloc0(sizeof(int) * nvec);
 	centroids_idx = (int *) palloc(sizeof(int) * num_clusters);
 
-	elog(DEBUG1, "neurondb: initializing centroids with k-means++");
+	/* Initialize centroids using k-means++ */
 	kmeanspp_init(data, nvec, dim, num_clusters, centroids_idx);
-	elog(DEBUG1, "neurondb: centroids initialized");
 
 	centers = (float **) palloc(sizeof(float *) * num_clusters);
 	for (c = 0; c < num_clusters; c++)

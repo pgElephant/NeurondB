@@ -86,8 +86,6 @@ neurondb_fetch_vectors_from_table(const char *table, const char *col, int *out_c
 	
 	result = (float **) palloc0(sizeof(float *) * (*out_count));
 
-	elog(DEBUG1, "neurondb: copying %d vectors of dimension %d", *out_count, *out_dim);
-
 	for (i = 0; i < *out_count; i++)
 	{
 		bool		isnull;
@@ -117,12 +115,7 @@ neurondb_fetch_vectors_from_table(const char *table, const char *col, int *out_c
 		result[i] = (float *) palloc(sizeof(float) * (*out_dim));
 		for (d = 0; d < *out_dim; d++)
 			result[i][d] = vec->data[d];
-			
-		if (i % 1000 == 0 && i > 0)
-			elog(DEBUG1, "neurondb: copied %d vectors", i);
 	}
-	
-	elog(DEBUG1, "neurondb: all %d vectors copied successfully", *out_count);
 
 	/* Switch back to SPI context before finishing */
 	MemoryContextSwitchTo(oldcontext);
