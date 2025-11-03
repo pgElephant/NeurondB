@@ -56,8 +56,11 @@ LIMIT 5;
 
 -- Use K-means clustering to find transaction patterns
 SELECT '=== Clustering Transactions (K=5) ===' as step;
+WITH clusters AS (
+    SELECT unnest(cluster_kmeans('public.transactions', 'features', 5, 100)) AS cluster
+)
 SELECT cluster, count(*) as count
-FROM cluster_kmeans('public.transactions', 'features', 5, 100)
+FROM clusters
 GROUP BY cluster
 ORDER BY cluster;
 

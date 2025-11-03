@@ -15,6 +15,7 @@
 #include "fmgr.h"
 #include "utils/builtins.h"
 #include "utils/array.h"
+#include "utils/memutils.h"
 #include "executor/spi.h"
 #include "catalog/pg_type.h"
 
@@ -34,6 +35,11 @@ neurondb_fetch_vectors_from_table(const char *table, const char *col, int *out_c
 	int				ret;
 	int				i, d;
 	float			**result;
+	MemoryContext	oldcontext;
+	MemoryContext	caller_context;
+
+	/* Save the caller's context before SPI operations */
+	caller_context = CurrentMemoryContext;
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql, "SELECT %s FROM %s", col, table);
@@ -56,50 +62,72 @@ neurondb_fetch_vectors_from_table(const char *table, const char *col, int *out_c
 		return NULL;
 	}
 
-	/* Assume all vectors have same dimension, derive from first result. */
+	/* Get dimension from first vector */
 	{
-		ArrayType  *first_vec;
-		int			ndims;
-		const int  *dims;
+		bool		isnull;
+		Datum		first_datum;
+		Vector	   *first_vec;
 
-		first_vec = DatumGetArrayTypeP(SPI_getbinval(SPI_tuptable->vals[0],
-													 SPI_tuptable->tupdesc,
-													 1, NULL));
-		ndims = ARR_NDIM(first_vec);
-		dims = ARR_DIMS(first_vec);
-
-		if (ndims != 1)
+		first_datum = SPI_getbinval(SPI_tuptable->vals[0],
+									SPI_tuptable->tupdesc,
+									1, &isnull);
+		if (isnull)
 		{
 			SPI_finish();
-			elog(ERROR, "Expected 1-D array for vector column");
+			elog(ERROR, "NULL vector in first row");
 		}
-		*out_dim = dims[0];
+		
+		first_vec = DatumGetVector(first_datum);
+		*out_dim = first_vec->dim;
 	}
 
+	/* Switch to caller's context to allocate result that survives SPI_finish() */
+	oldcontext = MemoryContextSwitchTo(caller_context);
+	
 	result = (float **) palloc0(sizeof(float *) * (*out_count));
+
+	elog(DEBUG1, "neurondb: copying %d vectors of dimension %d", *out_count, *out_dim);
 
 	for (i = 0; i < *out_count; i++)
 	{
 		bool		isnull;
-		ArrayType  *vec;
-		float4	   *vals;
+		Datum		vec_datum;
+		Vector	   *vec;
 
-		vec = DatumGetArrayTypeP(SPI_getbinval(SPI_tuptable->vals[i],
-											   SPI_tuptable->tupdesc,
-											   1, &isnull));
+		vec_datum = SPI_getbinval(SPI_tuptable->vals[i],
+								  SPI_tuptable->tupdesc,
+								  1, &isnull);
 		if (isnull)
 		{
 			SPI_finish();
 			elog(ERROR, "NULL vector at row %d", i);
 		}
 
-		vals = (float4 *) ARR_DATA_PTR(vec);
+		vec = DatumGetVector(vec_datum);
+		
+		/* Verify dimension consistency */
+		if (vec->dim != *out_dim)
+		{
+			SPI_finish();
+			elog(ERROR, "Inconsistent vector dimension at row %d: expected %d, got %d",
+				 i, *out_dim, vec->dim);
+		}
+		
+		/* Copy vector data */
 		result[i] = (float *) palloc(sizeof(float) * (*out_dim));
 		for (d = 0; d < *out_dim; d++)
-			result[i][d] = vals[d];
+			result[i][d] = vec->data[d];
+			
+		if (i % 1000 == 0 && i > 0)
+			elog(DEBUG1, "neurondb: copied %d vectors", i);
 	}
+	
+	elog(DEBUG1, "neurondb: all %d vectors copied successfully", *out_count);
 
+	/* Switch back to SPI context before finishing */
+	MemoryContextSwitchTo(oldcontext);
 	SPI_finish();
+	
 	return result;
 }
 

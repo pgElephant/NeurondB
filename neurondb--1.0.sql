@@ -479,10 +479,10 @@ COMMENT ON FUNCTION rerank_ensemble IS 'Ensemble reranking: (query, docs, models
 -- ============================================================================
 
 CREATE FUNCTION cluster_kmeans(text, text, integer, integer DEFAULT 100)
-    RETURNS TABLE(id bigint, cluster integer)
+    RETURNS integer[]
     AS 'MODULE_PATHNAME', 'cluster_kmeans'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION cluster_kmeans IS 'K-means clustering: (table, vector_col, num_clusters, max_iters)';
+COMMENT ON FUNCTION cluster_kmeans IS 'K-means clustering: (table, vector_col, num_clusters, max_iters) - returns array of cluster assignments (1-based)';
 
 -- TODO: Implement remaining analytics functions
 -- NOTE: These functions are temporarily disabled due to macOS dylib loader issues
