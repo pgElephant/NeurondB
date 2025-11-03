@@ -78,3 +78,21 @@ neurondb_data*/
 # Extension build artifacts
 *.sql.in
 *.control.in
+
+# Dataset downloads and caches
+dataset/datasets/
+dataset/*.hdf5
+dataset/*.gz
+dataset/*.tar
+dataset/*.zip
+dataset/*.ndjson
+dataset/*.json.gz
+
+# Worker backups and patches
+*.orig
+*.rej
+/tmp/*.patch
+Oops.rej
+
+# PostgreSQL data directories (specific)
+neurondb_data17/

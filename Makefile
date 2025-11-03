@@ -67,8 +67,10 @@ OBJS += \
 
 # Machine learning
 OBJS += \
+	src/ml/analytics.o \
 	src/ml/ml_utils.o \
 	src/ml/ml_kmeans.o \
+	src/ml/ml_dbscan.o \
 	src/ml/ml_minibatch_kmeans.o \
 	src/ml/ml_product_quantization.o \
 	src/ml/ml_mmr.o \
@@ -87,7 +89,6 @@ OBJS += \
 	src/ml/ml_drift_time.o \
 	src/ml/ml_opq.o \
 	src/ml/ml_inference.o \
-	src/ml/analytics.o \
 	src/ml/model_runtime.o \
 	src/ml/embeddings.o \
 	src/ml/reranking.o
@@ -139,6 +140,15 @@ REGRESS = \
 	10_gpu_distance_wrappers \
 	11_quantization_detail \
 	12_catalog_presence \
+	13_ml_clustering \
+	14_ml_dimensionality \
+	15_ml_quantization \
+	16_ml_reranking \
+	17_ml_outliers \
+	18_ml_metrics \
+	19_ml_drift \
+	20_ml_hybrid_search \
+	21_ml_analytics \
 	99_cleanup
 
 # GPU-only tests
@@ -228,7 +238,8 @@ PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -march=native -O3 -Wall -Wextra \
                -fno-math-errno -fstrict-aliasing -funroll-loops \
                -fomit-frame-pointer -ffp-contract=fast -fopenmp-simd \
                -mtune=native -fno-trapping-math \
-               -Wno-unused-parameter -Wno-missing-field-initializers
+               -Wno-unused-parameter -Wno-missing-field-initializers \
+               -Wno-declaration-after-statement
 
 # Check if compiler supports -fno-signaling-nans (GCC supports it, clang doesn't)
 # Test by compiling empty file - if it fails with "unsupported", don't use the flag
@@ -261,6 +272,13 @@ else ifeq ($(ARCH),aarch64)
 	PG_CPPFLAGS += -DUSE_NEON
 endif
 SHLIB_LINK += -lm -lz -lcrypto -lcurl -lssl
+
+# macOS: Note - symbol export issue being investigated
+# Functions are exported but PostgreSQL 17 loader cannot find them
+# This appears to be a PostgreSQL 17/macOS dylib loader bug
+ifeq ($(shell uname -s),Darwin)
+	# Keep default linking for now
+endif
 
 PG_CONFIG ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

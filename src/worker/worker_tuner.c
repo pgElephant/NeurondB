@@ -294,13 +294,23 @@ sample_and_tune(void)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "neurondb: SPI_connect failed in neuranmon");
 
+	/* Check if table exists (before CREATE EXTENSION, this is expected) */
+	ret = SPI_execute("SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' AND tablename = 'neurondb_query_metrics'", true, 0);
+	if (ret != SPI_OK_SELECT || SPI_processed == 0)
+	{
+		/* Table doesn't exist yet - extension not created. This is normal at startup. */
+		SPI_finish();
+		elog(DEBUG1, "neurondb: tuner waiting for extension to be created");
+		return;
+	}
+
 	/* Sample queries from pg_stat_statements if available, otherwise from query_history */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 		"SELECT AVG(latency_ms) as avg_latency, "
 		"       AVG(recall_at_k) as avg_recall "
 		"FROM neurondb.neurondb_query_metrics "
-		"WHERE timestamp > now() - interval '5 minutes' "
+		"WHERE query_timestamp > now() - interval '5 minutes' "
 		"  AND recall_at_k IS NOT NULL");
 
 	ret = SPI_execute(sql.data, true, 1);
@@ -454,7 +464,7 @@ record_metrics(void)
 			"       floor(latency_ms / 10) * 10 + 10, "
 			"       COUNT(*) "
 			"FROM neurondb.neurondb_query_metrics "
-			"WHERE timestamp > now() - interval '5 minutes' "
+			"WHERE query_timestamp > now() - interval '5 minutes' "
 			"GROUP BY floor(latency_ms / 10)");
 
 		SPI_execute(sql.data, false, 0);

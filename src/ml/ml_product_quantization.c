@@ -177,7 +177,7 @@ train_subspace_kmeans(float **subspace_data, int nvec, int dsub, int k,
  */
 PG_FUNCTION_INFO_V1(train_pq_codebook);
 
-Datum
+Datum __attribute__((visibility("default")))
 train_pq_codebook(PG_FUNCTION_ARGS)
 {
 	text *table_name;

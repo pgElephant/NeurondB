@@ -43,6 +43,18 @@ PGDLLEXPORT void neuranllm_main(Datum main_arg);
 
 static void process_llm_job(int job_id, const char *job_type, const char *payload);
 
+/* Signal handlers */
+static volatile sig_atomic_t got_sigterm = false;
+
+static void
+neuranllm_sigterm(SIGNAL_ARGS)
+{
+	int save_errno = errno;
+	got_sigterm = true;
+	SetLatch(MyLatch);
+	errno = save_errno;
+}
+
 /*
  * neuranllm_main - Background worker main loop.
  *
@@ -65,12 +77,16 @@ neuranllm_main(Datum main_arg)
 	volatile int iterations = 0;
 
 	(void) main_arg;
+	
+	/* Establish signal handler */
+	pqsignal(SIGTERM, neuranllm_sigterm);
+	
 	BackgroundWorkerUnblockSignals();
 	BackgroundWorkerInitializeConnection("postgres", NULL, 0);
 
 	elog(LOG, "neurondb: LLM worker started (all crashes handled)");
 
-	for (;;)
+	while (!got_sigterm)
 	{
 		MemoryContext llm_loop_ctx = NULL;
 		MemoryContext oldcxt = NULL;
@@ -114,6 +130,7 @@ neuranllm_main(Datum main_arg)
 
 					MemoryContextSwitchTo(oldcxt);
 					MemoryContextDelete(llm_loop_ctx);
+					llm_loop_ctx = NULL;  /* Prevent double-free */
 
 					(void) WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, 5000L, 0);
 					ResetLatch(MyLatch);
@@ -209,7 +226,11 @@ neuranllm_main(Datum main_arg)
 		PG_END_TRY();
 
 		MemoryContextSwitchTo(oldcxt);
-		MemoryContextDelete(llm_loop_ctx);
+		if (llm_loop_ctx != NULL)
+		{
+			MemoryContextDelete(llm_loop_ctx);
+			llm_loop_ctx = NULL;
+		}
 
 #if PG_VERSION_NUM >= 100000
 		(void) WaitLatch(MyLatch, WL_TIMEOUT | WL_LATCH_SET | WL_EXIT_ON_PM_DEATH, 1000L, PG_WAIT_EXTENSION);
@@ -221,6 +242,9 @@ neuranllm_main(Datum main_arg)
 		job_type = NULL;
 		payload = NULL;
 	}
+	
+	elog(LOG, "neurondb: LLM worker shutting down gracefully");
+	proc_exit(0);
 }
 
 /*
