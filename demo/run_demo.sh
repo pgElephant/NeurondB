@@ -1,15 +1,21 @@
 #!/bin/bash
-# NeuronDB ML Demo Runner
-# Usage: ./run_demo.sh --db-size=100MB --ml
+
+# run_demo.sh - NeuronDB ML Demo Runner
+# Usage: ./run_demo.sh [--db-size=100MB] [--gpu|--cpu]
 
 set -e
 
-# Default values
+# Default configuration
 DB_SIZE="100MB"
-RUN_ML=false
-PGPORT=5433
-PGHOST=localhost
-CLEANUP=false
+GPU_MODE="gpu"  # default to GPU
+PSQL="/usr/local/pgsql.18/bin/psql"
+DB_NAME="postgres"
+DB_USER="postgres"
+DB_PORT="5434"
+SQL_DIR="ML/sql"
+OUT_DIR="ML/out"
+PG_CTL="/usr/local/pgsql.18/bin/pg_ctl"
+PG_DATA="/Users/pgedge/neurondb_data18"
 
 # Parse arguments
 for arg in "$@"; do
@@ -18,20 +24,12 @@ for arg in "$@"; do
             DB_SIZE="${arg#*=}"
             shift
             ;;
-        --ml)
-            RUN_ML=true
+        --gpu)
+            GPU_MODE="gpu"
             shift
             ;;
-        --port=*)
-            PGPORT="${arg#*=}"
-            shift
-            ;;
-        --host=*)
-            PGHOST="${arg#*=}"
-            shift
-            ;;
-        --cleanup)
-            CLEANUP=true
+        --cpu)
+            GPU_MODE="cpu"
             shift
             ;;
         --help)
@@ -41,137 +39,145 @@ for arg in "$@"; do
             echo ""
             echo "Options:"
             echo "  --db-size=SIZE    Dataset size (default: 100MB)"
-            echo "  --ml              Run ML algorithm tests"
-            echo "  --port=PORT        PostgreSQL port (default: 5433)"
-            echo "  --host=HOST        PostgreSQL host (default: localhost)"
-            echo "  --cleanup          Clean up before running"
-            echo "  --help             Show this help message"
+            echo "  --gpu             Run with GPU acceleration (default)"
+            echo "  --cpu             Run with CPU only"
+            echo "  --help            Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0 --db-size=100MB --ml"
-            echo "  $0 --db-size=50MB --ml --port=5432"
+            echo "  $0 --db-size=100MB --gpu"
+            echo "  $0 --cpu"
             exit 0
-            ;;
-        *)
-            echo "Unknown option: $arg"
-            echo "Use --help for usage information"
-            exit 1
             ;;
     esac
 done
 
-# Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
+echo "════════════════════════════════════════════════════════════════════"
+echo "  NeuronDB ML Demo Runner"
+echo "════════════════════════════════════════════════════════════════════"
+echo "Database Size: $DB_SIZE"
+echo "GPU Mode: $GPU_MODE"
+echo "SQL Directory: $SQL_DIR"
+echo "Output Directory: $OUT_DIR"
+echo ""
 
-# Setup paths
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ML_DIR="$SCRIPT_DIR/ML"
-SQL_DIR="$ML_DIR/sql"
-OUT_DIR="$ML_DIR/out"
+# Step 1: Kill and restart PostgreSQL
+echo "Step 1: Restarting PostgreSQL..."
+pkill -9 postgres 2>/dev/null || true
+sleep 2
+$PG_CTL -D $PG_DATA -l /tmp/neurondb_demo.log start -w
+sleep 3
+echo "✓ PostgreSQL restarted"
+echo ""
 
-# Create output directory
+# Create output directory if it doesn't exist
 mkdir -p "$OUT_DIR"
 
-echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}   NeuronDB ML Demo Runner${NC}"
-echo -e "${BLUE}========================================${NC}"
-echo ""
-echo "Configuration:"
-echo "  Database Size: $DB_SIZE"
-echo "  ML Tests: $RUN_ML"
-echo "  PostgreSQL: $PGHOST:$PGPORT"
-echo "  Output Dir: $OUT_DIR"
+# Step 2: Configure GPU/CPU mode
+echo "Step 2: Configuring $GPU_MODE mode..."
+if [ "$GPU_MODE" = "gpu" ]; then
+    $PSQL -p $DB_PORT -U $DB_USER -d $DB_NAME -q <<EOF
+SET neurondb.gpu_enabled = true;
+SET neurondb.gpu_backend = 'metal';
+EOF
+    echo "✓ GPU mode enabled (Metal backend)"
+else
+    $PSQL -p $DB_PORT -U $DB_USER -d $DB_NAME -q <<EOF
+SET neurondb.gpu_enabled = false;
+EOF
+    echo "✓ CPU-only mode enabled"
+fi
 echo ""
 
-# Export PostgreSQL connection
-export PGPORT=$PGPORT
-export PGHOST=$PGHOST
+# Step 3: Run all SQL files in order
+echo "Step 3: Running ML demos..."
+echo ""
 
-# Function to run SQL file
-run_sql() {
-    local sql_file=$1
-    local out_file=$2
-    local description=$3
+SUCCESS_COUNT=0
+FAIL_COUNT=0
+
+for sql_file in $(ls -1 $SQL_DIR/*.sql 2>/dev/null | sort -V); do
+    filename=$(basename "$sql_file")
+    output_file="$OUT_DIR/${filename%.sql}.out"
     
-    echo -e "${YELLOW}[$description]${NC}"
-    echo "  Running: $sql_file"
+    echo "Running: $filename"
     
-    # Suppress NOTICE messages but keep errors
-    if psql -p "$PGPORT" -h "$PGHOST" postgres -q -v ON_ERROR_STOP=1 -f "$sql_file" > "$out_file" 2>&1; then
-        # Check for actual errors in output (not just connection issues)
-        if grep -qi "error\|fatal\|panic" "$out_file"; then
-            echo -e "  ${RED}✗ Failed (check output)${NC}"
-            return 1
-        else
-            echo -e "  ${GREEN}✓ Success${NC}"
-            return 0
-        fi
+    # Run the SQL file and capture output
+    if timeout 300 $PSQL -p $DB_PORT -U $DB_USER -d $DB_NAME -f "$sql_file" > "$output_file" 2>&1; then
+        echo "  ✓ Success → $output_file"
+        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
     else
-        # Check if it's just a connection issue
-        if grep -q "Connection refused\|could not connect" "$out_file"; then
-            echo -e "  ${YELLOW}⚠ PostgreSQL not running${NC}"
-            echo "  Start PostgreSQL: pg_ctl -D /path/to/data start"
-            return 2
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -eq 124 ]; then
+            echo "  ⚠ Timeout → $output_file"
         else
-            echo -e "  ${RED}✗ Failed${NC}"
-            echo "  Check output: $out_file"
-            return 1
+            echo "  ✗ Failed → $output_file"
         fi
+        FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
-}
+    echo ""
+done
 
-# Cleanup if requested
-if [ "$CLEANUP" = true ]; then
-    echo -e "${YELLOW}Cleaning up...${NC}"
-    run_sql "$SQL_DIR/999_drop_dataset.sql" "$OUT_DIR/00_cleanup.out" "Cleanup"
+# Step 4: Run GPU performance tests
+if [ "$GPU_MODE" = "gpu" ]; then
+    echo "Step 4: Running GPU performance tests..."
+    echo ""
+    
+    # Run extreme GPU test
+    if [ -f "extreme_gpu_test.sql" ]; then
+        echo "Running: extreme_gpu_test.sql"
+        if timeout 1200 $PSQL -p $DB_PORT -U $DB_USER -d $DB_NAME -f "extreme_gpu_test.sql" > "$OUT_DIR/extreme_gpu_test.out" 2>&1; then
+            echo "  ✓ Success → $OUT_DIR/extreme_gpu_test.out"
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        else
+            echo "  ✗ Failed/Timeout → $OUT_DIR/extreme_gpu_test.out"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+        echo ""
+    fi
+    
+    # Run final CPU vs GPU comparison
+    if [ -f "final_cpu_vs_gpu_5min.sql" ]; then
+        echo "Running: final_cpu_vs_gpu_5min.sql"
+        if timeout 600 $PSQL -p $DB_PORT -U $DB_USER -d $DB_NAME -f "final_cpu_vs_gpu_5min.sql" > "$OUT_DIR/final_cpu_vs_gpu.out" 2>&1; then
+            echo "  ✓ Success → $OUT_DIR/final_cpu_vs_gpu.out"
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+        else
+            echo "  ✗ Failed/Timeout → $OUT_DIR/final_cpu_vs_gpu.out"
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+        fi
+        echo ""
+    fi
+fi
+
+# Step 5: Verification
+echo "════════════════════════════════════════════════════════════════════"
+echo "  Verification & Summary"
+echo "════════════════════════════════════════════════════════════════════"
+echo ""
+echo "Total tests run: $((SUCCESS_COUNT + FAIL_COUNT))"
+echo "Successful: $SUCCESS_COUNT"
+echo "Failed: $FAIL_COUNT"
+echo ""
+
+if [ $FAIL_COUNT -eq 0 ]; then
+    echo "✓ All tests passed!"
+else
+    echo "✗ Some tests failed. Check output files in $OUT_DIR"
+fi
+echo ""
+
+# Show GPU status if in GPU mode
+if [ "$GPU_MODE" = "gpu" ]; then
+    echo "GPU Configuration:"
+    $PSQL -p $DB_PORT -U $DB_USER -d $DB_NAME -t -q <<EOF
+SELECT '  ' || name || ': ' || setting FROM pg_settings 
+WHERE name LIKE 'neurondb.gpu%' AND name IN ('neurondb.gpu_enabled', 'neurondb.gpu_backend');
+EOF
     echo ""
 fi
 
-# Step 1: Generate Dataset
-echo -e "${BLUE}Step 1: Dataset Generation${NC}"
-run_sql "$SQL_DIR/001_generate_dataset.sql" "$OUT_DIR/01_generate_dataset.out" "Generate $DB_SIZE dataset"
+echo "════════════════════════════════════════════════════════════════════"
+echo "  Demo Complete!"
+echo "════════════════════════════════════════════════════════════════════"
+echo "Results saved to: $OUT_DIR"
 echo ""
-
-if [ "$RUN_ML" = true ]; then
-    echo -e "${BLUE}Step 2: ML Algorithm Tests${NC}"
-    
-    # K-means (comprehensive 9-step test)
-    run_sql "$SQL_DIR/002_kmeans_clustering.sql" "$OUT_DIR/02_kmeans_clustering.out" "K-means Clustering"
-    echo ""
-    
-    # GMM (4-step test)
-    run_sql "$SQL_DIR/003_gmm_clustering.sql" "$OUT_DIR/03_gmm_clustering.out" "GMM Clustering"
-    echo ""
-    
-    # Mini-batch K-means (9-step test)
-    run_sql "$SQL_DIR/004_minibatch_kmeans.sql" "$OUT_DIR/04_minibatch_kmeans.out" "Mini-batch K-means"
-    echo ""
-    
-    # Outlier Detection (9-step test)
-    run_sql "$SQL_DIR/005_outlier_detection.sql" "$OUT_DIR/05_outlier_detection.out" "Outlier Detection"
-    echo ""
-    
-    # Hierarchical (9-step test, small sample)
-    run_sql "$SQL_DIR/006_hierarchical_clustering.sql" "$OUT_DIR/06_hierarchical_clustering.out" "Hierarchical Clustering"
-    echo ""
-    
-    # Complete Comparison
-    run_sql "$SQL_DIR/007_complete_comparison.sql" "$OUT_DIR/07_complete_comparison.out" "Complete Comparison"
-    echo ""
-fi
-
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}   Demo Complete!${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo ""
-echo "Output files:"
-ls -lh "$OUT_DIR"/*.out 2>/dev/null | awk '{print "  " $9 " (" $5 ")"}'
-echo ""
-echo "View results:"
-echo "  tail -f $OUT_DIR/*.out"
-echo ""
-

@@ -24,7 +24,8 @@ typedef enum GPUBackend
     GPU_BACKEND_NONE = 0,
     GPU_BACKEND_CUDA,
     GPU_BACKEND_ROCM,
-    GPU_BACKEND_OPENCL
+    GPU_BACKEND_OPENCL,
+    GPU_BACKEND_METAL
 } GPUBackend;
 
 /* GPU statistics for monitoring */

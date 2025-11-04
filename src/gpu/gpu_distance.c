@@ -21,6 +21,10 @@
 #include "neurondb_config.h"
 #include "neurondb_gpu.h"
 
+#ifdef NDB_GPU_METAL
+#include "gpu_metal.h"
+#endif
+
 #ifdef NDB_GPU_CUDA
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
@@ -43,8 +47,20 @@ extern int rocm_device;
 float
 neurondb_gpu_l2_distance(const float *vec1, const float *vec2, int dim)
 {
+	float result = -1.0f;
+
 	if (!neurondb_gpu_is_available())
 		return -1.0f;  /* Signal CPU fallback */
+
+#ifdef NDB_GPU_METAL
+	/* Try Metal first on Apple Silicon */
+	if (neurondb_gpu_get_backend() == GPU_BACKEND_METAL)
+	{
+		result = neurondb_gpu_metal_l2_distance(vec1, vec2, dim);
+		if (result >= 0.0f)
+			return result;
+	}
+#endif
 
 #ifdef NDB_GPU_CUDA
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA && cublas_handle)
@@ -125,8 +141,20 @@ neurondb_gpu_l2_distance(const float *vec1, const float *vec2, int dim)
 float
 neurondb_gpu_cosine_distance(const float *vec1, const float *vec2, int dim)
 {
+	float result = -1.0f;
+
 	if (!neurondb_gpu_is_available())
 		return -1.0f;
+
+#ifdef NDB_GPU_METAL
+	/* Try Metal first on Apple Silicon */
+	if (neurondb_gpu_get_backend() == GPU_BACKEND_METAL)
+	{
+		result = neurondb_gpu_metal_cosine_distance(vec1, vec2, dim);
+		if (result >= 0.0f)
+			return result;
+	}
+#endif
 
 #ifdef NDB_GPU_CUDA
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA && cublas_handle)
@@ -220,8 +248,20 @@ neurondb_gpu_cosine_distance(const float *vec1, const float *vec2, int dim)
 float
 neurondb_gpu_inner_product(const float *vec1, const float *vec2, int dim)
 {
+	float result = -1.0f;
+
 	if (!neurondb_gpu_is_available())
 		return -1.0f;
+
+#ifdef NDB_GPU_METAL
+	/* Try Metal first on Apple Silicon */
+	if (neurondb_gpu_get_backend() == GPU_BACKEND_METAL)
+	{
+		result = neurondb_gpu_metal_inner_product(vec1, vec2, dim);
+		if (result >= 0.0f)
+			return result;
+	}
+#endif
 
 #ifdef NDB_GPU_CUDA
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA && cublas_handle)

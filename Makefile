@@ -236,9 +236,26 @@ ifdef ROCM_PATH
 	endif
 endif
 
+# Check for Metal (Apple Silicon)
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_S),Darwin)
+	ifeq ($(UNAME_M),arm64)
+		HAVE_METAL := yes
+		PG_CPPFLAGS += -DNDB_GPU_METAL
+		SHLIB_LINK += -framework Metal -framework MetalPerformanceShaders -framework Accelerate -framework Foundation
+		METAL_OBJS = src/gpu/gpu_metal.o src/gpu/gpu_metal_impl.o
+	endif
+endif
+
 # Add GPU objects if available
 ifdef GPU_OBJS
 	OBJS += $(GPU_OBJS)
+endif
+
+# Add Metal objects if available
+ifdef METAL_OBJS
+	OBJS += $(METAL_OBJS)
 endif
 
 # Optimization flags for production with SIMD
@@ -323,7 +340,7 @@ neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile
 	@echo "=========================================================================="
 
 # Ensure SQL is generated before building
-all: neurondb--1.0.sql
+all: neurondb--1.0.sql metal-shaders
 
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
@@ -343,3 +360,5 @@ ifdef HIPCC
 src/gpu_kernels_hip.o: src/gpu_kernels.cu
 	$(HIPCC) -O3 -fPIC -I$(shell $(PG_CONFIG) --includedir-server) -Iinclude -c -o $@ $<
 endif
+include Makefile.metal
+include Makefile.metal.precompile

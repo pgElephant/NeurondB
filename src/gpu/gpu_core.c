@@ -62,6 +62,10 @@ static int rocm_device = 0;
 static hipStream_t *hip_streams = NULL;
 #endif
 
+#ifdef NDB_GPU_METAL
+#include "gpu_metal.h"
+#endif
+
 void
 neurondb_gpu_init_guc(void)
 {
@@ -330,6 +334,26 @@ ndb_gpu_init_if_needed(void)
         return;
     if (!neurondb_gpu_enabled || gpu_disabled)
         return;
+
+#ifdef NDB_GPU_METAL
+    /* Try Metal first on Apple Silicon */
+    if (!neurondb_gpu_backend || 
+        strcmp(neurondb_gpu_backend, "auto") == 0 ||
+        strcmp(neurondb_gpu_backend, "metal") == 0)
+    {
+        elog(DEBUG1, "neurondb: Attempting Metal GPU initialization");
+        if (neurondb_gpu_metal_init())
+        {
+            current_backend = GPU_BACKEND_METAL;
+            gpu_ready = true;
+            elog(LOG, "neurondb: ✅ Metal GPU backend active on %s",
+                 neurondb_gpu_metal_device_name());
+            return;
+        }
+        elog(DEBUG1, "neurondb: Metal init failed, trying other backends");
+    }
+#endif
+
     rc = ndb_gpu_runtime_init(&device_id);
     if (rc != 0)
     {
@@ -396,6 +420,14 @@ neurondb_gpu_shutdown(void)
 {
     if (!gpu_ready)
         return;
+
+#ifdef NDB_GPU_METAL
+    if (current_backend == GPU_BACKEND_METAL)
+    {
+        neurondb_gpu_metal_cleanup();
+        elog(LOG, "neurondb: Metal GPU backend shut down");
+    }
+#endif
 
 #ifdef NDB_GPU_CUDA
     if (current_backend == GPU_BACKEND_CUDA)

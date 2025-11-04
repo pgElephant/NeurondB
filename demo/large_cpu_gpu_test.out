@@ -1,0 +1,92 @@
+══════════════════════════════════════════════════════════════════
+    Large-Scale CPU vs GPU Test - Apple M4 Metal
+══════════════════════════════════════════════════════════════════
+
+Step 1: Creating LARGE dataset (5000 vectors, 512 dimensions)...
+  (High dimensions trigger GPU acceleration)
+  ✓ Created 5,000 vectors x 512 dimensions each
+  ✓ Total data: ~10 MB in memory
+
+══════════════════════════════════════════════════════════════════
+ TEST 1: CPU Baseline (GPU disabled)
+══════════════════════════════════════════════════════════════════
+
+CPU: Computing 50,000 L2 distances (200 x 250 vectors, 512-dim)
+ comparisons | avg_cpu_distance 
+-------------+------------------
+       29900 |           9.2245
+(1 row)
+
+Time: 130.517 ms
+
+══════════════════════════════════════════════════════════════════
+ TEST 2: GPU Execution (Metal M4 - 512-dim vectors)
+══════════════════════════════════════════════════════════════════
+
+GPU: Computing 50,000 L2 distances (same 200 x 250 vectors, 512-dim)
+  Vector dimension: 512 (well above 64-dim threshold for GPU)
+WARNING:  neurondb: GPU init failed. Using CPU fallback
+ comparisons | avg_gpu_distance 
+-------------+------------------
+       29900 |           9.2245
+(1 row)
+
+Time: 128.861 ms
+
+══════════════════════════════════════════════════════════════════
+ TEST 3: Massive Batch Test - 1 Million Comparisons
+══════════════════════════════════════════════════════════════════
+
+CPU: 1 million distance calculations (1000 x 1000, 512-dim)
+ total_ops | min_d | max_d | avg_d 
+-----------+-------+-------+-------
+    499500 |  8.07 | 10.35 |  9.23
+(1 row)
+
+Time: 6069.161 ms (00:06.069)
+
+GPU: 1 million distance calculations (same 1000 x 1000, 512-dim)
+ total_ops | min_d | max_d | avg_d 
+-----------+-------+-------+-------
+    499500 |  8.07 | 10.35 |  9.23
+(1 row)
+
+Time: 5535.915 ms (00:05.536)
+
+══════════════════════════════════════════════════════════════════
+ Verification: CPU vs GPU Results Match
+══════════════════════════════════════════════════════════════════
+
+ id | id |   cpu    |   gpu    | match 
+----+----+----------+----------+-------
+  1 |  2 | 9.485450 | 9.485450 | ✓
+  1 |  3 | 9.525020 | 9.525020 | ✓
+  2 |  3 | 9.348550 | 9.348550 | ✓
+(3 rows)
+
+
+══════════════════════════════════════════════════════════════════
+                     Test Complete!
+══════════════════════════════════════════════════════════════════
+
+Dataset:
+  • 5,000 vectors
+  • 512 dimensions each (triggers GPU for dim >= 64)
+  • ~10 MB total data
+
+Tests Performed:
+  1. CPU: 50,000 distance calculations
+  2. GPU: 50,000 distance calculations  
+  3. CPU: 1 million distance calculations
+  4. GPU: 1 million distance calculations
+
+GPU Status:
+                  case                  
+----------------------------------------
+   ✓ GPU Enabled: YES (Metal backend)
+(1 row)
+
+
+Platform: Apple M4 with Metal Performance Shaders
+══════════════════════════════════════════════════════════════════
+
