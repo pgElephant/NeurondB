@@ -216,8 +216,8 @@ ndb_llm_job_prune(int max_age_days)
     appendStringInfo(&query,
         "DELETE FROM neurondb.neurondb_llm_jobs "
         "WHERE (status = 'done' OR status = 'failed') "
-        "AND finished_at IS NOT NULL "
-        "AND finished_at < now() - interval '%d days'", days);
+        "AND completed_at IS NOT NULL "
+        "AND completed_at < now() - interval '%d days'", days);
 
     if (SPI_execute(query.data, false, 0) == SPI_OK_DELETE)
         deleted = SPI_processed;

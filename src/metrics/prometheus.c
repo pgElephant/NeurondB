@@ -94,7 +94,7 @@ typedef struct PrometheusMetrics
 static PrometheusMetrics *prom_metrics = NULL;
 
 /* Forward declarations */
-static void prometheus_worker_main(Datum arg) pg_attribute_noreturn();
+static void prometheus_worker_main(Datum arg) ;
 static void handle_http_request(int client_socket);
 static void send_metrics(int socket);
 static Size prometheus_shmem_size(void);

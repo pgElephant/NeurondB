@@ -96,3 +96,29 @@ Oops.rej
 
 # PostgreSQL data directories (specific)
 neurondb_data17/
+neurondb--1.0.sql
+neurondb--1.0.sql.tmp
+neurondb--1.0.sql.funcs
+neurondb--1.0.sql.reg.funcs
+neurondb--1.0.sql.clf.funcs
+neurondb--1.0.sql.knn.funcs
+neurondb--1.0.sql.ens.funcs
+
+# Demo output and test files
+demo/ML/out/*.out
+demo/ML/*.md
+!demo/ML/sql/*.sql
+
+# Cleanup notes
+CLEANUP_NOTES.txt
+
+# Unnecessary documentation
+ML_FINAL_STATUS.md
+ML_ALGORITHMS_STATUS.md
+ML_IMPLEMENTATION_SUMMARY.md
+ML_PROJECT_IMPLEMENTATION.md
+VERSION_COMPATIBILITY.md
+REORGANIZATION_PLAN.md
+src/DIRECTORY_STRUCTURE.md
+src/gpu/GPU_STATUS.md
+dataset/README.md

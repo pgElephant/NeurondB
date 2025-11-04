@@ -59,7 +59,7 @@ typedef struct NeurandefragSharedState
 static NeurandefragSharedState *neurandefrag_state = NULL;
 static MemoryContext DefragTopContext = NULL;
 
-PGDLLEXPORT void neurandefrag_main(Datum main_arg) pg_attribute_noreturn();
+PGDLLEXPORT void neurandefrag_main(Datum main_arg); 
 static void neurandefrag_sigterm(SIGNAL_ARGS);
 static void neurandefrag_sighup(SIGNAL_ARGS);
 static void perform_index_maintenance(void);

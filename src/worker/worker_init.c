@@ -24,17 +24,17 @@
 #include "utils/guc.h"
 
 /* Forward declarations from background worker modules */
-extern void neuranq_main(Datum main_arg) pg_attribute_noreturn();
+extern void neuranq_main(Datum main_arg);
 extern void neuranq_init_guc(void);
 extern Size neuranq_shmem_size(void);
 extern void neuranq_shmem_init(void);
 
-extern void neuranmon_main(Datum main_arg) pg_attribute_noreturn();
+extern void neuranmon_main(Datum main_arg);
 extern void neuranmon_init_guc(void);
 extern Size neuranmon_shmem_size(void);
 extern void neuranmon_shmem_init(void);
 
-extern void neurandefrag_main(Datum main_arg) pg_attribute_noreturn();
+extern void neurandefrag_main(Datum main_arg);
 extern void neurandefrag_init_guc(void);
 extern Size neurandefrag_shmem_size(void);
 extern void neurandefrag_shmem_init(void);
@@ -45,7 +45,7 @@ extern void neurondb_gpu_init(void);
 extern void neurondb_llm_init_guc(void);
 extern Size neurondb_llm_shmem_size(void);
 extern void neurondb_llm_shmem_init(void);
-extern void neuranllm_main(Datum main_arg) pg_attribute_noreturn();
+extern void neuranllm_main(Datum main_arg); 
 
 /* Prometheus and cache declarations */
 extern Size entrypoint_cache_shmem_size(void);

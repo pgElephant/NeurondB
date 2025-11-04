@@ -3,4 +3,4 @@ comment = 'NeurondB: Advanced AI Database - Vector types, ML inference, hybrid s
 default_version = '1.0'
 module_pathname = '$libdir/neurondb'
 relocatable = true
-requires = 'pg_trgm'
+# requires = 'pg_trgm'

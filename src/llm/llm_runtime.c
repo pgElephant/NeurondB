@@ -17,7 +17,7 @@
 #include "neurondb.h"
 #include "neurondb_llm.h"
 
-/* GUCs */
+/* ---- GUCs ---- */
 char *neurondb_llm_provider = NULL;
 char *neurondb_llm_model = NULL;
 char *neurondb_llm_endpoint = NULL;
@@ -27,56 +27,59 @@ int   neurondb_llm_cache_ttl = 600;
 int   neurondb_llm_rate_limiter_qps = 5;
 bool  neurondb_llm_fail_open = true;
 
-/* ------------------------
- *  Shared rate limiter (token bucket)
- * ------------------------
- */
+/* ---- Shared rate-limiter (Token Bucket) ---- */
 typedef struct NdbLLMRateLimiter
 {
     double      tokens;
     TimestampTz last_refill;
-    int         capacity;   /* tokens per second */
+    int         capacity;     /* tokens per second */
 } NdbLLMRateLimiter;
 
 static NdbLLMRateLimiter *llm_rl = NULL;
 static LWLock *llm_rl_lock = NULL;
 
-Size
-neurondb_llm_shmem_size(void)
+/* Returns the size required for shared memory allocation for the rate limiter. */
+Size neurondb_llm_shmem_size(void)
 {
     return MAXALIGN(sizeof(NdbLLMRateLimiter));
 }
 
-void
-neurondb_llm_shmem_init(void)
+/* Initializes the shared memory for the LLM rate limiter and sets up the lock. */
+void neurondb_llm_shmem_init(void)
 {
-    bool found;
+    bool found = false;
     llm_rl = (NdbLLMRateLimiter *) ShmemInitStruct("neurondb_llm_rate", sizeof(NdbLLMRateLimiter), &found);
     llm_rl_lock = &(GetNamedLWLockTranche("neurondb_llm")[0].lock);
     if (!found)
     {
+        /* First time initialization. */
         llm_rl->tokens = 0.0;
         llm_rl->last_refill = GetCurrentTimestamp();
         llm_rl->capacity = neurondb_llm_rate_limiter_qps > 0 ? neurondb_llm_rate_limiter_qps : 5;
     }
 }
 
-static bool
-llm_acquire_token(void)
+/* Attempts to acquire a token from the rate limiter; returns true if allowed. */
+static bool llm_acquire_token(void)
 {
     TimestampTz now = GetCurrentTimestamp();
-    long secs; int usecs; double elapsed;
+    long secs;
+    int usecs;
+    double elapsed;
     int cap;
+
     if (llm_rl == NULL || llm_rl_lock == NULL)
-        return true; /* no limiter initialized */
+        return true; /* No limiter initialized, always allow. */
 
     LWLockAcquire(llm_rl_lock, LW_EXCLUSIVE);
+
     cap = neurondb_llm_rate_limiter_qps > 0 ? neurondb_llm_rate_limiter_qps : llm_rl->capacity;
+
     TimestampDifference(llm_rl->last_refill, now, &secs, &usecs);
     elapsed = (double) secs + ((double) usecs / 1000000.0);
-    if (elapsed > 0.0)
-    {
-        llm_rl->tokens = Min((double) cap, llm_rl->tokens + elapsed * cap);
+
+    if (elapsed > 0.0) {
+        llm_rl->tokens = Min((double)cap, llm_rl->tokens + elapsed * cap);
         llm_rl->last_refill = now;
         llm_rl->capacity = cap;
     }
@@ -90,8 +93,8 @@ llm_acquire_token(void)
     return false;
 }
 
-void
-neurondb_llm_init_guc(void)
+/* Defines the GUC (config) variables. */
+void neurondb_llm_init_guc(void)
 {
     DefineCustomStringVariable("neurondb.llm_provider",
                                "LLM provider",
@@ -149,12 +152,12 @@ neurondb_llm_init_guc(void)
                              true, PGC_USERSET, 0, NULL, NULL, NULL);
 }
 
-static void
-compute_cache_key(StringInfo dst,
-                  const char *provider,
-                  const char *model,
-                  const char *endpoint,
-                  const char *payload)
+/* Computes a unique cache key for LLM requests by hashing input params. */
+static void compute_cache_key(StringInfo dst,
+                              const char *provider,
+                              const char *model,
+                              const char *endpoint,
+                              const char *payload)
 {
     unsigned char hash[SHA256_DIGEST_LENGTH];
     StringInfoData src;
@@ -173,8 +176,8 @@ compute_cache_key(StringInfo dst,
         appendStringInfo(&dst[0], "%02x", hash[i]);
 }
 
-static bool
-cache_lookup_text(const char *key, char **text_out)
+/* Looks up cache entry for a given key; if found, returns text via out pointer. */
+static bool cache_lookup_text(const char *key, char **text_out)
 {
     bool hit = false;
     if (SPI_connect() != SPI_OK_CONNECT)
@@ -199,8 +202,8 @@ cache_lookup_text(const char *key, char **text_out)
     return hit;
 }
 
-static void
-cache_store_text(const char *key, const char *text)
+/* Stores a given value in the neurondb_llm_cache table, replacing on conflict. */
+static void cache_store_text(const char *key, const char *text)
 {
     if (SPI_connect() != SPI_OK_CONNECT)
         return;
@@ -211,13 +214,17 @@ cache_store_text(const char *key, const char *text)
     appendStringInfo(&val, "{\"text\":%s}", quote_literal_cstr(text));
     values[0] = CStringGetTextDatum(key);
     values[1] = CStringGetTextDatum(val.data);
-    SPI_execute_with_args("INSERT INTO neurondb_llm_cache(key,value,created_at) VALUES($1,$2::jsonb,now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, created_at=now()",
-                          2, argtypes, values, NULL, false, 0);
+    SPI_execute_with_args(
+        "INSERT INTO neurondb_llm_cache(key,value,created_at) "
+        "VALUES($1,$2::jsonb,now()) "
+        "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, created_at=now()",
+        2, argtypes, values, NULL, false, 0
+    );
     SPI_finish();
 }
 
-static void
-fill_cfg(NdbLLMConfig *cfg)
+/* Fills an NdbLLMConfig struct from the GUCs */
+static void fill_cfg(NdbLLMConfig *cfg)
 {
     cfg->provider = neurondb_llm_provider ? neurondb_llm_provider : "huggingface";
     cfg->endpoint = neurondb_llm_endpoint ? neurondb_llm_endpoint : "https://api-inference.huggingface.co";
@@ -226,33 +233,40 @@ fill_cfg(NdbLLMConfig *cfg)
     cfg->timeout_ms = neurondb_llm_timeout_ms;
 }
 
-/* SQL: llm_complete(prompt text, params jsonb) RETURNS text */
+/* SQL: llm_complete(prompt text, params jsonb) RETURNS text
+ *
+ * Calls the configured LLM to complete a prompt, with input params as JSONB string.
+ * Uses rate-limiter, in-memory/DB cache, and supports fail-open/fail-closed.
+ */
 PG_FUNCTION_INFO_V1(ndb_llm_complete);
-Datum
-ndb_llm_complete(PG_FUNCTION_ARGS)
+Datum ndb_llm_complete(PG_FUNCTION_ARGS)
 {
     text *prompt_in = PG_GETARG_TEXT_PP(0);
     text *params_in = (PG_NARGS() > 1 && !PG_ARGISNULL(1)) ? PG_GETARG_TEXT_PP(1) : NULL;
     char *prompt = text_to_cstring(prompt_in);
     char *params = params_in ? text_to_cstring(params_in) : "{}";
-    NdbLLMConfig cfg; NdbLLMResp resp = {0};
+    NdbLLMConfig cfg;
+    NdbLLMResp resp = {0};
     StringInfoData keysrc, keyhex;
     char *cached = NULL;
     int rc;
 
     fill_cfg(&cfg);
+
+    /* Compose a cache key for this input */
     initStringInfo(&keysrc);
     appendStringInfo(&keysrc, "%s|%s|%s", prompt, params, cfg.model);
     compute_cache_key(&keyhex, cfg.provider, cfg.model, cfg.endpoint, keysrc.data);
 
+    /* Check cache */
     if (cache_lookup_text(keyhex.data, &cached))
         PG_RETURN_TEXT_P(cstring_to_text(cached));
 
+    /* Shortcut: mock endpoint for test/dev */
     if (cfg.endpoint && strncmp(cfg.endpoint, "mock://", 7) == 0)
-    {
         PG_RETURN_TEXT_P(cstring_to_text("mock-completion"));
-    }
 
+    /* Rate limit */
     if (!llm_acquire_token())
     {
         if (neurondb_llm_fail_open)
@@ -263,6 +277,7 @@ ndb_llm_complete(PG_FUNCTION_ARGS)
         ereport(ERROR, (errmsg("neurondb: LLM rate limited")));
     }
 
+    /* Call the actual provider (must be implemented in neurondb_llm.c) */
     rc = ndb_hf_complete(&cfg, prompt, params, &resp);
     if (rc != 0)
     {
@@ -270,29 +285,43 @@ ndb_llm_complete(PG_FUNCTION_ARGS)
             PG_RETURN_NULL();
         ereport(ERROR, (errmsg("neurondb: llm provider error")));
     }
+
     if (resp.text)
         cache_store_text(keyhex.data, resp.text);
     PG_RETURN_TEXT_P(cstring_to_text(resp.text ? resp.text : ""));
 }
 
-/* SQL: llm_embed(txt text, model text default null) RETURNS vector */
+/* SQL: llm_embed(txt text, model text default null) RETURNS vector
+ *
+ * Calls LLM endpoint to embed input text, with optional model override.
+ */
 PG_FUNCTION_INFO_V1(ndb_llm_embed);
-Datum
-ndb_llm_embed(PG_FUNCTION_ARGS)
+Datum ndb_llm_embed(PG_FUNCTION_ARGS)
 {
     text *txt_in = PG_GETARG_TEXT_PP(0);
     char *txt = text_to_cstring(txt_in);
-    NdbLLMConfig cfg; float *vec = NULL; int dim = 0; Vector *v;
-    fill_cfg(&cfg);
-    if (PG_NARGS() > 1 && !PG_ARGISNULL(1)) cfg.model = text_to_cstring(PG_GETARG_TEXT_PP(1));
+    NdbLLMConfig cfg;
+    float *vec = NULL;
+    int dim = 0;
+    Vector *v;
 
+    fill_cfg(&cfg);
+    if (PG_NARGS() > 1 && !PG_ARGISNULL(1))
+        cfg.model = text_to_cstring(PG_GETARG_TEXT_PP(1));
+
+    /* Shortcut: for dev/test, mock output. */
     if (cfg.endpoint && strncmp(cfg.endpoint, "mock://", 7) == 0)
     {
         dim = 4;
         v = new_vector(dim);
-        v->data[0] = 1; v->data[1] = 2; v->data[2] = 3; v->data[3] = 4;
+        v->data[0] = 1;
+        v->data[1] = 2;
+        v->data[2] = 3;
+        v->data[3] = 4;
         PG_RETURN_VECTOR_P(v);
     }
+
+    /* Rate limiting */
     if (!llm_acquire_token())
     {
         if (neurondb_llm_fail_open)
@@ -302,6 +331,8 @@ ndb_llm_embed(PG_FUNCTION_ARGS)
         }
         ereport(ERROR, (errmsg("neurondb: LLM rate limited")));
     }
+
+    /* Call embedding provider, see neurondb_llm.c for backend support */
     if (ndb_hf_embed(&cfg, txt, &vec, &dim) != 0 || dim <= 0)
     {
         if (neurondb_llm_fail_open)
@@ -315,28 +346,31 @@ ndb_llm_embed(PG_FUNCTION_ARGS)
 
 /* SQL: llm_rerank(query text, docs text[], model text default null, top_n int default 10)
  * RETURNS TABLE(idx int, score real)
+ * 
+ * This is a mock/test implementation only.
  */
 PG_FUNCTION_INFO_V1(ndb_llm_rerank);
-Datum
-ndb_llm_rerank(PG_FUNCTION_ARGS)
+Datum ndb_llm_rerank(PG_FUNCTION_ARGS)
 {
     FuncCallContext *funcctx;
     typedef struct { int ndocs; int i; } Ctx;
     Ctx *c;
+
     if (SRF_IS_FIRSTCALL())
     {
         MemoryContext old;
-        Ctx *c;
+        Ctx *new_ctx;
         ArrayType *arr;
         TupleDesc tupdesc;
 
         funcctx = SRF_FIRSTCALL_INIT();
         old = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-        c = palloc0(sizeof(Ctx));
+        new_ctx = palloc0(sizeof(Ctx));
         arr = PG_GETARG_ARRAYTYPE_P(1);
-        c->ndocs = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
-        c->i = 0;
-        funcctx->user_fctx = c;
+        new_ctx->ndocs = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+        new_ctx->i = 0;
+        funcctx->user_fctx = new_ctx;
+
         tupdesc = CreateTemplateTupleDesc(2);
         TupleDescInitEntry(tupdesc, (AttrNumber) 1, "idx", INT4OID, -1, 0);
         TupleDescInitEntry(tupdesc, (AttrNumber) 2, "score", FLOAT4OID, -1, 0);
@@ -344,12 +378,16 @@ ndb_llm_rerank(PG_FUNCTION_ARGS)
         MemoryContextSwitchTo(old);
     }
     funcctx = SRF_PERCALL_SETUP();
-    c = (Ctx *) funcctx->user_fctx;
+    c = (Ctx*)funcctx->user_fctx;
+
     if (c->i < c->ndocs)
     {
-        Datum values[2]; bool nulls[2] = {false,false}; HeapTuple tup;
+        Datum values[2];
+        bool nulls[2] = {false, false};
+        HeapTuple tup;
+
         values[0] = Int32GetDatum(c->i + 1);
-        values[1] = Float4GetDatum(1.0f - ((float) c->i / (float) Max(1,c->ndocs)));
+        values[1] = Float4GetDatum(1.0f - ((float) c->i / (float) Max(1, c->ndocs)));
         tup = heap_form_tuple(funcctx->tuple_desc, values, nulls);
         c->i++;
         SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tup));
@@ -357,9 +395,12 @@ ndb_llm_rerank(PG_FUNCTION_ARGS)
     SRF_RETURN_DONE(funcctx);
 }
 
+/* SQL: llm_enqueue(action text, payload jsonb) RETURNS bigint
+ *
+ * Enqueue an LLM job in the neurondb_llm_jobs table.
+ */
 PG_FUNCTION_INFO_V1(ndb_llm_enqueue);
-Datum
-ndb_llm_enqueue(PG_FUNCTION_ARGS)
+Datum ndb_llm_enqueue(PG_FUNCTION_ARGS)
 {
     Oid argtypes[2] = {TEXTOID, JSONBOID};
     Datum values[2];
@@ -367,17 +408,21 @@ ndb_llm_enqueue(PG_FUNCTION_ARGS)
     Datum d;
     text *action = PG_GETARG_TEXT_PP(0);
     text *payload = PG_GETARG_TEXT_PP(1);
+
     if (SPI_connect() != SPI_OK_CONNECT)
         ereport(ERROR, (errmsg("SPI_connect failed")));
+
     values[0] = PointerGetDatum(action);
     values[1] = PointerGetDatum(payload);
-    SPI_execute_with_args("INSERT INTO neurondb_llm_jobs(action,payload,status,created_at) VALUES($1,$2::jsonb,'queued',now()) RETURNING id",
-                          2, argtypes, values, NULL, true, 0);
+    SPI_execute_with_args(
+        "INSERT INTO neurondb_llm_jobs(action,payload,status,created_at) "
+        "VALUES($1,$2::jsonb,'queued',now()) RETURNING id",
+        2, argtypes, values, NULL, true, 0
+    );
     if (SPI_processed != 1)
         ereport(ERROR, (errmsg("enqueue failed")));
+
     d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
     SPI_finish();
     PG_RETURN_INT64(DatumGetInt64(d));
 }
-
-

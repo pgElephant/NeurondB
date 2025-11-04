@@ -67,7 +67,7 @@ typedef struct NeuranqSharedState
 static NeuranqSharedState * volatile neuranq_state = NULL;
 
 /* Forward declarations -- all error/edge conditions are handled in implementations elsewhere */
-PGDLLEXPORT void neuranq_main(Datum main_arg) pg_attribute_noreturn();
+PGDLLEXPORT void neuranq_main(Datum main_arg);
 static void neuranq_sigterm(SIGNAL_ARGS);
 static void neuranq_sighup(SIGNAL_ARGS);
 static void process_job_batch(void);

@@ -59,7 +59,7 @@ typedef struct NeuranmonSharedState
 static NeuranmonSharedState *neuranmon_state = NULL;
 
 /* Forward declarations */
-PGDLLEXPORT void neuranmon_main(Datum main_arg) pg_attribute_noreturn();
+PGDLLEXPORT void neuranmon_main(Datum main_arg); 
 static void neuranmon_sigterm(SIGNAL_ARGS);
 static void neuranmon_sighup(SIGNAL_ARGS);
 static void sample_and_tune(void);

@@ -2,9 +2,10 @@
  * model_runtime.c
  *     Model Runtime Integration for NeuronDB
  *
- * Provides full HTTP-based model inference, LLM integration, caching, and tracing.
- * This implementation handles actual HTTP using libcurl, JSON parsing, cost/billing tracking,
- * process cache using PostgreSQL SPI for demonstration, and traces events in a system table.
+ * Provides HTTP-based model inference (with retry logic and circuit breaker), 
+ * simulated LLM integration with cost tracking, expiring cache mechanism, 
+ * and distributed tracing/auditing. Implements tight PostgreSQL integration 
+ * using the Server Programming Interface (SPI).
  *
  * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
  */
@@ -15,6 +16,7 @@
 #include "lib/stringinfo.h"
 #include "executor/spi.h"
 #include "utils/elog.h"
+
 #include <curl/curl.h>
 #include <unistd.h>
 #include <sys/time.h>
@@ -23,13 +25,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+/* PG_MODULE_MAGIC already defined in neurondb.c */
 
-/*-------------------------------------------------------------------------
- *
- * Helper structure and callback for libcurl response accumulation
- *
- *-------------------------------------------------------------------------
- */
 typedef struct curl_buffer
 {
 	StringInfo	buf;
@@ -40,62 +37,59 @@ curl_writefunc(void *ptr, size_t size, size_t nmemb, void *userdata)
 {
 	curl_buffer *cb = (curl_buffer *) userdata;
 
+	if (cb == NULL || cb->buf == NULL)
+		return 0;
 	appendBinaryStringInfo(cb->buf, ptr, size * nmemb);
+
 	return size * nmemb;
 }
 
-
-/*-------------------------------------------------------------------------
- *
+/*
  * mdl_http
- *     Make an HTTP request using libcurl with retry, exponential backoff, and circuit breaker.
- *     Handles all HTTP verbs. Returns HTTP response as text.
- *
- *-------------------------------------------------------------------------
+ * General HTTP client with retry logic, exponential backoff, support for common
+ * HTTP verbs, JSON fallback wrapping, and circuit breaker paradigms.
  */
 PG_FUNCTION_INFO_V1(mdl_http);
 
 Datum
 mdl_http(PG_FUNCTION_ARGS)
 {
-	text		   *url = PG_GETARG_TEXT_PP(0);
-	text		   *method = PG_GETARG_TEXT_PP(1);
-	text		   *body = PG_GETARG_TEXT_PP(2);
-	int32			timeout_ms = PG_GETARG_INT32(3);
-	int32			max_retries = PG_GETARG_INT32(4);
-	char		   *url_str;
-	char		   *method_str;
-	char		   *body_str;
-	curl_buffer		cb;
-	CURL		   *curl;
-	CURLcode		res;
-	long			http_code = 0;
-	int				attempt;
-	bool			success = false;
-	StringInfoData	response;
-	struct timespec	ts;
-	struct curl_slist *headers = NULL;
+	text	   *url = PG_GETARG_TEXT_PP(0);
+	text	   *method = PG_GETARG_TEXT_PP(1);
+	text	   *body = PG_GETARG_TEXT_PP(2);
+	int32		timeout_ms = PG_GETARG_INT32(3);
+	int32		max_retries = PG_GETARG_INT32(4);
 
-	url_str = text_to_cstring(url);
-	method_str = text_to_cstring(method);
-	body_str = text_to_cstring(body);
+	char	   *url_str = text_to_cstring(url);
+	char	   *method_str = text_to_cstring(method);
+	char	   *body_str = text_to_cstring(body);
+	curl_buffer	cb;
+	CURL	   *curl;
+	CURLcode	res;
+	long		http_code = 0;
+	int			attempt;
+	bool		success = false;
+	StringInfoData response;
+	struct timespec ts;
+	struct curl_slist *headers = NULL;
 
 	initStringInfo(&response);
 	cb.buf = &response;
 
-	elog(NOTICE, "neurondb: HTTP %s to %s (timeout=%dms, max_retries=%d)",
+	elog(NOTICE, "neurondb: HTTP %s %s (timeout=%dms, max_retries=%d)",
 		 method_str, url_str, timeout_ms, max_retries);
 
 	for (attempt = 1; attempt <= max_retries; attempt++)
 	{
 		curl = curl_easy_init();
-		if (curl == NULL)
+		if (!curl)
 			ereport(ERROR,
 					(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
 					 errmsg("neurondb: curl initialization failed")));
 
 		resetStringInfo(&response);
 		http_code = 0;
+		headers = NULL;
 
 		curl_easy_setopt(curl, CURLOPT_URL, url_str);
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
@@ -103,7 +97,6 @@ mdl_http(PG_FUNCTION_ARGS)
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &cb);
 		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
-		/* Default to GET; set up for other verbs */
 		if (pg_strcasecmp(method_str, "POST") == 0)
 		{
 			curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -136,7 +129,7 @@ mdl_http(PG_FUNCTION_ARGS)
 		res = curl_easy_perform(curl);
 		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
-		if (headers != NULL)
+		if (headers)
 		{
 			curl_slist_free_all(headers);
 			headers = NULL;
@@ -152,14 +145,14 @@ mdl_http(PG_FUNCTION_ARGS)
 		{
 			success = false;
 			elog(WARNING,
-				 "neurondb: HTTP request attempt %d failed: %s (HTTP code %ld) - Retrying",
+				 "neurondb: HTTP failed on attempt %d: %s (HTTP %ld) - Retrying",
 				 attempt, curl_easy_strerror(res), http_code);
 
-			/* Exponential backoff: min(attempt * 100ms, 1000ms) */
 			ts.tv_sec = 0;
 			ts.tv_nsec = attempt * 100L * 1000000L;
 			if (ts.tv_nsec > 1000000000L)
 				ts.tv_nsec = 1000000000L;
+
 			(void) nanosleep(&ts, NULL);
 		}
 	}
@@ -173,33 +166,32 @@ mdl_http(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		/* Wrap response in JSON if not a JSON */
-		if (response.len > 0 && response.data[0] != '{' && response.data[0] != '[')
+		if (response.len > 0 &&
+			response.data[0] != '{' &&
+			response.data[0] != '[')
 		{
 			StringInfoData result_json;
-
 			initStringInfo(&result_json);
-			appendStringInfo(&result_json, "{\"status\":\"success\",\"data\":\"%s\"}", response.data);
+			appendStringInfo(&result_json,
+							 "{\"status\":\"success\",\"data\":\"%s\"}",
+							 response.data);
 			pfree(response.data);
 			response = result_json;
 		}
 		else if (response.len == 0)
 		{
-			appendStringInfoString(&response, "{\"status\":\"success\",\"data\":{}}");
+			appendStringInfoString(&response,
+								   "{\"status\":\"success\",\"data\":{}}");
 		}
 	}
 
 	PG_RETURN_TEXT_P(cstring_to_text_with_len(response.data, response.len));
 }
 
-
-/*-------------------------------------------------------------------------
- *
+/*
  * mdl_llm
- *     Simulate a call to an LLM API. Does basic "token" counting, handles cost estimation,
- *     and tracks each call in a metering table via SPI. Returns response JSON.
- *
- *-------------------------------------------------------------------------
+ * Simulates LLM inference: rough token counting, cost estimation, and
+ * auditing usage into a PostgreSQL metering table.
  */
 PG_FUNCTION_INFO_V1(mdl_llm);
 
@@ -210,6 +202,7 @@ mdl_llm(PG_FUNCTION_ARGS)
 	text	   *prompt = PG_GETARG_TEXT_PP(1);
 	int32		max_tokens = PG_GETARG_INT32(2);
 	float4		temperature = PG_GETARG_FLOAT4(3);
+
 	char	   *model_str = text_to_cstring(model);
 	char	   *prompt_str = text_to_cstring(prompt);
 	int32		tokens_in = 0;
@@ -220,14 +213,14 @@ mdl_llm(PG_FUNCTION_ARGS)
 	elog(NOTICE, "neurondb: LLM call: model=%s; max_tokens=%d; temperature=%.2f",
 		 model_str, max_tokens, temperature);
 
-	/* Approximate token count by word boundary */
+	/* Simple word-count for rough token estimation */
 	{
-		char   *p = prompt_str;
-		int		state = 0; /* 0 = whitespace, 1 = in word */
+		char   *ptr = prompt_str;
+		int		state = 0;
 
-		while (*p)
+		while (*ptr)
 		{
-			if (!isspace((unsigned char) *p))
+			if (!isspace((unsigned char) *ptr))
 			{
 				if (state == 0)
 				{
@@ -239,21 +232,18 @@ mdl_llm(PG_FUNCTION_ARGS)
 			{
 				state = 0;
 			}
-			p++;
+			ptr++;
 		}
 	}
 	if (tokens_in == 0)
 		tokens_in = 1;
 
 	tokens_out = (max_tokens > 0) ? max_tokens : 1;
-
-	/* Cost is $0.002/1k input, $0.006/1k output (microcents: 10000 microcents = 1 cent) */
 	estimated_cost_microcents = ((tokens_in * 2000 + tokens_out * 6000) + 999) / 1000;
 
 	elog(LOG, "neurondb: LLM tokens_in=%d tokens_out=%d cost_microcents=%d",
 		 tokens_in, tokens_out, estimated_cost_microcents);
 
-	/* Simulate the response (an actual API call could be placed here) */
 	initStringInfo(&result);
 	appendStringInfo(&result,
 					 "{\"model\":\"%s\",\"prompt\":\"%s\","
@@ -261,11 +251,11 @@ mdl_llm(PG_FUNCTION_ARGS)
 					 "\"tokens_in\":%d,\"tokens_out\":%d,\"cost_cents\":%.3f}",
 					 model_str, prompt_str, tokens_in, tokens_out, estimated_cost_microcents / 100.0);
 
-	/* Track in usage metering table */
+	/* Audit/metering: store in neurondb_llm_usage */
 	if (SPI_connect() == SPI_OK_CONNECT)
 	{
-		Datum	values[4];
-		Oid		argtypes[4] = { TEXTOID, INT4OID, INT4OID, INT4OID };
+		Datum		values[4];
+		Oid			argtypes[4] = {TEXTOID, INT4OID, INT4OID, INT4OID};
 
 		values[0] = CStringGetTextDatum(model_str);
 		values[1] = Int32GetDatum(tokens_in);
@@ -275,21 +265,16 @@ mdl_llm(PG_FUNCTION_ARGS)
 		SPI_execute_with_args(
 			"INSERT INTO neurondb_llm_usage (model, tokens_in, tokens_out, cost_microcents) VALUES ($1, $2, $3, $4)",
 			4, argtypes, values, NULL, false, 0);
-
 		SPI_finish();
 	}
 
 	PG_RETURN_TEXT_P(cstring_to_text_with_len(result.data, result.len));
 }
 
-
-/*-------------------------------------------------------------------------
- *
+/*
  * mdl_cache
- *     Implements an expiring cache using a PostgreSQL table.
- *     Inserts/updates cache value for key and TTL using upsert.
- *
- *-------------------------------------------------------------------------
+ * Upserts a cache entry (string key/value) with a TTL (in seconds).
+ * Persists expiry and value as a row in neurondb_cache.
  */
 PG_FUNCTION_INFO_V1(mdl_cache);
 
@@ -299,20 +284,22 @@ mdl_cache(PG_FUNCTION_ARGS)
 	text	   *cache_key = PG_GETARG_TEXT_PP(0);
 	text	   *cache_value = PG_GETARG_TEXT_PP(1);
 	int32		ttl_seconds = PG_GETARG_INT32(2);
+
 	char	   *key_str = text_to_cstring(cache_key);
 	char	   *value_str = text_to_cstring(cache_value);
 	Datum		values[3];
-	Oid			argtypes[3] = { TEXTOID, TEXTOID, INT8OID };
+	Oid			argtypes[3] = {TEXTOID, TEXTOID, INT8OID};
 	struct timeval tv;
 	time_t		expires_at;
 	bool		success = false;
 
-	elog(NOTICE, "neurondb: Insert/Update cache: key='%s' ttl=%d", key_str, ttl_seconds);
+	elog(NOTICE, "neurondb: Insert/Update cache: key='%s' ttl=%d",
+		 key_str, ttl_seconds);
 
 	if (SPI_connect() == SPI_OK_CONNECT)
 	{
 		gettimeofday(&tv, NULL);
-		expires_at = tv.tv_sec + ((ttl_seconds > 0) ? ttl_seconds : 1);
+		expires_at = tv.tv_sec + ((ttl_seconds > 0) ? ttl_seconds : 1L);
 
 		values[0] = CStringGetTextDatum(key_str);
 		values[1] = CStringGetTextDatum(value_str);
@@ -337,14 +324,10 @@ mdl_cache(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(success);
 }
 
-
-/*-------------------------------------------------------------------------
- *
+/*
  * mdl_trace
- *     Insert a span/event in the neurondb_traces audit table, capturing trace_id, event, metadata,
- *     and current timestamp.
- *
- *-------------------------------------------------------------------------
+ * Inserts a span/event in neurondb_traces for distributed tracing/audit.
+ * Arguments: trace_id (text), event (text), metadata (text/json)
  */
 PG_FUNCTION_INFO_V1(mdl_trace);
 
@@ -354,11 +337,13 @@ mdl_trace(PG_FUNCTION_ARGS)
 	text	   *trace_id = PG_GETARG_TEXT_PP(0);
 	text	   *event = PG_GETARG_TEXT_PP(1);
 	text	   *metadata = PG_GETARG_TEXT_PP(2);
+
 	char	   *trace_str = text_to_cstring(trace_id);
 	char	   *event_str = text_to_cstring(event);
 	char	   *meta_str = text_to_cstring(metadata);
+
 	Datum		values[3];
-	Oid			argtypes[3] = { TEXTOID, TEXTOID, TEXTOID };
+	Oid			argtypes[3] = {TEXTOID, TEXTOID, TEXTOID};
 
 	elog(DEBUG1, "neurondb: mdl_trace: id='%s', event='%s', meta='%s'",
 		 trace_str, event_str, meta_str);

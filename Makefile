@@ -65,10 +65,19 @@ OBJS += \
 	src/types/quantization.o \
 	src/types/aggregates.o
 
-# Machine learning
+# Machine learning (NEW supervised learning modules FIRST for better loading)
 OBJS += \
-	src/ml/analytics.o \
+	src/ml/ml_ridge_lasso.o \
+	src/ml/ml_random_forest.o \
+	src/ml/ml_svm.o \
+	src/ml/ml_naive_bayes.o \
+	src/ml/ml_decision_tree.o \
+	src/ml/ml_linear_regression.o \
+	src/ml/ml_logistic_regression.o \
+	src/ml/ml_knn.o \
+	src/ml/ml_projects.o \
 	src/ml/ml_utils.o \
+	src/ml/analytics.o \
 	src/ml/ml_kmeans.o \
 	src/ml/ml_dbscan.o \
 	src/ml/ml_minibatch_kmeans.o \
@@ -88,7 +97,6 @@ OBJS += \
 	src/ml/ml_topic_discovery.o \
 	src/ml/ml_drift_time.o \
 	src/ml/ml_opq.o \
-	src/ml/ml_inference.o \
 	src/ml/model_runtime.o \
 	src/ml/embeddings.o \
 	src/ml/reranking.o
@@ -281,6 +289,42 @@ ifeq ($(shell uname -s),Darwin)
 endif
 
 PG_CONFIG ?= pg_config
+# Generate SQL file from template before build
+neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile.header
+	$(eval include Makefile.header)
+	@echo "=========================================================================="
+	@echo "Generating version-specific SQL file..."
+	@echo "  PostgreSQL: $(PGSQL_VERSION) (version_num: $(PGSQL_VERSION_NUM))"
+	@echo "  Platform: $(PLATFORM) ($(UNAME_S))"
+	@echo "  Build Type: $(BUILD_TYPE)"
+	@echo "  Build Date: $(BUILD_DATE)"
+	@echo "=========================================================================="
+	@sed -e 's|@PGSQL_VERSION@|$(PGSQL_VERSION)|g' \
+	     -e 's|@PGSQL_VERSION_NUM@|$(PGSQL_VERSION_NUM)|g' \
+	     -e 's|@PLATFORM@|$(PLATFORM)|g' \
+	     -e 's|@UNAME_S@|$(UNAME_S)|g' \
+	     -e 's|@BUILD_DATE@|$(BUILD_DATE)|g' \
+	     -e 's|@BUILD_TYPE@|$(BUILD_TYPE)|g' \
+	     neurondb--1.0.sql.in > neurondb--1.0.sql.tmp
+	@$(MAKE) -s -f Makefile.sql-functions ml-regression-functions > neurondb--1.0.sql.reg.funcs
+	@$(MAKE) -s -f Makefile.sql-functions ml-classification-functions > neurondb--1.0.sql.clf.funcs
+	@$(MAKE) -s -f Makefile.sql-functions ml-knn-functions > neurondb--1.0.sql.knn.funcs
+	@$(MAKE) -s -f Makefile.sql-functions ml-ensemble-functions > neurondb--1.0.sql.ens.funcs
+	@sed '/@ML_REGRESSION_FUNCTIONS@/r neurondb--1.0.sql.reg.funcs' neurondb--1.0.sql.tmp | \
+	     sed '/@ML_REGRESSION_FUNCTIONS@/d' | \
+	     sed '/@ML_CLASSIFICATION_FUNCTIONS@/r neurondb--1.0.sql.clf.funcs' | \
+	     sed '/@ML_CLASSIFICATION_FUNCTIONS@/d' | \
+	     sed '/@ML_KNN_FUNCTIONS@/r neurondb--1.0.sql.knn.funcs' | \
+	     sed '/@ML_KNN_FUNCTIONS@/d' | \
+	     sed '/@ML_ENSEMBLE_FUNCTIONS@/r neurondb--1.0.sql.ens.funcs' | \
+	     sed '/@ML_ENSEMBLE_FUNCTIONS@/d' > neurondb--1.0.sql
+	@rm -f neurondb--1.0.sql.tmp neurondb--1.0.sql.reg.funcs neurondb--1.0.sql.clf.funcs neurondb--1.0.sql.knn.funcs neurondb--1.0.sql.ens.funcs
+	@echo "✓ Generated neurondb--1.0.sql for $(BUILD_TYPE)"
+	@echo "=========================================================================="
+
+# Ensure SQL is generated before building
+all: neurondb--1.0.sql
+
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 

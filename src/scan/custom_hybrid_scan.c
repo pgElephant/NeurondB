@@ -25,6 +25,7 @@
 #include "fmgr.h"
 #include "access/relscan.h"
 #include "access/table.h"
+#include "commands/explain.h"
 #include "executor/executor.h"
 #include "executor/nodeCustom.h"
 #include "nodes/execnodes.h"
@@ -264,10 +265,25 @@ hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
 	HybridScanState *state = (HybridScanState *) node;
 
+#if PG_VERSION_NUM >= 180000
+	/* PG18 removed ExplainProperty* functions - use appendStringInfo instead */
+	if (es->format == EXPLAIN_FORMAT_TEXT)
+	{
+		appendStringInfoSpaces(es->str, es->indent * 2);
+		appendStringInfo(es->str, "Hybrid Scan Type: Vector+FTS\n");
+		appendStringInfoSpaces(es->str, es->indent * 2);
+		appendStringInfo(es->str, "Vector Weight: %.2f\n", state->vectorWeight);
+		appendStringInfoSpaces(es->str, es->indent * 2);
+		appendStringInfo(es->str, "FTS Weight: %.2f\n", state->ftsWeight);
+		appendStringInfoSpaces(es->str, es->indent * 2);
+		appendStringInfo(es->str, "Target Results: %d\n", state->k);
+	}
+#else
 	ExplainPropertyText("Hybrid Scan Type", "Vector+FTS", es);
 	ExplainPropertyFloat("Vector Weight", NULL, state->vectorWeight, 2, es);
 	ExplainPropertyFloat("FTS Weight", NULL, state->ftsWeight, 2, es);
 	ExplainPropertyInteger("Target Results", NULL, state->k, es);
+#endif
 }
 
 /*

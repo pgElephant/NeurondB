@@ -1,5 +1,40 @@
 # NeurondB: Advanced AI Database Extension
+# NeuronDB Documentation
 
+NeuronDB is a PostgreSQL extension that brings native vector types, approximate nearest neighbor (ANN) search,
+GPU acceleration, ML analytics (k‑means, DBSCAN, GMM, PCA/whitening, topic discovery, drift detection), hybrid
+semantic+lexical search, and a production toolkit with background workers, observability, and auto‑tuning.
+
+- Vector types: dense `vector` (float32), packed `vectorp`, sparse `vecmap`, `vgraph` (KNN graph), `rtext` (retrieval text)
+- Embeddings: provider configuration, caching, model registration, safety fallbacks
+- GPU: CUDA/ROCm acceleration with `neurondb_gpu_info()`, `neurondb_gpu_enable()`, and `pg_stat_neurondb_gpu`
+- Workers: `neuranq` (queue), `neuranmon` (auto‑tuner), `neurandefrag` (index maintenance)
+
+See pages below for details:
+
+- Getting Started
+- Installation
+- Vector Types
+- Embeddings
+- GPU Acceleration
+- Hybrid Search
+- Background Workers
+- Configuration
+- Performance
+
+---
+
+## Requirements
+
+- PostgreSQL 16, 17, or 18
+- Build toolchain for PG extensions (server headers, `pg_config` on PATH)
+- Optional: CUDA or ROCm for GPU acceleration
+
+---
+
+## Repository
+
+- GitHub: https://github.com/pgelephant/neurondb
 <div align="center">
 
 ![NeurondB Logo](assets/logo.svg)

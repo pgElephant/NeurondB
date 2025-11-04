@@ -1,9 +1,13 @@
 /*
- * vector_config.c
- *     SHOW VECTOR CONFIG implementation for NeuronDB
+ * config.c
+ *     Detailed NeuronDB configuration interface implementation
  *
- * Provides SQL interface to view and modify NeuronDB configuration
- * including index parameters, search settings, and performance tuning.
+ * Implements SQL and C API for viewing and modifying all NeuronDB
+ * configuration variables. Each variable may reference a backend GUC,
+ * supports SHOW/SET/RESET, and is accessible via C APIs for internal use.
+ *
+ * Settings cover index/search/memory/replication. All are surfaced as
+ * system catalog views for inspection.
  *
  * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
  */
@@ -12,172 +16,345 @@
 #include "fmgr.h"
 #include "funcapi.h"
 #include "utils/builtins.h"
+#include "utils/guc.h"
+#include "utils/memutils.h"
+#include "utils/elog.h"
 #include "lib/stringinfo.h"
 
+#include <limits.h>
+#include <string.h>
+#include <ctype.h>
+
 /*
- * show_vector_config: Show all NeuronDB configuration settings
+ * Internal catalog of NeuronDB configuration options.
+ * Each: name, category, description, default value, and GUC type.
  */
+typedef enum ConfigType
+{
+	NEURON_GUC_INT,
+	NEURON_GUC_FLOAT,
+	NEURON_GUC_BOOL,
+	NEURON_GUC_STRING,
+	NEURON_GUC_ENUM
+} ConfigType;
+
+typedef struct NeuronDBConfigOpt
+{
+	const char   *name;
+	const char   *category;
+	const char   *description;
+	const char   *default_value;
+	ConfigType    type;
+	const char   *guc_var;      /* NULL if purely virtual config variable */
+	const char  **enum_values;  /* For enum type variables */
+} NeuronDBConfigOpt;
+
+static const char *wal_compression_enums[] = {"on", "off", NULL};
+
+/* Full configuration catalog of supported NeuronDB options */
+static const NeuronDBConfigOpt neuron_config_catalog[] = {
+	{
+		"ef_construction", "Index", "HNSW construction parameter",
+		"200", NEURON_GUC_INT, "neurondb_ef_construction", NULL
+	},
+	{
+		"ef_search", "Search", "HNSW search parameter",
+		"100", NEURON_GUC_INT, "neurondb_ef_search", NULL
+	},
+	{
+		"max_connections", "Performance", "Maximum concurrent connections",
+		"1000", NEURON_GUC_INT, "neurondb_max_connections", NULL
+	},
+	{
+		"buffer_size", "Memory", "ANN buffer cache size",
+		"128MB", NEURON_GUC_STRING, "neurondb_buffer_size", NULL
+	},
+	{
+		"wal_compression", "Replication", "Enable WAL compression for vectors",
+		"on", NEURON_GUC_ENUM, "neurondb_wal_compression", wal_compression_enums
+	},
+	{
+		"index_parallelism", "Performance", "Degree of index build parallelism",
+		"1", NEURON_GUC_INT, "neurondb_index_parallelism", NULL
+	},
+	{
+		"vector_dim_limit", "Index", "Maximum allowed index vector dimension",
+		"4096", NEURON_GUC_INT, "neurondb_vector_dim_limit", NULL
+	},
+	{
+		"hybrid_threshold", "Search", "Threshold for hybrid (ANN+keyword) search",
+		"0.6", NEURON_GUC_FLOAT, "neurondb_hybrid_threshold", NULL
+	},
+	{
+		"use_gpu", "Performance", "Enable GPU for vector search",
+		"off", NEURON_GUC_BOOL, "neurondb_use_gpu", NULL
+	},
+	{NULL, NULL, NULL, NULL, 0, NULL, NULL} /* List terminator */
+};
+
+/* Utility: Lookup option by name (case-insensitive) */
+static const NeuronDBConfigOpt *
+get_config_opt(const char *name)
+{
+	const NeuronDBConfigOpt *opt;
+
+	for (opt = neuron_config_catalog; opt && opt->name; opt++)
+	{
+		if (pg_strcasecmp(opt->name, name) == 0)
+			return opt;
+	}
+
+	return NULL;
+}
+
+/* Utility: Validate and apply a string to a GUC, according to type */
+static void
+set_neurondb_guc(const NeuronDBConfigOpt *opt, const char *value)
+{
+	switch (opt->type)
+	{
+		case NEURON_GUC_INT:
+		{
+			char   *endp = NULL;
+			long	num;
+			num = strtol(value, &endp, 10);
+			if (!isdigit((unsigned char)value[0]) ||
+				endp == value || num < 0 || num > INT_MAX)
+				ereport(ERROR,
+						(errmsg("invalid integer: \"%s\" for parameter \"%s\"",
+								value, opt->name)));
+			if (opt->guc_var)
+				SetConfigOption(opt->guc_var, value,
+								PGC_USERSET, PGC_S_SESSION);
+		}
+			break;
+		case NEURON_GUC_FLOAT:
+		{
+			char   *endp = NULL;
+			double	dval;
+			dval = strtod(value, &endp);
+			if (endp == value || isnan(dval) || isinf(dval))
+				ereport(ERROR,
+						(errmsg("invalid float: \"%s\" for parameter \"%s\"",
+								value, opt->name)));
+			if (opt->guc_var)
+				SetConfigOption(opt->guc_var, value,
+								PGC_USERSET, PGC_S_SESSION);
+		}
+			break;
+		case NEURON_GUC_BOOL:
+			if (pg_strcasecmp(value, "on") == 0 || pg_strcasecmp(value, "true") == 0 ||
+				strcmp(value, "1") == 0)
+			{
+				SetConfigOption(opt->guc_var, "on", PGC_USERSET, PGC_S_SESSION);
+			}
+			else if (pg_strcasecmp(value, "off") == 0 || pg_strcasecmp(value, "false") == 0 ||
+					 strcmp(value, "0") == 0)
+			{
+				SetConfigOption(opt->guc_var, "off", PGC_USERSET, PGC_S_SESSION);
+			}
+			else
+			{
+				ereport(ERROR,
+						(errmsg("invalid boolean: \"%s\" for parameter \"%s\"",
+								value, opt->name)));
+			}
+			break;
+		case NEURON_GUC_ENUM:
+		{
+			const char **enum_val;
+			bool found = false;
+
+			for (enum_val = opt->enum_values; enum_val && *enum_val; enum_val++)
+			{
+				if (pg_strcasecmp(value, *enum_val) == 0)
+				{
+					found = true;
+					break;
+				}
+			}
+			if (!found)
+				ereport(ERROR,
+						(errmsg("invalid enum value for %s: \"%s\"",
+								opt->name, value)));
+			if (opt->guc_var)
+				SetConfigOption(opt->guc_var, value,
+								PGC_USERSET, PGC_S_SESSION);
+		}
+			break;
+		case NEURON_GUC_STRING:
+			if (opt->guc_var)
+				SetConfigOption(opt->guc_var, value,
+								PGC_USERSET, PGC_S_SESSION);
+			break;
+		default:
+			ereport(ERROR,
+					(errmsg("unsupported parameter type for %s", opt->name)));
+	}
+}
+
+/* Utility: Read GUC as string representation */
+static char *
+get_neurondb_guc(const NeuronDBConfigOpt *opt)
+{
+	const char *val = NULL;
+
+	if (opt->guc_var)
+		val = GetConfigOption(opt->guc_var, false, false);
+
+	if (!val && opt->default_value)
+		return pstrdup(opt->default_value);
+
+	return val ? pstrdup(val) : NULL;
+}
+
+/* ========== SHOW ALL CONFIGURATION ========== */
+
 PG_FUNCTION_INFO_V1(show_vector_config);
+
 Datum
 show_vector_config(PG_FUNCTION_ARGS)
 {
-	TupleDesc		tupdesc;
-	Tuplestorestate *tupstore;
-	MemoryContext	per_query_ctx;
-	MemoryContext	oldcontext;
-	Datum			values[3];
-	bool			nulls[3];
-	int				i;
-	const char	   *categories[5];
-	const char	   *settings[5];
-	const char	   *descriptions[5];
-	
-	/* Initialize arrays */
-	categories[0] = "Index";
-	categories[1] = "Search";
-	categories[2] = "Performance";
-	categories[3] = "Memory";
-	categories[4] = "Replication";
-	
-	settings[0] = "ef_construction=200";
-	settings[1] = "ef_search=100";
-	settings[2] = "max_connections=1000";
-	settings[3] = "buffer_size=128MB";
-	settings[4] = "wal_compression=on";
-	
-	descriptions[0] = "HNSW construction parameter";
-	descriptions[1] = "HNSW search parameter";
-	descriptions[2] = "Maximum concurrent connections";
-	descriptions[3] = "ANN buffer cache size";
-	descriptions[4] = "Enable WAL compression for vectors";
-	
-	/* Build a tuple descriptor for our result type */
-	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("function returning record called in context "
-						"that cannot accept type record")));
-	
-	per_query_ctx = fcinfo->flinfo->fn_mcxt;
-	oldcontext = MemoryContextSwitchTo(per_query_ctx);
-	
-	tupstore = tuplestore_begin_heap(true, false, 1024); /* 1MB work mem */
-	
-	MemoryContextSwitchTo(oldcontext);
-	
-	/* Generate configuration rows */
-	for (i = 0; i < 5; i++)
+	FuncCallContext		   *funcctx;
+	const NeuronDBConfigOpt *catalog_row;
+	Datum					values[3];
+	bool					nulls[3];
+	HeapTuple				tuple;
+
+	if (SRF_IS_FIRSTCALL())
 	{
-		memset(nulls, 0, sizeof(nulls));
-		
-		values[0] = CStringGetTextDatum(categories[i]);
-		values[1] = CStringGetTextDatum(settings[i]);
-		values[2] = CStringGetTextDatum(descriptions[i]);
-		
-		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+		TupleDesc		tupdesc;
+		MemoryContext	oldcontext;
+
+		funcctx = SRF_FIRSTCALL_INIT();
+
+		tupdesc = CreateTemplateTupleDesc(3);
+		TupleDescInitEntry(tupdesc, (AttrNumber)1, "category", TEXTOID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber)2, "setting", TEXTOID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber)3, "description", TEXTOID, -1, 0);
+
+		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+		funcctx->max_calls = 0;
+
+		/* Set pointer to step through catalog during iteration */
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		funcctx->user_fctx = (void *) &neuron_config_catalog[0];
+		MemoryContextSwitchTo(oldcontext);
 	}
-	
-	/* Return the result */
-	return (Datum) 0;
+
+	funcctx = SRF_PERCALL_SETUP();
+
+	catalog_row = (const NeuronDBConfigOpt *)funcctx->user_fctx;
+
+	if (!catalog_row || !catalog_row->name)
+		SRF_RETURN_DONE(funcctx);
+
+	/* Compose 'name=value' as in SHOW ALL GUCs */
+	StringInfoData	valbuf;
+	char		   *curr_value;
+
+	initStringInfo(&valbuf);
+	curr_value = get_neurondb_guc(catalog_row);
+	appendStringInfo(&valbuf, "%s=%s", catalog_row->name,
+					 curr_value ? curr_value : "(null)");
+
+	values[0] = CStringGetTextDatum(catalog_row->category);
+	values[1] = CStringGetTextDatum(valbuf.data);
+	values[2] = CStringGetTextDatum(catalog_row->description);
+	memset(nulls, 0, sizeof(nulls));
+
+	tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+
+	/* Move to next catalog entry */
+	funcctx->user_fctx = (void *) (catalog_row + 1);
+
+	SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 }
 
-/*
- * set_vector_config: Set a NeuronDB configuration parameter
- */
+/* ========== SET CONFIG PARAMETER ========== */
+
 PG_FUNCTION_INFO_V1(set_vector_config);
+
 Datum
 set_vector_config(PG_FUNCTION_ARGS)
 {
-	text	   *config_name = PG_GETARG_TEXT_PP(0);
-	text	   *config_value = PG_GETARG_TEXT_PP(1);
-	char	   *name_str;
-	char	   *value_str;
-	
+	text				   *config_name = PG_GETARG_TEXT_PP(0);
+	text				   *config_value = PG_GETARG_TEXT_PP(1);
+	char				   *name_str;
+	char				   *value_str;
+	const NeuronDBConfigOpt *opt;
+
 	name_str = text_to_cstring(config_name);
 	value_str = text_to_cstring(config_value);
-	
-	elog(NOTICE, "neurondb: setting %s = %s", name_str, value_str);
-	
-	/*
-	 * Apply configuration setting
-	 * In production: use GUC system (SetConfigOption)
-	 */
-	if (strcmp(name_str, "ef_search") == 0)
-	{
-		elog(DEBUG1, "neurondb: ef_search updated to %s", value_str);
-	}
-	else if (strcmp(name_str, "ef_construction") == 0)
-	{
-		elog(DEBUG1, "neurondb: ef_construction updated to %s", value_str);
-	}
-	else if (strcmp(name_str, "max_connections") == 0)
-	{
-		elog(DEBUG1, "neurondb: max_connections updated to %s", value_str);
-	}
-	else
-	{
-		elog(WARNING, "neurondb: unknown configuration parameter '%s'", name_str);
-	}
-	
+
+	opt = get_config_opt(name_str);
+	if (opt == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: unknown configuration parameter '%s'",
+						name_str)));
+
+	set_neurondb_guc(opt, value_str);
+
+	elog(NOTICE, "neurondb: set %s = %s", name_str, value_str);
+
 	PG_RETURN_BOOL(true);
 }
 
-/*
- * get_vector_config: Get a specific configuration parameter
- */
+
+/* ========== GET CONFIG PARAMETER ========== */
+
 PG_FUNCTION_INFO_V1(get_vector_config);
+
 Datum
 get_vector_config(PG_FUNCTION_ARGS)
 {
-	text	   *config_name = PG_GETARG_TEXT_PP(0);
-	char	   *name_str;
-	char	   *value;
-	
+	text				   *config_name = PG_GETARG_TEXT_PP(0);
+	char				   *name_str;
+	const NeuronDBConfigOpt *opt;
+	char				   *curr_value;
+
 	name_str = text_to_cstring(config_name);
-	
-	/*
-	 * Look up configuration value
-	 * In production: use GetConfigOption from GUC system
-	 */
-	if (strcmp(name_str, "ef_search") == 0)
+	opt = get_config_opt(name_str);
+
+	if (opt == NULL)
 	{
-		value = "100";
-	}
-	else if (strcmp(name_str, "ef_construction") == 0)
-	{
-		value = "200";
-	}
-	else if (strcmp(name_str, "max_connections") == 0)
-	{
-		value = "1000";
-	}
-	else
-	{
-		elog(WARNING, "neurondb: unknown configuration parameter '%s'", name_str);
-		value = NULL;
-	}
-	
-	if (value == NULL)
+		ereport(WARNING,
+				(errmsg("neurondb: unknown configuration parameter '%s'",
+						name_str)));
 		PG_RETURN_NULL();
-	
-	PG_RETURN_TEXT_P(cstring_to_text(value));
+	}
+
+	curr_value = get_neurondb_guc(opt);
+
+	if (curr_value == NULL)
+		PG_RETURN_NULL();
+
+	PG_RETURN_TEXT_P(cstring_to_text(curr_value));
 }
 
-/*
- * reset_vector_config: Reset configuration to defaults
- */
+
+/* ========== RESET ALL CONFIGURATION TO DEFAULTS ========== */
+
 PG_FUNCTION_INFO_V1(reset_vector_config);
+
 Datum
 reset_vector_config(PG_FUNCTION_ARGS)
 {
-	(void) fcinfo;
-	
-	elog(NOTICE, "neurondb: Resetting all configuration to defaults");
-	
-	/*
-	 * Reset all GUC variables to default values
-	 * Clear any cached configuration state
-	 */
-	
+	const NeuronDBConfigOpt *opt;
+	int					  reset_count = 0;
+
+	for (opt = neuron_config_catalog; opt && opt->name; opt++)
+	{
+		if (opt->guc_var && opt->default_value)
+		{
+			SetConfigOption(opt->guc_var, opt->default_value,
+							PGC_USERSET, PGC_S_SESSION);
+			reset_count++;
+		}
+	}
+
+	elog(NOTICE, "neurondb: Reset %d settings to default values", reset_count);
+
 	PG_RETURN_BOOL(true);
 }
