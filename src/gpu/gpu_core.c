@@ -66,6 +66,14 @@ static hipStream_t *hip_streams = NULL;
 #include "gpu_metal.h"
 #endif
 
+#ifdef NDB_GPU_CUDA
+#include "gpu_cuda.h"
+#endif
+
+#ifdef NDB_GPU_HIP
+#include "gpu_rocm.h"
+#endif
+
 void
 neurondb_gpu_init_guc(void)
 {
@@ -421,12 +429,28 @@ neurondb_gpu_shutdown(void)
     if (!gpu_ready)
         return;
 
+#ifdef NDB_GPU_CUDA
+	if (current_backend == GPU_BACKEND_CUDA)
+	{
+		neurondb_gpu_cuda_cleanup();
+		elog(LOG, "neurondb: CUDA GPU backend shut down");
+	}
+#endif
+
+#ifdef NDB_GPU_HIP
+	if (current_backend == GPU_BACKEND_ROCM)
+	{
+		neurondb_gpu_rocm_cleanup();
+		elog(LOG, "neurondb: ROCm GPU backend shut down");
+	}
+#endif
+
 #ifdef NDB_GPU_METAL
-    if (current_backend == GPU_BACKEND_METAL)
-    {
-        neurondb_gpu_metal_cleanup();
-        elog(LOG, "neurondb: Metal GPU backend shut down");
-    }
+	if (current_backend == GPU_BACKEND_METAL)
+	{
+		neurondb_gpu_metal_cleanup();
+		elog(LOG, "neurondb: Metal GPU backend shut down");
+	}
 #endif
 
 #ifdef NDB_GPU_CUDA

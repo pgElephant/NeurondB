@@ -52,8 +52,28 @@ neurondb_gpu_l2_distance(const float *vec1, const float *vec2, int dim)
 	if (!neurondb_gpu_is_available())
 		return -1.0f;  /* Signal CPU fallback */
 
+#ifdef NDB_GPU_CUDA
+	/* Try CUDA for NVIDIA GPUs */
+	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA)
+	{
+		result = neurondb_gpu_cuda_l2_distance(vec1, vec2, dim);
+		if (result >= 0.0f)
+			return result;
+	}
+#endif
+
+#ifdef NDB_GPU_HIP
+	/* Try ROCm for AMD GPUs */
+	if (neurondb_gpu_get_backend() == GPU_BACKEND_ROCM)
+	{
+		result = neurondb_gpu_rocm_l2_distance(vec1, vec2, dim);
+		if (result >= 0.0f)
+			return result;
+	}
+#endif
+
 #ifdef NDB_GPU_METAL
-	/* Try Metal first on Apple Silicon */
+	/* Try Metal for Apple Silicon */
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_METAL)
 	{
 		result = neurondb_gpu_metal_l2_distance(vec1, vec2, dim);
@@ -146,8 +166,28 @@ neurondb_gpu_cosine_distance(const float *vec1, const float *vec2, int dim)
 	if (!neurondb_gpu_is_available())
 		return -1.0f;
 
+#ifdef NDB_GPU_CUDA
+	/* Try CUDA for NVIDIA GPUs */
+	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA)
+	{
+		result = neurondb_gpu_cuda_cosine_distance(vec1, vec2, dim);
+		if (result >= 0.0f)
+			return result;
+	}
+#endif
+
+#ifdef NDB_GPU_HIP
+	/* Try ROCm for AMD GPUs */
+	if (neurondb_gpu_get_backend() == GPU_BACKEND_ROCM)
+	{
+		result = neurondb_gpu_rocm_cosine_distance(vec1, vec2, dim);
+		if (result >= 0.0f)
+			return result;
+	}
+#endif
+
 #ifdef NDB_GPU_METAL
-	/* Try Metal first on Apple Silicon */
+	/* Try Metal for Apple Silicon */
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_METAL)
 	{
 		result = neurondb_gpu_metal_cosine_distance(vec1, vec2, dim);
@@ -253,8 +293,28 @@ neurondb_gpu_inner_product(const float *vec1, const float *vec2, int dim)
 	if (!neurondb_gpu_is_available())
 		return -1.0f;
 
+#ifdef NDB_GPU_CUDA
+	/* Try CUDA for NVIDIA GPUs */
+	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA)
+	{
+		result = neurondb_gpu_cuda_inner_product(vec1, vec2, dim);
+		if (result >= 0.0f)
+			return result;
+	}
+#endif
+
+#ifdef NDB_GPU_HIP
+	/* Try ROCm for AMD GPUs */
+	if (neurondb_gpu_get_backend() == GPU_BACKEND_ROCM)
+	{
+		result = neurondb_gpu_rocm_inner_product(vec1, vec2, dim);
+		if (result >= 0.0f)
+			return result;
+	}
+#endif
+
 #ifdef NDB_GPU_METAL
-	/* Try Metal first on Apple Silicon */
+	/* Try Metal for Apple Silicon */
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_METAL)
 	{
 		result = neurondb_gpu_metal_inner_product(vec1, vec2, dim);
