@@ -96,6 +96,7 @@ Oops.rej
 
 # PostgreSQL data directories (specific)
 neurondb_data17/
+neurondb_data18/
 neurondb--1.0.sql
 neurondb--1.0.sql.tmp
 neurondb--1.0.sql.funcs
@@ -104,13 +105,23 @@ neurondb--1.0.sql.clf.funcs
 neurondb--1.0.sql.knn.funcs
 neurondb--1.0.sql.ens.funcs
 
+# Metal GPU build artifacts
+src/gpu/*.air
+*.metallib
+
 # Demo output and test files
 demo/ML/out/*.out
 demo/ML/*.md
+demo/*.out
 !demo/ML/sql/*.sql
 
-# Cleanup notes
+# Cleanup notes and scripts
 CLEANUP_NOTES.txt
+compile_metal.sh
+compile_metal_clean.sh
+compile_metal_final.sh
+test_metal_direct
+test_metal_direct.c
 
 # Unnecessary documentation
 ML_FINAL_STATUS.md
