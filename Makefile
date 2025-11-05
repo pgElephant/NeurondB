@@ -239,6 +239,7 @@ endif
 # Check for Metal (Apple Silicon)
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
+# Check for Metal (Apple Silicon)
 ifeq ($(UNAME_S),Darwin)
 	ifeq ($(UNAME_M),arm64)
 		HAVE_METAL := yes
@@ -257,6 +258,10 @@ endif
 ifdef METAL_OBJS
 	OBJS += $(METAL_OBJS)
 endif
+
+# Special rule for Metal implementation to avoid Protocol conflicts
+src/gpu/gpu_metal_impl.o: src/gpu/gpu_metal_impl.m
+	$(CC) $(filter-out -I/usr/local/include, $(PG_CPPFLAGS)) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
 
 # Optimization flags for production with SIMD
 PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -I/usr/include -isystem /usr/local/pgsql.18/include \
@@ -361,5 +366,5 @@ ifdef HIPCC
 src/gpu_kernels_hip.o: src/gpu_kernels.cu
 	$(HIPCC) -O3 -fPIC -I$(shell $(PG_CONFIG) --includedir-server) -Iinclude -c -o $@ $<
 endif
-include Makefile.metal
+# include Makefile.metal  # Removed - conflicting with main Makefile rules
 include Makefile.metal.precompile

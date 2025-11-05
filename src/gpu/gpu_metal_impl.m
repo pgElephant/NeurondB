@@ -8,6 +8,12 @@
  * Copyright (c) 2024-2025, pgElephant, Inc.
  */
 
+/* Protocol conflict resolution for librale vs Objective-C */
+#ifdef Protocol
+#undef Protocol
+#endif
+#define Protocol ObjCProtocol
+
 /* Include standard C headers */
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,11 +22,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <mach/mach_time.h>
-
-/* Pre-include librale config.h to avoid conflicts */
-#if __has_include("/usr/local/include/config.h")
-#include "/usr/local/include/config.h"
-#endif
 
 /* Objective-C and Metal headers */
 #import <Metal/Metal.h>
@@ -52,7 +53,7 @@ metal_backend_init(void)
 		}
 
 		fprintf(stdout, "[Metal] ✅ GPU Detected: %s\n", [[metal_device name] UTF8String]);
-		fprintf(stdout, "[Metal] ✅ Max threads: %lu\n", 
+		fprintf(stdout, "[Metal] ✅ Max threads: %lu\n",
 				(unsigned long)[metal_device maxThreadsPerThreadgroup].width);
 		fprintf(stdout, "[Metal] ✅ GPU Memory: %.2f GB\n",
 				[metal_device recommendedMaxWorkingSetSize] / (1024.0 * 1024.0 * 1024.0));
@@ -79,7 +80,7 @@ metal_backend_init(void)
 }
 
 /*
- * Cleanup
+ * Cleanup Metal backend
  */
 void
 metal_backend_cleanup(void)
@@ -89,16 +90,16 @@ metal_backend_cleanup(void)
 			metal_command_queue = nil;
 		if (metal_device)
 			metal_device = nil;
-		
+
 		metal_initialized = false;
-		
+
 		if (total_gpu_ops > 0)
 			fprintf(stdout, "[Metal] Cleanup: %llu GPU operations performed\n", total_gpu_ops);
 	}
 }
 
 /*
- * Check availability
+ * Check if Metal is available
  */
 bool
 metal_backend_is_available(void)
@@ -107,7 +108,7 @@ metal_backend_is_available(void)
 }
 
 /*
- * Get device name
+ * Get Metal device name
  */
 const char *
 metal_backend_device_name(void)
@@ -115,7 +116,7 @@ metal_backend_device_name(void)
 	@autoreleasepool {
 		if (!metal_device)
 			return "None";
-		
+
 		static char device_name[256];
 		snprintf(device_name, sizeof(device_name), "%s", [[metal_device name] UTF8String]);
 		return device_name;
@@ -178,14 +179,14 @@ metal_backend_cosine_distance(const float *a, const float *b, int dim)
 		/* Use Accelerate vDSP - GPU-optimized on Apple Silicon, NO shader compilation */
 		vDSP_Length n = (vDSP_Length)dim;
 		float dot, norm_a, norm_b;
-		
+
 		/* GPU-accelerated operations via Accelerate */
 		vDSP_dotpr(a, 1, b, 1, &dot, n);
 		vDSP_dotpr(a, 1, a, 1, &norm_a, n);
 		vDSP_dotpr(b, 1, b, 1, &norm_b, n);
 
 		float similarity = dot / (sqrtf(norm_a) * sqrtf(norm_b));
-		
+
 		total_gpu_ops++;
 		return 1.0f - similarity;
 	}
@@ -242,7 +243,7 @@ metal_backend_batch_l2(const float *queries, const float *targets,
 					distances[i * num_targets + j] = dist;
 			}
 		}
-		
+
 		total_gpu_ops += num_queries * num_targets;
 	}
 }
@@ -276,7 +277,7 @@ metal_backend_device_info(char *name, size_t name_len,
 
 		if (total_mem)
 			*total_mem = [metal_device recommendedMaxWorkingSetSize];
-		
+
 		if (free_mem)
 			*free_mem = [metal_device currentAllocatedSize];
 	}
@@ -287,6 +288,9 @@ uint64_t metal_backend_get_operations_count(void) { return total_gpu_ops; }
 double metal_backend_get_avg_time_us(void) { return 0.0; }
 void metal_backend_reset_statistics(void) { total_gpu_ops = 0; }
 
+/*
+ * Get Metal capabilities string
+ */
 void
 metal_backend_get_capabilities(char *caps, size_t caps_len)
 {
