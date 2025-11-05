@@ -35,7 +35,7 @@
 -- ============================================================================
 -- PostgreSQL Version: 18.0 (180000)
 -- OS/Platform: macOS (Darwin)
--- Build Date: 2025-11-04 19:20:25
+-- Build Date: 2025-11-05 20:55:45
 -- Build Type: macos_pg18
 -- ============================================================================
 
@@ -3578,3 +3578,417 @@ GRANT USAGE, SELECT ON SEQUENCE neurondb.ml_predictions_prediction_id_seq TO PUB
 -- Compatible with Hugging Face models, ONNX, and custom algorithms
 
 -- End of NeurondB extension
+
+-- =============================================================================
+-- Unified ML API (PostgresML-compatible)
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.train(
+    project_name TEXT,
+    algorithm TEXT,
+    table_name TEXT,
+    target_column TEXT,
+    feature_columns TEXT[] DEFAULT NULL,
+    hyperparams JSONB DEFAULT NULL
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'neurondb_train'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.train IS 'Unified ML training interface - train any algorithm with one call';
+
+CREATE OR REPLACE FUNCTION neurondb.predict(
+    model_id INTEGER,
+    features ANYARRAY
+)
+RETURNS FLOAT8
+AS 'MODULE_PATHNAME', 'neurondb_predict'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.predict IS 'Unified prediction interface - predict with any trained model';
+
+CREATE OR REPLACE FUNCTION neurondb.deploy(
+    model_id INTEGER,
+    strategy TEXT DEFAULT 'replace'
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'neurondb_deploy'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.deploy IS 'Deploy model to production with strategy (replace, blue_green, canary)';
+
+CREATE OR REPLACE FUNCTION neurondb.load_model(
+    project_name TEXT,
+    model_path TEXT,
+    model_format TEXT
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'neurondb_load_model'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.load_model IS 'Load external model (onnx, tensorflow, pytorch, sklearn)';
+
+-- =============================================================================
+-- RAG Pipeline Functions
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.chunk(
+    text TEXT,
+    chunk_size INTEGER DEFAULT 512,
+    overlap INTEGER DEFAULT 128,
+    separator TEXT DEFAULT E'\n\n'
+)
+RETURNS TEXT[]
+AS 'MODULE_PATHNAME', 'neurondb_chunk_text'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.chunk IS 'Chunk text for RAG with configurable size and overlap';
+
+CREATE OR REPLACE FUNCTION neurondb.embed(
+    model TEXT,
+    text TEXT,
+    use_gpu BOOLEAN DEFAULT true
+)
+RETURNS vector
+AS 'MODULE_PATHNAME', 'neurondb_embed_text'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.embed IS 'Generate embeddings with GPU support';
+
+CREATE OR REPLACE FUNCTION neurondb.rank(
+    query TEXT,
+    documents TEXT[],
+    algorithm TEXT DEFAULT 'bm25'
+)
+RETURNS TABLE(document TEXT, score FLOAT8, rank INTEGER)
+AS 'MODULE_PATHNAME', 'neurondb_rank_documents'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.rank IS 'Rerank documents based on query relevance';
+
+CREATE OR REPLACE FUNCTION neurondb.transform(
+    pipeline TEXT,
+    data ANYARRAY
+)
+RETURNS ANYARRAY
+AS 'MODULE_PATHNAME', 'neurondb_transform_data'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.transform IS 'Apply data transformations (normalize, standardize, min_max)';
+
+-- =============================================================================
+-- Feature Store Functions
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.create_feature_store(
+    store_name TEXT,
+    entity_table TEXT,
+    entity_key TEXT
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'neurondb_create_feature_store'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.create_feature_store IS 'Initialize feature store for entity';
+
+CREATE OR REPLACE FUNCTION neurondb.register_feature(
+    store_id INTEGER,
+    feature_name TEXT,
+    feature_type TEXT,
+    transformation TEXT DEFAULT NULL
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'neurondb_register_feature'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.register_feature IS 'Register feature definition with transformation';
+
+CREATE OR REPLACE FUNCTION neurondb.get_features(
+    store_name TEXT,
+    entity_ids TEXT[],
+    feature_names TEXT[] DEFAULT NULL
+)
+RETURNS TABLE(entity_id TEXT, features JSONB)
+AS 'MODULE_PATHNAME', 'neurondb_get_features'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.get_features IS 'Retrieve features for entities';
+
+CREATE OR REPLACE FUNCTION neurondb.feature_engineering(
+    store_id INTEGER,
+    pipeline JSONB,
+    source_table TEXT
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'neurondb_feature_engineering'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.feature_engineering IS 'Apply automated feature engineering pipeline';
+
+-- =============================================================================
+-- Hyperparameter Tuning Functions
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.grid_search(
+    project_name TEXT,
+    algorithm TEXT,
+    param_grid JSONB,
+    cv_folds INTEGER DEFAULT 5
+)
+RETURNS TABLE(params JSONB, score FLOAT8, model_id INTEGER)
+AS 'MODULE_PATHNAME', 'neurondb_grid_search'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.grid_search IS 'Grid search hyperparameter optimization';
+
+CREATE OR REPLACE FUNCTION neurondb.random_search(
+    project_name TEXT,
+    algorithm TEXT,
+    param_distributions JSONB,
+    n_iter INTEGER DEFAULT 10,
+    cv_folds INTEGER DEFAULT 5
+)
+RETURNS TABLE(params JSONB, score FLOAT8, model_id INTEGER)
+AS 'MODULE_PATHNAME', 'neurondb_random_search'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.random_search IS 'Random search hyperparameter optimization';
+
+CREATE OR REPLACE FUNCTION neurondb.bayesian_optimize(
+    project_name TEXT,
+    algorithm TEXT,
+    param_space JSONB,
+    n_calls INTEGER DEFAULT 20,
+    acquisition_function TEXT DEFAULT 'ei'
+)
+RETURNS TABLE(params JSONB, score FLOAT8, model_id INTEGER)
+AS 'MODULE_PATHNAME', 'neurondb_bayesian_optimize'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.bayesian_optimize IS 'Bayesian optimization for hyperparameters';
+
+-- =============================================================================
+-- Text ML Functions
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.text_classify(
+    model_id INTEGER,
+    text TEXT
+)
+RETURNS TABLE(category TEXT, confidence FLOAT8)
+AS 'MODULE_PATHNAME', 'neurondb_text_classify'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.text_classify IS 'Text classification with confidence scores';
+
+CREATE OR REPLACE FUNCTION neurondb.sentiment_analysis(
+    text TEXT,
+    model TEXT DEFAULT 'vader'
+)
+RETURNS TABLE(sentiment TEXT, positive FLOAT8, negative FLOAT8, neutral FLOAT8)
+AS 'MODULE_PATHNAME', 'neurondb_sentiment_analysis'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.sentiment_analysis IS 'Sentiment analysis with scores';
+
+CREATE OR REPLACE FUNCTION neurondb.named_entity_recognition(
+    text TEXT,
+    entity_types TEXT[] DEFAULT NULL
+)
+RETURNS TABLE(entity TEXT, entity_type TEXT, confidence FLOAT8, position INTEGER)
+AS 'MODULE_PATHNAME', 'neurondb_named_entity_recognition'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.named_entity_recognition IS 'Named entity recognition (NER)';
+
+CREATE OR REPLACE FUNCTION neurondb.text_summarize(
+    text TEXT,
+    max_length INTEGER DEFAULT 128,
+    method TEXT DEFAULT 'extractive'
+)
+RETURNS TEXT
+AS 'MODULE_PATHNAME', 'neurondb_text_summarize'
+LANGUAGE C;
+COMMENT ON FUNCTION neurondb.text_summarize IS 'Text summarization (extractive or abstractive)';
+
+-- =============================================================================
+-- XGBoost Integration
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION train_xgboost_classifier(
+    table_name TEXT,
+    feature_col TEXT,
+    label_col TEXT,
+    n_estimators INTEGER DEFAULT 100,
+    max_depth INTEGER DEFAULT 6,
+    learning_rate FLOAT DEFAULT 0.3
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'train_xgboost_classifier'
+LANGUAGE C;
+COMMENT ON FUNCTION train_xgboost_classifier IS 'Train XGBoost gradient boosting classifier';
+
+CREATE OR REPLACE FUNCTION train_xgboost_regressor(
+    table_name TEXT,
+    feature_col TEXT,
+    target_col TEXT,
+    n_estimators INTEGER DEFAULT 100,
+    max_depth INTEGER DEFAULT 6,
+    learning_rate FLOAT DEFAULT 0.3
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'train_xgboost_regressor'
+LANGUAGE C;
+COMMENT ON FUNCTION train_xgboost_regressor IS 'Train XGBoost gradient boosting regressor';
+
+CREATE OR REPLACE FUNCTION predict_xgboost(
+    model_id INTEGER,
+    features REAL[]
+)
+RETURNS FLOAT8
+AS 'MODULE_PATHNAME', 'predict_xgboost'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION predict_xgboost IS 'Predict with XGBoost model';
+
+-- =============================================================================
+-- LightGBM Integration
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION train_lightgbm_classifier(
+    table_name TEXT,
+    feature_col TEXT,
+    label_col TEXT,
+    n_estimators INTEGER DEFAULT 100,
+    num_leaves INTEGER DEFAULT 31,
+    learning_rate FLOAT DEFAULT 0.1
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'train_lightgbm_classifier'
+LANGUAGE C;
+COMMENT ON FUNCTION train_lightgbm_classifier IS 'Train LightGBM classifier';
+
+CREATE OR REPLACE FUNCTION train_lightgbm_regressor(
+    table_name TEXT,
+    feature_col TEXT,
+    target_col TEXT,
+    n_estimators INTEGER DEFAULT 100
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'train_lightgbm_regressor'
+LANGUAGE C;
+COMMENT ON FUNCTION train_lightgbm_regressor IS 'Train LightGBM regressor';
+
+CREATE OR REPLACE FUNCTION predict_lightgbm(
+    model_id INTEGER,
+    features REAL[]
+)
+RETURNS FLOAT8
+AS 'MODULE_PATHNAME', 'predict_lightgbm'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION predict_lightgbm IS 'Predict with LightGBM model';
+
+-- =============================================================================
+-- CatBoost Integration
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION train_catboost_classifier(
+    table_name TEXT,
+    feature_col TEXT,
+    label_col TEXT,
+    iterations INTEGER DEFAULT 1000,
+    learning_rate FLOAT DEFAULT 0.03,
+    depth INTEGER DEFAULT 6
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'train_catboost_classifier'
+LANGUAGE C;
+COMMENT ON FUNCTION train_catboost_classifier IS 'Train CatBoost classifier';
+
+CREATE OR REPLACE FUNCTION train_catboost_regressor(
+    table_name TEXT,
+    feature_col TEXT,
+    target_col TEXT,
+    iterations INTEGER DEFAULT 1000
+)
+RETURNS INTEGER
+AS 'MODULE_PATHNAME', 'train_catboost_regressor'
+LANGUAGE C;
+COMMENT ON FUNCTION train_catboost_regressor IS 'Train CatBoost regressor';
+
+CREATE OR REPLACE FUNCTION predict_catboost(
+    model_id INTEGER,
+    features REAL[]
+)
+RETURNS FLOAT8
+AS 'MODULE_PATHNAME', 'predict_catboost'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION predict_catboost IS 'Predict with CatBoost model';
+
+-- =============================================================================
+-- End of NeuronDB Extension
+-- =============================================================================
+-- ============================================================================
+-- ML Unified API Schema
+-- PostgresML-compatible unified interface for NeuronDB
+-- ============================================================================
+
+-- Feature Stores Table
+CREATE TABLE IF NOT EXISTS neurondb.feature_stores (
+    store_id SERIAL PRIMARY KEY,
+    store_name TEXT UNIQUE NOT NULL,
+    entity_table TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Feature Definitions Table
+CREATE TABLE IF NOT EXISTS neurondb.features (
+    feature_id SERIAL PRIMARY KEY,
+    store_id INTEGER REFERENCES neurondb.feature_stores(store_id) ON DELETE CASCADE,
+    feature_name TEXT NOT NULL,
+    feature_type TEXT NOT NULL CHECK (feature_type IN ('numeric', 'categorical', 'vector', 'text')),
+    transformation TEXT,
+    version INTEGER DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(store_id, feature_name, version)
+);
+
+-- Hyperparameter Tuning Results
+CREATE TABLE IF NOT EXISTS neurondb.hyperparameter_results (
+    result_id SERIAL PRIMARY KEY,
+    project_id INTEGER REFERENCES neurondb.ml_projects(project_id) ON DELETE CASCADE,
+    algorithm TEXT NOT NULL,
+    parameters JSONB NOT NULL,
+    score FLOAT NOT NULL,
+    cv_scores FLOAT[] NOT NULL,
+    training_time_ms INTEGER,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_hyperparam_project ON neurondb.hyperparameter_results(project_id);
+CREATE INDEX IF NOT EXISTS idx_hyperparam_score ON neurondb.hyperparameter_results(score DESC);
+
+-- Text ML Models
+CREATE TABLE IF NOT EXISTS neurondb.text_models (
+    model_id SERIAL PRIMARY KEY,
+    model_name TEXT UNIQUE NOT NULL,
+    model_type TEXT NOT NULL CHECK (model_type IN ('classification', 'sentiment', 'ner', 'summarization')),
+    model_path TEXT,
+    vocabulary_size INTEGER,
+    embedding_dim INTEGER,
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- RAG Pipeline Configurations
+CREATE TABLE IF NOT EXISTS neurondb.rag_pipelines (
+    pipeline_id SERIAL PRIMARY KEY,
+    pipeline_name TEXT UNIQUE NOT NULL,
+    chunk_size INTEGER DEFAULT 512,
+    chunk_overlap INTEGER DEFAULT 128,
+    embedding_model TEXT NOT NULL,
+    reranking_model TEXT,
+    configuration JSONB,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Grant permissions
+GRANT SELECT, INSERT, UPDATE, DELETE ON neurondb.feature_stores TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON neurondb.features TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON neurondb.hyperparameter_results TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON neurondb.text_models TO PUBLIC;
+GRANT SELECT, INSERT, UPDATE, DELETE ON neurondb.rag_pipelines TO PUBLIC;
+
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA neurondb TO PUBLIC;
+
+-- Comments
+COMMENT ON TABLE neurondb.feature_stores IS 'Feature store registry for ML feature management';
+COMMENT ON TABLE neurondb.features IS 'Feature definitions with versioning';
+COMMENT ON TABLE neurondb.hyperparameter_results IS 'Hyperparameter tuning results';
+COMMENT ON TABLE neurondb.text_models IS 'Text ML model registry';
+COMMENT ON TABLE neurondb.rag_pipelines IS 'RAG pipeline configurations';
+

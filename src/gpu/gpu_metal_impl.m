@@ -8,8 +8,7 @@
  * Copyright (c) 2024-2025, pgElephant, Inc.
  */
 
-/* Prevent symbol conflicts */
-#define Protocol PostgresProtocol
+/* Include standard C headers */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,8 +16,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <mach/mach_time.h>
-#undef Protocol
 
+/* Pre-include librale config.h to avoid conflicts */
+#if __has_include("/usr/local/include/config.h")
+#include "/usr/local/include/config.h"
+#endif
+
+/* Objective-C and Metal headers */
 #import <Metal/Metal.h>
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 #import <Accelerate/Accelerate.h>

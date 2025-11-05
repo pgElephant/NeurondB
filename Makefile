@@ -259,7 +259,8 @@ ifdef METAL_OBJS
 endif
 
 # Optimization flags for production with SIMD
-PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -march=native -O3 -Wall -Wextra \
+PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -I/usr/include -isystem /usr/local/pgsql.18/include \
+               -march=native -O3 -Wall -Wextra \
                -fno-math-errno -fstrict-aliasing -funroll-loops \
                -fomit-frame-pointer -ffp-contract=fast -fopenmp-simd \
                -mtune=native -fno-trapping-math \

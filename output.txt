@@ -1,0 +1,56 @@
+gcc -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Werror=vla -Werror=unguarded-availability-new -Wendif-labels -Wmissing-format-attribute -Wcast-function-type -Wformat-security -Wmissing-variable-declarations -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-unused-command-line-argument -Wno-compound-token-split-by-macro -Wno-format-truncation -Wno-cast-function-type-strict -g -O2  -fvisibility=hidden -DNDB_GPU_METAL -Iinclude -I/usr/local/pgsql.18/include -march=native -O3 -Wall -Wextra -fno-math-errno -fstrict-aliasing -funroll-loops -fomit-frame-pointer -ffp-contract=fast -fopenmp-simd -mtune=native -fno-trapping-math -Wno-unused-parameter -Wno-missing-field-initializers -Wno-declaration-after-statement -DUSE_NEON -I. -I./ -I/usr/local/pgsql.18/include/server -I/usr/local/pgsql.18/include/internal -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.4.sdk   -I/opt/homebrew/opt/openssl@3/include -I/opt/homebrew/opt/icu4c/include     -c -o src/worker/worker_tuner.o src/worker/worker_tuner.c
+gcc -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Werror=vla -Werror=unguarded-availability-new -Wendif-labels -Wmissing-format-attribute -Wcast-function-type -Wformat-security -Wmissing-variable-declarations -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-unused-command-line-argument -Wno-compound-token-split-by-macro -Wno-format-truncation -Wno-cast-function-type-strict -g -O2  -fvisibility=hidden -DNDB_GPU_METAL -Iinclude -I/usr/local/pgsql.18/include -march=native -O3 -Wall -Wextra -fno-math-errno -fstrict-aliasing -funroll-loops -fomit-frame-pointer -ffp-contract=fast -fopenmp-simd -mtune=native -fno-trapping-math -Wno-unused-parameter -Wno-missing-field-initializers -Wno-declaration-after-statement -DUSE_NEON -I. -I./ -I/usr/local/pgsql.18/include/server -I/usr/local/pgsql.18/include/internal -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.4.sdk   -I/opt/homebrew/opt/openssl@3/include -I/opt/homebrew/opt/icu4c/include     -c -o src/gpu/gpu_rocm.o src/gpu/gpu_rocm.c
+src/gpu/gpu_rocm.c:426:1: warning: unused function 'neurondb_gpu_rocm_init' [-Wunused-function]
+  426 | neurondb_gpu_rocm_init(void)
+      | ^~~~~~~~~~~~~~~~~~~~~~
+src/gpu/gpu_rocm.c:433:1: warning: unused function 'neurondb_gpu_rocm_cleanup' [-Wunused-function]
+  433 | neurondb_gpu_rocm_cleanup(void)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~
+src/gpu/gpu_rocm.c:438:1: warning: unused function 'neurondb_gpu_rocm_is_available' [-Wunused-function]
+  438 | neurondb_gpu_rocm_is_available(void)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/gpu/gpu_rocm.c:444:1: warning: unused function 'neurondb_gpu_rocm_device_name' [-Wunused-function]
+  444 | neurondb_gpu_rocm_device_name(void)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/gpu/gpu_rocm.c:450:1: warning: unused function 'neurondb_gpu_rocm_l2_distance' [-Wunused-function]
+  450 | neurondb_gpu_rocm_l2_distance(const float *a, const float *b, int dim)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/gpu/gpu_rocm.c:460:1: warning: unused function 'neurondb_gpu_rocm_cosine_distance' [-Wunused-function]
+  460 | neurondb_gpu_rocm_cosine_distance(const float *a, const float *b, int dim)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/gpu/gpu_rocm.c:470:1: warning: unused function 'neurondb_gpu_rocm_inner_product' [-Wunused-function]
+  470 | neurondb_gpu_rocm_inner_product(const float *a, const float *b, int dim)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/gpu/gpu_rocm.c:480:1: warning: unused function 'neurondb_gpu_rocm_batch_l2' [-Wunused-function]
+  480 | neurondb_gpu_rocm_batch_l2(const float *queries, const float *targets,
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~
+src/gpu/gpu_rocm.c:494:1: warning: unused function 'neurondb_gpu_rocm_get_operations_count' [-Wunused-function]
+  494 | neurondb_gpu_rocm_get_operations_count(void)
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+9 warnings generated.
+gcc -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Werror=vla -Werror=unguarded-availability-new -Wendif-labels -Wmissing-format-attribute -Wcast-function-type -Wformat-security -Wmissing-variable-declarations -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-unused-command-line-argument -Wno-compound-token-split-by-macro -Wno-format-truncation -Wno-cast-function-type-strict -g -O2  -fvisibility=hidden -bundle -o neurondb.dylib src/core/neurondb.o src/core/distance.o src/core/types_core.o src/core/operators.o src/core/vector_ops.o src/index/index_hnsw_tenant.o src/index/index_hybrid.o src/index/index_temporal.o src/index/index_consistent.o src/index/index_rerank.o src/index/hnsw_am.o src/index/ivf_am.o src/index/opclass.o src/index/index_validator.o src/index/index_cache.o src/scan/hnsw_scan.o src/scan/custom_hybrid_scan.o src/scan/scan_rls.o src/scan/scan_quota.o src/worker/worker_queue.o src/worker/worker_tuner.o src/worker/worker_defrag.o src/worker/worker_init.o src/worker/worker_llm.o src/llm/llm_runtime.o src/llm/llm_cache.o src/llm/llm_jobs.o src/llm/hf_http.o src/gpu/gpu_core.o src/gpu/gpu_distance.o src/gpu/gpu_batch.o src/gpu/gpu_quantization.o src/gpu/gpu_clustering.o src/gpu/gpu_inference.o src/gpu/gpu_sql.o src/types/quantization.o src/types/aggregates.o src/ml/ml_ridge_lasso.o src/ml/ml_random_forest.o src/ml/ml_svm.o src/ml/ml_naive_bayes.o src/ml/ml_decision_tree.o src/ml/ml_linear_regression.o src/ml/ml_logistic_regression.o src/ml/ml_knn.o src/ml/ml_neural_network.o src/ml/ml_timeseries.o src/ml/ml_automl.o src/ml/ml_recommender.o src/ml/ml_nlp_production.o src/ml/ml_mlops_advanced.o src/ml/ml_deeplearning.o src/ml/ml_unified_api.o src/ml/ml_rag.o src/ml/ml_feature_store.o src/ml/ml_hyperparameter_tuning.o src/ml/ml_text.o src/ml/ml_xgboost.o src/ml/ml_lightgbm.o src/ml/ml_catboost.o src/ml/ml_projects.o src/ml/ml_utils.o src/ml/ml_inference.o src/ml/analytics.o src/ml/ml_kmeans.o src/ml/ml_dbscan.o src/ml/ml_minibatch_kmeans.o src/ml/ml_product_quantization.o src/ml/ml_mmr.o src/ml/ml_davies_bouldin.o src/ml/ml_outlier_detection.o src/ml/ml_pca_whitening.o src/ml/ml_recall_metrics.o src/ml/ml_drift_detection.o src/ml/ml_gmm.o src/ml/ml_hierarchical.o src/ml/ml_histogram.o src/ml/ml_rerank_ensemble.o src/ml/ml_ltr.o src/ml/ml_hybrid_search.o src/ml/ml_topic_discovery.o src/ml/ml_drift_time.o src/ml/ml_opq.o src/ml/model_runtime.o src/ml/embeddings.o src/ml/reranking.o src/metrics/pg_stat_neurondb.o src/metrics/prometheus.o src/search/hybrid_search.o src/search/temporal_integration.o src/storage/ann_buffer.o src/storage/vector_wal.o src/storage/buffer.o src/tenant/multi_tenant.o src/planner/planner.o src/util/config.o src/util/security.o src/util/hooks.o src/util/distributed.o src/util/usability.o src/util/data_management.o src/gpu/gpu_metal.o src/gpu/gpu_metal_impl.o src/gpu/gpu_cuda.o src/gpu/gpu_rocm.o -L/usr/local/pgsql.18/lib  -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.4.sdk   -L/opt/homebrew/opt/openssl@3/lib -L/opt/homebrew/opt/icu4c/lib -Wl,-dead_strip_dylibs   -fvisibility=hidden -framework Metal -framework MetalPerformanceShaders -framework Accelerate -framework Foundation -lm -lz -lcrypto -lcurl -lssl -lpq -bundle_loader /usr/local/pgsql.18/bin/postgres
+Undefined symbols for architecture arm64:
+  "_neurondb_gpu_metal_cleanup", referenced from:
+      _neurondb_gpu_shutdown in gpu_core.o
+  "_neurondb_gpu_metal_cosine_distance", referenced from:
+      _neurondb_gpu_cosine_distance in gpu_distance.o
+  "_neurondb_gpu_metal_device_info", referenced from:
+      _neurondb_gpu_get_device_info in gpu_core.o
+  "_neurondb_gpu_metal_device_name", referenced from:
+      _ndb_gpu_init_if_needed in gpu_core.o
+  "_neurondb_gpu_metal_inner_product", referenced from:
+      _neurondb_gpu_inner_product in gpu_distance.o
+  "_neurondb_gpu_metal_is_available", referenced from:
+      _ndb_gpu_runtime_init in gpu_core.o
+      _ndb_gpu_init_if_needed in gpu_core.o
+      _ndb_gpu_init_if_needed in gpu_core.o
+      _neurondb_gpu_get_device_count in gpu_core.o
+      _neurondb_gpu_get_device_info in gpu_core.o
+      _neurondb_gpu_set_device in gpu_core.o
+      _neurondb_gpu_set_device in gpu_core.o
+      ...
+  "_neurondb_gpu_metal_l2_distance", referenced from:
+      _neurondb_gpu_l2_distance in gpu_distance.o
+ld: symbol(s) not found for architecture arm64
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+make: *** [neurondb.dylib] Error 1
