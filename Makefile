@@ -67,6 +67,7 @@ OBJS += \
 
 # Machine learning (NEW supervised learning modules FIRST for better loading)
 OBJS += \
+	src/ml/ml_unified_api.o \
 	src/ml/ml_ridge_lasso.o \
 	src/ml/ml_random_forest.o \
 	src/ml/ml_svm.o \
@@ -97,6 +98,20 @@ OBJS += \
 	src/ml/ml_topic_discovery.o \
 	src/ml/ml_drift_time.o \
 	src/ml/ml_opq.o \
+	src/ml/ml_automl.o \
+	src/ml/ml_catboost.o \
+	src/ml/ml_deeplearning.o \
+	src/ml/ml_feature_store.o \
+	src/ml/ml_hyperparameter_tuning.o \
+	src/ml/ml_lightgbm.o \
+	src/ml/ml_mlops_advanced.o \
+	src/ml/ml_neural_network.o \
+	src/ml/ml_nlp_production.o \
+	src/ml/ml_rag.o \
+	src/ml/ml_recommender.o \
+	src/ml/ml_text.o \
+	src/ml/ml_timeseries.o \
+	src/ml/ml_xgboost.o \
 	src/ml/model_runtime.o \
 	src/ml/embeddings.o \
 	src/ml/reranking.o

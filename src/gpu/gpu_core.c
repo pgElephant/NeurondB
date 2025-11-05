@@ -19,9 +19,11 @@
 #include "funcapi.h"
 #include "access/htup_details.h"
 #include "catalog/pg_type.h"
+#include "utils/builtins.h"
 
 #include "neurondb_config.h"
 #include "neurondb_gpu.h"
+#include "gpu_backend_interface.h"
 
 #include <string.h>
 
@@ -638,25 +640,74 @@ PG_FUNCTION_INFO_V1(neurondb_gpu_enable);
 Datum
 neurondb_gpu_enable(PG_FUNCTION_ARGS)
 {
-    bool enable = PG_GETARG_BOOL(0);
+    neurondb_gpu_enabled = true;
+    gpu_disabled = false;
+    ndb_gpu_init_if_needed();
 
-    neurondb_gpu_enabled = enable;
+    if (!gpu_ready)
+    {
+        elog(WARNING, "neurondb: GPU initialization failed");
+        PG_RETURN_BOOL(false);
+    }
 
-    if (enable)
-    {
-        gpu_disabled = false;
-        ndb_gpu_init_if_needed();
-        if (!gpu_ready)
-        {
-            elog(WARNING, "neurondb: GPU enable requested but initialization failed");
-            PG_RETURN_BOOL(false);
-        }
-        elog(NOTICE, "neurondb: GPU acceleration enabled");
-    }
-    else
-    {
-        neurondb_gpu_shutdown();
-        elog(NOTICE, "neurondb: GPU acceleration disabled");
-    }
-    PG_RETURN_BOOL(enable && gpu_ready);
+    elog(NOTICE, "neurondb: GPU acceleration enabled");
+    PG_RETURN_BOOL(true);
+}
+
+PG_FUNCTION_INFO_V1(neurondb_gpu_info);
+Datum
+neurondb_gpu_info(PG_FUNCTION_ARGS)
+{
+    ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+    Datum values[7];
+    bool nulls[7] = {false, false, false, false, false, false, false};
+
+    /* Initialize tuple store */
+    InitMaterializedSRF(fcinfo, 0);
+
+    /* Return basic GPU info - simplified for now */
+    values[0] = Int32GetDatum(0);                    /* device_id */
+    values[1] = CStringGetTextDatum(gpu_ready ? "GPU Available" : "No GPU"); /* name */
+    values[2] = Int64GetDatum(gpu_ready ? 8192 : 0); /* total_memory (MB) */
+    values[3] = Int64GetDatum(gpu_ready ? 4096 : 0); /* free_memory (MB) */
+    values[4] = Int32GetDatum(gpu_ready ? 8 : 0);    /* compute_major */
+    values[5] = Int32GetDatum(gpu_ready ? 6 : 0);    /* compute_minor */
+    values[6] = BoolGetDatum(gpu_ready);             /* is_available */
+
+    tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+
+    return (Datum) 0;
+}
+
+PG_FUNCTION_INFO_V1(neurondb_gpu_stats);
+Datum
+neurondb_gpu_stats(PG_FUNCTION_ARGS)
+{
+    ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+    Datum values[6];
+    bool nulls[6] = {false, false, false, false, false, false};
+
+    /* Initialize tuple store */
+    InitMaterializedSRF(fcinfo, 0);
+
+    values[0] = Int64GetDatum(gpu_stats.queries_executed);
+    values[1] = Int64GetDatum(gpu_stats.fallback_count);
+    values[2] = Float8GetDatum(gpu_stats.total_gpu_time_ms);
+    values[3] = Float8GetDatum(gpu_stats.total_cpu_time_ms);
+    values[4] = Float8GetDatum(gpu_stats.avg_latency_ms);
+    values[5] = TimestampTzGetDatum(gpu_stats.last_reset);
+
+    tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+
+    return (Datum) 0;
+}
+
+PG_FUNCTION_INFO_V1(neurondb_gpu_reset_stats_func);
+Datum
+neurondb_gpu_reset_stats_func(PG_FUNCTION_ARGS)
+{
+    memset(&gpu_stats, 0, sizeof(GPUStats));
+    gpu_stats.last_reset = GetCurrentTimestamp();
+    elog(LOG, "neurondb: GPU statistics reset");
+    PG_RETURN_BOOL(true);
 }

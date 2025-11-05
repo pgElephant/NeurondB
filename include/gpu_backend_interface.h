@@ -42,19 +42,7 @@ typedef enum GPUBackendType
 /*
  * GPU Device Information
  */
-typedef struct GPUDeviceInfo
-{
-    int         device_id;
-    char        name[256];
-    uint64_t    total_memory;      /* Total memory in bytes */
-    uint64_t    free_memory;       /* Free memory in bytes */
-    int         compute_major;
-    int         compute_minor;
-    int         max_threads_per_block;
-    int         multiprocessor_count;
-    bool        unified_memory;
-    bool        is_available;
-} GPUDeviceInfo;
+/* GPUDeviceInfo is defined in neurondb_gpu.h */
 
 /*
  * GPU Backend Interface - All backends must implement these functions

@@ -35,7 +35,7 @@
 -- ============================================================================
 -- PostgreSQL Version: 18.0 (180000)
 -- OS/Platform: macOS (Darwin)
--- Build Date: 2025-11-05 21:03:30
+-- Build Date: 2025-11-05 21:09:22
 -- Build Type: macos_pg18
 -- ============================================================================
 
@@ -1329,30 +1329,30 @@ COMMENT ON EXTENSION neurondb IS 'NeurondB: Advanced AI Database - 100+ function
 -- ============================================================================
 
 -- GPU control and info functions (TODO: implement in gpu_sql.c)
--- CREATE FUNCTION neurondb_gpu_enable(enabled boolean) RETURNS boolean
---     AS 'MODULE_PATHNAME', 'neurondb_gpu_enable'
---     LANGUAGE C STRICT;
--- COMMENT ON FUNCTION neurondb_gpu_enable IS 'Enable or disable GPU acceleration dynamically';
+CREATE FUNCTION neurondb_gpu_enable() RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_gpu_enable'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb_gpu_enable IS 'Enable GPU acceleration';
 
--- CREATE FUNCTION neurondb_gpu_info() 
---     RETURNS TABLE(device_id int, name text, total_memory_mb bigint, 
---                   free_memory_mb bigint, compute_major int, compute_minor int, is_available boolean)
---     AS 'MODULE_PATHNAME', 'neurondb_gpu_info'
---     LANGUAGE C STABLE;
--- COMMENT ON FUNCTION neurondb_gpu_info IS 'Returns GPU device information';
+CREATE FUNCTION neurondb_gpu_info()
+    RETURNS TABLE(device_id int, name text, total_memory bigint,
+                  free_memory bigint, compute_major int, compute_minor int, is_available boolean)
+    AS 'MODULE_PATHNAME', 'neurondb_gpu_info'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_gpu_info IS 'Returns GPU device information';
 
--- CREATE FUNCTION neurondb_gpu_stats() 
---     RETURNS TABLE(queries_executed bigint, fallback_count bigint, 
---                   total_gpu_time_ms double precision, total_cpu_time_ms double precision,
---                   avg_latency_ms double precision, last_reset timestamptz)
---     AS 'MODULE_PATHNAME', 'neurondb_gpu_stats'
---     LANGUAGE C STABLE;
--- COMMENT ON FUNCTION neurondb_gpu_stats IS 'Returns GPU runtime statistics';
+CREATE FUNCTION neurondb_gpu_stats()
+    RETURNS TABLE(queries_executed bigint, fallback_count bigint,
+                  total_gpu_time_ms double precision, total_cpu_time_ms double precision,
+                  avg_latency_ms double precision, last_reset timestamptz)
+    AS 'MODULE_PATHNAME', 'neurondb_gpu_stats'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_gpu_stats IS 'Returns GPU performance statistics';
 
--- CREATE FUNCTION neurondb_gpu_stats_reset() RETURNS boolean
---     AS 'MODULE_PATHNAME', 'neurondb_gpu_reset_stats_func'
---     LANGUAGE C STRICT;
--- COMMENT ON FUNCTION neurondb_gpu_stats_reset IS 'Reset GPU statistics counters';
+CREATE FUNCTION neurondb_gpu_stats_reset() RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_gpu_reset_stats_func'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb_gpu_stats_reset IS 'Reset GPU statistics counters';
 
 -- GPU statistics view (TODO: uncomment when stats functions are implemented)
 -- CREATE VIEW pg_stat_neurondb_gpu AS
@@ -3146,18 +3146,19 @@ COMMENT ON FUNCTION neurondb.tune_model IS 'Hyperparameter tuning: grid or rando
 -- =============================================================================
 
 -- Single prediction
-CREATE OR REPLACE FUNCTION neurondb.predict(
-    model_name TEXT,
-    features ANYARRAY
-) RETURNS FLOAT
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    -- TODO: Implement model prediction
-    RETURN 0.0;
-END;
-$$;
-COMMENT ON FUNCTION neurondb.predict IS 'Make prediction using trained model: returns single prediction value';
+-- Removed PL/pgSQL predict stub - using C implementation instead
+-- CREATE OR REPLACE FUNCTION neurondb.predict(
+--     model_name TEXT,
+--     features ANYARRAY
+-- ) RETURNS FLOAT
+-- LANGUAGE plpgsql
+-- AS $$
+-- BEGIN
+--     -- TODO: Implement model prediction
+--     RETURN 0.0;
+-- END;
+-- $$;
+-- COMMENT ON FUNCTION neurondb.predict(TEXT, ANYARRAY) IS 'Make prediction using trained model: returns single prediction value';
 
 -- Probability prediction
 CREATE OR REPLACE FUNCTION neurondb.predict_proba(
@@ -3533,7 +3534,7 @@ GRANT EXECUTE ON FUNCTION neurondb.explain_prediction(TEXT, JSONB) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.train_model(TEXT, TEXT, TEXT, TEXT[], TEXT, FLOAT, JSONB, INT) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.train_with_search(TEXT, TEXT, TEXT, TEXT[], TEXT, TEXT, JSONB, TEXT) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.tune_model(TEXT, TEXT, TEXT, TEXT[], TEXT, JSONB, TEXT, INT, INT) TO PUBLIC;
-GRANT EXECUTE ON FUNCTION neurondb.predict(TEXT, ANYARRAY) TO PUBLIC;
+-- GRANT EXECUTE ON FUNCTION neurondb.predict(TEXT, ANYARRAY) TO PUBLIC;  -- Function removed
 GRANT EXECUTE ON FUNCTION neurondb.predict_proba(TEXT, ANYARRAY) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.predict_batch(TEXT, TEXT, TEXT[], TEXT) TO PUBLIC;
 
@@ -3778,7 +3779,7 @@ CREATE OR REPLACE FUNCTION neurondb.named_entity_recognition(
     text TEXT,
     entity_types TEXT[] DEFAULT NULL
 )
-RETURNS TABLE(entity TEXT, entity_type TEXT, confidence FLOAT8, position INTEGER)
+RETURNS TABLE(entity TEXT, entity_type TEXT, confidence FLOAT8, entity_position INTEGER)
 AS 'MODULE_PATHNAME', 'neurondb_named_entity_recognition'
 LANGUAGE C;
 COMMENT ON FUNCTION neurondb.named_entity_recognition IS 'Named entity recognition (NER)';

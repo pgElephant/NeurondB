@@ -52,7 +52,7 @@ typedef struct NERResult
     char    entity[MAX_ENTITY_LEN];
     char    entity_type[MAX_ENTITY_TYPE];
     float4  confidence;
-    int32   position;
+    int32   entity_position;
 } NERResult;
 
 typedef struct SentimentResult
@@ -476,7 +476,7 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
                     strlcpy(entities[n_entities].entity, dbent, MAX_ENTITY_LEN);
                     strlcpy(entities[n_entities].entity_type, type, MAX_ENTITY_TYPE);
                     entities[n_entities].confidence = conf;
-                    entities[n_entities].position = t + 1;
+                    entities[n_entities].entity_position = t + 1;
                     n_entities++;
                 }
                 pfree(dbent);
@@ -538,7 +538,7 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
             values[0] = CStringGetTextDatum(entities[funcctx->call_cntr].entity);
             values[1] = CStringGetTextDatum(entities[funcctx->call_cntr].entity_type);
             values[2] = Float4GetDatum(entities[funcctx->call_cntr].confidence);
-            values[3] = Int32GetDatum(entities[funcctx->call_cntr].position);
+            values[3] = Int32GetDatum(entities[funcctx->call_cntr].entity_position);
 
             if (funcctx->tuple_desc == NULL)
             {
@@ -546,7 +546,7 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
                 TupleDescInitEntry(desc, (AttrNumber) 1, "entity", TEXTOID, -1, 0);
                 TupleDescInitEntry(desc, (AttrNumber) 2, "entity_type", TEXTOID, -1, 0);
                 TupleDescInitEntry(desc, (AttrNumber) 3, "confidence", FLOAT4OID, -1, 0);
-                TupleDescInitEntry(desc, (AttrNumber) 4, "position", INT4OID, -1, 0);
+                TupleDescInitEntry(desc, (AttrNumber) 4, "entity_position", INT4OID, -1, 0);
                 funcctx->tuple_desc = BlessTupleDesc(desc);
             }
             tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
