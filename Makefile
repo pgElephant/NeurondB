@@ -285,7 +285,7 @@ src/gpu/gpu_metal_impl.o: src/gpu/gpu_metal_impl.m
 	$(CC) $(filter-out -I/usr/local/include, $(PG_CPPFLAGS)) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
 
 # Optimization flags for production with SIMD
-PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -I/usr/include -isystem /usr/local/pgsql.18/include \
+PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -I/usr/include \
                -march=native -O3 -Wall -Wextra \
                -fno-math-errno -fstrict-aliasing -funroll-loops \
                -fomit-frame-pointer -ffp-contract=fast -fopenmp-simd \
@@ -332,7 +332,7 @@ ifeq ($(shell uname -s),Darwin)
 	# Keep default linking for now
 endif
 
-PG_CONFIG ?= /usr/local/pgsql.18/bin/pg_config
+PG_CONFIG ?= /usr/local/pgsql.16/bin/pg_config
 # Generate SQL file from template before build
 neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile.header
 	$(eval include Makefile.header)
@@ -373,7 +373,7 @@ all: neurondb--1.0.sql metal-shaders
 ONNX_RUNTIME_PATH = /usr/local/onnxruntime
 ifneq ($(wildcard $(ONNX_RUNTIME_PATH)),)
     PG_CPPFLAGS += -I$(ONNX_RUNTIME_PATH)/include -DHAVE_ONNX_RUNTIME
-    SHLIB_LINK += -L$(ONNX_RUNTIME_PATH)/lib -lonnxruntime
+    SHLIB_LINK += -L$(ONNX_RUNTIME_PATH)/lib -lonnxruntime -Wl,-rpath $(ONNX_RUNTIME_PATH)/lib
     $(info ✓ ONNX Runtime found at $(ONNX_RUNTIME_PATH))
 else
     $(warning ⚠ ONNX Runtime not found at $(ONNX_RUNTIME_PATH) - building without HuggingFace support)

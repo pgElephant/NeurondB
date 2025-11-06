@@ -49,15 +49,15 @@
 #include "utils/memutils.h"
 #include "neurondb_onnx.h"
 
-#ifdef HAVE_ONNX_RUNTIME
-
-#include <onnxruntime_c_api.h>
-
-/* ---- Global Configuration Variables (GUC) ---- */
+/* ---- Global Configuration Variables (GUC) - Always available ---- */
 char	   *neurondb_onnx_model_path = NULL;   /* Base dir for ONNX model files   */
 bool		neurondb_onnx_use_gpu = true;      /* Prefer GPU EPs if possible      */
 int			neurondb_onnx_threads = 4;         /* Intra-op thread count           */
 int			neurondb_onnx_cache_size = 10;     /* Max number of cached sessions   */
+
+#ifdef HAVE_ONNX_RUNTIME
+
+#include <onnxruntime_c_api.h>
 
 /* ---- Global ONNX API objects ---- */
 static const OrtApi *g_ort_api = NULL;         /* ONNX Runtime C API Instance */
