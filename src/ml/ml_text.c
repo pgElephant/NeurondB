@@ -158,7 +158,7 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
         category_counts = (int *) palloc0(sizeof(int) * MAX_CATEGORIES);
 
         /* Fill category names (de-duplication) */
-        for (r = 0; r < SPI_processed; r++)
+        for (r = 0; r < (int)SPI_processed; r++)
         {
             HeapTuple   tuple = SPI_tuptable->vals[r];
             TupleDesc   tupdesc = SPI_tuptable->tupdesc;
@@ -188,7 +188,7 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
         }
 
         /* Tally up word matches for each category */
-        for (r = 0; r < SPI_processed; r++)
+        for (r = 0; r < (int)SPI_processed; r++)
         {
             HeapTuple   tuple = SPI_tuptable->vals[r];
             TupleDesc   tupdesc = SPI_tuptable->tupdesc;
@@ -329,7 +329,7 @@ neurondb_sentiment_analysis(PG_FUNCTION_ARGS)
         for (t = 0; t < num_tokens; t++)
         {
             bool found = false;
-            for (r = 0; r < SPI_processed; r++)
+            for (r = 0; r < (int)SPI_processed; r++)
             {
                 HeapTuple   tuple = SPI_tuptable->vals[r];
                 TupleDesc   tupdesc = SPI_tuptable->tupdesc;
@@ -464,7 +464,7 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 
         for (t = 0; t < num_tokens && n_entities < MAX_ENTITIES; t++)
         {
-            for (r = 0; r < SPI_processed && n_entities < MAX_ENTITIES; r++)
+            for (r = 0; r < (int)SPI_processed && n_entities < MAX_ENTITIES; r++)
             {
                 HeapTuple   tuple = SPI_tuptable->vals[r];
                 TupleDesc   tupdesc = SPI_tuptable->tupdesc;
@@ -598,7 +598,7 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
         int         scores[MAX_SENTENCES];
         int         n_sentences = 0, written = 0;
         int         used[MAX_SENTENCES];
-        int         ret, s, t;
+        int         ret, s;
 
         memset(used, 0, sizeof(used));
         while (send < len && n_sentences < MAX_SENTENCES)

@@ -42,7 +42,7 @@ PG_FUNCTION_INFO_V1(predict_catboost);
 /*
  * Helper function to get column index in a query result by name.
  */
-static int
+static int __attribute__((unused))
 get_column_index(SPITupleTable *tuptable, TupleDesc tupdesc, const char *colname)
 {
 	int i;
@@ -60,7 +60,7 @@ get_column_index(SPITupleTable *tuptable, TupleDesc tupdesc, const char *colname
 /*
  * Helper to write training data to CSV for CatBoost
  */
-static void
+static void __attribute__((unused))
 write_csv_from_spi(char *csv_path, SPITupleTable *tuptable, TupleDesc tupdesc,
 				   int *feature_idxs, int n_features, int label_idx)
 {
@@ -134,7 +134,7 @@ write_csv_from_spi(char *csv_path, SPITupleTable *tuptable, TupleDesc tupdesc,
 /*
  * Helper function for error translation from CatBoost return codes.
  */
-static void
+static void __attribute__((unused))
 check_catboost_error(int err_code)
 {
 #ifdef CATBOOST_AVAILABLE

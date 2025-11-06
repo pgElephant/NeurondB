@@ -326,7 +326,7 @@ ifeq ($(shell uname -s),Darwin)
 	# Keep default linking for now
 endif
 
-PG_CONFIG ?= pg_config
+PG_CONFIG ?= /usr/local/pgsql.18/bin/pg_config
 # Generate SQL file from template before build
 neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile.header
 	$(eval include Makefile.header)

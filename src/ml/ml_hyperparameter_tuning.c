@@ -63,7 +63,7 @@ generate_grid_combinations(Jsonb *param_grid, List **param_names,
 			if (r == WJB_VALUE && vals_array.type == jbvArray)
 			{
 				List *values = NIL;
-				uint32 i;
+				int i;
 
 				for (i = 0; i < vals_array.val.array.nElems; ++i)
 					values = lappend(values, copyObject(&vals_array.val.array.elems[i]));
@@ -179,7 +179,7 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 
 	{
 		Datum values[3];
-		bool nulls[3] = {false, false, false};
+		char spi_nulls[3] = {false, false, false};
 
 		values[0] = CStringGetTextDatum(algo);
 		values[1] = PointerGetDatum(param_json);
@@ -187,7 +187,7 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 
 		ret = SPI_execute_with_args(cmd.data, 3,
 									(Oid[]) {TEXTOID, JSONBOID, INT4OID},
-									values, nulls, true, 1);
+									values, spi_nulls, true, 1);
 
 		if (ret == SPI_OK_SELECT && SPI_processed == 1)
 		{

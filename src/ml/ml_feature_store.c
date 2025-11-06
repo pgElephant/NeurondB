@@ -278,42 +278,39 @@ neurondb_get_features(PG_FUNCTION_ARGS)
             HeapTuple tuple = SPI_tuptable->vals[0];
             TupleDesc tupdesc = SPI_tuptable->tupdesc;
             int nf = ndefs;
-            JsonbValue *obj_pairs = (JsonbValue *) palloc(sizeof(JsonbValue) * (nf * 2));
-            int objidx = 0;
+            JsonbPair *obj_pairs = (JsonbPair *) palloc(sizeof(JsonbPair) * nf);
             bool isnull;
             for (j = 0; j < ndefs; ++j)
             {
                 Datum feat_val = SPI_getbinval(tuple, tupdesc, j + 2, &isnull);
-                obj_pairs[objidx].type = jbvString;
-                obj_pairs[objidx].val.string.len = strlen(feature_names[j]);
-                obj_pairs[objidx].val.string.val = feature_names[j];
-                objidx++;
+                obj_pairs[j].key.type = jbvString;
+                obj_pairs[j].key.val.string.len = strlen(feature_names[j]);
+                obj_pairs[j].key.val.string.val = feature_names[j];
                 if (isnull)
                 {
-                    obj_pairs[objidx].type = jbvNull;
+                    obj_pairs[j].value.type = jbvNull;
                 }
                 else
                 {
                     /* Numeric and text only */
                     if (strcmp(feature_types[j], "float8") == 0)
                     {
-                        obj_pairs[objidx].type = jbvNumeric;
-                        obj_pairs[objidx].val.numeric = DatumGetNumeric(DirectFunctionCall1(float8_numeric, feat_val));
+                        obj_pairs[j].value.type = jbvNumeric;
+                        obj_pairs[j].value.val.numeric = DatumGetNumeric(DirectFunctionCall1(float8_numeric, feat_val));
                     }
                     else if (strcmp(feature_types[j], "int4") == 0)
                     {
-                        obj_pairs[objidx].type = jbvNumeric;
-                        obj_pairs[objidx].val.numeric = DatumGetNumeric(DirectFunctionCall1(int4_numeric, feat_val));
+                        obj_pairs[j].value.type = jbvNumeric;
+                        obj_pairs[j].value.val.numeric = DatumGetNumeric(DirectFunctionCall1(int4_numeric, feat_val));
                     }
                     else
                     {
                         char *sval = TextDatumGetCString(feat_val);
-                        obj_pairs[objidx].type = jbvString;
-                        obj_pairs[objidx].val.string.val = sval;
-                        obj_pairs[objidx].val.string.len = strlen(sval);
+                        obj_pairs[j].value.type = jbvString;
+                        obj_pairs[j].value.val.string.val = sval;
+                        obj_pairs[j].value.val.string.len = strlen(sval);
                     }
                 }
-                objidx++;
             }
             /* Now build {"entity_id": {feature1: v1, ...}} */
             ent_key_jbv.type = jbvString;
@@ -333,16 +330,13 @@ neurondb_get_features(PG_FUNCTION_ARGS)
         {
             /* entity row not found: return nulls for all features */
             int nf = ndefs;
-            JsonbValue *obj_pairs = (JsonbValue *) palloc(sizeof(JsonbValue) * (nf * 2));
-            int objidx = 0;
+            JsonbPair *obj_pairs = (JsonbPair *) palloc(sizeof(JsonbPair) * nf);
             for (j = 0; j < ndefs; ++j)
             {
-                obj_pairs[objidx].type = jbvString;
-                obj_pairs[objidx].val.string.len = strlen(feature_names[j]);
-                obj_pairs[objidx].val.string.val = feature_names[j];
-                objidx++;
-                obj_pairs[objidx].type = jbvNull;
-                objidx++;
+                obj_pairs[j].key.type = jbvString;
+                obj_pairs[j].key.val.string.len = strlen(feature_names[j]);
+                obj_pairs[j].key.val.string.val = feature_names[j];
+                obj_pairs[j].value.type = jbvNull;
             }
             ent_key_jbv.type = jbvString;
             ent_key_jbv.val.string.val = eid;

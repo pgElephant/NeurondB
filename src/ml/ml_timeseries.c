@@ -533,6 +533,7 @@ forecast_arima(PG_FUNCTION_ARGS)
 	}
 
 	arr_elem_type = ARR_ELEMTYPE(ar_coeffs_arr);
+	(void) arr_elem_type;  /* Suppress unused variable warning */
 	ndims = ARR_NDIM(ar_coeffs_arr);
 	Assert(ndims == 1);
 	dims = ARR_DIMS(ar_coeffs_arr);

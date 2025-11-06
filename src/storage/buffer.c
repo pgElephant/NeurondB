@@ -17,6 +17,7 @@
 
 #include "postgres.h"
 #include "neurondb.h"
+#include "neurondb_compat.h"
 #include "fmgr.h"
 #include "utils/builtins.h"
 #include "executor/spi.h"
@@ -71,7 +72,7 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 	{
 		checkpoint_id = 0;
 	}
-		elog(NOTICE, "neurondb: resuming from checkpoint %ld", checkpoint_id);
+		elog(NOTICE, "neurondb: resuming from checkpoint " NDB_INT64_FMT, NDB_INT64_CAST(checkpoint_id));
 	}
 	
 	/* Build index incrementally */
@@ -114,7 +115,7 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 	
 	SPI_finish();
 	
-	elog(NOTICE, "neurondb: processed %ld vectors", vectors_processed);
+	elog(NOTICE, "neurondb: processed " NDB_INT64_FMT " vectors", NDB_INT64_CAST(vectors_processed));
 	
 	PG_RETURN_INT64(vectors_processed);
 }
@@ -169,8 +170,8 @@ save_rebuild_checkpoint(PG_FUNCTION_ARGS)
 	state_str = text_to_cstring(state_json);
 	(void) state_str; /* Used in checkpoint record */
 	
-	elog(DEBUG1, "neurondb: saving checkpoint for '%s' at offset %ld",
-		 idx_str, vector_offset);
+	elog(DEBUG1, "neurondb: saving checkpoint for '%s' at offset " NDB_INT64_FMT,
+		 idx_str, NDB_INT64_CAST(vector_offset));
 	
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,

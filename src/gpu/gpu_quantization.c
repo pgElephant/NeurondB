@@ -258,6 +258,9 @@ neurondb_gpu_quantize_int8(const float *input, int8 *output, int count)
     }
     float scale = (max_abs > 0.0f) ? (127.0f / max_abs) : 1.0f;
 
+    /* Suppress unused variable warning - will be used when GPU implementation is complete */
+    (void) scale;
+
 #ifdef NDB_GPU_CUDA
     if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA) {
         float *d_input = NULL;
@@ -328,6 +331,9 @@ neurondb_gpu_quantize_binary(const float *input, uint8 *output, int count)
         return;
 
     int num_bytes = (count + 7) / 8; // How many output bytes needed
+
+    /* Suppress unused variable warning - will be used when GPU implementation is complete */
+    (void) num_bytes;
 
 #ifdef NDB_GPU_CUDA
     if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA) {

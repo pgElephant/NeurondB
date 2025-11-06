@@ -191,7 +191,7 @@ find_best_split(float **X, double *y, int *indices, int n_samples, int dim,
 /*
  * Build decision tree recursively
  */
-static TreeNode *
+static TreeNode * __attribute__((unused))
 build_tree(float **X, double *y, int *indices, int n_samples, int dim,
 		   int max_depth, int min_samples_split, bool is_classification)
 {
@@ -296,7 +296,7 @@ build_tree(float **X, double *y, int *indices, int n_samples, int dim,
 /*
  * Predict using decision tree
  */
-static double
+static double __attribute__((unused))
 tree_predict(TreeNode *node, float *x)
 {
 	if (node->is_leaf)
@@ -324,6 +324,27 @@ train_decision_tree_classifier(PG_FUNCTION_ARGS)
 	text	   *label_col;
 	int			max_depth = PG_GETARG_INT32(3);
 	int			min_samples_split = PG_GETARG_INT32(4);
+
+	/* Get arguments */
+	table_name = PG_GETARG_TEXT_PP(0);
+	feature_col = PG_GETARG_TEXT_PP(1);
+	label_col = PG_GETARG_TEXT_PP(2);
+
+	/* Validate inputs */
+	if (table_name == NULL)
+		ereport(ERROR, (errmsg("table_name cannot be null")));
+	if (feature_col == NULL)
+		ereport(ERROR, (errmsg("feature_col cannot be null")));
+	if (label_col == NULL)
+		ereport(ERROR, (errmsg("label_col cannot be null")));
+	if (max_depth <= 0)
+		ereport(ERROR, (errmsg("max_depth must be positive")));
+	if (min_samples_split < 2)
+		ereport(ERROR, (errmsg("min_samples_split must be at least 2")));
+
+	elog(DEBUG1, "Training decision tree on table %s (%s, %s) with max_depth=%d, min_samples_split=%d",
+		 text_to_cstring(table_name), text_to_cstring(feature_col),
+		 text_to_cstring(label_col), max_depth, min_samples_split);
 	
 	/* For now, return a simple status */
 	/* Full implementation would serialize the tree structure */

@@ -45,7 +45,7 @@ linear_kernel(float *x, float *y, int dim)
 /*
  * RBF kernel: K(x, y) = exp(-gamma * ||x - y||^2)
  */
-static double
+static double __attribute__((unused))
 rbf_kernel(float *x, float *y, int dim, double gamma)
 {
 	double dist_sq = 0.0;
@@ -248,7 +248,30 @@ predict_svm(PG_FUNCTION_ARGS)
 	text	   *feature_col;
 	text	   *label_col;
 	Vector	   *query_vec;
-	
+
+	/* Get arguments */
+	model_params = PG_GETARG_ARRAYTYPE_P(0);
+	train_table = PG_GETARG_TEXT_PP(1);
+	feature_col = PG_GETARG_TEXT_PP(2);
+	label_col = PG_GETARG_TEXT_PP(3);
+	query_vec = PG_GETARG_VECTOR_P(4);
+
+	/* Validate inputs */
+	if (model_params == NULL)
+		ereport(ERROR, (errmsg("model_params cannot be null")));
+	if (train_table == NULL)
+		ereport(ERROR, (errmsg("train_table cannot be null")));
+	if (feature_col == NULL)
+		ereport(ERROR, (errmsg("feature_col cannot be null")));
+	if (label_col == NULL)
+		ereport(ERROR, (errmsg("label_col cannot be null")));
+	if (query_vec == NULL)
+		PG_RETURN_NULL();
+
+	elog(DEBUG1, "SVM prediction on table %s (%s, %s) with %d features",
+		 text_to_cstring(train_table), text_to_cstring(feature_col),
+		 text_to_cstring(label_col), query_vec->dim);
+
 	/* Simplified: just return 0 or 1 */
 	/* Full implementation would use support vectors */
 	

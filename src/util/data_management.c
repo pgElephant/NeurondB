@@ -17,6 +17,7 @@
 
 #include "postgres.h"
 #include "neurondb.h"
+#include "neurondb_compat.h"
 #include "fmgr.h"
 #include "funcapi.h"
 #include "utils/builtins.h"
@@ -60,7 +61,6 @@ vector_time_travel(PG_FUNCTION_ARGS)
 	struct pg_tm	tm;
 	fsec_t			fsec;
 	bool			table_exists = false;
-	Oid             nspOid;
 	Datum			count_datum;
 	bool			isnull;
 	MemoryContext	oldcontext, tmpcontext;
@@ -172,8 +172,8 @@ vector_time_travel(PG_FUNCTION_ARGS)
 
 	initStringInfo(&result_msg);
 	appendStringInfo(&result_msg,
-		"Time-travel query on table \"%s\" as of %s: Found %ld valid historical vectors.",
-		tbl_str, timebuf, row_count);
+		"Time-travel query on table \"%s\" as of %s: Found " NDB_INT64_FMT " valid historical vectors.",
+		tbl_str, timebuf, NDB_INT64_CAST(row_count));
 
 	elog(NOTICE, "%s", result_msg.data);
 
@@ -326,7 +326,7 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 		if (!isnull)
 			compressed_count = DatumGetInt64(d);
 	}
-	elog(NOTICE, "neurondb: found %ld vector(s) older than threshold for compression in %s", compressed_count, tbl_str);
+	elog(NOTICE, "neurondb: found " NDB_INT64_FMT " vector(s) older than threshold for compression in %s", NDB_INT64_CAST(compressed_count), tbl_str);
 
 	/* Step 3: If there are candidates, compress/move up to 1000 in a batch */
 	if (compressed_count > 0)
@@ -362,7 +362,7 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 				moved_count = compressed_count - DatumGetInt64(d); /* assuming exactly correspondence for batch */
 		}
 
-		elog(NOTICE, "neurondb: attempted to move %ld vectors; %ld records processed", compressed_count, moved_count);
+		elog(NOTICE, "neurondb: attempted to move " NDB_INT64_FMT " vectors; " NDB_INT64_FMT " records processed", NDB_INT64_CAST(compressed_count), NDB_INT64_CAST(moved_count));
 
 		/* Mark original rows as compressed in the main table */
 		resetStringInfo(&sql);
@@ -424,7 +424,6 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 	int64			cleaned_count = 0;
 	int64           orphan_count = 0;
 	int				ret;
-	bool			table_exists = false;
 	Datum			dead_datum;
 	Datum			live_datum;
 	bool			isnull;
@@ -483,7 +482,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 		live_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull);
 		if (!isnull)
 			live_tuples = DatumGetInt64(live_datum);
-		elog(NOTICE, "neurondb: \"%s\" before vacuum - dead tuples: %ld, live: %ld", tbl_str, dead_tuples, live_tuples);
+		elog(NOTICE, "neurondb: \"%s\" before vacuum - dead tuples: %lld, live: %lld", tbl_str, dead_tuples, live_tuples);
 	}
 	pfree(stat_sql.data);
 
@@ -507,7 +506,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 	cleaned_count += orphan_count;
 	pfree(sql.data);
 
-	elog(NOTICE, "neurondb: removed %ld orphaned vectors from \"%s\"", orphan_count, tbl_str);
+	elog(NOTICE, "neurondb: removed %lld orphaned vectors from \"%s\"", orphan_count, tbl_str);
 
 	/* Step 3: Issue PostgreSQL VACUUM (FULL/standard as specified) */
 	initStringInfo(&sql);
@@ -549,7 +548,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 		"           CASE WHEN COUNT(*) > 0 THEN AVG(vector_dims(embedding)) ELSE 0 END AS avg_dim "
 		"    FROM %s)"
 		"INSERT INTO neurondb_vector_stats (table_name, num_vectors, avg_dimension, dead_tuples_cleaned, last_vacuum) "
-		"SELECT '%s', n, avg_dim, %ld, now() FROM stats "
+		"SELECT '%s', n, avg_dim, %lld, now() FROM stats "
 		"ON CONFLICT (table_name) DO UPDATE SET "
 		"  num_vectors = excluded.num_vectors, "
 		"  avg_dimension = excluded.avg_dimension, "
@@ -563,7 +562,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 	/* Generate and emit overall statistics and status */
 	initStringInfo(&statmsg);
 	appendStringInfo(&statmsg,
-		"VACUUM completed for \"%s\": Dead tuples cleaned: %ld, Orphaned tuples removed: %ld. Table is now optimized.",
+		"VACUUM completed for \"%s\": Dead tuples cleaned: %lld, Orphaned tuples removed: %lld. Table is now optimized.",
 		tbl_str, dead_tuples, orphan_count);
 	elog(NOTICE, "%s", statmsg.data);
 
@@ -691,7 +690,7 @@ rebalance_index(PG_FUNCTION_ARGS)
 		/* Ignore balance factor because we are about to update it */
 	}
 
-	elog(NOTICE, "neurondb: index \"%s\" original: %ld nodes", idx_str, total_nodes);
+	elog(NOTICE, "neurondb: index \"%s\" original: %lld nodes", idx_str, total_nodes);
 
 	/*
 	 * In a full implementation we would:
@@ -707,8 +706,8 @@ rebalance_index(PG_FUNCTION_ARGS)
 	appendStringInfo(&sql,
 		"INSERT INTO neurondb_index_metadata "
 		"(index_name, index_type, num_nodes, balance_factor, last_rebalance, metadata) "
-		"VALUES ('%s', 'HNSW', %ld, %.6f, now(), "
-		"        jsonb_build_object('rebalanced_edges', %ld, 'target_balance', %.3f)) "
+		"VALUES ('%s', 'HNSW', %lld, %.6f, now(), "
+		"        jsonb_build_object('rebalanced_edges', %lld, 'target_balance', %.3f)) "
 		"ON CONFLICT (index_name) DO UPDATE SET "
 		"   balance_factor = EXCLUDED.balance_factor, "
 		"   last_rebalance = now(), "
@@ -720,7 +719,7 @@ rebalance_index(PG_FUNCTION_ARGS)
 	if (ret < 0)
 		elog(WARNING, "neurondb: updating index metadata failed for \"%s\"", idx_str);
 
-	elog(NOTICE, "neurondb: rebalanced (simulated) %ld edges in index \"%s\" (target balance=%.3f)", rebalanced_edges, idx_str, target_balance);
+	elog(NOTICE, "neurondb: rebalanced (simulated) %lld edges in index \"%s\" (target balance=%.3f)", rebalanced_edges, idx_str, target_balance);
 
 	pfree(sql.data);
 	pfree(idx_str);

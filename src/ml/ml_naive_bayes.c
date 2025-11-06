@@ -300,6 +300,7 @@ predict_naive_bayes(PG_FUNCTION_ARGS)
 				(errmsg("Model parameters must be 1-dimensional array")));
 	
 	n_params = ARR_DIMS(model_params)[0];
+	(void) n_params;  /* Suppress unused variable warning */
 	params = (float8 *) ARR_DATA_PTR(model_params);
 	
 	n_classes = (int) params[0];

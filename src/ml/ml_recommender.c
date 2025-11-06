@@ -270,7 +270,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
     /* Insert factors into tables */
     Oid    arg_types[3] = {INT8OID, INT4OID, 1021}; /* float4[] is 1021 */
     Datum  values[3];
-    bool   nulls[3] = {false, false, false};
+    char   nulls[3] = {false, false, false};
     ArrayType *array;
     int     j;
 

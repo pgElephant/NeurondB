@@ -59,6 +59,7 @@ extern int      neurondb_gpu_streams;
 extern double   neurondb_gpu_memory_pool_mb;
 extern bool     neurondb_gpu_fail_open;
 extern char     *neurondb_gpu_kernels;
+extern char     *neurondb_gpu_backend;
 extern int      neurondb_gpu_timeout_ms;
 
 /*==================*/

@@ -16,6 +16,7 @@
  */
 
 #include "postgres.h"
+#include "neurondb_compat.h"
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "postmaster/bgworker.h"
@@ -417,7 +418,7 @@ rotate_caches(void)
 
 		SPI_execute(sql.data, false, 0);
 
-		elog(DEBUG1, "neurondb: rotated cache (removed %lu entries)", SPI_processed);
+		elog(DEBUG1, "neurondb: rotated cache (removed " NDB_UINT64_FMT " entries)", NDB_UINT64_CAST(SPI_processed));
 
 		pfree(sql.data);
 	}
@@ -513,16 +514,16 @@ export_prometheus_metrics(void)
 		appendStringInfo(&sql,
 			"INSERT INTO neurondb.neurondb_prometheus_metrics (metric_name, metric_value) "
 			"VALUES "
-			"  ('neurondb_queries_sampled_total', %ld), "
-			"  ('neurondb_adjustments_made_total', %ld), "
+			"  ('neurondb_queries_sampled_total', " NDB_INT64_FMT "), "
+			"  ('neurondb_adjustments_made_total', " NDB_INT64_FMT "), "
 			"  ('neurondb_avg_latency_ms', %.2f), "
 			"  ('neurondb_avg_recall', %.3f), "
 			"  ('neurondb_current_ef_search', %d) "
 			"ON CONFLICT (metric_name) DO UPDATE SET "
 			"  metric_value = EXCLUDED.metric_value, "
 			"  last_updated = now()",
-			neuranmon_state->queries_sampled,
-			neuranmon_state->adjustments_made,
+			NDB_INT64_CAST(neuranmon_state->queries_sampled),
+			NDB_INT64_CAST(neuranmon_state->adjustments_made),
 			neuranmon_state->avg_latency_ms,
 			neuranmon_state->avg_recall,
 			neuranmon_state->current_ef_search);

@@ -74,7 +74,6 @@ dbscan_region_query(const DBSCANState *state, int idx, int *neighbor_count)
 static void
 dbscan_expand_cluster(DBSCANState *state, int point_idx, int *neighbors, int neighbor_count, int cluster_id)
 {
-	int			i;
 	int		   *seeds;
 	int			seed_count;
 	int			seed_idx;

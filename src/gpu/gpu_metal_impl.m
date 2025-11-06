@@ -34,6 +34,21 @@ static id<MTLCommandQueue> metal_command_queue = nil;
 static bool metal_initialized = false;
 static uint64_t total_gpu_ops = 0;
 
+/* Forward declarations to avoid missing prototype warnings */
+extern bool metal_backend_init(void);
+extern void metal_backend_cleanup(void);
+extern bool metal_backend_is_available(void);
+extern const char *metal_backend_device_name(void);
+extern float metal_backend_l2_distance(const float *a, const float *b, int dim);
+extern float metal_backend_cosine_distance(const float *a, const float *b, int dim);
+extern float metal_backend_inner_product(const float *a, const float *b, int dim);
+extern void metal_backend_batch_l2(const float *queries, const float *targets, int num_queries, int num_targets, int dim, float *distances);
+extern void metal_backend_device_info(char *name, size_t name_len, uint64_t *total_memory, uint64_t *free_memory);
+extern uint64_t metal_backend_get_operations_count(void);
+extern double metal_backend_get_avg_time_us(void);
+extern void metal_backend_reset_statistics(void);
+extern void metal_backend_get_capabilities(char *caps, size_t caps_len);
+
 /*
  * Initialize Metal backend - Using MPS (no shader compilation needed)
  */

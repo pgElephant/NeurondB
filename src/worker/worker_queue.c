@@ -16,6 +16,7 @@
  */
 
 #include "postgres.h"
+#include "neurondb_compat.h"
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "postmaster/bgworker.h"
@@ -478,7 +479,7 @@ execute_job(int64 job_id, const char *job_type, const char *payload, int tenant_
         if (strcmp(job_type, "embed") == 0)
         {
             /* Embedding generation job */
-            elog(DEBUG2, "neurondb: processing embed job %ld: %s", job_id, payload);
+            elog(DEBUG2, "neurondb: processing embed job " NDB_INT64_FMT ": %s", NDB_INT64_CAST(job_id), payload);
             /* Call embedding generation function */
             /* For now, just mark as success */
             success = true;
@@ -486,30 +487,30 @@ execute_job(int64 job_id, const char *job_type, const char *payload, int tenant_
         else if (strcmp(job_type, "rerank") == 0)
         {
             /* Reranking job */
-            elog(DEBUG2, "neurondb: processing rerank job %ld", job_id);
+            elog(DEBUG2, "neurondb: processing rerank job " NDB_INT64_FMT, NDB_INT64_CAST(job_id));
             success = true;
         }
         else if (strcmp(job_type, "cache_refresh") == 0)
         {
             /* Cache refresh job */
-            elog(DEBUG2, "neurondb: processing cache_refresh job %ld", job_id);
+            elog(DEBUG2, "neurondb: processing cache_refresh job " NDB_INT64_FMT, NDB_INT64_CAST(job_id));
             success = true;
         }
         else if (strcmp(job_type, "http_call") == 0)
         {
             /* External HTTP API call */
-            elog(DEBUG2, "neurondb: processing http_call job %ld", job_id);
+            elog(DEBUG2, "neurondb: processing http_call job " NDB_INT64_FMT, NDB_INT64_CAST(job_id));
             success = true;
         }
         else
         {
-            elog(WARNING, "neurondb: unknown job type '%s' for job %ld", job_type, job_id);
+            elog(WARNING, "neurondb: unknown job type '%s' for job " NDB_INT64_FMT, job_type, NDB_INT64_CAST(job_id));
             success = false;
         }
     }
     PG_CATCH();
     {
-        elog(WARNING, "neurondb: exception executing job %ld (type: %s)", job_id, job_type);
+        elog(WARNING, "neurondb: exception executing job " NDB_INT64_FMT " (type: %s)", NDB_INT64_CAST(job_id), job_type);
         FlushErrorState();
         success = false;
     }

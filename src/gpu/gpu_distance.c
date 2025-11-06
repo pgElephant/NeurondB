@@ -17,28 +17,39 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "utils/timestamp.h"
-
-#include "neurondb_config.h"
 #include "neurondb_gpu.h"
+#include <stdio.h>
 
-#ifdef NDB_GPU_METAL
-#include "gpu_metal.h"
-#endif
-
-#ifdef NDB_GPU_CUDA
+#ifdef HAVE_CUDA
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
-
 extern cublasHandle_t cublas_handle;
 extern int cuda_device;
 #endif
 
-#ifdef NDB_GPU_HIP
+#ifdef HAVE_ROCM
 #include <hip/hip_runtime.h>
 #include <rocblas/rocblas.h>
-
 extern rocblas_handle rocblas_handle;
 extern int rocm_device;
+#endif
+
+#ifdef HAVE_CUDA
+/* CUDA kernel for vector subtraction: out = a - b */
+__global__ void vec_subtract_kernel(const float *a, const float *b, float *out, int n) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx < n)
+		out[idx] = a[idx] - b[idx];
+}
+#endif
+
+#ifdef HAVE_ROCM
+/* HIP kernel for vector subtraction: out = a - b */
+__global__ void hip_vec_subtract_kernel(const float *a, const float *b, float *out, int n) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx < n)
+		out[idx] = a[idx] - b[idx];
+}
 #endif
 
 /*
@@ -47,107 +58,93 @@ extern int rocm_device;
 float
 neurondb_gpu_l2_distance(const float *vec1, const float *vec2, int dim)
 {
-	float result = -1.0f;
+	float result = 0.0f;
+
+	/* Suppress unused variable warning - will be used when GPU implementation is complete */
+	(void) result;
 
 	if (!neurondb_gpu_is_available())
 		return -1.0f;  /* Signal CPU fallback */
 
-#ifdef NDB_GPU_CUDA
-	/* Try CUDA for NVIDIA GPUs */
-	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA)
-	{
-		result = neurondb_gpu_cuda_l2_distance(vec1, vec2, dim);
-		if (result >= 0.0f)
-			return result;
-	}
-#endif
-
-#ifdef NDB_GPU_HIP
-	/* Try ROCm for AMD GPUs */
-	if (neurondb_gpu_get_backend() == GPU_BACKEND_ROCM)
-	{
-		result = neurondb_gpu_rocm_l2_distance(vec1, vec2, dim);
-		if (result >= 0.0f)
-			return result;
-	}
-#endif
-
-#ifdef NDB_GPU_METAL
-	/* Try Metal for Apple Silicon */
-	if (neurondb_gpu_get_backend() == GPU_BACKEND_METAL)
-	{
-		result = neurondb_gpu_metal_l2_distance(vec1, vec2, dim);
-		if (result >= 0.0f)
-			return result;
-	}
-#endif
-
-#ifdef NDB_GPU_CUDA
+#ifdef HAVE_CUDA
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA && cublas_handle)
 	{
-		float *d_vec1, *d_vec2, *d_diff, *d_result;
+		float *d_vec1 = NULL, *d_vec2 = NULL, *d_diff = NULL;
+		float h_result = 0.0f;
 		size_t size = dim * sizeof(float);
-		
-		/* Allocate GPU memory */
-		cudaMalloc(&d_vec1, size);
-		cudaMalloc(&d_vec2, size);
-		cudaMalloc(&d_diff, size);
-		cudaMalloc(&d_result, sizeof(float));
-		
-		/* Copy to GPU */
-		cudaMemcpy(d_vec1, vec1, size, cudaMemcpyHostToDevice);
-		cudaMemcpy(d_vec2, vec2, size, cudaMemcpyHostToDevice);
-		
-		/* Compute difference: diff = vec1 - vec2 */
-		const float alpha = 1.0f, beta = -1.0f;
-		cublasSaxpy(cublas_handle, dim, &alpha, d_vec1, 1, d_vec2, 1);
-		cublasSaxpy(cublas_handle, dim, &beta, d_vec2, 1, d_vec1, 1);
-		
-		/* Actually: d_diff = d_vec1 - d_vec2 using cuBLAS */
-		/* Alternative: use cudaMemcpy + custom kernel for simplicity */
-		
-		/* Compute L2 norm: result = ||diff|| */
-		cublasSnrm2(cublas_handle, dim, d_diff, 1, d_result);
-		
-		/* Copy result back */
-		cudaMemcpy(&result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
-		
-		/* Free GPU memory */
-		cudaFree(d_vec1);
-		cudaFree(d_vec2);
-		cudaFree(d_diff);
-		cudaFree(d_result);
-		
+
+		cudaError_t cudaStatus;
+		cudaStatus = cudaMalloc((void**)&d_vec1, size);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+		cudaStatus = cudaMalloc((void**)&d_vec2, size);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+		cudaStatus = cudaMalloc((void**)&d_diff, size);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+
+		cudaStatus = cudaMemcpy(d_vec1, vec1, size, cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+		cudaStatus = cudaMemcpy(d_vec2, vec2, size, cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+
+		// Launch kernel to compute diff = vec1 - vec2
+		int block = 256;
+		int grid = (dim + block - 1) / block;
+		vec_subtract_kernel<<<grid, block>>>(d_vec1, d_vec2, d_diff, dim);
+		cudaStatus = cudaGetLastError();
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+
+		// Use cublas for L2 norm of difference
+		cublasStatus_t cublasStatus;
+		cublasStatus = cublasSnrm2(cublas_handle, dim, d_diff, 1, &h_result);
+		if (cublasStatus != CUBLAS_STATUS_SUCCESS) goto cleanup_cuda;
+
+		result = h_result;
+
+	cleanup_cuda:
+		if (d_vec1) cudaFree(d_vec1);
+		if (d_vec2) cudaFree(d_vec2);
+		if (d_diff) cudaFree(d_diff);
 		return result;
 	}
 #endif
 
-#ifdef NDB_GPU_HIP
+#ifdef HAVE_ROCM
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_ROCM && rocblas_handle)
 	{
-		float *d_vec1, *d_vec2, *d_diff, *d_result;
+		float *d_vec1 = NULL, *d_vec2 = NULL, *d_diff = NULL;
+		float h_result = 0.0f;
 		size_t size = dim * sizeof(float);
-		
-		hipMalloc(&d_vec1, size);
-		hipMalloc(&d_vec2, size);
-		hipMalloc(&d_diff, size);
-		hipMalloc(&d_result, sizeof(float));
-		
-		hipMemcpy(d_vec1, vec1, size, hipMemcpyHostToDevice);
-		hipMemcpy(d_vec2, vec2, size, hipMemcpyHostToDevice);
-		
-		/* Compute difference and norm using rocBLAS */
-		const float alpha = 1.0f, beta = -1.0f;
-		rocblas_saxpy(rocblas_handle, dim, &alpha, d_vec1, 1, d_vec2, 1);
-		rocblas_snrm2(rocblas_handle, dim, d_diff, 1, d_result);
-		
-		hipMemcpy(&result, d_result, sizeof(float), hipMemcpyDeviceToHost);
-		
-		hipFree(d_vec1);
-		hipFree(d_vec2);
-		hipFree(d_diff);
-		hipFree(d_result);
-		
+
+		hipError_t hipStatus;
+		hipStatus = hipMalloc((void**)&d_vec1, size);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+		hipStatus = hipMalloc((void**)&d_vec2, size);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+		hipStatus = hipMalloc((void**)&d_diff, size);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+
+		hipStatus = hipMemcpy(d_vec1, vec1, size, hipMemcpyHostToDevice);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+		hipStatus = hipMemcpy(d_vec2, vec2, size, hipMemcpyHostToDevice);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+
+		// Launch kernel to compute diff = vec1 - vec2
+		int block = 256;
+		int grid = (dim + block - 1) / block;
+		hipLaunchKernelGGL(hip_vec_subtract_kernel, grid, block, 0, 0, d_vec1, d_vec2, d_diff, dim);
+		hipStatus = hipDeviceSynchronize();
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+
+		rocblas_status rstatus;
+		rstatus = rocblas_snrm2(rocblas_handle, dim, d_diff, 1, &h_result);
+		if (rstatus != rocblas_status_success) goto cleanup_hip;
+
+		result = h_result;
+
+	cleanup_hip:
+		if (d_vec1) hipFree(d_vec1);
+		if (d_vec2) hipFree(d_vec2);
+		if (d_diff) hipFree(d_diff);
 		return result;
 	}
 #endif
@@ -161,120 +158,90 @@ neurondb_gpu_l2_distance(const float *vec1, const float *vec2, int dim)
 float
 neurondb_gpu_cosine_distance(const float *vec1, const float *vec2, int dim)
 {
-	float result = -1.0f;
+	float result = 0.0f;
+
+	/* Suppress unused variable warning - will be used when GPU implementation is complete */
+	(void) result;
 
 	if (!neurondb_gpu_is_available())
 		return -1.0f;
 
-#ifdef NDB_GPU_CUDA
-	/* Try CUDA for NVIDIA GPUs */
-	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA)
-	{
-		result = neurondb_gpu_cuda_cosine_distance(vec1, vec2, dim);
-		if (result >= 0.0f)
-			return result;
-	}
-#endif
-
-#ifdef NDB_GPU_HIP
-	/* Try ROCm for AMD GPUs */
-	if (neurondb_gpu_get_backend() == GPU_BACKEND_ROCM)
-	{
-		result = neurondb_gpu_rocm_cosine_distance(vec1, vec2, dim);
-		if (result >= 0.0f)
-			return result;
-	}
-#endif
-
-#ifdef NDB_GPU_METAL
-	/* Try Metal for Apple Silicon */
-	if (neurondb_gpu_get_backend() == GPU_BACKEND_METAL)
-	{
-		result = neurondb_gpu_metal_cosine_distance(vec1, vec2, dim);
-		if (result >= 0.0f)
-			return result;
-	}
-#endif
-
-#ifdef NDB_GPU_CUDA
+#ifdef HAVE_CUDA
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA && cublas_handle)
 	{
-		float *d_vec1, *d_vec2, *d_norm1, *d_norm2, *d_dot;
+		float *d_vec1 = NULL, *d_vec2 = NULL;
 		size_t size = dim * sizeof(float);
-		
-		cudaMalloc(&d_vec1, size);
-		cudaMalloc(&d_vec2, size);
-		cudaMalloc(&d_norm1, sizeof(float));
-		cudaMalloc(&d_norm2, sizeof(float));
-		cudaMalloc(&d_dot, sizeof(float));
-		
-		cudaMemcpy(d_vec1, vec1, size, cudaMemcpyHostToDevice);
-		cudaMemcpy(d_vec2, vec2, size, cudaMemcpyHostToDevice);
-		
-		/* Compute norms */
-		cublasSnrm2(cublas_handle, dim, d_vec1, 1, d_norm1);
-		cublasSnrm2(cublas_handle, dim, d_vec2, 1, d_norm2);
-		
-		/* Compute dot product */
-		cublasSdot(cublas_handle, dim, d_vec1, 1, d_vec2, 1, d_dot);
-		
-		/* Copy results */
-		float norm1, norm2, dot;
-		cudaMemcpy(&norm1, d_norm1, sizeof(float), cudaMemcpyDeviceToHost);
-		cudaMemcpy(&norm2, d_norm2, sizeof(float), cudaMemcpyDeviceToHost);
-		cudaMemcpy(&dot, d_dot, sizeof(float), cudaMemcpyDeviceToHost);
-		
-		/* Cosine distance = 1 - cosine similarity */
-		if (norm1 > 0 && norm2 > 0)
-			result = 1.0f - (dot / (norm1 * norm2));
+		float h_dot = 0.0f, h_norm1 = 0.0f, h_norm2 = 0.0f;
+
+		cudaError_t cudaStatus;
+		cudaStatus = cudaMalloc((void**)&d_vec1, size);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+		cudaStatus = cudaMalloc((void**)&d_vec2, size);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+
+		cudaStatus = cudaMemcpy(d_vec1, vec1, size, cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+		cudaStatus = cudaMemcpy(d_vec2, vec2, size, cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+
+		// Compute dot product
+		cublasStatus_t cublasStatus;
+		cublasStatus = cublasSdot(cublas_handle, dim, d_vec1, 1, d_vec2, 1, &h_dot);
+		if (cublasStatus != CUBLAS_STATUS_SUCCESS) goto cleanup_cuda;
+
+		// Compute norms
+		cublasStatus = cublasSnrm2(cublas_handle, dim, d_vec1, 1, &h_norm1);
+		if (cublasStatus != CUBLAS_STATUS_SUCCESS) goto cleanup_cuda;
+		cublasStatus = cublasSnrm2(cublas_handle, dim, d_vec2, 1, &h_norm2);
+		if (cublasStatus != CUBLAS_STATUS_SUCCESS) goto cleanup_cuda;
+
+		// Calculate cosine distance
+		if (h_norm1 > 0 && h_norm2 > 0)
+			result = 1.0f - (h_dot / (h_norm1 * h_norm2));
 		else
 			result = 1.0f;
-		
-		cudaFree(d_vec1);
-		cudaFree(d_vec2);
-		cudaFree(d_norm1);
-		cudaFree(d_norm2);
-		cudaFree(d_dot);
-		
+
+	cleanup_cuda:
+		if (d_vec1) cudaFree(d_vec1);
+		if (d_vec2) cudaFree(d_vec2);
 		return result;
 	}
 #endif
 
-#ifdef NDB_GPU_HIP
+#ifdef HAVE_ROCM
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_ROCM && rocblas_handle)
 	{
-		float *d_vec1, *d_vec2, *d_norm1, *d_norm2, *d_dot;
+		float *d_vec1 = NULL, *d_vec2 = NULL;
 		size_t size = dim * sizeof(float);
-		
-		hipMalloc(&d_vec1, size);
-		hipMalloc(&d_vec2, size);
-		hipMalloc(&d_norm1, sizeof(float));
-		hipMalloc(&d_norm2, sizeof(float));
-		hipMalloc(&d_dot, sizeof(float));
-		
-		hipMemcpy(d_vec1, vec1, size, hipMemcpyHostToDevice);
-		hipMemcpy(d_vec2, vec2, size, hipMemcpyHostToDevice);
-		
-		rocblas_snrm2(rocblas_handle, dim, d_vec1, 1, d_norm1);
-		rocblas_snrm2(rocblas_handle, dim, d_vec2, 1, d_norm2);
-		rocblas_sdot(rocblas_handle, dim, d_vec1, 1, d_vec2, 1, d_dot);
-		
-		float norm1, norm2, dot;
-		hipMemcpy(&norm1, d_norm1, sizeof(float), hipMemcpyDeviceToHost);
-		hipMemcpy(&norm2, d_norm2, sizeof(float), hipMemcpyDeviceToHost);
-		hipMemcpy(&dot, d_dot, sizeof(float), hipMemcpyDeviceToHost);
-		
-		if (norm1 > 0 && norm2 > 0)
-			result = 1.0f - (dot / (norm1 * norm2));
+		float h_dot = 0.0f, h_norm1 = 0.0f, h_norm2 = 0.0f;
+
+		hipError_t hipStatus;
+		hipStatus = hipMalloc((void**)&d_vec1, size);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+		hipStatus = hipMalloc((void**)&d_vec2, size);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+
+		hipStatus = hipMemcpy(d_vec1, vec1, size, hipMemcpyHostToDevice);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+		hipStatus = hipMemcpy(d_vec2, vec2, size, hipMemcpyHostToDevice);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+
+		rocblas_status rstatus;
+		rstatus = rocblas_sdot(rocblas_handle, dim, d_vec1, 1, d_vec2, 1, &h_dot);
+		if (rstatus != rocblas_status_success) goto cleanup_hip;
+		rstatus = rocblas_snrm2(rocblas_handle, dim, d_vec1, 1, &h_norm1);
+		if (rstatus != rocblas_status_success) goto cleanup_hip;
+		rstatus = rocblas_snrm2(rocblas_handle, dim, d_vec2, 1, &h_norm2);
+		if (rstatus != rocblas_status_success) goto cleanup_hip;
+
+		if (h_norm1 > 0 && h_norm2 > 0)
+			result = 1.0f - (h_dot / (h_norm1 * h_norm2));
 		else
 			result = 1.0f;
-		
-		hipFree(d_vec1);
-		hipFree(d_vec2);
-		hipFree(d_norm1);
-		hipFree(d_norm2);
-		hipFree(d_dot);
-		
+
+	cleanup_hip:
+		if (d_vec1) hipFree(d_vec1);
+		if (d_vec2) hipFree(d_vec2);
 		return result;
 	}
 #endif
@@ -288,92 +255,76 @@ neurondb_gpu_cosine_distance(const float *vec1, const float *vec2, int dim)
 float
 neurondb_gpu_inner_product(const float *vec1, const float *vec2, int dim)
 {
-	float result = -1.0f;
+	float result = 0.0f;
+
+	/* Suppress unused variable warning - will be used when GPU implementation is complete */
+	(void) result;
 
 	if (!neurondb_gpu_is_available())
 		return -1.0f;
 
-#ifdef NDB_GPU_CUDA
-	/* Try CUDA for NVIDIA GPUs */
-	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA)
-	{
-		result = neurondb_gpu_cuda_inner_product(vec1, vec2, dim);
-		if (result >= 0.0f)
-			return result;
-	}
-#endif
-
-#ifdef NDB_GPU_HIP
-	/* Try ROCm for AMD GPUs */
-	if (neurondb_gpu_get_backend() == GPU_BACKEND_ROCM)
-	{
-		result = neurondb_gpu_rocm_inner_product(vec1, vec2, dim);
-		if (result >= 0.0f)
-			return result;
-	}
-#endif
-
-#ifdef NDB_GPU_METAL
-	/* Try Metal for Apple Silicon */
-	if (neurondb_gpu_get_backend() == GPU_BACKEND_METAL)
-	{
-		result = neurondb_gpu_metal_inner_product(vec1, vec2, dim);
-		if (result >= 0.0f)
-			return result;
-	}
-#endif
-
-#ifdef NDB_GPU_CUDA
+#ifdef HAVE_CUDA
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_CUDA && cublas_handle)
 	{
-		float *d_vec1, *d_vec2, *d_result;
-		size_t vec_size = dim * sizeof(float);
-		
-		cudaMalloc(&d_vec1, vec_size);
-		cudaMalloc(&d_vec2, vec_size);
-		cudaMalloc(&d_result, sizeof(float));
-		
-		cudaMemcpy(d_vec1, vec1, vec_size, cudaMemcpyHostToDevice);
-		cudaMemcpy(d_vec2, vec2, vec_size, cudaMemcpyHostToDevice);
-		
-		/* Dot product */
-		cublasSdot(cublas_handle, dim, d_vec1, 1, d_vec2, 1, d_result);
-		
-		cudaMemcpy(&result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
-		
-		cudaFree(d_vec1);
-		cudaFree(d_vec2);
-		cudaFree(d_result);
-		
+		float *d_vec1 = NULL, *d_vec2 = NULL;
+		size_t size = dim * sizeof(float);
+		float temp_result = 0.0f;
+
+		cudaError_t cudaStatus;
+		cudaStatus = cudaMalloc((void**)&d_vec1, size);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+		cudaStatus = cudaMalloc((void**)&d_vec2, size);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+
+		cudaStatus = cudaMemcpy(d_vec1, vec1, size, cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+		cudaStatus = cudaMemcpy(d_vec2, vec2, size, cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess) goto cleanup_cuda;
+
+		// Dot product via cublas
+		cublasStatus_t cublasStatus;
+		cublasStatus = cublasSdot(cublas_handle, dim, d_vec1, 1, d_vec2, 1, &temp_result);
+		if (cublasStatus != CUBLAS_STATUS_SUCCESS) goto cleanup_cuda;
+
+		result = temp_result;
+
+	cleanup_cuda:
+		if (d_vec1) cudaFree(d_vec1);
+		if (d_vec2) cudaFree(d_vec2);
 		return result;
 	}
 #endif
 
-#ifdef NDB_GPU_HIP
+#ifdef HAVE_ROCM
 	if (neurondb_gpu_get_backend() == GPU_BACKEND_ROCM && rocblas_handle)
 	{
-		float *d_vec1, *d_vec2, *d_result;
-		size_t vec_size = dim * sizeof(float);
-		
-		hipMalloc(&d_vec1, vec_size);
-		hipMalloc(&d_vec2, vec_size);
-		hipMemcpy(&d_result, &result, sizeof(float), hipMemcpyHostToDevice);
-		
-		hipMemcpy(d_vec1, vec1, vec_size, hipMemcpyHostToDevice);
-		hipMemcpy(d_vec2, vec2, vec_size, hipMemcpyHostToDevice);
-		
-		rocblas_sdot(rocblas_handle, dim, d_vec1, 1, d_vec2, 1, d_result);
-		
-		hipMemcpy(&result, d_result, sizeof(float), hipMemcpyDeviceToHost);
-		
-		hipFree(d_vec1);
-		hipFree(d_vec2);
-		hipFree(d_result);
-		
+		float *d_vec1 = NULL, *d_vec2 = NULL;
+		size_t size = dim * sizeof(float);
+		float temp_result = 0.0f;
+
+		hipError_t hipStatus;
+		hipStatus = hipMalloc((void**)&d_vec1, size);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+		hipStatus = hipMalloc((void**)&d_vec2, size);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+
+		hipStatus = hipMemcpy(d_vec1, vec1, size, hipMemcpyHostToDevice);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+		hipStatus = hipMemcpy(d_vec2, vec2, size, hipMemcpyHostToDevice);
+		if (hipStatus != hipSuccess) goto cleanup_hip;
+
+		rocblas_status rstatus;
+		rstatus = rocblas_sdot(rocblas_handle, dim, d_vec1, 1, d_vec2, 1, &temp_result);
+		if (rstatus != rocblas_status_success) goto cleanup_hip;
+
+		result = temp_result;
+
+	cleanup_hip:
+		if (d_vec1) hipFree(d_vec1);
+		if (d_vec2) hipFree(d_vec2);
 		return result;
 	}
 #endif
 
 	return -1.0f;  /* CPU fallback */
 }
-

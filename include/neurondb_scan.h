@@ -16,6 +16,7 @@
 
 #include "postgres.h"
 #include "access/relscan.h"
+#include "access/genam.h"
 #include "nodes/execnodes.h"
 #include "utils/timestamp.h"
 

@@ -15,6 +15,7 @@
  */
 
 #include "postgres.h"
+#include "neurondb_compat.h"
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "postmaster/bgworker.h"
@@ -443,8 +444,8 @@ perform_index_maintenance(void)
 					datum = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 5, &isnull);
 					frag_ratio = isnull ? 0.0 : DatumGetFloat8(datum);
 
-					elog(DEBUG1, "neurondb: maintaining index %s (edges=%ld, frag=%.2f)",
-						 index_name, num_edges, frag_ratio);
+					elog(DEBUG1, "neurondb: maintaining index %s (edges=" NDB_INT64_FMT ", frag=%.2f)",
+						 index_name, NDB_INT64_CAST(num_edges), frag_ratio);
 
 					PG_TRY();
 					{
@@ -577,8 +578,8 @@ compact_hnsw_graph(const char *index_name)
 		}
 		edges_after = edges_before;
 
-		elog(LOG, "neurondb: compacted index '%s': %ld nodes maintained",
-			 index_name, edges_after);
+		elog(LOG, "neurondb: compacted index '%s': " NDB_INT64_FMT " nodes maintained",
+			 index_name, NDB_INT64_CAST(edges_after));
 
 finish:
 		if (sql_inited && sql.data) pfree(sql.data);

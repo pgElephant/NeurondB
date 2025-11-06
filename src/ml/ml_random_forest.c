@@ -43,7 +43,7 @@ typedef struct
 /*
  * Bootstrap sample: randomly sample with replacement
  */
-static void
+static void __attribute__((unused))
 bootstrap_sample(int n_samples, int **indices, int *n_bootstrap)
 {
 	int i;
@@ -59,7 +59,7 @@ bootstrap_sample(int n_samples, int **indices, int *n_bootstrap)
 /*
  * Get random subset of features
  */
-static void
+static void __attribute__((unused))
 random_features(int n_features, int max_features, int **features, int *n_selected)
 {
 	int i, j, temp;
@@ -95,7 +95,7 @@ random_features(int n_features, int max_features, int **features, int *n_selecte
 /*
  * Compute Gini impurity (for classification)
  */
-static double
+static double __attribute__((unused))
 compute_gini(double *labels, int *indices, int n, int n_classes)
 {
 	double *class_counts;
@@ -136,9 +136,9 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	text	   *feature_col;
 	text	   *label_col;
 	int			n_trees = PG_GETARG_INT32(3);
-	int			max_depth PG_USED_FOR_ASSERTS_ONLY = PG_GETARG_INT32(4);
-	int			min_samples_split PG_USED_FOR_ASSERTS_ONLY = PG_NARGS() > 5 ? PG_GETARG_INT32(5) : 2;
-	int			max_features PG_USED_FOR_ASSERTS_ONLY = PG_NARGS() > 6 ? PG_GETARG_INT32(6) : 0;
+	int			max_depth = PG_GETARG_INT32(4);
+	int			min_samples_split = PG_NARGS() > 5 ? PG_GETARG_INT32(5) : 2;
+	int			max_features = PG_NARGS() > 6 ? PG_GETARG_INT32(6) : 0;
 	
 	char	   *tbl_str;
 	char	   *feat_str;
@@ -160,7 +160,15 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
 	label_str = text_to_cstring(label_col);
-	
+
+	/* Validate parameters */
+	if (max_depth <= 0)
+		ereport(ERROR, (errmsg("max_depth must be positive")));
+	if (min_samples_split < 2)
+		ereport(ERROR, (errmsg("min_samples_split must be at least 2")));
+	if (max_features < 0)
+		ereport(ERROR, (errmsg("max_features cannot be negative")));
+
 	oldcontext = CurrentMemoryContext;
 	
 	/* Connect to SPI */
@@ -260,11 +268,19 @@ PG_FUNCTION_INFO_V1(predict_random_forest);
 Datum
 predict_random_forest(PG_FUNCTION_ARGS)
 {
-	int			model_id PG_USED_FOR_ASSERTS_ONLY = PG_GETARG_INT32(0);
+	int			model_id = PG_GETARG_INT32(0);
 	Datum		features_datum = PG_GETARG_DATUM(1);
-	Vector	   *features PG_USED_FOR_ASSERTS_ONLY = DatumGetVector(features_datum);
+	Vector	   *features = DatumGetVector(features_datum);
 	double		prediction;
-	
+
+	/* Validate inputs */
+	if (model_id < 0)
+		ereport(ERROR, (errmsg("model_id must be non-negative")));
+	if (features == NULL)
+		PG_RETURN_NULL();
+
+	elog(DEBUG1, "Random forest prediction: model_id=%d, feature_dim=%d", model_id, features->dim);
+
 	/*
 	 * In full implementation:
 	 * 1. Load forest from model_id
@@ -289,14 +305,21 @@ PG_FUNCTION_INFO_V1(evaluate_random_forest);
 Datum
 evaluate_random_forest(PG_FUNCTION_ARGS)
 {
-	text	   *table_name PG_USED_FOR_ASSERTS_ONLY = PG_GETARG_TEXT_PP(0);
-	text	   *feature_col PG_USED_FOR_ASSERTS_ONLY = PG_GETARG_TEXT_PP(1);
-	text	   *label_col PG_USED_FOR_ASSERTS_ONLY = PG_GETARG_TEXT_PP(2);
-	int			model_id PG_USED_FOR_ASSERTS_ONLY = PG_GETARG_INT32(3);
-	
+	text	   *table_name = PG_GETARG_TEXT_PP(0);
+	text	   *feature_col = PG_GETARG_TEXT_PP(1);
+	text	   *label_col = PG_GETARG_TEXT_PP(2);
+	int			model_id = PG_GETARG_INT32(3);
+
 	Datum	   *result_datums;
 	ArrayType  *result_array;
-	
+
+	/* Validate inputs */
+	if (model_id < 0)
+		ereport(ERROR, (errmsg("model_id must be non-negative")));
+
+	elog(DEBUG1, "Evaluating random forest model %d on table %s (%s, %s)", model_id,
+		 text_to_cstring(table_name), text_to_cstring(feature_col), text_to_cstring(label_col));
+
 	/* Placeholder metrics */
 	result_datums = (Datum *) palloc(sizeof(Datum) * 4);
 	result_datums[0] = Float8GetDatum(0.95);  /* accuracy */

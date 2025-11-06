@@ -14,6 +14,7 @@
 
 #include "neurondb_config.h"
 #include "neurondb_gpu.h"
+#include "gpu_metal.h"
 
 #ifdef NDB_GPU_METAL
 

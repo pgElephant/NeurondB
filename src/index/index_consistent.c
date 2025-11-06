@@ -16,6 +16,7 @@
 
 #include "postgres.h"
 #include "neurondb.h"
+#include "neurondb_compat.h"
 #include "neurondb_index.h"
 #include "fmgr.h"
 #include "utils/builtins.h"
@@ -110,7 +111,7 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-		elog(NOTICE, "Consistent kNN search for %d neighbors with snapshot xmin %ld", k, snapshot_xmin);
+		elog(NOTICE, "Consistent kNN search for %d neighbors with snapshot xmin " NDB_INT64_FMT, k, NDB_INT64_CAST(snapshot_xmin));
 
 		/* Convert query vector to string for SQL embedding */
 		vector_str = vector_to_sql_literal(query);
@@ -160,7 +161,7 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 
 		MemoryContextSwitchTo(oldcontext);
 
-		elog(DEBUG1, "Consistent query: snapshot %ld returned %lu results", snapshot_xmin, (unsigned long)SPI_processed);
+		elog(DEBUG1, "Consistent query: snapshot " NDB_INT64_FMT " returned %lu results", NDB_INT64_CAST(snapshot_xmin), (unsigned long)SPI_processed);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();

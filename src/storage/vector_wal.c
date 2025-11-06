@@ -9,6 +9,7 @@
  */
 
 #include "postgres.h"
+#include "neurondb_compat.h"
 #include "fmgr.h"
 #include "utils/builtins.h"
 #include "lib/stringinfo.h"
@@ -149,8 +150,8 @@ vector_wal_get_stats(PG_FUNCTION_ARGS)
 	
 	initStringInfo(&stats);
 	appendStringInfo(&stats,
-		"{\"original_bytes\":%ld,\"compressed_bytes\":%ld,\"compression_ratio\":%.2f}",
-		total_bytes_original, total_bytes_compressed, compression_ratio);
+		"{\"original_bytes\":" NDB_INT64_FMT ",\"compressed_bytes\":" NDB_INT64_FMT ",\"compression_ratio\":%.2f}",
+		NDB_INT64_CAST(total_bytes_original), NDB_INT64_CAST(total_bytes_compressed), compression_ratio);
 	
 	elog(DEBUG1, "neurondb: WAL compression stats: %.2fx ratio", compression_ratio);
 	

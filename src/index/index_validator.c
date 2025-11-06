@@ -23,6 +23,7 @@
 #include "fmgr.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
+#include "access/genam.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_index.h"
 #include "storage/bufmgr.h"

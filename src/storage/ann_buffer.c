@@ -9,6 +9,7 @@
  */
 
 #include "postgres.h"
+#include "neurondb_compat.h"
 #include "fmgr.h"
 #include "storage/shmem.h"
 #include "storage/lwlock.h"
@@ -192,11 +193,11 @@ neurondb_ann_buffer_get_stats(PG_FUNCTION_ARGS)
 	
 	initStringInfo(&stats);
 	appendStringInfo(&stats,
-		"{\"entries\":%d,\"max_entries\":%d,\"hits\":%ld,\"misses\":%ld,\"hit_rate\":%.2f}",
+		"{\"entries\":%d,\"max_entries\":%d,\"hits\":" NDB_INT64_FMT ",\"misses\":" NDB_INT64_FMT ",\"hit_rate\":%.2f}",
 		ann_buffer_control->num_entries,
 		ann_buffer_control->max_entries,
-		ann_buffer_control->total_hits,
-		ann_buffer_control->total_misses,
+		NDB_INT64_CAST(ann_buffer_control->total_hits),
+		NDB_INT64_CAST(ann_buffer_control->total_misses),
 		hit_rate);
 	
 	PG_RETURN_TEXT_P(cstring_to_text(stats.data));

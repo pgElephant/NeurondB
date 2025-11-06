@@ -364,10 +364,11 @@ evaluate_logistic_regression(PG_FUNCTION_ARGS)
 	if (ARR_NDIM(coef_array) != 1)
 		ereport(ERROR,
 				(errmsg("Coefficients must be 1-dimensional array")));
-	
+
 	ncoef = ARR_DIMS(coef_array)[0];
+	(void) ncoef;  /* Suppress unused variable warning */
 	coef = (float8 *) ARR_DATA_PTR(coef_array);
-	
+
 	oldcontext = CurrentMemoryContext;
 	
 	/* Connect to SPI */

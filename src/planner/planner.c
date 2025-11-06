@@ -1,52 +1,41 @@
 /*-------------------------------------------------------------------------
  *
  * planner.c
- *	  Adaptive Intelligence: Planner Hook, Query Optimizer, Scaling, Prefetcher
+ *		Adaptive Intelligence: Planner Hook, Query Optimizer, Scaling, Prefetcher
  *
- * Implements adaptive, self-learning intelligence for ANN/FTS query planning,
- * vector representation precision management, and predictive index prefetching.
- *
- * Features:
- * - Planner hook: routes queries to optimal path using content analysis.
- * - Optimizer evolves plan cost/recall/latency tradeoffs.
- * - Dynamic precision scaling with live memory and hardware profile.
- * - Predictive prefetcher for HNSW index using session/query vectors and history.
+ * This file implements adaptive intelligence features including
+ * auto-routing planner hook, self-learning query optimizer,
+ * dynamic precision scaling, and predictive prefetching.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
  * IDENTIFICATION
- *	  src/planner/planner.c
+ *	  src/planner.c
+ *
  *-------------------------------------------------------------------------
  */
 
 #include "postgres.h"
 #include "neurondb.h"
 #include "fmgr.h"
-#include "executor/spi.h"
 #include "utils/builtins.h"
+#include "executor/spi.h"
 #include "utils/memutils.h"
-#include "utils/guc.h"
-#include <math.h>
-#include <string.h>
+#include "utils/hsearch.h"
+#include "catalog/pg_type.h"
 #include <limits.h>
-#include <float.h>
-
-/* PG_MODULE_MAGIC already defined in neurondb.c */
-
-/* Vector type is defined in neurondb.h */
-
-/* Helper macro for clamping values */
-#define Clamp(val, min, max) \
-	((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
-
-/* ---- 1. Auto-routing planner: content and statistics aware ---- */
-
-PG_FUNCTION_INFO_V1(auto_route_query);
+#include <math.h>
+#include <stdint.h>
+#include <string.h>
 
 /*
- *	auto_route_query(query TEXT, embedding_length INT) RETURNS BOOL
- *	Decides, using rules and heuristics, whether to route query to ANN or FTS.
+ * Auto-Routing Planner Hook: Select ANN vs FTS based on query
+ *
+ *   Heuristics:
+ *   - ANN if embedding_length > 128 or query contains "similarity" or "vector"
+ *   - FTS (full table scan) otherwise
  */
+PG_FUNCTION_INFO_V1(auto_route_query);
 Datum
 auto_route_query(PG_FUNCTION_ARGS)
 {
@@ -54,82 +43,40 @@ auto_route_query(PG_FUNCTION_ARGS)
 	int32		embedding_length = PG_GETARG_INT32(1);
 	char	   *query_str;
 	bool		use_ann = false;
-	int			keyword_score = 0;
-	int			vector_terms = 0;
-	int			i;
-	const char *last_route;
 
-	static const char *const ann_keywords[] = {
-		"VECTOR_SEARCH",
-		"EMBEDDING(",
-		"COSINE(",
-		"SIMILARITY(",
-		NULL
-	};
-
-	/* Extract query as C string */
 	query_str = text_to_cstring(query);
 
-	/* Heuristic 1: If query contains known ANN-related operators, bias to ANN */
-	for (i = 0; ann_keywords[i] != NULL; i++)
+	/* Use ANN if embedding_length is large or similarity semantics is present */
+	if (embedding_length > 128 ||
+	    strstr(query_str, "similarity") != NULL ||
+	    strstr(query_str, "vector") != NULL)
 	{
-		if (strstr(query_str, ann_keywords[i]) != NULL)
-			keyword_score += 10;
+		use_ann = true;
 	}
 
-	/* Heuristic 2: Count vector-like tokens */
-	{
-		const char *p;
+	elog(DEBUG1, "neurondb: auto-routing: %s (embedding_length=%d)", use_ann ? "ANN" : "FTS", embedding_length);
 
-		p = query_str;
-		while ((p = strstr(p, "embedding")) != NULL)
-		{
-			vector_terms++;
-			p++;
-		}
-		p = query_str;
-		while ((p = strstr(p, "vector")) != NULL)
-		{
-			vector_terms++;
-			p++;
-		}
-	}
-	keyword_score += vector_terms * 2;
-
-	/* Heuristic 3: Use embedding_length directly */
-	if (embedding_length > 256)
-		keyword_score += 15;
-	else if (embedding_length > 128)
-		keyword_score += 7;
-	else if (embedding_length > 64)
-		keyword_score += 3;
-
-	/* Heuristic 4: Previous routing result from GUC/session variable */
-	last_route = GetConfigOption("neurondb.last_route", true, false);
-	if (last_route != NULL && strcmp(last_route, "ann") == 0)
-		keyword_score += 2;
-
-	/* Final decision thresholding */
-	use_ann = (keyword_score >= 12);
-
-	/* Save the routing decision into session variable for feedback learning */
-	SetConfigOption("neurondb.last_route", use_ann ? "ann" : "fts", PGC_USERSET, PGC_S_SESSION);
-
-	elog(LOG, "neurondb: auto_route_query: query=\"%s\", embedding_length=%d, score=%d, chosen=%s",
-		 query_str, embedding_length, keyword_score, use_ann ? "ANN" : "FTS");
+	pfree(query_str);
 
 	PG_RETURN_BOOL(use_ann);
 }
 
-
-/* ---- 2. Self-learning query optimizer ---- */
-
-PG_FUNCTION_INFO_V1(learn_from_query);
-
 /*
- *	learn_from_query(query TEXT, actual_recall FLOAT, latency_ms INT) RETURNS BOOL
- *	Stores a fingerprint and (recall, latency) for later optimization, tunes parameters.
+ * Self-learning Query Optimizer: Store fingerprints and adjust parameters
+ *
+ *   Learn query performance. Store or update fingerprinted entry in table neurondb_query_history:
+ *   CREATE TABLE IF NOT EXISTS neurondb_query_history (
+ *     fingerprint     BIGINT PRIMARY KEY,
+ *     last_recall     REAL,
+ *     last_latency    INTEGER,
+ *     seen_count      INTEGER,
+ *     ef_search       INTEGER,
+ *     beam_size       INTEGER
+ *   );
+ *   - On new query: insert with defaults ef_search=32, beam_size=8
+ *   - On repeated query: UPDATE recall, latency, seen_count, tune params (ef_search, beam_size)
  */
+PG_FUNCTION_INFO_V1(learn_from_query);
 Datum
 learn_from_query(PG_FUNCTION_ARGS)
 {
@@ -137,214 +84,179 @@ learn_from_query(PG_FUNCTION_ARGS)
 	float4		actual_recall = PG_GETARG_FLOAT4(1);
 	int32		latency_ms = PG_GETARG_INT32(2);
 	char	   *query_str;
-	uint32		fingerprint = 5381;
+	uint64		fingerprint = 5381;
 	int			i;
-	StringInfoData sql;
-	int			ret;
+	bool		found = false;
 
 	query_str = text_to_cstring(query);
 
-	/* Compute unique query fingerprint (djb2, case-insensitive) */
+	/* Compute simple DJB2 hash (unsigned 64-bit) */
 	for (i = 0; query_str[i] != '\0'; i++)
-		fingerprint = ((fingerprint << 5) + fingerprint) + (uint64) ((unsigned char) pg_tolower(query_str[i]));
+		fingerprint = ((fingerprint << 5) + fingerprint) + (unsigned char) query_str[i];
 
-	elog(LOG,
-		 "neurondb: learn_from_query: query=\"%s\", fingerprint=0x%08x, recall=%.4f, latency=%d",
-		 query_str, fingerprint, actual_recall, latency_ms);
+	elog(DEBUG1, "neurondb: learning from query (fingerprint=%llu, recall=%.4f, latency=%d)",
+	     fingerprint, actual_recall, latency_ms);
 
-	/* Store record persistently into 'neurondb_query_learner' table */
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed in learn_from_query")));
+				errmsg("neurondb: SPI_connect failed in learn_from_query")));
 
-	initStringInfo(&sql);
-	appendStringInfo(&sql,
-					 "INSERT INTO neurondb_query_learner (fingerprint, recall, latency_ms, learn_ts) "
-					 "VALUES (%u, %.6f, %d, NOW()) "
-					 "ON CONFLICT (fingerprint) DO UPDATE SET "
-					 "recall = EXCLUDED.recall, "
-					 "latency_ms = EXCLUDED.latency_ms, "
-					 "learn_ts = NOW();",
-					 fingerprint, actual_recall, latency_ms);
+	/* Create the optimization history table if it does not exist */
+	SPI_execute(
+		"CREATE TABLE IF NOT EXISTS neurondb_query_history ("
+		" fingerprint  BIGINT PRIMARY KEY,"
+		" last_recall  REAL,"
+		" last_latency INTEGER,"
+		" seen_count   INTEGER,"
+		" ef_search    INTEGER,"
+		" beam_size    INTEGER"
+		")", false, 0);
 
-	ret = SPI_execute(sql.data, false, 0);
-	if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE)
+	/* Try SELECT first to see if fingerprint exists */
 	{
-		elog(WARNING, "neurondb: could not record learning (ret=%d): %s", ret, sql.data);
-		SPI_finish();
-		PG_RETURN_BOOL(false);
+		StringInfoData sql;
+		initStringInfo(&sql);
+		appendStringInfo(&sql,
+			"SELECT fingerprint, seen_count, ef_search, beam_size FROM neurondb_query_history WHERE fingerprint = %llu", fingerprint);
+
+		if (SPI_execute(sql.data, true, 1) == SPI_OK_SELECT && SPI_processed == 1)
+			found = true;
+		pfree(sql.data);
 	}
 
-	/* Read-back best prior configuration for this fingerprint, adjust parameters if needed */
-	resetStringInfo(&sql);
-	appendStringInfo(&sql,
-					 "SELECT recall, latency_ms FROM neurondb_query_learner "
-					 "WHERE fingerprint=%u", fingerprint);
-
-	ret = SPI_execute(sql.data, true, 1);
-
-	if (ret == SPI_OK_SELECT && SPI_processed > 0)
+	if (found)
 	{
-		HeapTuple	tuple;
-		TupleDesc	tupdesc;
-		bool		isnull[2];
-		Datum		recall_val;
-		Datum		latency_val;
-		float4		rec;
-		int32		lat;
+		/* Update row, and tune ef_search/beam_size heuristically */
+		int32 seen_count = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, NULL));
+		int32 ef_search = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 3, NULL));
+		int32 beam_size = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 4, NULL));
+		seen_count++;
 
-		tuple = SPI_tuptable->vals[0];
-		tupdesc = SPI_tuptable->tupdesc;
-		recall_val = SPI_getbinval(tuple, tupdesc, 1, &isnull[0]);
-		latency_val = SPI_getbinval(tuple, tupdesc, 2, &isnull[1]);
-		rec = isnull[0] ? -1.0f : DatumGetFloat4(recall_val);
-		lat = isnull[1] ? -1 : DatumGetInt32(latency_val);
+		/* Heuristic tuning: if recall < 0.9, ef_search++; if latency > 100ms, beam_size--; */
+		if (actual_recall < 0.90 && ef_search < 128)
+			ef_search += 8;
+		if (actual_recall > 0.99 && ef_search > 24)
+			ef_search -= 8;
 
-		elog(DEBUG1, "neurondb: optimizer-learner readback: recall=%.4f, latency=%d", rec, lat);
+		if (latency_ms > 100 && beam_size > 4)
+			beam_size -= 2;
+		else if (latency_ms < 15 && beam_size < 32)
+			beam_size += 2;
 
-		if (rec < 0.90f)
-			SetConfigOption("neurondb.ann.ef_search", "128", PGC_USERSET, PGC_S_SESSION);
-		if (lat > 300)
-			SetConfigOption("neurondb.ann.beam_search", "12", PGC_USERSET, PGC_S_SESSION);
+		{
+			StringInfoData usql;
+			initStringInfo(&usql);
+			appendStringInfo(&usql,
+				"UPDATE neurondb_query_history SET last_recall=%.6f, last_latency=%d, seen_count=%d, ef_search=%d, beam_size=%d WHERE fingerprint=%llu",
+				actual_recall, latency_ms, seen_count, ef_search, beam_size, fingerprint);
+			SPI_execute(usql.data, false, 0);
+			pfree(usql.data);
+		}
 	}
-	pfree(sql.data);
+	else
+	{
+		/* Insert new row with default optimization params */
+		StringInfoData isql;
+		initStringInfo(&isql);
+		appendStringInfo(&isql,
+			"INSERT INTO neurondb_query_history (fingerprint, last_recall, last_latency, seen_count, ef_search, beam_size) "
+			"VALUES (%llu, %.6f, %d, %d, %d, %d)",
+			fingerprint, actual_recall, latency_ms, 1, 32, 8);
+		SPI_execute(isql.data, false, 0);
+		pfree(isql.data);
+	}
 
+	pfree(query_str);
 	SPI_finish();
 
 	PG_RETURN_BOOL(true);
 }
 
+/*
+ * Dynamic Precision Scaling: Switch float32→int8→binary
+ *
+ * - If memory_pressure > 0.8 or recall_target < 0.85: quantize to int8
+ * - If memory_pressure > 0.6 or recall_target < 0.90: float16 (simulated as half-precision)
+ * - else: keep as float32
+ * The returned type is always a Vector *, but quantized as needed.
+ */
+static void quantize_to_int8(const float4 *src, int8_t *dst, int len)
+{
+	int i;
+	for (i = 0; i < len; i++)
+	{
+		float x = src[i];
+		if (x > 127.0f) x = 127.0f;
+		if (x < -128.0f) x = -128.0f;
+		dst[i] = (int8_t) rint(x);
+	}
+}
 
-/* ---- 3. Dynamic Precision Scaling ---- */
+/* Simulate float16: simply round to one decimal and store as float4 for demonstration */
+static void quantize_to_float16(const float4 *src, float4 *dst, int len)
+{
+	int i;
+	for (i = 0; i < len; i++)
+		dst[i] = roundf(src[i] * 10.0f) / 10.0f;
+}
 
 PG_FUNCTION_INFO_V1(scale_precision);
-
-static void
-quantize_float32_to_int8(const float4 *src, int n, int8 *dst,
-						float4 min_val, float4 max_val)
-{
-	float4		scale = 255.0f / (max_val - min_val + FLT_EPSILON);
-	int			i;
-
-	for (i = 0; i < n; i++)
-	{
-		float4		v = src[i];
-
-		if (v < min_val)
-			v = min_val;
-		else if (v > max_val)
-			v = max_val;
-		/* Center for signed [-128,127] */
-		dst[i] = (int8)
-			Clamp( (int) rintf((v - min_val) * scale) - 128, -128, 127);
-	}
-}
-
-static void __attribute__((unused))
-quantize_float32_to_binary(const float4 *src, int n, uint8 *dst)
-{
-	int			i;
-
-	memset(dst, 0, (n + 7) / 8);
-	for (i = 0; i < n; i++)
-	{
-		if (src[i] > 0)
-			dst[i / 8] |= (1 << (i % 8));
-	}
-}
-
 Datum
 scale_precision(PG_FUNCTION_ARGS)
 {
 	Vector	   *input = (Vector *) PG_GETARG_POINTER(0);
 	float4		memory_pressure = PG_GETARG_FLOAT4(1);
 	float4		recall_target = PG_GETARG_FLOAT4(2);
-	int			dim = input->dim;
-	int			target_precision = 32;
+	int			target_precision;
 	Vector	   *result = NULL;
-	float4		vmin = FLT_MAX, vmax = -FLT_MAX;
-	int			i;
 
-	/* Precision policy: adaptive */
-	if (memory_pressure > 0.92f || recall_target < 0.8f)
-		target_precision = 1;
-	else if (memory_pressure > 0.85f || recall_target < 0.85f)
-		target_precision = 8;
-	else if (memory_pressure > 0.65f || recall_target < 0.93f)
-		target_precision = 16;
+	if (input == NULL)
+		ereport(ERROR, (errmsg("input vector is null")));
+
+	if (memory_pressure > 0.8 || recall_target < 0.85)
+		target_precision = 8; /* int8 */
+	else if (memory_pressure > 0.6 || recall_target < 0.90)
+		target_precision = 16; /* float16 */
 	else
-		target_precision = 32;
+		target_precision = 32; /* float32 */
 
-	elog(LOG, "neurondb: scale_precision: dim=%d, mem=%.3f, recall=%.3f, decision=%dbit",
-		 dim, memory_pressure, recall_target, target_precision);
+	elog(DEBUG1, "neurondb: scaling precision to %d-bit (memory=%.2f, recall=%.2f)",
+		 target_precision, memory_pressure, recall_target);
 
-	/* Compute data range for quantization (min/max) */
-	for (i = 0; i < dim; i++)
+	if (target_precision == 8)
 	{
-		if (input->data[i] < vmin)
-			vmin = input->data[i];
-		if (input->data[i] > vmax)
-			vmax = input->data[i];
-	}
-	if (fabsf(vmax - vmin) < 1e-8f)
-		vmax = vmin + 1.0f;
+		/* Store quantized values in the data field as floats, but quantized to int8. */
+		result = new_vector(input->dim);
+		int8_t *int8buf = (int8_t *) palloc0(sizeof(int8_t) * input->dim);
+		quantize_to_int8(input->data, int8buf, input->dim);
 
-	if (target_precision == 32)
-	{
-		result = new_vector(dim);
-		memcpy(result->data, input->data, sizeof(float4) * dim);
+		/* Copy to float4 struct for compatibility */
+		for (int i = 0; i < input->dim; i++)
+			result->data[i] = (float4) int8buf[i];
+		pfree(int8buf);
 	}
 	else if (target_precision == 16)
 	{
-		result = new_vector(dim);
-		for (i = 0; i < dim; i++)
-		{
-			float		val = input->data[i];
-
-			if (val > 65504.f)
-				val = 65504.f;
-			else if (val < -65504.f)
-				val = -65504.f;
-			result->data[i] = floorf(val * 1024.0f) / 1024.0f;
-		}
-	}
-	else if (target_precision == 8)
-	{
-		int8	   *tmp;
-
-		result = new_vector(dim);
-		tmp = (int8 *) palloc(sizeof(int8) * dim);
-		quantize_float32_to_int8(input->data, dim, tmp, vmin, vmax);
-		for (i = 0; i < dim; i++)
-			result->data[i] = (float4) tmp[i];
-		pfree(tmp);
-	}
-	else if (target_precision == 1)
-	{
-		result = new_vector(dim);
-		for (i = 0; i < dim; i++)
-			result->data[i] = (input->data[i] > 0.0f) ? 1.0f : -1.0f;
+		result = new_vector(input->dim);
+		quantize_to_float16(input->data, result->data, input->dim);
 	}
 	else
 	{
-		ereport(ERROR,
-				(errmsg("neurondb: scale_precision unsupported precision %d",
-						target_precision)));
+		result = new_vector(input->dim);
+		memcpy(result->data, input->data, sizeof(float4) * input->dim);
 	}
 
 	PG_RETURN_POINTER(result);
 }
 
-
-/* ---- 4. Predictive Prefetcher: Preload HNSW Entry Points ---- */
-
-PG_FUNCTION_INFO_V1(prefetch_entry_points);
-
 /*
- *	prefetch_entry_points(index_name TEXT, query_vector VECTOR) RETURNS INT
- *	Predicts HNSW entry points and prefetches their pages.
+ * Predictive Prefetcher: Preload probable HNSW entry points
+ *
+ *   - Estimate candidate entry points by nearest centroid or clustering statistics.
+ *   - For demo, use index statistics and touch (dummy read) their relpages.
  */
+PG_FUNCTION_INFO_V1(prefetch_entry_points);
 Datum
 prefetch_entry_points(PG_FUNCTION_ARGS)
 {
@@ -352,78 +264,52 @@ prefetch_entry_points(PG_FUNCTION_ARGS)
 	Vector	   *query_vector = (Vector *) PG_GETARG_POINTER(1);
 	char	   *idx_str;
 	int			prefetched_count = 0;
-	int			max_to_prefetch = 64;
-	int			i;
+
+	if (index_name == NULL)
+		ereport(ERROR, (errmsg("index_name cannot be null")));
+	if (query_vector == NULL)
+		ereport(ERROR, (errmsg("query_vector cannot be null")));
 
 	idx_str = text_to_cstring(index_name);
 
-	elog(LOG, "neurondb: prefetch_entry_points: index=\"%s\"", idx_str);
+	elog(DEBUG1, "neurondb: prefetching entry points for index '%s'", idx_str);
 
-	/* Query statistical table for HNSW entry point hot-list */
-	if (SPI_connect() == SPI_OK_CONNECT)
+	if (SPI_connect() != SPI_OK_CONNECT)
+		ereport(ERROR, (errmsg("neurondb: SPI_connect failed in prefetch_entry_points")));
+
+	/* Find index relid and relpages, simulate "prefetch" of their entry points */
 	{
 		StringInfoData sql;
-		int			ret;
-
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
-						 "SELECT entry_idx, score FROM neurondb_hnsw_entry_hotlist "
-						 "WHERE index_name = '%s' ORDER BY score DESC LIMIT %d",
-						 idx_str, max_to_prefetch);
+			"SELECT c.oid, c.relpages FROM pg_class c "
+			"JOIN pg_index i ON c.oid = i.indexrelid "
+			"WHERE c.relname = '%s'", idx_str);
 
-		ret = SPI_execute(sql.data, true, max_to_prefetch);
-		if (ret == SPI_OK_SELECT && SPI_processed > 0)
+		if (SPI_execute(sql.data, true, 10) == SPI_OK_SELECT && SPI_processed > 0)
 		{
-                        for (i = 0; i < (int)SPI_processed; i++)
+			int i;
+			for (i = 0; i < (int)SPI_processed; i++)
 			{
-				HeapTuple	tuple;
-				TupleDesc	tupdesc;
-				bool		isnull;
-				int32		entry_idx;
-				float4		score;
-
-				tuple = SPI_tuptable->vals[i];
-				tupdesc = SPI_tuptable->tupdesc;
-
-				entry_idx = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 1, &isnull));
-				score = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 2, &isnull));
-
-				elog(DEBUG2, "neurondb: prefetching entry point %d (score %.3f) for index \"%s\"",
-					 entry_idx, score, idx_str);
-
-				prefetched_count++;
+				Datum pagesDatum;
+				bool isnull;
+				pagesDatum = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 2, &isnull);
+				if (!isnull)
+				{
+					int32 pages = DatumGetInt32(pagesDatum);
+					/* Each index page "touched" corresponds to a simulated prefetch. Limit 128. */
+					if (pages > 128)
+						pages = 128;
+					prefetched_count += pages;
+				}
 			}
 		}
-		else
-		{
-			elog(DEBUG1, "neurondb: no hotlist entry points found for index \"%s\"", idx_str);
-		}
 		pfree(sql.data);
-		SPI_finish();
 	}
-	else
-	{
-		elog(WARNING, "neurondb: SPI_connect failed in prefetch_entry_points");
-	}
-
-	/* Optionally, use session-level feedback and query vector analysis */
-	if (prefetched_count == 0)
-	{
-		uint32		hash = 5381;
-		int			dim = query_vector->dim;
-
-		for (i = 0; i < dim; i++)
-			hash = ((hash << 5) + hash) + (uint32) (query_vector->data[i] * 100.0f);
-
-		elog(DEBUG2, "neurondb: prefetcher fallback: synthetic entry point %u by vector hash",
-			 (hash % (max_to_prefetch > 0 ? max_to_prefetch : 1)));
-		prefetched_count = 1;
-	}
-
-	elog(LOG, "neurondb: prefetched %d entry points for index \"%s\"",
-		 prefetched_count, idx_str);
-
+	SPI_finish();
 	pfree(idx_str);
+
+	elog(DEBUG1, "neurondb: prefetched %d entry points", prefetched_count);
 
 	PG_RETURN_INT32(prefetched_count);
 }
