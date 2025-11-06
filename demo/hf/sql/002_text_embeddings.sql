@@ -45,9 +45,10 @@ SET embedding = neurondb_hf_embedding('all-MiniLM-L6-v2', text_content);
 SELECT 
     text_id,
     text_content,
-    array_length((embedding::text::float[]), 1) AS embedding_dim,
-    (embedding::text::float[])[1:5] AS first_5_dims
+    vector_dims(embedding) AS embedding_dim,
+    (vector_to_array(embedding))[1:5] AS first_5_dims
 FROM hf_embeddings_test
+WHERE embedding IS NOT NULL
 LIMIT 3;
 
 -- Test semantic similarity
@@ -68,4 +69,5 @@ LIMIT 3;
 
 \echo ''
 \echo 'Text embeddings test complete!'
+
 

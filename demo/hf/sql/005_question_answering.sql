@@ -10,3 +10,4 @@
 \echo 'Example usage (when available):'
 \echo '  SELECT neurondb_hf_qa(''distilbert-qa'', ''What is PostgreSQL?'', ''PostgreSQL is a powerful database...'');'
 
+

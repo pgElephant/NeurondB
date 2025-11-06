@@ -29,18 +29,15 @@ WITH vector_results AS (
         dc.chunk_id,
         d.title,
         dc.chunk_text,
-        1 - (dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        1 - (dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'PostgreSQL index performance'
         )) AS vector_score,
-        ROW_NUMBER() OVER (ORDER BY dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        ROW_NUMBER() OVER (ORDER BY dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'PostgreSQL index performance'
         )) AS vector_rank
     FROM document_chunks dc
     JOIN documents d ON dc.doc_id = d.doc_id
-    ORDER BY dc.embedding <=> neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    ORDER BY dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'PostgreSQL index performance'
     )
     LIMIT 10
@@ -88,12 +85,10 @@ LIMIT 5;
 WITH vector_results AS (
     SELECT 
         dc.chunk_id,
-        ROUND((1 - (dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        ROUND((1 - (dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'machine learning embeddings'
         )))::numeric, 4) AS vector_score,
-        ROW_NUMBER() OVER (ORDER BY dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        ROW_NUMBER() OVER (ORDER BY dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'machine learning embeddings'
         )) AS vector_rank
     FROM document_chunks dc

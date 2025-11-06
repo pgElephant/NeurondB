@@ -11,3 +11,4 @@
 \echo '  SELECT neurondb_hf_ner(''bert-ner'', ''Apple Inc. is in California'');'
 \echo '  Result: [{"entity": "ORG", "text": "Apple Inc."}, {"entity": "LOC", "text": "California"}]'
 
+

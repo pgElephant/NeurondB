@@ -17,7 +17,6 @@ DROP EXTENSION IF EXISTS neurondb CASCADE;
 
 -- Create extensions
 CREATE EXTENSION neurondb;
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 \echo 'Extension loaded'
 \echo ''

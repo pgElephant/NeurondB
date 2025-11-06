@@ -10,8 +10,7 @@
 \echo 'Query 1: Search within "machine_learning" category'
 
 WITH query_embedding AS (
-    SELECT neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    SELECT neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'training models with data'
     ) AS embedding
 )
@@ -31,8 +30,7 @@ LIMIT 5;
 \echo 'Query 2: Search within "database" category'
 
 WITH query_embedding AS (
-    SELECT neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    SELECT neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'performance tuning'
     ) AS embedding
 )
@@ -62,4 +60,5 @@ ORDER BY d.created_at DESC;
 
 \echo ''
 \echo 'Contextual retrieval complete!'
+
 

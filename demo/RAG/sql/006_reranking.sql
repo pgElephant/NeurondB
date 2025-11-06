@@ -15,18 +15,15 @@ WITH initial_retrieval AS (
         dc.chunk_id,
         d.title,
         dc.chunk_text,
-        1 - (dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        1 - (dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'vector embeddings for semantic search'
         )) AS initial_score,
-        ROW_NUMBER() OVER (ORDER BY dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        ROW_NUMBER() OVER (ORDER BY dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'vector embeddings for semantic search'
         )) AS initial_rank
     FROM document_chunks dc
     JOIN documents d ON dc.doc_id = d.doc_id
-    ORDER BY dc.embedding <=> neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    ORDER BY dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'vector embeddings for semantic search'
     )
     LIMIT 20
@@ -50,14 +47,12 @@ WITH initial_retrieval AS (
         d.title,
         dc.chunk_text,
         dc.embedding,
-        1 - (dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        1 - (dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'vector embeddings for semantic search'
         )) AS relevance_score
     FROM document_chunks dc
     JOIN documents d ON dc.doc_id = d.doc_id
-    ORDER BY dc.embedding <=> neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    ORDER BY dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'vector embeddings for semantic search'
     )
     LIMIT 20

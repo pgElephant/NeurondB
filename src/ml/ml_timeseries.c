@@ -536,6 +536,7 @@ forecast_arima(PG_FUNCTION_ARGS)
 	(void) arr_elem_type;  /* Suppress unused variable warning */
 	ndims = ARR_NDIM(ar_coeffs_arr);
 	Assert(ndims == 1);
+	(void) ndims;  /* Used in Assert only */
 	dims = ARR_DIMS(ar_coeffs_arr);
 	Assert(dims[0] == p);
 	ar_coeffs = (float *) palloc(sizeof(float) * p);
@@ -548,6 +549,7 @@ forecast_arima(PG_FUNCTION_ARGS)
 
 	arr_elem_type = ARR_ELEMTYPE(ma_coeffs_arr);
 	ndims = ARR_NDIM(ma_coeffs_arr);
+	(void) ndims;  /* Used in Assert only */
 	dims = ARR_DIMS(ma_coeffs_arr);
 	if (q > 0 && dims[0] == q)
 	{

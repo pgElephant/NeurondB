@@ -6,3 +6,4 @@ optimum[onnxruntime]>=1.16.0
 onnx>=1.15.0
 torch>=2.1.0
 
+

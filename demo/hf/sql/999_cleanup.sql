@@ -10,3 +10,4 @@ DROP TABLE IF EXISTS hf_classification_test CASCADE;
 \echo ''
 \echo 'HuggingFace demo cleanup complete!'
 
+

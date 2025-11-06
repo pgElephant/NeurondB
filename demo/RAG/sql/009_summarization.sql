@@ -14,18 +14,15 @@ WITH relevant_chunks AS (
     SELECT 
         d.title,
         dc.chunk_text,
-        1 - (dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        1 - (dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'PostgreSQL database'
         )) AS relevance
     FROM document_chunks dc
     JOIN documents d ON dc.doc_id = d.doc_id
-    WHERE 1 - (dc.embedding <=> neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    WHERE 1 - (dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'PostgreSQL database'
     )) > 0.3
-    ORDER BY dc.embedding <=> neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    ORDER BY dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'PostgreSQL database'
     )
     LIMIT 10
@@ -61,4 +58,5 @@ GROUP BY doc_id, title;
 
 \echo ''
 \echo 'Document summarization complete!'
+
 

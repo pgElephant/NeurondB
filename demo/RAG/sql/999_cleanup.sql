@@ -14,3 +14,4 @@ DROP TABLE IF EXISTS documents CASCADE;
 \echo ''
 \echo 'RAG demo cleanup complete!'
 
+

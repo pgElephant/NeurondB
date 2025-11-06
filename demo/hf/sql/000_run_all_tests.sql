@@ -18,33 +18,33 @@
 
 -- Test 001: Model management
 \echo 'Test 001: HuggingFace Model Management'
-\i 001_model_management.sql
+\i sql/001_model_management.sql
 \echo ''
 
 -- Test 002: Text embeddings
 \echo 'Test 002: Text Embeddings with HuggingFace Models'
-\i 002_text_embeddings.sql
+\i sql/002_text_embeddings.sql
 \echo ''
 
 -- Test 003: Text classification
-\echo 'Test 003: Text Classification'
-\i 003_text_classification.sql
+\echo 'Test 003: Text classification'
+\i sql/003_text_classification.sql
 \echo ''
 
 -- Test 004: Named Entity Recognition
 \echo 'Test 004: Named Entity Recognition (NER)'
-\i 004_ner.sql
+\i sql/004_ner.sql
 \echo ''
 
 -- Test 005: Question answering
 \echo 'Test 005: Question Answering'
-\i 005_question_answering.sql
+\i sql/005_question_answering.sql
 \echo ''
 
 
 -- Cleanup
 \echo 'Test 999: Cleanup'
-\i 999_cleanup.sql
+\i sql/999_cleanup.sql
 \echo ''
 
 \echo '======================================================================'

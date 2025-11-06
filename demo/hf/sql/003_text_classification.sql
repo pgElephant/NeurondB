@@ -25,7 +25,7 @@ INSERT INTO hf_classification_test (text_content) VALUES
 \echo 'Classifying texts using distilbert-sentiment model...'
 
 UPDATE hf_classification_test
-SET classification_result = neurondb_hf_classify('distilbert-sentiment', text_content);
+SET classification_result = neurondb_hf_classify('distilbert-sentiment', text_content)::jsonb;
 
 SELECT 
     text_id,
@@ -37,4 +37,5 @@ ORDER BY text_id;
 
 \echo ''
 \echo 'Text classification test complete!'
+
 

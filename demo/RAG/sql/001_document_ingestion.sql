@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS document_chunks (
 
 -- Create indexes
 CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON document_chunks(doc_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON document_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- Note: Vector indexes can be added after embeddings are generated
+-- CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON document_chunks USING hnsw (embedding) WITH (m = 16, ef_construction = 64);
 
 \echo 'Ingesting sample documents...'
 

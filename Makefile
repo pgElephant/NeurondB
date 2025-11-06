@@ -10,10 +10,14 @@ DOCS = README.md
 # Core vector types and operations
 OBJS = \
 	src/core/neurondb.o \
-	src/core/distance.o \
-	src/core/types_core.o \
-	src/core/operators.o \
-	src/core/vector_ops.o
+	src/core/operators.o
+
+# Vector module (consolidated)
+OBJS += \
+	src/vector/vector_distance.o \
+	src/vector/vector_types.o \
+	src/vector/vector_ops.o \
+	src/vector/vector_wal.o
 
 # Index access methods
 OBJS += \
@@ -135,7 +139,6 @@ OBJS += \
 # Storage and memory
 OBJS += \
 	src/storage/ann_buffer.o \
-	src/storage/vector_wal.o \
 	src/storage/buffer.o
 
 # Multi-tenancy
@@ -332,7 +335,7 @@ ifeq ($(shell uname -s),Darwin)
 	# Keep default linking for now
 endif
 
-PG_CONFIG ?= /usr/local/pgsql.16/bin/pg_config
+PG_CONFIG ?= /usr/local/pgsql.18/bin/pg_config
 # Generate SQL file from template before build
 neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile.header
 	$(eval include Makefile.header)
@@ -366,8 +369,8 @@ neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile
 	@echo "✓ Generated neurondb--1.0.sql for $(BUILD_TYPE)"
 	@echo "=========================================================================="
 
-# Ensure SQL is generated before building
-all: neurondb--1.0.sql metal-shaders
+# Ensure SQL exists before building
+all: metal-shaders
 
 # ONNX Runtime configuration
 ONNX_RUNTIME_PATH = /usr/local/onnxruntime

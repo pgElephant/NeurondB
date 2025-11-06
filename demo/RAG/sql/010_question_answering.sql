@@ -20,8 +20,7 @@ CREATE TABLE IF NOT EXISTS qa_pairs (
 \echo 'Question 1: What are vector databases used for?'
 
 WITH question_embedding AS (
-    SELECT neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    SELECT neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'What are vector databases used for?'
     ) AS embedding
 ),
@@ -52,8 +51,7 @@ RETURNING qa_id, question, answer, ROUND(confidence::numeric, 4) AS conf;
 \echo 'Question 2: How does RAG reduce hallucinations?'
 
 WITH question_embedding AS (
-    SELECT neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    SELECT neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'How does RAG reduce hallucinations?'
     ) AS embedding
 )
@@ -72,8 +70,7 @@ LIMIT 3;
 \echo 'Question 3: What are common machine learning best practices?'
 
 WITH question_embedding AS (
-    SELECT neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    SELECT neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'What are common machine learning best practices?'
     ) AS embedding
 )
@@ -93,4 +90,5 @@ SELECT * FROM qa_pairs ORDER BY created_at DESC;
 
 \echo ''
 \echo 'Question answering complete!'
+
 

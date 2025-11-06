@@ -30,13 +30,11 @@ query_results AS (
     SELECT 
         title,
         chunk_text,
-        ROUND((1 - (embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        ROUND((1 - (embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'performance optimization'
         )))::numeric, 4) AS score
     FROM filtered_docs
-    ORDER BY embedding <=> neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    ORDER BY embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'performance optimization'
     )
     LIMIT 3
@@ -50,13 +48,11 @@ WITH initial_retrieval AS (
     SELECT 
         dc.chunk_id,
         dc.chunk_text,
-        1 - (dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        1 - (dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             'complex database query'
         )) AS confidence
     FROM document_chunks dc
-    ORDER BY dc.embedding <=> neurondb_generate_embedding(
-        'sentence-transformers/all-MiniLM-L6-v2',
+    ORDER BY dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
         'complex database query'
     )
     LIMIT 5
@@ -73,4 +69,5 @@ FROM initial_retrieval;
 
 \echo ''
 \echo 'Advanced RAG patterns complete!'
+
 

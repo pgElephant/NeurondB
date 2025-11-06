@@ -37,13 +37,11 @@ WITH multi_query_results AS (
         dc.chunk_id,
         d.title,
         dc.chunk_text,
-        1 - (dc.embedding <=> neurondb_generate_embedding(
-            'sentence-transformers/all-MiniLM-L6-v2',
+        1 - (dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
             qv.query_variation
         )) AS similarity,
         ROW_NUMBER() OVER (PARTITION BY qv.variation_id 
-                          ORDER BY dc.embedding <=> neurondb_generate_embedding(
-                              'sentence-transformers/all-MiniLM-L6-v2',
+                          ORDER BY dc.embedding <=> neurondb_generate_embedding('sentence-transformers/all-MiniLM-L6-v2'::text,
                               qv.query_variation
                           )) AS rank_in_query
     FROM query_variations qv
@@ -77,4 +75,5 @@ LIMIT 5;
 \echo 'Multi-query retrieval complete!'
 
 DROP TABLE query_variations;
+
 
