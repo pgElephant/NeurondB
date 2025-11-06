@@ -23,12 +23,14 @@
 #include "fmgr.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
+#include "utils/array.h"
 #include "catalog/pg_type.h"
 #include "access/xact.h"
 #include "access/htup_details.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "executor/spi.h"
+#include "pgtime.h"
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -339,7 +341,8 @@ predict_batch(PG_FUNCTION_ARGS)
 	elog(INFO, "neurondb: [predict_batch] Model '%s' on batch: %ld vectors (mock backend: '%s')",
 		 name_str, (long) nvecs, m->model_handle->backend_msg);
 
-	PG_RETURN_ARRAYTYPE_P(array_copy(inputs));
+	/* Return a copy of the input array as predictions (stub implementation) */
+	PG_RETURN_ARRAYTYPE_P(DatumGetArrayTypePCopy(PointerGetDatum(inputs)));
 }
 
 /* LIST MODELS: Return metadata of all registered models as JSON array */
@@ -365,11 +368,14 @@ list_models(PG_FUNCTION_ARGS)
 
 		if (cur->model_handle && cur->model_handle->created)
 		{
-			struct tm	tmt;
-			time_t		ct = cur->model_handle->created;
+			struct pg_tm *tmt;
+			pg_time_t	ct = (pg_time_t) cur->model_handle->created;
 
-			pg_gmtime_r(&ct, &tmt);
-			strftime(created_buf, sizeof(created_buf), "%Y-%m-%dT%H:%M:%SZ", &tmt);
+			tmt = pg_gmtime(&ct);
+			if (tmt)
+				snprintf(created_buf, sizeof(created_buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+						tmt->tm_year + 1900, tmt->tm_mon + 1, tmt->tm_mday,
+						tmt->tm_hour, tmt->tm_min, tmt->tm_sec);
 		}
 
 		appendStringInfo(&buf,

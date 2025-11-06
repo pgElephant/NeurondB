@@ -123,6 +123,7 @@ OBJS += \
 	src/ml/ml_timeseries.o \
 	src/ml/ml_xgboost.o \
 	src/ml/model_runtime.o \
+	src/ml/ml_inference.o \
 	src/ml/embeddings.o \
 	src/ml/reranking.o
 

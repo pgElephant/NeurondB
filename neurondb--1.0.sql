@@ -3570,6 +3570,11 @@ GRANT EXECUTE ON FUNCTION neurondb.delete_model(TEXT) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.import_model(TEXT, TEXT, TEXT, JSONB) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.extract_features(TEXT, JSONB) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.model_performance(TEXT, TIMESTAMPTZ, TIMESTAMPTZ) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.load_model(TEXT, TEXT, TEXT) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.predict(TEXT, FLOAT8[]) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.predict_batch(TEXT, TEXT, TEXT) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.finetune_model(TEXT, TEXT, TEXT) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.export_model(TEXT, TEXT, TEXT) TO PUBLIC;
 
 -- Grant permissions on tables
 GRANT SELECT ON neurondb.ml_projects TO PUBLIC;
@@ -3611,14 +3616,53 @@ LANGUAGE C STRICT;
 COMMENT ON FUNCTION neurondb.deploy IS 'Deploy model to production with strategy (replace, blue_green, canary)';
 
 CREATE OR REPLACE FUNCTION neurondb.load_model(
-    project_name TEXT,
+    model_name TEXT,
     model_path TEXT,
-    model_format TEXT
+    model_type TEXT
 )
 RETURNS INTEGER
-AS 'MODULE_PATHNAME', 'neurondb_load_model'
+AS 'MODULE_PATHNAME', 'load_model'
 LANGUAGE C STRICT;
 COMMENT ON FUNCTION neurondb.load_model IS 'Load external model (onnx, tensorflow, pytorch, sklearn)';
+
+CREATE OR REPLACE FUNCTION neurondb.predict(
+    model_name TEXT,
+    input_data FLOAT8[]
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'predict'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.predict IS 'Run inference on a loaded model with input data';
+
+CREATE OR REPLACE FUNCTION neurondb.predict_batch(
+    model_name TEXT,
+    input_table TEXT,
+    input_column TEXT
+)
+RETURNS TABLE(row_id INTEGER, prediction FLOAT8[])
+AS 'MODULE_PATHNAME', 'predict_batch'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.predict_batch IS 'Run batch inference on table data';
+
+CREATE OR REPLACE FUNCTION neurondb.finetune_model(
+    model_name TEXT,
+    training_table TEXT,
+    config TEXT
+)
+RETURNS BOOLEAN
+AS 'MODULE_PATHNAME', 'finetune_model'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.finetune_model IS 'Fine-tune a loaded model with new training data';
+
+CREATE OR REPLACE FUNCTION neurondb.export_model(
+    model_name TEXT,
+    output_path TEXT,
+    output_format TEXT
+)
+RETURNS BOOLEAN
+AS 'MODULE_PATHNAME', 'export_model'
+LANGUAGE C STRICT;
+COMMENT ON FUNCTION neurondb.export_model IS 'Export a loaded model to file in specified format';
 
 -- =============================================================================
 -- RAG Pipeline Functions
