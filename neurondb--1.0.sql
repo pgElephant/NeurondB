@@ -3992,3 +3992,114 @@ COMMENT ON TABLE neurondb.hyperparameter_results IS 'Hyperparameter tuning resul
 COMMENT ON TABLE neurondb.text_models IS 'Text ML model registry';
 COMMENT ON TABLE neurondb.rag_pipelines IS 'RAG pipeline configurations';
 
+
+-- ============================================================================
+-- ONNX Runtime Integration for HuggingFace Models
+-- ============================================================================
+-- Provides SQL interface to HuggingFace models via ONNX Runtime
+-- Models must be exported to ONNX format first using export_hf_to_onnx.py
+-- ============================================================================
+
+-- Get ONNX Runtime information
+CREATE OR REPLACE FUNCTION neurondb_onnx_info()
+RETURNS jsonb
+AS 'MODULE_PATHNAME', 'neurondb_onnx_info'
+LANGUAGE C STABLE STRICT;
+
+COMMENT ON FUNCTION neurondb_onnx_info() IS 
+'Get ONNX Runtime version, configuration, and available execution providers';
+
+-- Generate text embeddings using HuggingFace model
+CREATE OR REPLACE FUNCTION neurondb_hf_embedding(
+    model_name TEXT,
+    input_text TEXT
+)
+RETURNS vector
+AS 'MODULE_PATHNAME', 'neurondb_hf_embedding'
+LANGUAGE C STABLE STRICT;
+
+COMMENT ON FUNCTION neurondb_hf_embedding(TEXT, TEXT) IS 
+'Generate text embeddings using HuggingFace model via ONNX Runtime.
+Model must be exported to ONNX format and placed in neurondb.onnx_model_path directory.
+
+Example:
+  SELECT neurondb_hf_embedding(''all-MiniLM-L6-v2'', ''Hello world'');
+
+Supported models:
+  - sentence-transformers/all-MiniLM-L6-v2 (384-dim)
+  - sentence-transformers/all-mpnet-base-v2 (768-dim)
+  - Any HuggingFace embedding model exported to ONNX';
+
+-- Text classification using HuggingFace model
+CREATE OR REPLACE FUNCTION neurondb_hf_classify(
+    model_name TEXT,
+    input_text TEXT
+)
+RETURNS jsonb
+AS 'MODULE_PATHNAME', 'neurondb_hf_classify'
+LANGUAGE C STABLE STRICT;
+
+COMMENT ON FUNCTION neurondb_hf_classify(TEXT, TEXT) IS
+'Classify text using HuggingFace classification model via ONNX Runtime.
+
+Returns JSON: {"label": class_id, "score": confidence}
+
+Example:
+  SELECT neurondb_hf_classify(''distilbert-sentiment'', ''I love PostgreSQL!'');
+  Result: {"label": 1, "score": 0.9876}
+
+Supported models:
+  - distilbert-base-uncased-finetuned-sst-2-english (sentiment)
+  - Any HuggingFace text classification model exported to ONNX';
+
+-- Named Entity Recognition (future release)
+CREATE OR REPLACE FUNCTION neurondb_hf_ner(
+    model_name TEXT,
+    input_text TEXT
+)
+RETURNS jsonb
+AS 'MODULE_PATHNAME', 'neurondb_hf_ner'
+LANGUAGE C STABLE STRICT;
+
+COMMENT ON FUNCTION neurondb_hf_ner(TEXT, TEXT) IS
+'Named Entity Recognition using HuggingFace model (available in next release)';
+
+-- Question Answering (future release)
+CREATE OR REPLACE FUNCTION neurondb_hf_qa(
+    model_name TEXT,
+    question TEXT,
+    context TEXT
+)
+RETURNS TEXT
+AS 'MODULE_PATHNAME', 'neurondb_hf_qa'
+LANGUAGE C STABLE STRICT;
+
+COMMENT ON FUNCTION neurondb_hf_qa(TEXT, TEXT, TEXT) IS
+'Question Answering using HuggingFace model (available in next release)';
+
+-- ============================================================================
+-- ONNX Model Management Views
+-- ============================================================================
+
+-- View for ONNX Runtime status
+CREATE OR REPLACE VIEW neurondb.onnx_runtime_status AS
+SELECT 
+    (neurondb_onnx_info()->>'available')::boolean AS onnx_available,
+    neurondb_onnx_info()->>'version' AS onnx_version,
+    neurondb_onnx_info()->>'model_path' AS model_path,
+    (neurondb_onnx_info()->>'use_gpu')::boolean AS gpu_enabled,
+    (neurondb_onnx_info()->>'threads')::integer AS threads,
+    (neurondb_onnx_info()->>'cache_size')::integer AS cache_size,
+    neurondb_onnx_info()->'providers' AS available_providers;
+
+COMMENT ON VIEW neurondb.onnx_runtime_status IS
+'Current ONNX Runtime configuration and status';
+
+-- Grant permissions
+GRANT EXECUTE ON FUNCTION neurondb_onnx_info() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb_hf_embedding(TEXT, TEXT) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb_hf_classify(TEXT, TEXT) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb_hf_ner(TEXT, TEXT) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb_hf_qa(TEXT, TEXT, TEXT) TO PUBLIC;
+GRANT SELECT ON neurondb.onnx_runtime_status TO PUBLIC;
+

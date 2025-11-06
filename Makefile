@@ -50,6 +50,12 @@ OBJS += \
 	src/llm/llm_jobs.o \
 	src/llm/hf_http.o
 
+# ONNX Runtime integration for HuggingFace models
+OBJS += \
+	src/onnx/neurondb_onnx.o \
+	src/onnx/neurondb_tokenizer.o \
+	src/onnx/neurondb_hf.o
+
 # GPU acceleration
 OBJS += \
 	src/gpu/gpu_core.o \
@@ -362,6 +368,16 @@ neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile
 
 # Ensure SQL is generated before building
 all: neurondb--1.0.sql metal-shaders
+
+# ONNX Runtime configuration
+ONNX_RUNTIME_PATH = /usr/local/onnxruntime
+ifneq ($(wildcard $(ONNX_RUNTIME_PATH)),)
+    PG_CPPFLAGS += -I$(ONNX_RUNTIME_PATH)/include -DHAVE_ONNX_RUNTIME
+    SHLIB_LINK += -L$(ONNX_RUNTIME_PATH)/lib -lonnxruntime
+    $(info ✓ ONNX Runtime found at $(ONNX_RUNTIME_PATH))
+else
+    $(warning ⚠ ONNX Runtime not found at $(ONNX_RUNTIME_PATH) - building without HuggingFace support)
+endif
 
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)

@@ -23,6 +23,9 @@
 #include "storage/shmem.h"
 #include "utils/guc.h"
 
+/* Include ONNX Runtime header */
+#include "neurondb_onnx.h"
+
 /* Forward declarations from background worker modules */
 extern void neuranq_main(Datum main_arg);
 extern void neuranq_init_guc(void);
@@ -84,9 +87,13 @@ _PG_init(void)
 	neuranmon_init_guc();
 	neurandefrag_init_guc();
 	
-    /* Initialize GPU and LLM GUC variables */
+	/* Initialize GPU and LLM GUC variables */
 	neurondb_gpu_init_guc();
-    neurondb_llm_init_guc();
+	neurondb_llm_init_guc();
+	
+	/* Initialize ONNX Runtime for HuggingFace models */
+	neurondb_onnx_define_gucs();
+	neurondb_onnx_init();
 
     /* Install shared memory request hook or request directly (older PG) */
 #if PG_VERSION_NUM >= 150000
@@ -191,9 +198,12 @@ _PG_init(void)
 void
 _PG_fini(void)
 {
-    /* Restore previous hooks */
+	/* Cleanup ONNX Runtime */
+	neurondb_onnx_cleanup();
+	
+	/* Restore previous hooks */
 #if PG_VERSION_NUM >= 150000
-    shmem_request_hook = prev_shmem_request_hook;
+	shmem_request_hook = prev_shmem_request_hook;
 #endif
 	shmem_startup_hook = prev_shmem_startup_hook;
 

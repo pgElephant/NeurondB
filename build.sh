@@ -101,6 +101,21 @@ install_ubuntu_deps() {
             postgresql-server-dev-$PG_VERSION
     fi
     
+    # ONNX Runtime for HuggingFace model support
+    log_info "Installing ONNX Runtime..."
+    ONNX_VERSION="1.17.0"
+    ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
+    
+    if [ ! -d "/usr/local/onnxruntime" ]; then
+        wget -q $ONNX_URL -O /tmp/onnxruntime.tgz
+        $SUDO mkdir -p /usr/local/onnxruntime
+        $SUDO tar -xzf /tmp/onnxruntime.tgz -C /usr/local/onnxruntime --strip-components=1
+        rm /tmp/onnxruntime.tgz
+        log_success "ONNX Runtime installed to /usr/local/onnxruntime"
+    else
+        log_info "ONNX Runtime already installed"
+    fi
+    
     # Optional: GPU libraries
     if [ "$WITH_GPU" = "yes" ]; then
         log_info "Checking for CUDA..."
@@ -114,6 +129,16 @@ install_ubuntu_deps() {
         if [ -z "$CUDA_PATH" ]; then
             log_warning "CUDA not found. Install CUDA Toolkit from: https://developer.nvidia.com/cuda-downloads"
             log_warning "NeurondB will build without GPU support"
+        fi
+        
+        # Install ONNX Runtime with CUDA support
+        if [ -n "$CUDA_PATH" ]; then
+            log_info "Installing ONNX Runtime with CUDA support..."
+            ONNX_CUDA_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-gpu-${ONNX_VERSION}.tgz"
+            wget -q $ONNX_CUDA_URL -O /tmp/onnxruntime-cuda.tgz
+            $SUDO tar -xzf /tmp/onnxruntime-cuda.tgz -C /usr/local/onnxruntime --strip-components=1
+            rm /tmp/onnxruntime-cuda.tgz
+            log_success "ONNX Runtime with CUDA installed"
         fi
     fi
     
@@ -166,6 +191,21 @@ install_rocky_deps() {
             postgresql$PG_VERSION-devel
     fi
     
+    # ONNX Runtime for HuggingFace model support
+    log_info "Installing ONNX Runtime..."
+    ONNX_VERSION="1.17.0"
+    ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
+    
+    if [ ! -d "/usr/local/onnxruntime" ]; then
+        wget -q $ONNX_URL -O /tmp/onnxruntime.tgz
+        $SUDO mkdir -p /usr/local/onnxruntime
+        $SUDO tar -xzf /tmp/onnxruntime.tgz -C /usr/local/onnxruntime --strip-components=1
+        rm /tmp/onnxruntime.tgz
+        log_success "ONNX Runtime installed to /usr/local/onnxruntime"
+    else
+        log_info "ONNX Runtime already installed"
+    fi
+    
     # Optional: GPU libraries
     if [ "$WITH_GPU" = "yes" ]; then
         log_info "Checking for ROCm..."
@@ -179,6 +219,16 @@ install_rocky_deps() {
         if [ -z "$ROCM_PATH" ]; then
             log_warning "ROCm not found. Install from: https://rocm.docs.amd.com/"
             log_warning "NeurondB will build without GPU support"
+        fi
+        
+        # Install ONNX Runtime with ROCm/CUDA support if available
+        if [ -n "$ROCM_PATH" ] || [ -n "$CUDA_PATH" ]; then
+            log_info "Installing ONNX Runtime with GPU support..."
+            ONNX_GPU_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-gpu-${ONNX_VERSION}.tgz"
+            wget -q $ONNX_GPU_URL -O /tmp/onnxruntime-gpu.tgz
+            $SUDO tar -xzf /tmp/onnxruntime-gpu.tgz -C /usr/local/onnxruntime --strip-components=1
+            rm /tmp/onnxruntime-gpu.tgz
+            log_success "ONNX Runtime with GPU support installed"
         fi
     fi
     
@@ -214,6 +264,34 @@ install_macos_deps() {
         log_info "PostgreSQL already installed"
     fi
     
+    # ONNX Runtime for HuggingFace model support
+    log_info "Installing ONNX Runtime for macOS..."
+    ONNX_VERSION="1.17.0"
+    
+    # Detect macOS architecture (Intel vs Apple Silicon)
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "arm64" ]; then
+        ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-osx-arm64-${ONNX_VERSION}.tgz"
+        log_info "Detected Apple Silicon (arm64)"
+    else
+        ONNX_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-osx-x86_64-${ONNX_VERSION}.tgz"
+        log_info "Detected Intel (x86_64)"
+    fi
+    
+    if [ ! -d "/usr/local/onnxruntime" ]; then
+        if command -v curl >/dev/null 2>&1; then
+            curl -L -o /tmp/onnxruntime.tgz $ONNX_URL
+        else
+            wget -q $ONNX_URL -O /tmp/onnxruntime.tgz
+        fi
+        sudo mkdir -p /usr/local/onnxruntime
+        sudo tar -xzf /tmp/onnxruntime.tgz -C /usr/local/onnxruntime --strip-components=1
+        rm /tmp/onnxruntime.tgz
+        log_success "ONNX Runtime installed to /usr/local/onnxruntime"
+    else
+        log_info "ONNX Runtime already installed"
+    fi
+    
     # Optional: GPU libraries (CUDA for macOS if available)
     if [ "$WITH_GPU" = "yes" ]; then
         log_info "Checking for CUDA on macOS..."
@@ -227,7 +305,8 @@ install_macos_deps() {
         if [ -z "$CUDA_PATH" ]; then
             log_warning "GPU support on macOS requires CUDA toolkit"
             log_warning "Download from: https://developer.nvidia.com/cuda-downloads"
-            log_warning "NeurondB will build without GPU support"
+            log_warning "For Apple Silicon, ONNX Runtime uses CoreML acceleration"
+            log_warning "NeurondB will build without CUDA GPU support"
         fi
     fi
     
