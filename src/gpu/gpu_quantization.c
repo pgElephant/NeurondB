@@ -26,7 +26,7 @@
 #include <math.h>
 
 #ifdef NDB_GPU_CUDA
-#include <cuda_runtime.h>
+#include "neurondb_cuda_runtime.h"
 #include <cuda_fp16.h>
 #endif
 

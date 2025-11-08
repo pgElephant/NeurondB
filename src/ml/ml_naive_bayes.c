@@ -288,7 +288,7 @@ predict_naive_bayes(PG_FUNCTION_ARGS)
 	double	   *class_priors;
 	double	  **means;
 	double	  **variances;
-	double		log_probs[2];
+	double		log_probs[2] = {0.0, 0.0};
 	int			predicted_class;
 	int			i, j, idx;
 	

@@ -313,6 +313,151 @@ install_macos_deps() {
     log_success "macOS dependencies installed"
 }
 
+detect_onnx_runtime() {
+    local header="include/onnxruntime/core/session/onnxruntime_cxx_api.h"
+    if [ -n "$ONNX_PATH" ] && [ -f "$ONNX_PATH/$header" ]; then
+        if [ -z "$ONNX_RUNTIME_PATH" ]; then
+            ONNX_RUNTIME_PATH="$ONNX_PATH"
+        fi
+        log_info "Detected ONNX Runtime at $ONNX_PATH"
+        return
+    fi
+    if [ -n "$ONNX_RUNTIME_PATH" ] && [ -f "$ONNX_RUNTIME_PATH/$header" ]; then
+        if [ -z "$ONNX_PATH" ]; then
+            ONNX_PATH="$ONNX_RUNTIME_PATH"
+        fi
+        log_info "Detected ONNX Runtime at $ONNX_RUNTIME_PATH"
+        return
+    fi
+
+    local candidates=(
+        "$HOME/onnxruntime-gpu"
+        "$HOME/onnxruntime"
+        "/usr/local/onnxruntime"
+        "/usr/lib/onnxruntime"
+        "/opt/onnxruntime"
+    )
+
+    for path in "${candidates[@]}"; do
+        if [ -n "$path" ] && [ -f "$path/$header" ]; then
+            ONNX_PATH="$path"
+            ONNX_RUNTIME_PATH="${ONNX_RUNTIME_PATH:-$path}"
+            log_info "Detected ONNX Runtime at $path"
+            return
+        fi
+    done
+
+    log_info "ONNX Runtime not found automatically. Set --onnx-path or ONNX_PATH if required."
+}
+
+detect_cuda_toolkit() {
+    if [ "$WITH_GPU" = "no" ]; then
+        return
+    fi
+
+    if [ -n "$CUDA_PATH" ] && [ -f "$CUDA_PATH/include/cuda_runtime.h" ]; then
+        log_info "Using CUDA toolkit at $CUDA_PATH"
+        return
+    fi
+
+    if command -v nvcc >/dev/null 2>&1; then
+        local nvcc_path
+        nvcc_path=$(command -v nvcc)
+        local nvcc_root
+        nvcc_root=$(dirname "$(dirname "$nvcc_path")")
+        if [ -f "$nvcc_root/include/cuda_runtime.h" ]; then
+            CUDA_PATH="$nvcc_root"
+            log_info "Detected CUDA via nvcc at $CUDA_PATH"
+            return
+        fi
+    fi
+
+    local candidates=(
+        "$CUDA_HOME"
+        "/usr/local/cuda"
+        "/opt/cuda"
+        "/usr/lib/cuda"
+        "/usr"
+    )
+
+    for path in "${candidates[@]}"; do
+        if [ -n "$path" ] && [ -f "$path/include/cuda_runtime.h" ]; then
+            CUDA_PATH="$path"
+            log_info "Detected CUDA toolkit at $CUDA_PATH"
+            return
+        fi
+    done
+
+    if [ "$WITH_GPU" = "yes" ]; then
+        log_warning "CUDA toolkit headers not found. GPU build will fall back to CPU unless CUDA_PATH is provided."
+    fi
+}
+
+detect_rocm_toolkit() {
+    if [ "$WITH_GPU" = "no" ]; then
+        return
+    fi
+
+    if [ -n "$ROCM_PATH" ] && [ -f "$ROCM_PATH/include/hip/hip_runtime.h" ]; then
+        log_info "Using ROCm toolkit at $ROCM_PATH"
+        return
+    fi
+
+    local candidates=(
+        "$ROCM_HOME"
+        "/opt/rocm"
+        "/usr/rocm"
+    )
+
+    for path in "${candidates[@]}"; do
+        if [ -n "$path" ] && [ -f "$path/include/hip/hip_runtime.h" ]; then
+            ROCM_PATH="$path"
+            log_info "Detected ROCm toolkit at $ROCM_PATH"
+            return
+        fi
+    done
+}
+
+prepare_make_args() {
+    local log_mode="${1:-log}"
+    MAKE_ARGS=""
+
+    if [ -n "$ONNX_PATH" ]; then
+        MAKE_ARGS="$MAKE_ARGS ONNX_PATH=$ONNX_PATH"
+        if [ "$log_mode" = "log" ]; then
+            log_info "Using ONNX Runtime headers at: $ONNX_PATH"
+        fi
+    fi
+    if [ -n "$ONNX_RUNTIME_PATH" ]; then
+        MAKE_ARGS="$MAKE_ARGS ONNX_RUNTIME_PATH=$ONNX_RUNTIME_PATH"
+        if [ "$log_mode" = "log" ]; then
+            log_info "Using ONNX Runtime libraries at: $ONNX_RUNTIME_PATH"
+        fi
+    fi
+
+    if [ "$WITH_GPU" = "yes" ]; then
+        if [ -n "$CUDA_PATH" ]; then
+            MAKE_ARGS="$MAKE_ARGS CUDA_PATH=$CUDA_PATH"
+            if [ "$log_mode" = "log" ]; then
+                log_info "Building with CUDA support from: $CUDA_PATH"
+            fi
+        fi
+        if [ -n "$ROCM_PATH" ]; then
+            MAKE_ARGS="$MAKE_ARGS ROCM_PATH=$ROCM_PATH"
+            if [ "$log_mode" = "log" ]; then
+                log_info "Building with ROCm support from: $ROCM_PATH"
+            fi
+        fi
+        if [ -z "$CUDA_PATH" ] && [ -z "$ROCM_PATH" ] && [ "$log_mode" = "log" ]; then
+            log_warning "GPU support requested but no CUDA/ROCm toolkit detected. CPU fallback will remain enabled."
+        fi
+    else
+        if [ "$log_mode" = "log" ]; then
+            log_info "Building CPU-only (use --with-gpu to enable GPU acceleration)"
+        fi
+    fi
+}
+
 # Build NeurondB
 build_neurondb() {
     log_info "Building NeurondB..."
@@ -358,33 +503,7 @@ build_neurondb() {
             ;;
     esac
     
-    # Set GPU paths if enabled
-    if [ "$WITH_GPU" = "yes" ]; then
-        # Build make arguments for GPU
-        GPU_MAKE_ARGS=""
-        
-        if [ -n "$CUDA_PATH" ]; then
-            GPU_MAKE_ARGS="$GPU_MAKE_ARGS CUDA_PATH=$CUDA_PATH"
-            log_info "Building with CUDA support: $CUDA_PATH"
-        fi
-        
-        if [ -n "$ROCM_PATH" ]; then
-            GPU_MAKE_ARGS="$GPU_MAKE_ARGS ROCM_PATH=$ROCM_PATH"
-            log_info "Building with ROCm support: $ROCM_PATH"
-        fi
-        
-        if [ -n "$ONNX_PATH" ]; then
-            GPU_MAKE_ARGS="$GPU_MAKE_ARGS ONNX_PATH=$ONNX_PATH"
-            log_info "Building with ONNX Runtime GPU: $ONNX_PATH"
-        fi
-        
-        if [ -z "$GPU_MAKE_ARGS" ]; then
-            log_warning "GPU support requested but no GPU toolkit found, building CPU-only"
-        fi
-    else
-        GPU_MAKE_ARGS=""
-        log_info "Building CPU-only (use --with-gpu for GPU support)"
-    fi
+    prepare_make_args
     
     # Generate config.h based on detected GPU support
     log_info "Generating config.h..."
@@ -414,7 +533,7 @@ build_neurondb() {
 /* GPU support flags */
 EOF
 
-    if [ -n "$CUDA_PATH" ]; then
+    if [ "$WITH_GPU" = "yes" ] && [ -n "$CUDA_PATH" ]; then
         cat >> include/neurondb_config.h <<EOF
 #define NDB_GPU_CUDA 1
 #define CUDA_PATH "$CUDA_PATH"
@@ -426,7 +545,7 @@ EOF
 EOF
     fi
 
-    if [ -n "$ROCM_PATH" ]; then
+    if [ "$WITH_GPU" = "yes" ] && [ -n "$ROCM_PATH" ]; then
         cat >> include/neurondb_config.h <<EOF
 #define NDB_GPU_HIP 1
 #define ROCM_PATH "$ROCM_PATH"
@@ -438,7 +557,7 @@ EOF
 EOF
     fi
 
-    if [ -n "$ONNX_PATH" ]; then
+    if [ "$WITH_GPU" = "yes" ] && [ -n "$ONNX_PATH" ]; then
         cat >> include/neurondb_config.h <<EOF
 #define HAVE_ONNXRUNTIME_GPU 1
 #define ONNX_PATH "$ONNX_PATH"
@@ -466,11 +585,11 @@ EOF
     echo ""
     
     # Clean previous build
-    make clean PG_CONFIG=$PG_CONFIG 2>/dev/null || true
+    make clean PG_CONFIG=$PG_CONFIG $MAKE_ARGS 2>/dev/null || true
     
     # Build
     log_info "Compiling NeurondB..."
-    if make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) PG_CONFIG=$PG_CONFIG $GPU_MAKE_ARGS; then
+    if make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) PG_CONFIG=$PG_CONFIG $MAKE_ARGS; then
         log_success "Build completed successfully"
     else
         log_error "Build failed"
@@ -513,7 +632,8 @@ install_neurondb() {
         SUDO="sudo"
     fi
     
-    if $SUDO make install PG_CONFIG=$PG_CONFIG; then
+    prepare_make_args quiet
+    if $SUDO make install PG_CONFIG=$PG_CONFIG $MAKE_ARGS; then
         log_success "NeurondB installed successfully"
         
         # Show installation paths
@@ -541,7 +661,8 @@ run_tests() {
         return
     fi
     
-    if make installcheck PG_CONFIG=$PG_CONFIG; then
+    prepare_make_args quiet
+    if make installcheck PG_CONFIG=$PG_CONFIG $MAKE_ARGS; then
         log_success "All regression tests passed"
     else
         log_error "Regression tests failed"
@@ -594,10 +715,11 @@ INSTALL_DEPS="yes"
 BUILD="yes"
 INSTALL="yes"
 RUN_TESTS="no"
-WITH_GPU="no"
-CUDA_PATH=""
-ROCM_PATH=""
-ONNX_PATH=""
+WITH_GPU="${WITH_GPU:-auto}"
+CUDA_PATH="${CUDA_PATH:-${CUDA_HOME:-}}"
+ROCM_PATH="${ROCM_PATH:-${ROCM_HOME:-}}"
+ONNX_PATH="${ONNX_PATH:-}"
+ONNX_RUNTIME_PATH="${ONNX_RUNTIME_PATH:-}"
 CLEAN_ONLY="no"
 
 while [ $# -gt 0 ]; do
@@ -640,6 +762,7 @@ while [ $# -gt 0 ]; do
             ;;
         --onnx-path)
             ONNX_PATH="$2"
+            ONNX_RUNTIME_PATH="$2"
             shift 2
             ;;
         --clean)
@@ -676,6 +799,19 @@ main() {
     # Detect platform and PostgreSQL
     detect_platform
     detect_postgres_version
+
+    # Auto-detect ONNX Runtime if not explicitly provided
+    if [ -z "$ONNX_PATH" ]; then
+        for p in "$ONNX_RUNTIME_PATH" /usr/local/onnxruntime /usr/lib/onnxruntime /opt/onnxruntime "$HOME/onnxruntime-gpu"; do
+            if [ -n "$p" ] && [ -f "$p/include/onnxruntime/core/session/onnxruntime_cxx_api.h" ]; then
+                ONNX_PATH="$p"
+                break
+            fi
+        done
+    fi
+    if [ -z "$ONNX_RUNTIME_PATH" ] && [ -n "$ONNX_PATH" ]; then
+        ONNX_RUNTIME_PATH="$ONNX_PATH"
+    fi
     
     # Install dependencies
     if [ "$INSTALL_DEPS" = "yes" ]; then
@@ -700,6 +836,20 @@ main() {
     # Re-detect pg_config after installation
     if [ "$INSTALL_DEPS" = "yes" ]; then
         detect_postgres_version
+    fi
+    
+    detect_onnx_runtime
+    detect_cuda_toolkit
+    detect_rocm_toolkit
+
+    if [ "$WITH_GPU" = "auto" ]; then
+        if [ -n "$CUDA_PATH" ] || [ -n "$ROCM_PATH" ]; then
+            WITH_GPU="yes"
+            log_info "Auto-detected GPU toolkits. Enabling GPU build."
+        else
+            WITH_GPU="no"
+            log_info "No GPU toolkit detected. Building CPU-only."
+        fi
     fi
     
     # Build

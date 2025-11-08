@@ -22,6 +22,8 @@
 #include "utils/builtins.h"
 #include "executor/spi.h"
 
+#include <math.h>
+
 /*
  * Planner Extension API: Register custom distance or reranker operators
  */

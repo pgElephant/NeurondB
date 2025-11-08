@@ -62,8 +62,13 @@ static void
 als_free_matrix(float **mat, int nrow)
 {
     int i;
+    if (mat == NULL)
+        return;
     for (i = 0; i < nrow; ++i)
-        pfree(mat[i]);
+    {
+        if (mat[i])
+            pfree(mat[i]);
+    }
     pfree(mat);
 }
 
@@ -73,6 +78,8 @@ dot_product(const float *v1, const float *v2, int n)
 {
     float s = 0.0f;
     int i;
+    if (!v1 || !v2 || n <= 0)
+        return s;
     for (i = 0; i < n; ++i)
         s += v1[i] * v2[i];
     return s;
@@ -100,8 +107,8 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
     char       *rating_col_str = text_to_cstring(rating_col);
 
     int         ret;
-    MemoryContext oldcontext, model_mcxt;
-    int         n_row, i;
+    MemoryContext oldcontext = NULL, model_mcxt = NULL;
+    int         n_row = 0, i = 0;
     int         max_user_id = 0;
     int         max_item_id = 0;
 
@@ -114,7 +121,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
     float     **Q = NULL; /* item factors: item_id x n_factors */
 
     StringInfoData sql;
-    SPIPlanPtr    plan;
+    SPIPlanPtr    plan = NULL;
 
     /* Parameter checking */
     if (n_factors < ALS_MIN_NFACTORS || n_factors > ALS_MAX_NFACTORS)
@@ -161,9 +168,9 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
     {
         HeapTuple tuple = SPI_tuptable->vals[i];
         TupleDesc tupdesc = SPI_tuptable->tupdesc;
-        bool isnull[3];
-        int32 user, item;
-        float r;
+        bool isnull[3] = {false, false, false};
+        int32 user = 0, item = 0;
+        float r = 0.0f;
 
         user = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 1, &isnull[0]));
         item = DatumGetInt32(SPI_getbinval(tuple, tupdesc, 2, &isnull[1]));
@@ -271,8 +278,8 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
     Oid    arg_types[3] = {INT8OID, INT4OID, 1021}; /* float4[] is 1021 */
     Datum  values[3];
     char   nulls[3] = {false, false, false};
-    ArrayType *array;
-    int     j;
+    ArrayType *array = NULL;
+    int     j = 0;
 
     plan = SPI_prepare(
             "INSERT INTO neurondb_cf_user_factors (model_id, user_id, factors) VALUES ($1,$2,$3)", 3, arg_types);
@@ -348,14 +355,14 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
     als_free_matrix(P, max_user_id+1);
     als_free_matrix(Q, max_item_id+1);
 
-    pfree(user_ids);
-    pfree(item_ids);
-    pfree(ratings);
-    pfree(table_name_str);
-    pfree(user_col_str);
-    pfree(item_col_str);
-    pfree(rating_col_str);
-    MemoryContextDelete(model_mcxt);
+    if (user_ids) pfree(user_ids);
+    if (item_ids) pfree(item_ids);
+    if (ratings) pfree(ratings);
+    if (table_name_str) pfree(table_name_str);
+    if (user_col_str) pfree(user_col_str);
+    if (item_col_str) pfree(item_col_str);
+    if (rating_col_str) pfree(rating_col_str);
+    if (model_mcxt) MemoryContextDelete(model_mcxt);
     SPI_finish();
 
     resetStringInfo(&sql);
@@ -380,17 +387,17 @@ recommend_items(PG_FUNCTION_ARGS)
 
     float      *user_factors = NULL;
     int         n_factors = 0;
-	int        *item_ids = NULL;
-	float     **item_factors = NULL;
-	int         n_items_total = 0;
-	int         i, j;
-	int32      *top_items;
-	float      *top_scores;
-	StringInfoData sql;
-	int         ret;
+    int        *item_ids = NULL;
+    float     **item_factors = NULL;
+    int         n_items_total = 0;
+    int         i = 0, j = 0;
+    int32      *top_items = NULL;
+    float      *top_scores = NULL;
+    StringInfoData sql;
+    int         ret = 0;
 
-    ArrayType  *result_array;
-    Datum      *elems;
+    ArrayType  *result_array = NULL;
+    Datum      *elems = NULL;
 
     if (n_items < RECO_MIN_RESULT || n_items > RECO_MAX_RESULT)
         ereport(ERROR,
@@ -421,7 +428,7 @@ recommend_items(PG_FUNCTION_ARGS)
 
     HeapTuple tuple = SPI_tuptable->vals[0];
     TupleDesc tupdesc = SPI_tuptable->tupdesc;
-    bool isnull;
+    bool isnull = false;
     Datum arr = SPI_getbinval(tuple, tupdesc, 1, &isnull);
     if (isnull)
     {
@@ -442,7 +449,7 @@ recommend_items(PG_FUNCTION_ARGS)
     ret = SPI_execute(sql.data, true, 0);
     if (ret != SPI_OK_SELECT)
     {
-        pfree(user_factors);
+        if (user_factors) pfree(user_factors);
         SPI_finish();
         ereport(ERROR, (errmsg("Failed to load item factors")));
     }
@@ -450,7 +457,7 @@ recommend_items(PG_FUNCTION_ARGS)
     n_items_total = SPI_processed;
     if (n_items_total < 1)
     {
-        pfree(user_factors);
+        if (user_factors) pfree(user_factors);
         SPI_finish();
         ereport(ERROR, (errmsg("No items found for model")));
     }
@@ -460,15 +467,15 @@ recommend_items(PG_FUNCTION_ARGS)
     for (i = 0; i < n_items_total; ++i)
     {
         HeapTuple itup = SPI_tuptable->vals[i];
-        int item_id;
-        float *fac;
-        int item_n_factors;
-        ArrayType *arr;
-        bool isnull_item, isnull_fac;
+        int item_id = 0;
+        float *fac = NULL;
+        int item_n_factors = 0;
+        ArrayType *arr_f = NULL;
+        bool isnull_item = false, isnull_fac = false;
         item_id = DatumGetInt32(SPI_getbinval(itup, SPI_tuptable->tupdesc, 1, &isnull_item));
         Datum facdatum = SPI_getbinval(itup, SPI_tuptable->tupdesc, 2, &isnull_fac);
-        arr = DatumGetArrayTypeP(facdatum);
-        item_n_factors = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+        arr_f = DatumGetArrayTypeP(facdatum);
+        item_n_factors = ArrayGetNItems(ARR_NDIM(arr_f), ARR_DIMS(arr_f));
         if (item_n_factors != n_factors)
         {
             for (j = 0; j < i; ++j) pfree(item_factors[j]);
@@ -479,7 +486,7 @@ recommend_items(PG_FUNCTION_ARGS)
             ereport(ERROR, (errmsg("Factor dimension mismatch for item %d", item_id)));
         }
         fac = (float *) palloc(sizeof(float) * n_factors);
-        memcpy(fac, ARR_DATA_PTR(arr), sizeof(float) * n_factors);
+        memcpy(fac, ARR_DATA_PTR(arr_f), sizeof(float) * n_factors);
         item_ids[i] = item_id;
         item_factors[i] = fac;
     }
@@ -512,11 +519,11 @@ recommend_items(PG_FUNCTION_ARGS)
         }
     }
 
-    pfree(user_factors);
+    if (user_factors) pfree(user_factors);
     for (i = 0; i < n_items_total; ++i)
-        pfree(item_factors[i]);
-    pfree(item_factors);
-    pfree(item_ids);
+        if (item_factors[i]) pfree(item_factors[i]);
+    if (item_factors) pfree(item_factors);
+    if (item_ids) pfree(item_ids);
 
     /* Return result as array (sorted by score descending) */
     /* Bubble down, for small N it's fine */
@@ -566,16 +573,16 @@ recommend_content_based(PG_FUNCTION_ARGS)
     int32       n_recommendations = PG_ARGISNULL(2) ? 10 : PG_GETARG_INT32(2);
 
     char       *features_table_str = text_to_cstring(features_table);
-    int         ret, i, j, item_count, n_factors;
+    int         ret = 0, i = 0, j = 0, item_count = 0, n_factors = 0;
     int32      *other_ids = NULL;
     float     **other_factors = NULL;
     int         target_idx = -1;
     float      *target_vec = NULL;
 
-    ArrayType  *result_array;
-    Datum      *elems;
-    int32      *top_items;
-    float      *top_sims;
+    ArrayType  *result_array = NULL;
+    Datum      *elems = NULL;
+    int32      *top_items = NULL;
+    float      *top_sims = NULL;
 
     if (n_recommendations < RECO_MIN_RESULT || n_recommendations > RECO_MAX_RESULT)
         ereport(ERROR,
@@ -591,14 +598,14 @@ recommend_content_based(PG_FUNCTION_ARGS)
     ret = SPI_execute(sql.data, true, 0);
     if (ret != SPI_OK_SELECT)
     {
-        pfree(features_table_str);
+        if (features_table_str) pfree(features_table_str);
         SPI_finish();
         ereport(ERROR, (errmsg("Could not SELECT item features")));
     }
     item_count = SPI_processed;
     if (item_count < 2)
     {
-        pfree(features_table_str);
+        if (features_table_str) pfree(features_table_str);
         SPI_finish();
         ereport(ERROR, (errmsg("Not enough items for content-based recommendations")));
     }
@@ -609,16 +616,16 @@ recommend_content_based(PG_FUNCTION_ARGS)
     {
         HeapTuple tup = SPI_tuptable->vals[i];
         TupleDesc tupdesc = SPI_tuptable->tupdesc;
-        bool isnull_item, isnull_feat;
+        bool isnull_item = false, isnull_feat = false;
 
         int id = DatumGetInt32(SPI_getbinval(tup, tupdesc, 1, &isnull_item));
         Datum arr_datum = SPI_getbinval(tup, tupdesc, 2, &isnull_feat);
         if (isnull_item || isnull_feat)
         {
-            pfree(features_table_str);
-            for (j=0; j < i; ++j) pfree(other_factors[j]);
-            pfree(other_factors);
-            pfree(other_ids);
+            if (features_table_str) pfree(features_table_str);
+            for (j=0; j < i; ++j) if (other_factors[j]) pfree(other_factors[j]);
+            if (other_factors) pfree(other_factors);
+            if (other_ids) pfree(other_ids);
             SPI_finish();
             ereport(ERROR, (errmsg("NULL item or features at row %d", i+1)));
         }
@@ -627,10 +634,10 @@ recommend_content_based(PG_FUNCTION_ARGS)
         if (i==0) n_factors = nf;
         if (nf != n_factors)
         {
-            pfree(features_table_str);
-            for (j=0; j < i; ++j) pfree(other_factors[j]);
-            pfree(other_factors);
-            pfree(other_ids);
+            if (features_table_str) pfree(features_table_str);
+            for (j=0; j < i; ++j) if (other_factors[j]) pfree(other_factors[j]);
+            if (other_factors) pfree(other_factors);
+            if (other_ids) pfree(other_ids);
             SPI_finish();
             ereport(ERROR, (errmsg("Feature length mismatch at row %d", i+1)));
         }
@@ -646,10 +653,10 @@ recommend_content_based(PG_FUNCTION_ARGS)
     }
     if (target_idx == -1)
     {
-        pfree(features_table_str);
-        for (j=0; j<item_count; ++j) pfree(other_factors[j]);
-        pfree(other_factors);
-        pfree(other_ids);
+        if (features_table_str) pfree(features_table_str);
+        for (j=0; j<item_count; ++j) if (other_factors[j]) pfree(other_factors[j]);
+        if (other_factors) pfree(other_factors);
+        if (other_ids) pfree(other_ids);
         SPI_finish();
         ereport(ERROR, (errmsg("item_id %d not found in features table", item_id)));
     }
@@ -663,7 +670,9 @@ recommend_content_based(PG_FUNCTION_ARGS)
         top_sims[i] = -INFINITY;
     }
 
-    float target_len = sqrtf(dot_product(target_vec, target_vec, n_factors));
+    float target_len = 0.0f;
+    target_len = sqrtf(dot_product(target_vec, target_vec, n_factors));
+
     for (i = 0; i < item_count; ++i)
     {
         if (i == target_idx)
@@ -698,13 +707,13 @@ recommend_content_based(PG_FUNCTION_ARGS)
     result_array = construct_array(elems, n_recommendations, INT4OID, sizeof(int32), true, 'i');
 
     for (i=0; i<item_count; ++i)
-        pfree(other_factors[i]);
-    pfree(other_factors);
-    pfree(other_ids);
-    pfree(features_table_str);
-    pfree(elems);
-    pfree(top_items);
-    pfree(top_sims);
+        if (other_factors[i]) pfree(other_factors[i]);
+    if (other_factors) pfree(other_factors);
+    if (other_ids) pfree(other_ids);
+    if (features_table_str) pfree(features_table_str);
+    if (elems) pfree(elems);
+    if (top_items) pfree(top_items);
+    if (top_sims) pfree(top_sims);
 
     SPI_finish();
     PG_RETURN_ARRAYTYPE_P(result_array);
@@ -725,9 +734,9 @@ user_similarity(PG_FUNCTION_ARGS)
     text *ratings_table = PG_GETARG_TEXT_PP(2);
 
     char *ratings_table_str = text_to_cstring(ratings_table);
-    int ret, count = 0;
-    float sx = 0.0, sy = 0.0, sxx = 0.0, syy = 0.0, sxy = 0.0;
-    float r = 0.0;
+    int ret = 0, count = 0, i = 0;
+    float sx = 0.0f, sy = 0.0f, sxx = 0.0f, syy = 0.0f, sxy = 0.0f;
+    float r = 0.0f;
 
     if ((ret = SPI_connect()) != SPI_OK_CONNECT)
         elog(ERROR, "SPI_connect failed");
@@ -746,7 +755,7 @@ user_similarity(PG_FUNCTION_ARGS)
     ret = SPI_execute(sql.data, true, 0);
     if (ret != SPI_OK_SELECT)
     {
-        pfree(ratings_table_str);
+        if (ratings_table_str) pfree(ratings_table_str);
         SPI_finish();
         ereport(ERROR, (errmsg("Could not fetch user ratings")));
     }
@@ -754,12 +763,12 @@ user_similarity(PG_FUNCTION_ARGS)
     count = SPI_processed;
     if (count < 2)
     {
-        pfree(ratings_table_str);
+        if (ratings_table_str) pfree(ratings_table_str);
         SPI_finish();
         ereport(ERROR, (errmsg("Users must have at least two items in common")));
     }
 
-    for (int i=0; i<count; ++i)
+    for (i=0; i<count; ++i)
     {
         HeapTuple tup = SPI_tuptable->vals[i];
         TupleDesc tupdesc = SPI_tuptable->tupdesc;
@@ -775,15 +784,15 @@ user_similarity(PG_FUNCTION_ARGS)
 
     float num = sxy - sx*sy/count;
     float den = sqrtf(sxx - sx*sx/count) * sqrtf(syy - sy*sy/count);
-    if (den != 0)
+    if (den != 0.0f)
         r = num / den;
     else
         r = 0.0f;
 
-    pfree(ratings_table_str);
+    if (ratings_table_str) pfree(ratings_table_str);
     SPI_finish();
 
-    PG_RETURN_FLOAT8(r);
+    PG_RETURN_FLOAT8((double)r);
 }
 
 /*
@@ -812,7 +821,7 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 
     char *content_table_str = text_to_cstring(content_table);
 
-    int ret;
+    int ret = 0, i = 0, j = 0;
     if ((ret = SPI_connect()) != SPI_OK_CONNECT)
         elog(ERROR, "SPI_connect failed");
 
@@ -826,23 +835,23 @@ recommend_hybrid(PG_FUNCTION_ARGS)
     ret = SPI_execute(sql.data, true, 1);
     if (ret != SPI_OK_SELECT)
     {
-        pfree(content_table_str);
+        if (content_table_str) pfree(content_table_str);
         SPI_finish();
         ereport(ERROR, (errmsg("Failed to load user factors")));
     }
     if (SPI_processed != 1)
     {
-        pfree(content_table_str);
+        if (content_table_str) pfree(content_table_str);
         SPI_finish();
         ereport(ERROR, (errmsg("No user_factors found for user %d in model %d", user_id, cf_model_id)));
     }
     HeapTuple tuple = SPI_tuptable->vals[0];
     TupleDesc tupdesc = SPI_tuptable->tupdesc;
-    bool isnull;
+    bool isnull = false;
     Datum arr = SPI_getbinval(tuple, tupdesc, 1, &isnull);
     if (isnull)
     {
-        pfree(content_table_str);
+        if (content_table_str) pfree(content_table_str);
         SPI_finish();
         ereport(ERROR, (errmsg("NULL user factors array")));
     }
@@ -857,13 +866,21 @@ recommend_hybrid(PG_FUNCTION_ARGS)
     ret = SPI_execute(sql.data, true, 0);
     if (ret != SPI_OK_SELECT)
     {
-        pfree(user_factors); pfree(content_table_str); SPI_finish();
+        if (user_factors)
+            pfree(user_factors);
+        if (content_table_str)
+            pfree(content_table_str);
+        SPI_finish();
         ereport(ERROR, (errmsg("Failed to load item factors")));
     }
-    int n_items_total = SPI_processed, i, j;
+    int n_items_total = SPI_processed;
     if (n_items_total < 1)
     {
-        pfree(user_factors); pfree(content_table_str); SPI_finish();
+        if (user_factors)
+            pfree(user_factors);
+        if (content_table_str)
+            pfree(content_table_str);
+        SPI_finish();
         ereport(ERROR, (errmsg("No items found for model")));
     }
     int32 *item_ids = (int32 *) palloc(sizeof(int32) * n_items_total);
@@ -872,15 +889,26 @@ recommend_hybrid(PG_FUNCTION_ARGS)
     {
         HeapTuple tup = SPI_tuptable->vals[i];
         TupleDesc desc = SPI_tuptable->tupdesc;
-        bool isnull_id, isnull_fac;
+        bool isnull_id = false, isnull_fac = false;
         int id = DatumGetInt32(SPI_getbinval(tup, desc, 1, &isnull_id));
         Datum facdatum = SPI_getbinval(tup, desc, 2, &isnull_fac);
         ArrayType *facarr = DatumGetArrayTypeP(facdatum);
         int nf = ArrayGetNItems(ARR_NDIM(facarr), ARR_DIMS(facarr));
         if (nf != n_factors)
         {
-            for (j=0;j<i;++j) pfree(item_factors[j]);
-            pfree(item_factors); pfree(item_ids); pfree(user_factors); pfree(content_table_str);
+            for (j = 0; j < i; ++j)
+            {
+                if (item_factors[j])
+                    pfree(item_factors[j]);
+            }
+            if (item_factors)
+                pfree(item_factors);
+            if (item_ids)
+                pfree(item_ids);
+            if (user_factors)
+                pfree(user_factors);
+            if (content_table_str)
+                pfree(content_table_str);
             SPI_finish();
             ereport(ERROR, (errmsg("Factor dimension mismatch for item %d", id)));
         }
@@ -895,9 +923,21 @@ recommend_hybrid(PG_FUNCTION_ARGS)
     ret = SPI_execute(sql.data, true, 0);
     if (ret != SPI_OK_SELECT)
     {
-        for (i=0;i<n_items_total;++i) pfree(item_factors[i]);
-        pfree(item_factors); pfree(item_ids); pfree(user_factors); pfree(content_table_str);
-        SPI_finish(); ereport(ERROR, (errmsg("Could not load item features")));
+        for (i = 0; i < n_items_total; ++i)
+        {
+            if (item_factors[i])
+                pfree(item_factors[i]);
+        }
+        if (item_factors)
+            pfree(item_factors);
+        if (item_ids)
+            pfree(item_ids);
+        if (user_factors)
+            pfree(user_factors);
+        if (content_table_str)
+            pfree(content_table_str);
+        SPI_finish();
+        ereport(ERROR, (errmsg("Could not load item features")));
     }
     int n_feat_items = SPI_processed;
     int32 *feat_item_ids = (int32 *) palloc(sizeof(int32) * n_feat_items);
@@ -908,19 +948,39 @@ recommend_hybrid(PG_FUNCTION_ARGS)
     {
         HeapTuple tup = SPI_tuptable->vals[i];
         TupleDesc desc = SPI_tuptable->tupdesc;
-        bool isnull_id, isnull_feat;
+        bool isnull_id = false, isnull_feat = false;
         int id = DatumGetInt32(SPI_getbinval(tup, desc, 1, &isnull_id));
-        Datum arr = SPI_getbinval(tup, desc, 2, &isnull_feat);
-        ArrayType *a = DatumGetArrayTypeP(arr);
+        Datum arr_tmp = SPI_getbinval(tup, desc, 2, &isnull_feat);
+        ArrayType *a = DatumGetArrayTypeP(arr_tmp);
         int nf = ArrayGetNItems(ARR_NDIM(a), ARR_DIMS(a));
         if (i == 0)
             nf_content = nf;
         if (nf != nf_content)
         {
-            for (j=0;j<i;++j) pfree(content_factors[j]);
-            for (j=0;j<n_items_total;++j) pfree(item_factors[j]);
-            pfree(content_factors); pfree(feat_item_ids); pfree(item_factors); pfree(item_ids); pfree(user_factors); pfree(content_table_str);
-            SPI_finish(); ereport(ERROR, (errmsg("Content vector dimension mismatch")));
+            for (j = 0; j < i; ++j)
+            {
+                if (content_factors[j])
+                    pfree(content_factors[j]);
+            }
+            for (j = 0; j < n_items_total; ++j)
+            {
+                if (item_factors[j])
+                    pfree(item_factors[j]);
+            }
+            if (content_factors)
+                pfree(content_factors);
+            if (feat_item_ids)
+                pfree(feat_item_ids);
+            if (item_factors)
+                pfree(item_factors);
+            if (item_ids)
+                pfree(item_ids);
+            if (user_factors)
+                pfree(user_factors);
+            if (content_table_str)
+                pfree(content_table_str);
+            SPI_finish();
+            ereport(ERROR, (errmsg("Content vector dimension mismatch")));
         }
         float *vec = (float *) palloc(sizeof(float) * nf_content);
         memcpy(vec, ARR_DATA_PTR(a), sizeof(float) * nf_content);
@@ -952,9 +1012,7 @@ recommend_hybrid(PG_FUNCTION_ARGS)
         float cf_score = dot_product(user_factors, item_factors[i], n_factors);
         float c_dot = dot_product(content_factors[featidx], content_factors[featidx], nf_content);
         float c_len = sqrtf(c_dot);
-        float c_score = 1.0;
-        if (c_len > 0.0)
-            c_score = dot_product(content_factors[featidx], content_factors[featidx], nf_content) / (c_len * c_len);
+        float c_score = (c_len > 0.0f) ? dot_product(content_factors[featidx], content_factors[featidx], nf_content) / (c_len * c_len) : 1.0f;
         float score = (float)(cf_weight * cf_score + (1.0-cf_weight)*c_score);
 
         /* insert in top */
@@ -981,10 +1039,17 @@ recommend_hybrid(PG_FUNCTION_ARGS)
         elems[i]=Int32GetDatum(top_items[i]);
     ArrayType *result_array = construct_array(elems, ntop, INT4OID, sizeof(int32), true, 'i');
     /* cleanup */
-    pfree(top_items); pfree(top_scores);
-    for (i=0;i<n_feat_items;++i) pfree(content_factors[i]);
-    for (i=0;i<n_items_total;++i) pfree(item_factors[i]);
-    pfree(content_factors); pfree(feat_item_ids); pfree(item_factors); pfree(item_ids); pfree(user_factors); pfree(content_table_str); pfree(elems);
+    if (top_items) pfree(top_items); 
+    if (top_scores) pfree(top_scores);
+    for (i=0;i<n_feat_items;++i) if (content_factors[i]) pfree(content_factors[i]);
+    for (i=0;i<n_items_total;++i) if (item_factors[i]) pfree(item_factors[i]);
+    if (content_factors) pfree(content_factors); 
+    if (feat_item_ids) pfree(feat_item_ids); 
+    if (item_factors) pfree(item_factors); 
+    if (item_ids) pfree(item_ids); 
+    if (user_factors) pfree(user_factors); 
+    if (content_table_str) pfree(content_table_str); 
+    if (elems) pfree(elems);
 
     SPI_finish();
     PG_RETURN_ARRAYTYPE_P(result_array);

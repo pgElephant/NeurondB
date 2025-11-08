@@ -17,6 +17,8 @@
 #include "neurondb_ml.h"
 #include "neurondb_simd.h"
 
+#include <math.h>
+
 /* DBSCAN constants */
 #define DBSCAN_NOISE -1
 #define DBSCAN_UNDEFINED -2

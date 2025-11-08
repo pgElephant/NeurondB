@@ -184,11 +184,10 @@ neuranllm_main(Datum main_arg)
 			++iterations;
 		if (iterations % 1000 == 0)
 		{
-			int pruned;
-			
+			volatile int pruned = 0;
+
 			StartTransactionCommand();
 			PushActiveSnapshot(GetTransactionSnapshot());
-			pruned = 0;
 			PG_TRY();
 				{
 					pruned = ndb_llm_job_prune(7);

@@ -6,6 +6,12 @@ EXTENSION = neurondb
 DATA = neurondb--1.0.sql
 DOCS = README.md
 
+# Compiler-specific tweaks
+CC_VERSION := $(shell $(CC) --version 2>/dev/null | head -1)
+ifeq ($(findstring clang,$(CC_VERSION)),)
+PG_CPPFLAGS += -Wno-sign-compare -Wno-shadow=compatible-local -Wno-clobbered -Wno-dangling-pointer
+endif
+
 # Source files organized by subdirectory
 # Core vector types and operations
 OBJS = \
@@ -233,9 +239,19 @@ ifdef CUDA_PATH
 	HAVE_CUDA := $(shell test -f $(CUDA_PATH)/include/cuda_runtime.h && echo "yes" || echo "no")
 	ifeq ($(HAVE_CUDA),yes)
 		NVCC := $(CUDA_PATH)/bin/nvcc
-		PG_CPPFLAGS += -DNDB_GPU_CUDA -I$(CUDA_PATH)/include
-		CUDA_LIBDIR := $(shell test -d $(CUDA_PATH)/lib64 && echo lib64 || echo lib)
-		SHLIB_LINK += -L$(CUDA_PATH)/$(CUDA_LIBDIR) -lcudart -lcublas -lcublasLt
+		PG_CPPFLAGS += -DNDB_GPU_CUDA -DHAVE_CUDA -I$(CUDA_PATH)/include
+		CUDA_LIBDIR := $(shell \
+			for d in lib64 lib lib/x86_64-linux-gnu; do \
+				if test -d $(CUDA_PATH)/$$d; then echo $(CUDA_PATH)/$$d; break; fi; \
+			done)
+		ifeq ($(CUDA_LIBDIR),)
+			CUDA_LIBDIR := $(shell if test -d /usr/lib/x86_64-linux-gnu; then echo /usr/lib/x86_64-linux-gnu; fi)
+		endif
+		ifneq ($(CUDA_LIBDIR),)
+			SHLIB_LINK += -L$(CUDA_LIBDIR) -lcudart -lcublas -lcublasLt
+		else
+			SHLIB_LINK += -L$(CUDA_PATH)/lib -lcudart -lcublas -lcublasLt
+		endif
 		NVCC_FLAGS = -O3 -arch=sm_80 -Xcompiler -fPIC
 		GPU_OBJS = src/gpu_kernels.o
 		
@@ -261,6 +277,9 @@ ifdef ROCM_PATH
 	endif
 endif
 
+# Default: Metal disabled
+METAL_OBJS :=
+
 # Check for Metal (Apple Silicon)
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
@@ -280,13 +299,15 @@ ifdef GPU_OBJS
 endif
 
 # Add Metal objects if available
-ifdef METAL_OBJS
+ifneq ($(strip $(METAL_OBJS)),)
 	OBJS += $(METAL_OBJS)
 endif
 
 # Special rule for Metal implementation to avoid Protocol conflicts
+ifneq ($(strip $(METAL_OBJS)),)
 src/gpu/gpu_metal_impl.o: src/gpu/gpu_metal_impl.m
 	$(CC) $(filter-out -I/usr/local/include, $(PG_CPPFLAGS)) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
+endif
 
 # Optimization flags for production with SIMD
 PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -I/usr/include \
@@ -337,7 +358,9 @@ ifeq ($(shell uname -s),Darwin)
 endif
 
 PG_CONFIG ?= /usr/local/pgsql.18/bin/pg_config
-# Generate SQL file from template before build
+
+ifneq ($(wildcard neurondb--1.0.sql.in),)
+# Generate SQL file from template before build when template is present
 neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile.header
 	$(eval include Makefile.header)
 	@echo "=========================================================================="
@@ -369,9 +392,15 @@ neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile
 	@rm -f neurondb--1.0.sql.tmp neurondb--1.0.sql.reg.funcs neurondb--1.0.sql.clf.funcs neurondb--1.0.sql.knn.funcs neurondb--1.0.sql.ens.funcs
 	@echo "✓ Generated neurondb--1.0.sql for $(BUILD_TYPE)"
 	@echo "=========================================================================="
+else
+neurondb--1.0.sql:
+	@echo "⚠ Using existing neurondb--1.0.sql (template not found)"
+endif
 
 # Ensure SQL exists before building
+ifeq ($(UNAME_S),Darwin)
 all: metal-shaders
+endif
 
 # ONNX Runtime configuration
 ONNX_RUNTIME_PATH = /usr/local/onnxruntime

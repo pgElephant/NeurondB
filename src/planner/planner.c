@@ -351,8 +351,11 @@ scale_precision(PG_FUNCTION_ARGS)
         ereport(ERROR, (errmsg("scale_precision: input vector is missing")));
 
     /* Defensive: validate dim (max for int16 is 32767) */
-    if (input->dim <= 0 || input->dim > 32767)
-        ereport(ERROR, (errmsg("scale_precision: invalid vector dimension")));
+    {
+        int dim = (int) input->dim;
+        if (dim <= 0 || dim > 32767)
+            ereport(ERROR, (errmsg("scale_precision: invalid vector dimension")));
+    }
 
     /* Decision logic (100% robust, never produces weird values) */
     if (memory_pressure > 0.8f || recall_target < 0.85f)

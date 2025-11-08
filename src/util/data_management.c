@@ -482,7 +482,8 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 		live_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull);
 		if (!isnull)
 			live_tuples = DatumGetInt64(live_datum);
-		elog(NOTICE, "neurondb: \"%s\" before vacuum - dead tuples: %lld, live: %lld", tbl_str, dead_tuples, live_tuples);
+		elog(NOTICE, "neurondb: \"%s\" before vacuum - dead tuples: %ld, live: %ld",
+			 tbl_str, (long) dead_tuples, (long) live_tuples);
 	}
 	pfree(stat_sql.data);
 
@@ -506,7 +507,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 	cleaned_count += orphan_count;
 	pfree(sql.data);
 
-	elog(NOTICE, "neurondb: removed %lld orphaned vectors from \"%s\"", orphan_count, tbl_str);
+	elog(NOTICE, "neurondb: removed %ld orphaned vectors from \"%s\"", (long) orphan_count, tbl_str);
 
 	/* Step 3: Issue PostgreSQL VACUUM (FULL/standard as specified) */
 	initStringInfo(&sql);
@@ -548,13 +549,13 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 		"           CASE WHEN COUNT(*) > 0 THEN AVG(vector_dims(embedding)) ELSE 0 END AS avg_dim "
 		"    FROM %s)"
 		"INSERT INTO neurondb_vector_stats (table_name, num_vectors, avg_dimension, dead_tuples_cleaned, last_vacuum) "
-		"SELECT '%s', n, avg_dim, %lld, now() FROM stats "
+		"SELECT '%s', n, avg_dim, %ld, now() FROM stats "
 		"ON CONFLICT (table_name) DO UPDATE SET "
 		"  num_vectors = excluded.num_vectors, "
 		"  avg_dimension = excluded.avg_dimension, "
 		"  dead_tuples_cleaned = excluded.dead_tuples_cleaned, "
 		"  last_vacuum = now();",
-		tbl_str, tbl_str, cleaned_count);
+		tbl_str, tbl_str, (long) cleaned_count);
 	elog(DEBUG1, "neurondb: update stats SQL: %s", sql.data);
 	SPI_execute(sql.data, false, 0);
 	pfree(sql.data);
@@ -562,8 +563,8 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 	/* Generate and emit overall statistics and status */
 	initStringInfo(&statmsg);
 	appendStringInfo(&statmsg,
-		"VACUUM completed for \"%s\": Dead tuples cleaned: %lld, Orphaned tuples removed: %lld. Table is now optimized.",
-		tbl_str, dead_tuples, orphan_count);
+		"VACUUM completed for \"%s\": Dead tuples cleaned: %ld, Orphaned tuples removed: %ld. Table is now optimized.",
+		tbl_str, (long) dead_tuples, (long) orphan_count);
 	elog(NOTICE, "%s", statmsg.data);
 
 	pfree(statmsg.data);
@@ -690,7 +691,7 @@ rebalance_index(PG_FUNCTION_ARGS)
 		/* Ignore balance factor because we are about to update it */
 	}
 
-	elog(NOTICE, "neurondb: index \"%s\" original: %lld nodes", idx_str, total_nodes);
+	elog(NOTICE, "neurondb: index \"%s\" original: %ld nodes", idx_str, (long) total_nodes);
 
 	/*
 	 * In a full implementation we would:
@@ -706,20 +707,21 @@ rebalance_index(PG_FUNCTION_ARGS)
 	appendStringInfo(&sql,
 		"INSERT INTO neurondb_index_metadata "
 		"(index_name, index_type, num_nodes, balance_factor, last_rebalance, metadata) "
-		"VALUES ('%s', 'HNSW', %lld, %.6f, now(), "
-		"        jsonb_build_object('rebalanced_edges', %lld, 'target_balance', %.3f)) "
+		"VALUES ('%s', 'HNSW', %ld, %.6f, now(), "
+		"        jsonb_build_object('rebalanced_edges', %ld, 'target_balance', %.3f)) "
 		"ON CONFLICT (index_name) DO UPDATE SET "
 		"   balance_factor = EXCLUDED.balance_factor, "
 		"   last_rebalance = now(), "
 		"   metadata = EXCLUDED.metadata;",
-		idx_str, total_nodes, target_balance, rebalanced_edges, target_balance);
+		idx_str, (long) total_nodes, target_balance, (long) rebalanced_edges, target_balance);
 	elog(DEBUG1, "neurondb: rebalance update metadata SQL: %s", sql.data);
 
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret < 0)
 		elog(WARNING, "neurondb: updating index metadata failed for \"%s\"", idx_str);
 
-	elog(NOTICE, "neurondb: rebalanced (simulated) %lld edges in index \"%s\" (target balance=%.3f)", rebalanced_edges, idx_str, target_balance);
+	elog(NOTICE, "neurondb: rebalanced (simulated) %ld edges in index \"%s\" (target balance=%.3f)",
+		 (long) rebalanced_edges, idx_str, target_balance);
 
 	pfree(sql.data);
 	pfree(idx_str);

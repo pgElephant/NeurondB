@@ -108,6 +108,7 @@ vocab_lookup_token(const char *token)
  *    Loads a vocab.txt file, as exported by HuggingFace or other BERT-compatible models.
  *    Each line is a token. Line number = token_id.
  */
+static void load_vocab_file(const char *vocab_path) pg_attribute_unused();
 static void
 load_vocab_file(const char *vocab_path)
 {

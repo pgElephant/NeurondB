@@ -108,7 +108,8 @@ static uint16
 float_to_fp16(float f)
 {
 	/* Simple IEEE-754 conversion (round to nearest) */
-	uint32		u = *((uint32 *) &f);
+	uint32		u;
+	memcpy(&u, &f, sizeof(uint32));
 	uint16		sign = (u >> 16) & 0x8000;
 	uint32		mantissa = u & 0x7fffff;
 	int16		exp = ((u >> 23) & 0xff) - 127 + 15; /* bias change */

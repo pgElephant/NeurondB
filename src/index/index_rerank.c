@@ -163,7 +163,7 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 			"SELECT candidate_id, candidate_vec, similarity "
 			"FROM %s WHERE query_hash = " NDB_UINT64_FMT " "
 			"ORDER BY similarity DESC LIMIT %d",
-			cache_tbl, query_hash, k);
+			cache_tbl, NDB_UINT64_CAST(query_hash), k);
 
 		ret = SPI_execute(sql.data, true, 0);
 		if (ret != SPI_OK_SELECT)
@@ -186,7 +186,7 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 				"INSERT INTO %s (query_hash, query_vec, candidate_id, candidate_vec, similarity) "
 				"SELECT " NDB_UINT64_FMT ", $1, id, %s, (random()) "
 				"FROM %s ORDER BY random() LIMIT %d",
-				cache_tbl, query_hash, "v", table_name, k);
+				cache_tbl, NDB_UINT64_CAST(query_hash), "v", table_name, k);
 
 			Oid argtypes[1] = { 3802 };	// vector type Oid (may vary in prod)
 			Datum values[1] = { PointerGetDatum(query) };
@@ -210,7 +210,7 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 				"SELECT candidate_id, candidate_vec, similarity "
 				"FROM %s WHERE query_hash = " NDB_UINT64_FMT " "
 				"ORDER BY similarity DESC LIMIT %d",
-				cache_tbl, query_hash, k);
+				cache_tbl, NDB_UINT64_CAST(query_hash), k);
 			ret = SPI_execute(sql.data, true, 0);
 			if (ret != SPI_OK_SELECT)
 			{

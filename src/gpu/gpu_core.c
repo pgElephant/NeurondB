@@ -11,6 +11,14 @@
  *     src/gpu_core.c
  */
 
+#include "neurondb_config.h"
+#include "neurondb_cuda_runtime.h"
+
+#ifdef NDB_GPU_HIP
+#include <hip/hip_runtime.h>
+#include <rocblas/rocblas.h>
+#endif
+
 #include "postgres.h"
 #include "fmgr.h"
 #include "utils/guc.h"
@@ -21,10 +29,21 @@
 #include "catalog/pg_type.h"
 #include "utils/builtins.h"
 
-#include "neurondb_config.h"
 #include "neurondb_gpu.h"
 #include "gpu_backend_interface.h"
 
+#ifdef NDB_GPU_CUDA
+#include "gpu_cuda.h"
+#endif
+#ifdef NDB_GPU_HIP
+#include "gpu_rocm.h"
+#endif
+#ifdef NDB_GPU_METAL
+#include "gpu_metal.h"
+#endif
+
+#include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* GUC variables and GPU settings */
@@ -43,37 +62,22 @@ static bool gpu_ready = false;
 static bool gpu_disabled = false;
 static GPUBackend current_backend = GPU_BACKEND_NONE;
 static GPUStats gpu_stats;
-/* Unused in current implementation - reserved for future use */
-/* static LWLock *gpu_stats_lock = NULL; */
-/* static void *gpu_memory_pool = NULL; */
-/* static int gpu_pool_size = 0; */
+
+#if defined(NDB_GPU_CUDA) || defined(NDB_GPU_HIP)
+static void *gpu_memory_pool = NULL;
+static size_t gpu_pool_bytes = 0;
+static int gpu_pool_size = 0;
+#endif
 
 #ifdef NDB_GPU_CUDA
-#include <cuda_runtime.h>
-#include <cublas_v2.h>
-static cublasHandle_t cublas_handle = NULL;
 static int cuda_device = 0;
 static cudaStream_t *cuda_streams = NULL;
 #endif
 
 #ifdef NDB_GPU_HIP
-#include <hip/hip_runtime.h>
-#include <rocblas/rocblas.h>
 static rocblas_handle rocblas_handle = NULL;
 static int rocm_device = 0;
 static hipStream_t *hip_streams = NULL;
-#endif
-
-#ifdef NDB_GPU_METAL
-#include "gpu_metal.h"
-#endif
-
-#ifdef NDB_GPU_CUDA
-#include "gpu_cuda.h"
-#endif
-
-#ifdef NDB_GPU_HIP
-#include "gpu_rocm.h"
 #endif
 
 void
@@ -233,18 +237,48 @@ ndb_gpu_runtime_init(int *device_id)
 void
 ndb_gpu_mem_pool_init(int pool_size_mb)
 {
-    (void)pool_size_mb; /* Reserved for future pool management */
+    if (pool_size_mb <= 0)
+    {
+#if defined(NDB_GPU_CUDA) || defined(NDB_GPU_HIP)
+        gpu_pool_size = 0;
+        gpu_pool_bytes = 0;
+        if (gpu_memory_pool != NULL)
+        {
+#ifdef NDB_GPU_CUDA
+            if (current_backend == GPU_BACKEND_CUDA)
+                cudaFree(gpu_memory_pool);
+#endif
+#ifdef NDB_GPU_HIP
+            if (current_backend == GPU_BACKEND_ROCM)
+                hipFree(gpu_memory_pool);
+#endif
+        }
+        gpu_memory_pool = NULL;
+#endif
+        return;
+    }
+
+#if defined(NDB_GPU_CUDA) || defined(NDB_GPU_HIP)
+    size_t pool_bytes_local = (size_t) pool_size_mb * 1024 * 1024;
+#endif
 #ifdef NDB_GPU_CUDA
     if (current_backend == GPU_BACKEND_CUDA)
     {
-        if (cudaMalloc(&gpu_memory_pool, pool_bytes) == cudaSuccess)
+        if (gpu_memory_pool)
+        {
+            cudaFree(gpu_memory_pool);
+            gpu_memory_pool = NULL;
+        }
+        if (cudaMalloc(&gpu_memory_pool, pool_bytes_local) == cudaSuccess)
         {
             gpu_pool_size = pool_size_mb;
+            gpu_pool_bytes = pool_bytes_local;
             elog(DEBUG1, "neurondb: GPU memory pool allocated: %d MB", pool_size_mb);
         }
         else
         {
             gpu_pool_size = 0;
+            gpu_pool_bytes = 0;
             gpu_memory_pool = NULL;
             elog(WARNING, "neurondb: GPU memory pool allocation failed");
         }
@@ -253,14 +287,21 @@ ndb_gpu_mem_pool_init(int pool_size_mb)
 #ifdef NDB_GPU_HIP
     if (current_backend == GPU_BACKEND_ROCM)
     {
-        if (hipMalloc(&gpu_memory_pool, pool_bytes) == hipSuccess)
+        if (gpu_memory_pool)
+        {
+            hipFree(gpu_memory_pool);
+            gpu_memory_pool = NULL;
+        }
+        if (hipMalloc(&gpu_memory_pool, pool_bytes_local) == hipSuccess)
         {
             gpu_pool_size = pool_size_mb;
+            gpu_pool_bytes = pool_bytes_local;
             elog(DEBUG1, "neurondb: GPU memory pool allocated: %d MB", pool_size_mb);
         }
         else
         {
             gpu_pool_size = 0;
+            gpu_pool_bytes = 0;
             gpu_memory_pool = NULL;
             elog(WARNING, "neurondb: GPU memory pool allocation failed");
         }
@@ -380,14 +421,9 @@ ndb_gpu_init_if_needed(void)
         return;
     }
 #ifdef NDB_GPU_CUDA
-    if (cublas_handle)
+    if (!neurondb_gpu_cuda_init())
     {
-        cublasDestroy(cublas_handle);
-        cublas_handle = NULL;
-    }
-    if (cublasCreate(&cublas_handle) != CUBLAS_STATUS_SUCCESS)
-    {
-        elog(WARNING, "neurondb: cuBLAS initialization failed");
+        elog(WARNING, "neurondb: CUDA backend initialization failed");
         gpu_disabled = true;
         gpu_ready = false;
         current_backend = GPU_BACKEND_NONE;
@@ -464,11 +500,6 @@ neurondb_gpu_shutdown(void)
                 cudaStreamDestroy(cuda_streams[i]);
             free(cuda_streams);
             cuda_streams = NULL;
-        }
-        if (cublas_handle)
-        {
-            cublasDestroy(cublas_handle);
-            cublas_handle = NULL;
         }
         if (gpu_memory_pool)
         {

@@ -180,6 +180,7 @@ model_backend_load(const char *path, ModelType type)
 	return hdl;
 }
 
+static void model_backend_unload(ModelHandle *hdl, ModelType type) pg_attribute_unused();
 static void
 model_backend_unload(ModelHandle *hdl, ModelType type)
 {

@@ -225,7 +225,6 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
 		if (tuptable)
 			SPI_freetuptable(tuptable);
 		SPI_finish();

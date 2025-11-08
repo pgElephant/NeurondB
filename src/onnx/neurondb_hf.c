@@ -248,7 +248,7 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 	int			max_class;
 	float		max_score;
 	const char *entity_labels[] = {"O", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"};
-	int			num_labels = 7;
+	const int	num_labels = 7;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
@@ -297,12 +297,12 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 	appendStringInfo(&buf, "{\"entities\": [");
 
 	/* Extract entities (simplified - just first token for demo) */
-	if (output_tensor->size >= num_labels)
+	if (output_tensor->size >= (size_t) num_labels)
 	{
 		max_class = 0;
 		max_score = output_tensor->data[0];
 		
-		for (i = 1; i < num_labels && i < output_tensor->size; i++)
+		for (i = 1; i < num_labels && (size_t) i < output_tensor->size; i++)
 		{
 			if (output_tensor->data[i] > max_score)
 			{
@@ -349,10 +349,10 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 	StringInfoData combined_text;
 	int64		input_shape[2];
 	float	   *input_data;
-	int			start_idx = 0;
-	int			end_idx = 0;
-	float		start_score = -1000.0;
-	float		end_score = -1000.0;
+	volatile int start_idx = 0;
+	volatile int end_idx = 0;
+	volatile float start_score = -1000.0f;
+	volatile float end_score = -1000.0f;
 	int			i;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2))
@@ -406,7 +406,7 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 
 	/* Extract start and end positions (QA model outputs start/end logits) */
 	/* Simplified: find max start and end positions */
-	if (output_tensor->size >= token_length * 2)
+	if (output_tensor->size >= (size_t) token_length * 2)
 	{
 		/* Find start position */
 		for (i = 0; i < token_length; i++)
@@ -419,7 +419,7 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 		}
 
 		/* Find end position */
-		for (i = token_length; i < token_length * 2; i++)
+		for (i = token_length; i < token_length * 2 && (size_t) i < output_tensor->size; i++)
 		{
 			if (output_tensor->data[i] > end_score)
 			{

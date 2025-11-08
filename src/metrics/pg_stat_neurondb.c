@@ -232,11 +232,19 @@ neurondb_update_query_stats(int index_type, int latency_ms, int recall_percent)
 
     /* Update recall stats if recall_percent positive (fraction*100 as int).
        Again, rolling mean, same comments as above. */
-    if (recall_percent > 0)
+	if (recall_percent > 0)
     {
-        g_stats.recall_at_1   = (g_stats.recall_at_1   == 0) ? recall_percent : (g_stats.recall_at_1   + recall_percent)/2;
-        g_stats.recall_at_10  = (g_stats.recall_at_10  == 0) ? recall_percent : (g_stats.recall_at_10  + recall_percent)/2;
-        g_stats.recall_at_100 = (g_stats.recall_at_100 == 0) ? recall_percent : (g_stats.recall_at_100 + recall_percent)/2;
+		uint64 recall_u = (uint64) recall_percent;
+
+		g_stats.recall_at_1   = (g_stats.recall_at_1   == 0)
+									? recall_u
+									: (g_stats.recall_at_1   + recall_u) / 2;
+		g_stats.recall_at_10  = (g_stats.recall_at_10  == 0)
+									? recall_u
+									: (g_stats.recall_at_10  + recall_u) / 2;
+		g_stats.recall_at_100 = (g_stats.recall_at_100 == 0)
+									? recall_u
+									: (g_stats.recall_at_100 + recall_u) / 2;
         /* If/when supports true per-K stats, extend here; for now assumes recall_percent covers K=1,10,100 identically. */
     }
 }

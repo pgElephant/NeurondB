@@ -24,6 +24,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <math.h>
 
 /* Architecture detection */
 #if defined(__x86_64__) || defined(_M_X64)

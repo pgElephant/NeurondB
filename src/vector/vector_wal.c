@@ -106,7 +106,7 @@ vector_wal_compress(PG_FUNCTION_ARGS)
 	float8	   *cur_values = NULL, *base_values = NULL;
 	int			dim = 0, base_dim = 0;
 	int			i, run_len;
-	float8		delta = 0, prev_delta = 0;
+	float8		delta = 0;
 	StringInfoData compressed;
 
 	vec_str = safe_text_to_cstring(vector);
@@ -165,7 +165,7 @@ vector_wal_decompress(PG_FUNCTION_ARGS)
 	char	   *comp_str = NULL, *base_str = NULL;
 	int			dim=0, base_dim=0;
 	float8	   *base_values = NULL, *output = NULL;
-	char	   *p, *q, *rle_start, *endptr;
+	char	   *p, *endptr;
 	int			out_idx = 0, run, found_dim=0;
 	float8		delta = 0;
 	StringInfoData decompressed;

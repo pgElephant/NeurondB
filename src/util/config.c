@@ -22,6 +22,7 @@
 #include "lib/stringinfo.h"
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 #include <ctype.h>
 

@@ -17,6 +17,8 @@
  */
 
 #include "postgres.h"
+
+#include <math.h>
 #include "fmgr.h"
 #include "funcapi.h"
 #include "utils/builtins.h"

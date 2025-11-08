@@ -21,7 +21,7 @@
 #include "neurondb_gpu.h"
 
 #ifdef NDB_GPU_CUDA
-#include <cuda_runtime.h>
+#include "neurondb_cuda_runtime.h"
 #include <cublas_v2.h>
 
 extern cublasHandle_t cublas_handle;

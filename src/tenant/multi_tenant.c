@@ -245,7 +245,7 @@ audit_log_query(PG_FUNCTION_ARGS)
 	Vector	   *result_vectors = (Vector *) PG_GETARG_POINTER(2);
 	char	   *query_str = NULL;
 	char	   *user_str = NULL;
-	uint32		vector_hash = 0;
+	volatile uint32 vector_hash = 0;
 	volatile bool success = false;
 
 	if (query_text == NULL || user_id == NULL || result_vectors == NULL)
