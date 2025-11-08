@@ -2,13 +2,13 @@
 numpy>=1.21.0
 psutil>=5.8.0
 
-# Optional GPU stress testing dependencies
-# For NVIDIA GPUs (CUDA 12.x):
-# cupy-cuda12x>=12.0.0
+# GPU dependencies (installed only when available)
+# CUDA 12.x+ cards (Linux/Windows):
+cupy-cuda12x>=12.0.0; platform_system == "Linux"
 
-# For Apple Silicon (Metal Performance Shaders):
-# torch>=2.0.0
+# Apple Silicon (Metal Performance Shaders):
+# torch>=2.0.0; platform_system == "Darwin"
 
-# For AMD ROCm GPUs:
-# cupy-rocm-5-0>=12.0.0
+# AMD ROCm GPUs:
+# cupy-rocm-5-0>=12.0.0; platform_system == "Linux"
 

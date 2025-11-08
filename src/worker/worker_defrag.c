@@ -73,6 +73,15 @@ static volatile sig_atomic_t got_sighup = 0;
 static jmp_buf segv_jmp_buf;
 static volatile sig_atomic_t segv_recursed = 0;
 
+PG_FUNCTION_INFO_V1(neurandefrag_run);
+
+Datum
+neurandefrag_run(PG_FUNCTION_ARGS)
+{
+	elog(NOTICE, "neurondb: neurandefrag_run invoked (stub implementation)");
+	PG_RETURN_BOOL(false);
+}
+
 /* SIGTERM: request orderly shutdown */
 static void __attribute__((unused))
 neurandefrag_sigterm(SIGNAL_ARGS)

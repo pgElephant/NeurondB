@@ -361,7 +361,7 @@ PG_CONFIG ?= /usr/local/pgsql.18/bin/pg_config
 
 ifneq ($(wildcard neurondb--1.0.sql.in),)
 # Generate SQL file from template before build when template is present
-neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile.header
+neurondb--1.0.sql: neurondb--1.0.sql.in neurondb.sql Makefile Makefile.sql-functions Makefile.header
 	$(eval include Makefile.header)
 	@echo "=========================================================================="
 	@echo "Generating version-specific SQL file..."
@@ -389,12 +389,19 @@ neurondb--1.0.sql: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile
 	     sed '/@ML_KNN_FUNCTIONS@/d' | \
 	     sed '/@ML_ENSEMBLE_FUNCTIONS@/r neurondb--1.0.sql.ens.funcs' | \
 	     sed '/@ML_ENSEMBLE_FUNCTIONS@/d' > neurondb--1.0.sql
+	@awk 'BEGIN { while ((getline line < "neurondb.sql") > 0) buf = buf line "\n" } \
+	      { if ($$0 == "@NEURONDB_USER_API@") printf "%s", buf; else print }' \
+	      neurondb--1.0.sql > neurondb--1.0.sql.tmp
+	@mv neurondb--1.0.sql.tmp neurondb--1.0.sql
 	@rm -f neurondb--1.0.sql.tmp neurondb--1.0.sql.reg.funcs neurondb--1.0.sql.clf.funcs neurondb--1.0.sql.knn.funcs neurondb--1.0.sql.ens.funcs
 	@echo "✓ Generated neurondb--1.0.sql for $(BUILD_TYPE)"
 	@echo "=========================================================================="
 else
-neurondb--1.0.sql:
+neurondb--1.0.sql: neurondb.sql
 	@echo "⚠ Using existing neurondb--1.0.sql (template not found)"
+	@awk 'BEGIN { while ((getline line < "neurondb.sql") > 0) buf = buf line "\n" } \
+	      { if ($$0 == "@NEURONDB_USER_API@") printf "%s", buf; else print }' \
+	      $@ > $@.tmp && mv $@.tmp $@
 endif
 
 # Ensure SQL exists before building
