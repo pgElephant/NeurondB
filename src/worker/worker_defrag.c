@@ -20,12 +20,14 @@
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "postmaster/bgworker.h"
+#include "pgstat.h"
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/lwlock.h"
 #include "storage/proc.h"
 #include "storage/shmem.h"
 #include "executor/spi.h"
+#include "libpq/pqsignal.h"
 #include "utils/guc.h"
 #include "utils/timestamp.h"
 #include "utils/builtins.h"
@@ -72,6 +74,7 @@ static volatile sig_atomic_t got_sigterm = 0;
 static volatile sig_atomic_t got_sighup = 0;
 static jmp_buf segv_jmp_buf;
 static volatile sig_atomic_t segv_recursed = 0;
+static void neurandefrag_on_exit(int code, Datum arg);
 
 PG_FUNCTION_INFO_V1(neurandefrag_run);
 
@@ -205,4 +208,120 @@ neurandefrag_shmem_init(void)
 	}
 
 	LWLockRelease(AddinShmemInitLock);
+}
+
+static void
+neurandefrag_on_exit(int code, Datum arg)
+{
+	if (neurandefrag_state == NULL)
+		return;
+
+	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+	if (neurandefrag_state != NULL)
+	{
+		neurandefrag_state->worker_pid = 0;
+		neurandefrag_state->in_maintenance_window = false;
+	}
+	LWLockRelease(AddinShmemInitLock);
+}
+
+void
+neurandefrag_main(Datum main_arg)
+{
+	sigjmp_buf	local_sigjmp_buf;
+	MemoryContext	worker_memctx;
+	MemoryContext	oldctx;
+	bool		found;
+	volatile bool	got_sigterm = false;
+	volatile bool	got_sighup = false;
+
+	BackgroundWorkerUnblockSignals();
+	pqsignal(SIGTERM, neurandefrag_sigterm);
+	pqsignal(SIGHUP, neurandefrag_sighup);
+	pqsignal(SIGSEGV, neurandefrag_segv_handler);
+
+	CurrentResourceOwner = ResourceOwnerCreate(NULL, "neurandefrag worker");
+
+	/* Attach to shmem state */
+	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+	neurandefrag_state = (NeurandefragSharedState *) ShmemInitStruct(
+		"NeuronDB Defrag Worker State",
+		neurandefrag_shmem_size(),
+		&found
+	);
+	LWLockRelease(AddinShmemInitLock);
+
+	if (!found || neurandefrag_state == NULL)
+	{
+		ereport(ERROR, (errmsg("neurondb: unable to attach defrag shared state")));
+		proc_exit(1);
+	}
+
+	/* Set up longjmp exception handler */
+	if (sigsetjmp(local_sigjmp_buf, 1) != 0)
+	{
+		/* Error occurred, reset and cleanup */
+		FlushErrorState();
+		MemoryContextSwitchTo(TopMemoryContext);
+		if (worker_memctx)
+			MemoryContextReset(worker_memctx);
+		ereport(LOG, (errmsg("neurondb: neurandefrag worker error, restarting loop")));
+		pg_usleep(1000000L); /* sleep 1s before retry */
+	}
+	PG_exception_stack = &local_sigjmp_buf;
+
+	worker_memctx = AllocSetContextCreate(TopMemoryContext,
+		"neurandefrag worker context",
+		ALLOCSET_DEFAULT_SIZES);
+
+	ereport(LOG, (errmsg("neurondb: neurandefrag worker started (PID %d)", MyProcPid)));
+
+	on_shmem_exit(neurandefrag_on_exit, (Datum) 0);
+
+	while (!got_sigterm)
+	{
+		ResetLatch(MyLatch);
+
+		if (got_sighup)
+		{
+			ProcessConfigFile(PGC_SIGHUP);
+			got_sighup = false;
+			ereport(LOG, (errmsg("neurondb: neurandefrag worker processed SIGHUP")));
+		}
+
+		/* Check if worker is enabled */
+		if (!neurandefrag_enabled)
+		{
+			pg_usleep(1000000L); /* sleep 1s */
+			continue;
+		}
+
+		oldctx = MemoryContextSwitchTo(worker_memctx);
+
+		/* Heartbeat */
+		LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+		neurandefrag_state->last_heartbeat = GetCurrentTimestamp();
+		LWLockRelease(AddinShmemInitLock);
+
+		/* TODO: Implement main defragmentation logic here:
+		 *  - scan indexes for tombstones
+		 *  - compact orphaned pages/edges
+		 *  - rebalance structures if needed
+		 *  - update shared state counters/statistics
+		 */
+		ereport(DEBUG1, (errmsg("neurondb: neurandefrag worker heartbeat (PID %d)", MyProcPid)));
+
+		/* Simulate work for now */
+		pg_usleep(5000000L); /* sleep 5s in absence of real work */
+
+		MemoryContextSwitchTo(oldctx);
+		MemoryContextReset(worker_memctx);
+
+		/* Check for interrupts and latch wakeups */
+		CHECK_FOR_INTERRUPTS();
+		WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, 1000L, PG_WAIT_EXTENSION);
+	}
+
+	ereport(LOG, (errmsg("neurondb: neurandefrag worker shutting down (PID %d)", MyProcPid)));
+	proc_exit(0);
 }

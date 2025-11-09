@@ -589,7 +589,7 @@ EOF
     
     # Build
     log_info "Compiling NeurondB..."
-    if make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) PG_CONFIG=$PG_CONFIG $MAKE_ARGS; then
+    if make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) PG_CONFIG=$PG_CONFIG $MAKE_ARGS all; then
         log_success "Build completed successfully"
     else
         log_error "Build failed"

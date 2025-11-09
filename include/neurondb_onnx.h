@@ -29,6 +29,11 @@
 #include <onnxruntime_c_api.h>
 #endif
 
+extern PGDLLIMPORT char *neurondb_onnx_model_path;
+extern PGDLLIMPORT bool neurondb_onnx_use_gpu;
+extern PGDLLIMPORT int neurondb_onnx_threads;
+extern PGDLLIMPORT int neurondb_onnx_cache_size;
+
 /*
  * ONNX Model Types
  */

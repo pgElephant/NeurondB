@@ -117,6 +117,25 @@ extern void neurondb_gpu_onnx_inference(void *model_handle, const float *input,
                                          int input_size, float *output, int output_size);
 
 /*==================*/
+/* Random Forest (Phase-1: GPU-assisted best split for binary labels) */
+extern bool neurondb_gpu_rf_predict(const void *rf_hdr,
+                                    const void *trees,
+                                    const void *nodes,
+                                    int node_capacity,
+                                    const float *x,
+                                    int n_features,
+                                    int *class_out,
+                                    char **errstr);
+extern bool neurondb_gpu_rf_best_split_binary(
+    const float *feature_values,
+    const uint8_t *labels01,
+    int n,
+    double *best_threshold,
+    double *best_gini,
+    int *left_count,
+    int *right_count);
+
+/*==================*/
 /* Implementation for device-level management (optional: not part of minimal prototype) */
 #ifdef NDB_GPU_INTERNAL
 /* Memory pool and stream management functions for internal use */

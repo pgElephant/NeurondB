@@ -1,13 +1,11 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_backend_metal.c
- *     Metal GPU backend implementation for NeurondB: fully detailed and complete.
+ *     Metal GPU backend implementation for NeurondB.
  *
- * This file implements comprehensive and explicit support for the Metal API,
- * providing all details for backend initialization, device querying,
- * explicit memory management, vector and batch operations, quantization,
- * clustering, and advanced GPU features. All resource management, validation,
- * and error-handling paths are included and logged for full traceability.
+ * This module implements Metal backend initialization, device management,
+ * memory routines with error handling and logging, vector and batch operations,
+ * quantization, clustering (KMeans/DBSCAN), and a backend interface registration.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
  *
@@ -21,7 +19,6 @@
 
 #include "utils/elog.h"
 #include "utils/palloc.h"
-
 #include "neurondb_gpu.h"
 #include "gpu_backend_interface.h"
 
@@ -33,234 +30,180 @@
 #include <math.h>
 #include <float.h>
 #include <stdint.h>
+#include <stdbool.h>
 
-/* =========================================================================
- * Metal Backend Lifecycle
- * =========================================================================
- */
+/* Metal Backend Lifecycle */
 
-/*
- * metal_backend_init_impl
- * - Sets up Metal, initializing the device, command queues, and pipelines.
- *   Logs every step for audit and diagnosis.
- */
 static bool
 metal_backend_init_impl(void)
 {
-	bool ok = metal_backend_init();
+	bool	ok;
+
+	ok = metal_backend_init();
 	if (!ok)
 	{
 		elog(WARNING, "neurondb: Metal backend initialization failed. "
-		              "This may be due to an unsupported system or missing Metal driver.");
+					  "Check Metal device support and driver installation on this system.");
 		return false;
 	}
-	elog(LOG, "neurondb: Metal GPU backend initialized successfully (MTLDevice, queues, kernels ready)");
+	elog(LOG, "neurondb: Metal GPU backend initialized successfully (MTLDevice acquired, command queues/pipelines ready)");
 	return true;
 }
 
-/*
- * metal_backend_cleanup_impl
- * - Releases all Metal resources acquired during backend lifetime.
- *   Ensures device, queues, buffers, and all cached kernels are properly released.
- */
 static void
 metal_backend_cleanup_impl(void)
 {
 	metal_backend_cleanup();
-	elog(DEBUG1, "neurondb: Metal GPU backend cleanup: all memory and state released");
+	elog(DEBUG1, "neurondb: Metal GPU backend cleanup: all queues, kernels, and state released");
 }
 
-/*
- * metal_backend_is_available_impl
- * - Queries the system for Metal GPU support.
- *   Returns true if Metal device is discoverable and initialized.
- */
 static bool
 metal_backend_is_available_impl(void)
 {
-	bool avail = metal_backend_is_available();
-	elog(DEBUG3, "neurondb: Metal backend available = %s", avail ? "YES" : "NO");
+	bool	avail;
+
+	avail = metal_backend_is_available();
+	elog(DEBUG3, "neurondb: Metal backend availability = %s", avail ? "YES" : "NO");
 	return avail;
 }
 
-/* =========================================================================
- * Metal Device Management
- * =========================================================================
- */
+/* Metal Device Management */
 
-/*
- * metal_backend_get_device_count_impl
- * - Returns the number of Metal-capable GPU devices (typically 1 on Apple Silicon).
- */
 static int
 metal_backend_get_device_count_impl(void)
 {
-	int count = metal_backend_is_available() ? 1 : 0;
-	elog(DEBUG2, "neurondb: Metal get_device_count -> %d", count);
+	int	count;
+
+	count = metal_backend_is_available() ? 1 : 0;
+	elog(DEBUG2, "neurondb: Metal get_device_count: %d", count);
 	return count;
 }
 
-/*
- * metal_backend_get_device_info_impl
- * - Fills in a GPUDeviceInfo struct with the properties of the available Metal device.
- *   Queries the Metal wrapper for descriptive and memory metadata.
- */
 static bool
 metal_backend_get_device_info_impl(int device_id, GPUDeviceInfo *info)
 {
+	const char *device_name;
+	uint64_t	total_mem = 0;
+	uint64_t	free_mem = 0;
+	char		name_buf[256] = {0};
+
 	if (device_id != 0 || info == NULL)
 	{
-		elog(WARNING, "neurondb: metal_backend_get_device_info - invalid device_id (%d) or info pointer (%p)", device_id, info);
+		elog(WARNING, "neurondb: metal_backend_get_device_info: invalid id (%d) or NULL info pointer %p",
+			 device_id, info);
 		return false;
 	}
 
 	if (!metal_backend_is_available())
 	{
-		elog(WARNING, "neurondb: Metal not available for device info query");
+		elog(WARNING, "neurondb: Metal not available (cannot query device info)");
 		return false;
 	}
 
-	const char *device_name = metal_backend_device_name();
-	uint64_t total_mem = 0, free_mem = 0;
-	char name_buf[256] = {0};
-
-	/* Query device-specific details (getter may overwrite name_buf and update memory info) */
+	device_name = metal_backend_device_name();
 	metal_backend_device_info(name_buf, sizeof(name_buf), &total_mem, &free_mem);
 
-	/* Use wrapper result, fallback to direct name string if not provided */
 	if (name_buf[0])
-		strncpy(info->name, name_buf, sizeof(info->name) - 1);
+		snprintf(info->name, sizeof(info->name), "%s", name_buf);
 	else if (device_name && device_name[0])
-		strncpy(info->name, device_name, sizeof(info->name) - 1);
+		snprintf(info->name, sizeof(info->name), "%s", device_name);
 	else
-		strncpy(info->name, "Apple GPU", sizeof(info->name) - 1);
+		snprintf(info->name, sizeof(info->name), "Apple GPU");
 	info->name[sizeof(info->name) - 1] = '\0';
 
 	info->device_id = 0;
-	info->total_memory = (total_mem > 0) ? total_mem : 8ULL * 1024 * 1024 * 1024;
-	info->free_memory  = (free_mem > 0) ? free_mem  : 4ULL * 1024 * 1024 * 1024;
-	info->compute_major = 3;       // Metal 3.0+ for recent Apple hardware
+	info->total_memory = (total_mem > 0) ? total_mem : (8ULL << 30);
+	info->free_memory = (free_mem > 0) ? free_mem : (4ULL << 30);
+	info->compute_major = 3;
 	info->compute_minor = 0;
 	info->max_threads_per_block = 1024;
-	info->multiprocessor_count = 8; // Typical for M-Series Apple Silicon
+	info->multiprocessor_count = 8;
 	info->unified_memory = true;
 	info->is_available = true;
 
-	elog(DEBUG2, "neurondb: metal_backend_get_device_info: name='%s', "
-	             "total=0x%llx free=0x%llx major=%d minor=%d",
-	     info->name,
-	     (unsigned long long)info->total_memory,
-	     (unsigned long long)info->free_memory,
-	     info->compute_major, info->compute_minor);
+	elog(DEBUG2, "neurondb: Metal get_device_info: name='%s', total=0x%llx, free=0x%llx, "
+				 "major=%d, minor=%d, multiproc=%d, unified=%d",
+		 info->name,
+		 (unsigned long long) info->total_memory,
+		 (unsigned long long) info->free_memory,
+		 info->compute_major,
+		 info->compute_minor,
+		 info->multiprocessor_count,
+		 info->unified_memory);
 
 	return true;
 }
 
-/*
- * metal_backend_set_device_impl
- * - On Metal, we only support one device; this is effectively a check and no-op.
- */
 static bool
 metal_backend_set_device_impl(int device_id)
 {
 	if (device_id == 0)
 	{
-		elog(DEBUG3, "neurondb: Metal device 0 selected (single-device system)");
+		elog(DEBUG3, "neurondb: Metal device 0 selected");
 		return true;
 	}
-	elog(WARNING, "neurondb: Metal set_device called for device_id=%d, which does not exist.", device_id);
+	elog(WARNING, "neurondb: Metal set_device: device_id %d not available", device_id);
 	return false;
 }
 
-/* =========================================================================
- * Metal Memory Management
- * =========================================================================
- */
+/* Metal Memory Management */
 
-/*
- * metal_backend_mem_alloc_impl
- * - Allocates memory for use with GPU computations.
- *   On Apple Silicon, system memory is unified and coherently accessible.
- */
 static void *
-metal_backend_mem_alloc_impl(size_t bytes)
+metal_backend_mem_alloc_impl(Size bytes)
 {
-	void *ptr = palloc(bytes);
-	if (!ptr)
-		elog(ERROR, "neurondb: Metal mem_alloc failed, bytes=%zu", bytes);
-	elog(DEBUG3, "neurondb: Metal mem_alloc -> %zu bytes at %p", bytes, ptr);
+	void   *ptr;
+
+	ptr = palloc(bytes);
+	if (ptr == NULL)
+		elog(ERROR, "neurondb: Metal mem_alloc: failed to allocate %zu bytes", bytes);
+	elog(DEBUG3, "neurondb: Metal mem_alloc: %zu bytes -> %p", bytes, ptr);
 	return ptr;
 }
 
-/*
- * metal_backend_mem_free_impl
- * - Deallocates memory previously allocated; uses PostgreSQL's pfree.
- */
 static void
 metal_backend_mem_free_impl(void *ptr)
 {
-	if (ptr)
+	if (ptr != NULL)
 	{
-		elog(DEBUG3, "neurondb: Metal mem_free at %p", ptr);
+		elog(DEBUG3, "neurondb: Metal mem_free: %p", ptr);
 		pfree(ptr);
 	}
 }
 
-/*
- * metal_backend_mem_copy_h2d_impl
- * - Host-to-device memory copy; equivalent to memcpy on unified memory hardware.
- */
 static bool
-metal_backend_mem_copy_h2d_impl(void *dst, const void *src, size_t bytes)
+metal_backend_mem_copy_h2d_impl(void *dst, const void *src, Size bytes)
 {
-	if (dst && src && bytes > 0)
+	if (dst != NULL && src != NULL && bytes > 0)
 	{
 		memcpy(dst, src, bytes);
-		elog(DEBUG3, "neurondb: Metal memcpy H2D: %zu bytes (%p->%p)", bytes, src, dst);
+		elog(DEBUG3, "neurondb: Metal mem_copy_h2d: %zu bytes %p -> %p", bytes, src, dst);
 		return true;
 	}
-	elog(WARNING, "neurondb: Metal H2D mem copy failed: dst=%p src=%p bytes=%zu", dst, src, bytes);
+	elog(WARNING, "neurondb: Metal mem_copy_h2d failed: dst=%p, src=%p, bytes=%zu", dst, src, bytes);
 	return false;
 }
 
-/*
- * metal_backend_mem_copy_d2h_impl
- * - Device-to-host memory copy; in unified memory, also just memcpy.
- */
 static bool
-metal_backend_mem_copy_d2h_impl(void *dst, const void *src, size_t bytes)
+metal_backend_mem_copy_d2h_impl(void *dst, const void *src, Size bytes)
 {
-	if (dst && src && bytes > 0)
+	if (dst != NULL && src != NULL && bytes > 0)
 	{
 		memcpy(dst, src, bytes);
-		elog(DEBUG3, "neurondb: Metal memcpy D2H: %zu bytes (%p->%p)", bytes, src, dst);
+		elog(DEBUG3, "neurondb: Metal mem_copy_d2h: %zu bytes %p -> %p", bytes, src, dst);
 		return true;
 	}
-	elog(WARNING, "neurondb: Metal D2H mem copy failed: dst=%p src=%p bytes=%zu", dst, src, bytes);
+	elog(WARNING, "neurondb: Metal mem_copy_d2h failed: dst=%p, src=%p, bytes=%zu", dst, src, bytes);
 	return false;
 }
 
-/*
- * metal_backend_synchronize_impl
- * - In Metal, synchronization is generally implicit for CPU-accessible buffers.
- *   Logs action for completeness.
- */
 static void
 metal_backend_synchronize_impl(void)
 {
-	elog(DEBUG2, "neurondb: Metal synchronize: no explicit action required on Apple Silicon");
+	elog(DEBUG2, "neurondb: Metal synchronize: no explicit sync required (UMA system)");
 }
 
-/* =========================================================================
- * Metal Vector Operations
- * =========================================================================
- */
+/* Metal Vector Operations */
 
-/*
- * metal_backend_l2_distance_impl
- * - Computes the L2 (Euclidean) distance between two dim-dimensional vectors.
- *   Delegates to Metal kernel or wrapper.
- */
 static float
 metal_backend_l2_distance_impl(const float *a, const float *b, int dim)
 {
@@ -268,11 +211,6 @@ metal_backend_l2_distance_impl(const float *a, const float *b, int dim)
 	return metal_backend_l2_distance(a, b, dim);
 }
 
-/*
- * metal_backend_cosine_distance_impl
- * - Computes the cosine distance between two vectors.
- *   Relies on Metal kernel if available.
- */
 static float
 metal_backend_cosine_distance_impl(const float *a, const float *b, int dim)
 {
@@ -280,11 +218,6 @@ metal_backend_cosine_distance_impl(const float *a, const float *b, int dim)
 	return metal_backend_cosine_distance(a, b, dim);
 }
 
-/*
- * metal_backend_inner_product_impl
- * - Computes the dot-product between two vectors.
- *   Utilizes Metal kernel or wrapper.
- */
 static float
 metal_backend_inner_product_impl(const float *a, const float *b, int dim)
 {
@@ -292,415 +225,545 @@ metal_backend_inner_product_impl(const float *a, const float *b, int dim)
 	return metal_backend_inner_product(a, b, dim);
 }
 
-/* =========================================================================
- * Metal Batch Operations
- * =========================================================================
- */
+/* Metal Batch Operations */
 
-/*
- * metal_backend_batch_l2_impl
- * - Computes full matrix of L2 distances between query and target batches.
- *   Delegates to efficient Metal batch L2 kernel.
- */
 static bool
 metal_backend_batch_l2_impl(const float *queries, const float *targets,
-                            int num_queries, int num_targets, int dim,
-                            float *distances)
+							int num_queries, int num_targets, int dim,
+							float *distances)
 {
-	Assert(queries && targets && distances);
+	Assert(queries != NULL && targets != NULL && distances != NULL);
 	metal_backend_batch_l2(queries, targets, num_queries, num_targets, dim, distances);
-	elog(DEBUG2, "neurondb: batch_l2 - %d queries, %d targets, dim=%d", num_queries, num_targets, dim);
+	elog(DEBUG2, "neurondb: batch_l2 %d queries x %d targets, dim=%d", num_queries, num_targets, dim);
 	return true;
 }
 
-/*
- * metal_backend_batch_cosine_impl
- * - Computes the matrix of cosine distances.
- *   Metal acceleration not implemented, so does this explicitly in C for each pair.
- */
 static bool
 metal_backend_batch_cosine_impl(const float *queries, const float *targets,
-                                int num_queries, int num_targets, int dim,
-                                float *distances)
+							   int num_queries, int num_targets, int dim,
+							   float *distances)
 {
-	Assert(queries && targets && distances);
-	for (int i = 0; i < num_queries; i++)
+	int			i, j, d;
+
+	Assert(queries != NULL && targets != NULL && distances != NULL);
+	for (i = 0; i < num_queries; i++)
 	{
 		const float *q = queries + i * dim;
-		for (int j = 0; j < num_targets; j++)
+
+		for (j = 0; j < num_targets; j++)
 		{
 			const float *t = targets + j * dim;
-			float dot = 0.f, norm_q = 0.f, norm_t = 0.f;
-			for (int d = 0; d < dim; d++)
+			float		dot = 0.0f;
+			float		norm_q = 0.0f;
+			float		norm_t = 0.0f;
+			float		denom, cosine, dist;
+
+			for (d = 0; d < dim; d++)
 			{
 				dot += q[d] * t[d];
 				norm_q += q[d] * q[d];
 				norm_t += t[d] * t[d];
 			}
-			float denom = sqrtf(norm_q) * sqrtf(norm_t);
-			float cosine = (denom != 0.0f) ? dot / denom : 0.0f;
-			float dist = 1.0f - cosine;
+			denom = sqrtf(norm_q) * sqrtf(norm_t);
+			cosine = (denom != 0.0f) ? (dot / denom) : 0.0f;
+			dist = 1.0f - cosine;
+
 			distances[i * num_targets + j] = dist;
-			elog(DEBUG5, "neurondb: batch_cosine q=%d t=%d dist=%f", i, j, dist);
+			elog(DEBUG5, "neurondb: batch_cosine i=%d j=%d dist=%f", i, j, dist);
 		}
 	}
 	return true;
 }
 
-/* =========================================================================
- * Metal Quantization
- * =========================================================================
- */
+/* Metal Quantization */
 
-/*
- * metal_backend_quantize_int8_impl
- * - Converts a float array to int8 quantized values in [-127,127],
- *   scaling to the maximum absolute value ("full range" quantization).
- *   All behavior and math is spelled out.
- */
 static bool
 metal_backend_quantize_int8_impl(const float *input, int8_t *output, int count)
 {
-	Assert(input && output && count >= 0);
-	float max_val = 0.0f;
-	for (int i = 0; i < count; ++i)
+	int		i;
+	float	max_abs = 0.0f;
+	float	scale;
+
+	Assert(input != NULL && output != NULL && count >= 0);
+
+	for (i = 0; i < count; i++)
 	{
-		float abs_val = fabsf(input[i]);
-		if (abs_val > max_val)
-			max_val = abs_val;
+		float	v = fabsf(input[i]);
+
+		if (v > max_abs)
+			max_abs = v;
 	}
-	if (max_val < 1e-10f)
+
+	if (max_abs < 1e-10f)
 	{
 		memset(output, 0, count * sizeof(int8_t));
-		elog(DEBUG4, "neurondb: quantize_int8 - zero or near-zero input for all elements");
+		elog(DEBUG4, "neurondb: quantize_int8: all-zeros (max abs < 1e-10)");
 		return true;
 	}
-	float scale = 127.0f / max_val;
-	for (int i = 0; i < count; ++i)
+
+	scale = 127.0f / max_abs;
+	for (i = 0; i < count; i++)
 	{
-		float scaled = input[i] * scale;
-		int8_t qout;
-		if (scaled > 127.0f)
-			qout = 127;
-		else if (scaled < -127.0f)
-			qout = -127;
-		else
-			qout = (int8_t)roundf(scaled);
-		output[i] = qout;
-		elog(DEBUG5, "neurondb: quantize_int8 i=%d in=%f scale=%f out=%d", i, input[i], scale, qout);
+		int		out;
+		float	scaled = input[i] * scale;
+
+		out = (int) rintf(scaled);
+		if (out > 127)
+			out = 127;
+		if (out < -127)
+			out = -127;
+		output[i] = (int8_t) out;
+		elog(DEBUG5, "neurondb: quantize_int8[%d]: in=%f scaled=%f out=%d", i, input[i], scale, out);
 	}
 	return true;
 }
 
-/*
- * metal_backend_quantize_fp16_impl
- * - Converts an array of floats to IEEE 754-2008 half-float binary representations.
- *   Handles overflow/underflow/mantissa reduction.
- *   Output must be a buffer large enough to hold 'count' 16-bit values.
- */
 static bool
 metal_backend_quantize_fp16_impl(const float *input, void *output, int count)
 {
-	Assert(input && output && count >= 0);
-	uint16_t *out16 = (uint16_t *)output;
-	for (int i = 0; i < count; ++i)
+	int			i;
+
+	Assert(input != NULL && output != NULL && count >= 0);
+
+	for (i = 0; i < count; i++)
 	{
-		uint32_t f32;
-		memcpy(&f32, &input[i], sizeof(float));
-		uint16_t f16;
-		uint32_t sign = (f32 >> 31) & 0x1;
-		int32_t  exp  = ((f32 >> 23) & 0xFF) - 127;
-		uint32_t mant = f32 & 0x7FFFFF;
+		uint32		bits;
+		uint16		sign, fp16;
+		int32		exp;
+		uint32		mant;
+		uint16	   *o = (uint16 *) output;
+
+		memcpy(&bits, &input[i], sizeof(float));
+		sign = (bits >> 16) & 0x8000;
+		exp = ((bits >> 23) & 0xFF) - 127;
+		mant = bits & 0x7FFFFF;
+
 		if (exp > 15)
-			f16 = (sign << 15) | 0x7C00;
+		{
+			fp16 = sign | 0x7C00;
+		}
 		else if (exp < -14)
-			f16 = (sign << 15);
+		{
+			fp16 = sign;
+		}
 		else
 		{
 			exp = exp + 15;
-			mant = mant >> 13;
-			f16 = (uint16_t)((sign << 15) | (exp << 10) | mant);
+			mant >>= 13;
+			fp16 = sign | (exp << 10) | (mant & 0x3FF);
 		}
-		out16[i] = f16;
-		elog(DEBUG5, "neurondb: quantize_fp16 i=%d in=%f -> 0x%04x", i, input[i], (unsigned)f16);
+		o[i] = fp16;
+		elog(DEBUG5, "neurondb: quantize_fp16[%d]: in=%f -> 0x%04x", i, input[i], fp16);
 	}
+
 	return true;
 }
 
-/* =========================================================================
- * Metal Clustering (K-means)
- * =========================================================================
- */
+/* Metal Clustering (K-means, DBSCAN) */
 
-/*
- * metal_backend_kmeans_impl
- * - Fully detailed vanilla Lloyd's K-means, with assignment and update loops,
- *   all resource allocation, logging, and checks.
- */
 static bool
 metal_backend_kmeans_impl(const float *vectors, int num_vectors, int dim,
-                          int k, int max_iters, float *centroids, int *assignments)
+						  int k, int max_iters, float *centroids, int *assignments)
 {
-	Assert(vectors && centroids && assignments && num_vectors>0 && k>0 && dim>0 && max_iters>0);
-	int *cluster_sizes = (int *)palloc0(k * sizeof(int));
-	float *new_centroids = (float *)palloc0(k * dim * sizeof(float));
-	for (int iter = 0; iter < max_iters; ++iter)
+	int		   *cluster_counts;
+	float	   *new_centroids;
+	int			iter;
+	bool		changed;
+	int			i, j, d;
+
+	Assert(vectors != NULL && centroids != NULL && assignments != NULL &&
+		   num_vectors > 0 && k > 0 && dim > 0 && max_iters > 0);
+
+	cluster_counts = (int *) palloc0(k * sizeof(int));
+	new_centroids = (float *) palloc0(k * dim * sizeof(float));
+
+	for (iter = 0; iter < max_iters; iter++)
 	{
-		bool changed = false;
-		/* Assignment: for each vector, find nearest centroid */
-		for (int i = 0; i < num_vectors; ++i)
+		changed = false;
+		for (i = 0; i < num_vectors; i++)
 		{
 			const float *vec = vectors + i * dim;
-			float min_dist = FLT_MAX;
-			int   best_cluster = 0;
-			for (int j = 0; j < k; ++j)
+			float		min_dist = FLT_MAX;
+			int			cid = 0;
+
+			for (j = 0; j < k; j++)
 			{
 				const float *c = centroids + j * dim;
-				float sum = 0.0f;
-				for (int d = 0; d < dim; ++d)
+				float		dist_sq = 0.0f;
+
+				for (d = 0; d < dim; d++)
 				{
-					float dval = vec[d] - c[d];
-					sum += dval * dval;
+					float diff = vec[d] - c[d];
+					dist_sq += diff * diff;
 				}
-				if (sum < min_dist)
+				if (dist_sq < min_dist)
 				{
-					min_dist = sum;
-					best_cluster = j;
+					min_dist = dist_sq;
+					cid = j;
 				}
 			}
-			if (assignments[i] != best_cluster)
+
+			if (assignments[i] != cid)
 			{
-				assignments[i] = best_cluster;
 				changed = true;
-				elog(DEBUG5, "kmeans: vector=%d new_cluster=%d dist=%f", i, best_cluster, min_dist);
+				elog(DEBUG5, "kmeans: vector %d: cluster %d -> %d (dist=%f)", i, assignments[i], cid, sqrtf(min_dist));
+				assignments[i] = cid;
 			}
 		}
+
 		if (!changed)
 		{
-			elog(DEBUG3, "kmeans: converged after %d iterations", iter+1);
+			elog(DEBUG3, "kmeans: converged after %d iteration(s)", iter + 1);
 			break;
 		}
-		/* Recompute centroids */
+
 		memset(new_centroids, 0, k * dim * sizeof(float));
-		memset(cluster_sizes, 0, k * sizeof(int));
-		for (int i = 0; i < num_vectors; ++i)
+		memset(cluster_counts, 0, k * sizeof(int));
+
+		for (i = 0; i < num_vectors; i++)
 		{
-			int cid = assignments[i];
-			cluster_sizes[cid]++;
-			float *accum = new_centroids + cid * dim;
-			const float *vec = vectors + i * dim;
-			for (int d = 0; d < dim; ++d)
-				accum[d] += vec[d];
+			int			cid = assignments[i];
+			float	   *agg = new_centroids + cid * dim;
+			const float *src = vectors + i * dim;
+
+			cluster_counts[cid]++;
+			for (d = 0; d < dim; d++)
+				agg[d] += src[d];
 		}
-		for (int j = 0; j < k; ++j)
+		for (j = 0; j < k; j++)
 		{
-			if (cluster_sizes[j] > 0)
+			if (cluster_counts[j] > 0)
 			{
 				float *c = new_centroids + j * dim;
-				for (int d = 0; d < dim; ++d)
-					c[d] /= (float)cluster_sizes[j];
+
+				for (d = 0; d < dim; d++)
+					c[d] /= (float) cluster_counts[j];
 			}
 		}
 		memcpy(centroids, new_centroids, k * dim * sizeof(float));
-		elog(DEBUG4, "kmeans: iteration %d centroids updated", iter+1);
+		elog(DEBUG4, "kmeans: iter %d: centroids recomputed", iter + 1);
 	}
-	pfree(cluster_sizes);
+
+	pfree(cluster_counts);
 	pfree(new_centroids);
+
 	return true;
 }
 
-/*
- * metal_backend_dbscan_impl
- * - DBSCAN clustering algorithm implementation for Metal backend.
- *   For now, uses CPU implementation (GPU acceleration can be added later).
- */
 static bool
 metal_backend_dbscan_impl(const float *vectors, int num_vectors, int dim,
 						  float eps, int min_points, int *cluster_ids)
 {
-	/*
-	 * DBSCAN is computationally intensive and benefits from GPU parallelization.
-	 * This Metal implementation currently uses a CPU-based approach with detailed
-	 * neighbor search. Full Metal kernel optimization can be added in the future.
-	 */
-	Assert(vectors && cluster_ids && num_vectors > 0 && dim > 0);
+	bool	   *visited;
+	int		   *neighbors;
+	int			cluster = -1;
+	int			i, j, d;
 
-	bool	   *visited = (bool *) palloc0(num_vectors * sizeof(bool));
-	int		   *neighbors = (int *) palloc(num_vectors * sizeof(int));
-	int			cluster_id = -1;
+	Assert(vectors != NULL && cluster_ids != NULL && num_vectors > 0 && dim > 0);
 
-	/* Initialize all points as unclassified */
-	for (int i = 0; i < num_vectors; ++i)
+	visited = (bool *) palloc0(num_vectors * sizeof(bool));
+	neighbors = (int *) palloc(num_vectors * sizeof(int));
+
+	for (i = 0; i < num_vectors; i++)
 		cluster_ids[i] = -1;
 
-	/* DBSCAN main loop */
-	for (int i = 0; i < num_vectors; ++i)
+	for (i = 0; i < num_vectors; i++)
 	{
 		if (visited[i])
 			continue;
-
 		visited[i] = true;
 
 		/* Find neighbors within eps */
 		int			neighbor_count = 0;
+		const float *vec_i = vectors + i * dim;
 
-		for (int j = 0; j < num_vectors; ++j)
+		for (j = 0; j < num_vectors; j++)
 		{
-			const float *vec_i = vectors + i * dim;
 			const float *vec_j = vectors + j * dim;
-			float		dist_sq = 0.0f;
+			float		dist2 = 0.0f;
 
-			for (int d = 0; d < dim; ++d)
+			for (d = 0; d < dim; d++)
 			{
-				float		diff = vec_i[d] - vec_j[d];
-
-				dist_sq += diff * diff;
+				float diff = vec_i[d] - vec_j[d];
+				dist2 += diff * diff;
 			}
-
-			if (sqrtf(dist_sq) <= eps)
+			if (sqrtf(dist2) <= eps)
 				neighbors[neighbor_count++] = j;
 		}
-
-		/* Check if core point */
 		if (neighbor_count < min_points)
 		{
-			cluster_ids[i] = -1;	/* Noise */
+			cluster_ids[i] = -1;
+			continue;
 		}
-		else
+		cluster++;
+		cluster_ids[i] = cluster;
+
+		for (j = 0; j < neighbor_count; j++)
 		{
-			/* Start new cluster */
-			cluster_id++;
-			cluster_ids[i] = cluster_id;
+			int n = neighbors[j];
 
-			/* Expand cluster */
-			for (int j = 0; j < neighbor_count; ++j)
+			if (!visited[n])
 			{
-				int			neighbor = neighbors[j];
+				visited[n] = true;
+				int nn_count = 0;
+				const float *vec_n = vectors + n * dim;
+				int m;
 
-				if (cluster_ids[neighbor] == -1)
-					cluster_ids[neighbor] = cluster_id;
+				for (m = 0; m < num_vectors; m++)
+				{
+					const float *vec_m = vectors + m * dim;
+					float d2 = 0.0f;
+
+					for (d = 0; d < dim; d++)
+					{
+						float sdf = vec_n[d] - vec_m[d];
+						d2 += sdf * sdf;
+					}
+					if (sqrtf(d2) <= eps)
+						neighbors[neighbor_count + nn_count++] = m;
+				}
+				if (nn_count > 0 && nn_count + neighbor_count < num_vectors)
+					neighbor_count += nn_count;
 			}
+			if (cluster_ids[n] == -1)
+				cluster_ids[n] = cluster;
 		}
+		elog(DEBUG5, "neurondb: dbscan: assigned cluster %d (core=%d neighbors=%d)", cluster, i, neighbor_count);
 	}
 
 	pfree(visited);
 	pfree(neighbors);
 
-	elog(DEBUG2, "neurondb: Metal DBSCAN found %d clusters", cluster_id + 1);
+	elog(DEBUG2, "neurondb: Metal DBSCAN: %d clusters (including noise)", cluster + 1);
 	return true;
 }
 
-/* =========================================================================
- * Metal Advanced Features: Streams/Context (command queue abstraction)
- * =========================================================================
- */
+/* Streams and Contexts */
 
-/*
- * metal_backend_create_streams_impl
- * - In Metal, this means creating one or more command queues for parallel work.
- *   Here, only logs and acknowledges the request.
- */
 static bool
 metal_backend_create_streams_impl(int num_streams)
 {
-	elog(DEBUG1, "neurondb: Metal create_streams called for %d command queues", num_streams);
+	elog(DEBUG1, "neurondb: Metal create_streams: requested %d command queues", num_streams);
 	return true;
 }
 
-/*
- * metal_backend_destroy_streams_impl
- * - Destroys and releases all Metal command queues created by this backend.
- */
 static void
 metal_backend_destroy_streams_impl(void)
 {
-	elog(DEBUG1, "neurondb: Metal destroy_streams called, all command queues released");
+	elog(DEBUG1, "neurondb: Metal destroy_streams: command queues released");
 }
 
-/*
- * metal_backend_get_context_impl
- * - Exposes the Metal device/context handle; returns NULL for now.
- */
 static void *
 metal_backend_get_context_impl(void)
 {
-	elog(DEBUG1, "neurondb: Metal backend get_context called, returning NULL");
+	elog(DEBUG1, "neurondb: Metal backend get_context invoked (not implemented, returns NULL)");
 	return NULL;
 }
 
-/* =========================================================================
- * Backend Interface Definition
- * =========================================================================
- */
+/* Backend Interface Definition */
 
 static const GPUBackendInterface metal_backend_interface = {
-    .type = GPU_BACKEND_TYPE_METAL,
-    .name = "Metal",
-    .version = "3.0",
+	.type = GPU_BACKEND_TYPE_METAL,
+	.name = "Metal",
+	.version = "3.0",
 
-    /* Backend lifecycle */
-    .init = metal_backend_init_impl,
-    .cleanup = metal_backend_cleanup_impl,
-    .is_available = metal_backend_is_available_impl,
+	.init = metal_backend_init_impl,
+	.cleanup = metal_backend_cleanup_impl,
+	.is_available = metal_backend_is_available_impl,
 
-    /* Device mgmt */
-    .get_device_count = metal_backend_get_device_count_impl,
-    .get_device_info = metal_backend_get_device_info_impl,
-    .set_device = metal_backend_set_device_impl,
+	.get_device_count = metal_backend_get_device_count_impl,
+	.get_device_info = metal_backend_get_device_info_impl,
+	.set_device = metal_backend_set_device_impl,
 
-    /* Memory mgmt */
-    .mem_alloc = metal_backend_mem_alloc_impl,
-    .mem_free = metal_backend_mem_free_impl,
-    .mem_copy_h2d = metal_backend_mem_copy_h2d_impl,
-    .mem_copy_d2h = metal_backend_mem_copy_d2h_impl,
-    .synchronize = metal_backend_synchronize_impl,
+	.mem_alloc = metal_backend_mem_alloc_impl,
+	.mem_free = metal_backend_mem_free_impl,
+	.mem_copy_h2d = metal_backend_mem_copy_h2d_impl,
+	.mem_copy_d2h = metal_backend_mem_copy_d2h_impl,
+	.synchronize = metal_backend_synchronize_impl,
 
-    /* Vector ops */
-    .l2_distance = metal_backend_l2_distance_impl,
-    .cosine_distance = metal_backend_cosine_distance_impl,
-    .inner_product = metal_backend_inner_product_impl,
+	.l2_distance = metal_backend_l2_distance_impl,
+	.cosine_distance = metal_backend_cosine_distance_impl,
+	.inner_product = metal_backend_inner_product_impl,
 
-    /* Batch ops */
-    .batch_l2 = metal_backend_batch_l2_impl,
-    .batch_cosine = metal_backend_batch_cosine_impl,
+	.batch_l2 = metal_backend_batch_l2_impl,
+	.batch_cosine = metal_backend_batch_cosine_impl,
 
-    /* Quantization */
-    .quantize_int8 = metal_backend_quantize_int8_impl,
-    .quantize_fp16 = metal_backend_quantize_fp16_impl,
+	.quantize_int8 = metal_backend_quantize_int8_impl,
+	.quantize_fp16 = metal_backend_quantize_fp16_impl,
 
-    /* Clustering */
-    .kmeans = metal_backend_kmeans_impl,
-    .dbscan = metal_backend_dbscan_impl,
+	.kmeans = metal_backend_kmeans_impl,
+	.dbscan = metal_backend_dbscan_impl,
 
-    /* Advanced features */
-    .create_streams = metal_backend_create_streams_impl,
-    .destroy_streams = metal_backend_destroy_streams_impl,
-    .get_context = metal_backend_get_context_impl
+	.create_streams = metal_backend_create_streams_impl,
+	.destroy_streams = metal_backend_destroy_streams_impl,
+	.get_context = metal_backend_get_context_impl
 };
 
-/*
- * neurondb_gpu_register_metal_backend
- * - Registers the Metal backend with the central GPU runtime of NeurondB.
- *   Must be called during extension/module initialization.
- */
 void
 neurondb_gpu_register_metal_backend(void)
 {
-    if (gpu_backend_register(&metal_backend_interface))
-        elog(DEBUG1, "neurondb: Metal GPU backend registered successfully");
-    else
-        elog(WARNING, "neurondb: Metal GPU backend registration failed");
+	if (gpu_backend_register(&metal_backend_interface))
+		elog(DEBUG1, "neurondb: Metal GPU backend registered successfully");
+	else
+		elog(WARNING, "neurondb: Metal GPU backend registration failed");
 }
 
-#else /* !NDB_GPU_METAL */
+/* ----------------------------
+ * Random Forest predict (CPU-on-Metal implementation)
+ * ---------------------------- */
+#ifdef NDB_GPU_METAL
 
-/*
- * Stub registration when Metal backend support is not compiled.
- */
-void
-neurondb_gpu_register_metal_backend(void)
+/* Flat RF layout (must match ml_random_forest.c) */
+typedef struct RFNodeFlat_Metal
 {
-    /* No operation */
+	int32		feature_index;
+	uint32		_pad0;
+	double		threshold;
+	int32		left;
+	int32		right;
+	int32		is_leaf;
+	uint32		_pad1;
+	double		value;
+} RFNodeFlat_Metal;
+
+typedef struct RFTreeFlat_Metal
+{
+	int32		offset_to_nodes;
+	int32		num_nodes;
+	int64		_pad2;
+} RFTreeFlat_Metal;
+
+typedef struct RFModelFlat_Metal
+{
+	int32		n_trees;
+	int32		max_depth;
+	int32		min_samples_split;
+	int32		max_features;
+	int32		n_classes;
+	int32		n_features;
+	int32		trees_offset;
+	int32		nodes_offset;
+	int64		_pad3;
+} RFModelFlat_Metal;
+
+static inline int
+rf_tree_predict_flat_safe_metal(const RFNodeFlat_Metal *nodes, int num_nodes,
+				   int n_features, const float *x)
+{
+	int		curr = 0;
+	int		steps = 0;
+	const int	max_steps = 4096;
+
+	while (curr >= 0 && curr < num_nodes && steps < max_steps)
+	{
+		const RFNodeFlat_Metal *n = &nodes[curr];
+		int		left;
+		int		right;
+
+		if (n->is_leaf)
+			return (int) (n->value);
+		if (n->feature_index < 0 || n->feature_index >= n_features)
+			return -1;
+		left = n->left;
+		right = n->right;
+		if (left < 0 || left >= num_nodes || right < 0 || right >= num_nodes)
+			return -1;
+		curr = (x[n->feature_index] <= n->threshold) ? left : right;
+		steps++;
+	}
+	return -1;
+}
+
+bool
+neurondb_gpu_rf_predict_backend(const void *rf_hdr,
+                                const void *trees,
+                                const void *nodes,
+                                int node_capacity,
+                                const float *x,
+                                int n_features,
+                                int *class_out,
+                                char **errstr)
+{
+	const RFModelFlat_Metal *hdr;
+	const RFTreeFlat_Metal *blob_trees;
+	const RFNodeFlat_Metal *blob_nodes;
+	int		n_trees;
+	int		n_classes;
+	Size	payload_dummy = 0; /* header validation already done by caller */
+	int		*tally = NULL;
+	int		i;
+
+	if (errstr)
+		*errstr = NULL;
+	if (!rf_hdr || !trees || !nodes || !x || !class_out)
+		return false;
+	if (n_features <= 0 || node_capacity <= 0)
+		return false;
+
+	hdr = (const RFModelFlat_Metal *) rf_hdr;
+	n_trees = hdr->n_trees;
+	n_classes = hdr->n_classes;
+	if (n_trees <= 0 || n_classes <= 0 || hdr->n_features <= 0)
+	{
+		if (errstr) *errstr = pstrdup("invalid RF header");
+		return false;
+	}
+	if (n_features != hdr->n_features)
+	{
+		if (errstr) *errstr = pstrdup("feature dimension mismatch");
+		return false;
+	}
+
+	blob_trees = (const RFTreeFlat_Metal *) ((const char *) rf_hdr + hdr->trees_offset);
+	blob_nodes = (const RFNodeFlat_Metal *) ((const char *) rf_hdr + hdr->nodes_offset);
+	if (hdr->trees_offset < (int) sizeof(RFModelFlat_Metal) ||
+	    hdr->nodes_offset < (int) sizeof(RFModelFlat_Metal))
+	{
+		if (errstr) *errstr = pstrdup("offsets out of bounds");
+		return false;
+	}
+
+	tally = (int *) palloc0(sizeof(int) * n_classes);
+	for (i = 0; i < n_trees; i++)
+	{
+		int		off = blob_trees[i].offset_to_nodes;
+		int		nn = blob_trees[i].num_nodes;
+		int		pred;
+		if (off < 0 || nn <= 0 || off + nn > node_capacity)
+		{
+			pfree(tally);
+			if (errstr) *errstr = pstrdup("tree bounds invalid");
+			return false;
+		}
+		pred = rf_tree_predict_flat_safe_metal(blob_nodes + off, nn, n_features, x);
+		if (pred >= 0 && pred < n_classes)
+			tally[pred]++;
+	}
+	{
+		int		best_cls = 0;
+		int		best_cnt = tally[0];
+		for (i = 1; i < n_classes; i++)
+		{
+			if (tally[i] > best_cnt)
+			{
+				best_cnt = tally[i];
+				best_cls = i;
+			}
+		}
+		*class_out = best_cls;
+	}
+	pfree(tally);
+	return true;
 }
 
 #endif /* NDB_GPU_METAL */
+
+#else	/* !NDB_GPU_METAL */
+
+void
+neurondb_gpu_register_metal_backend(void)
+{
+	/* Metal backend not compiled; stub does nothing. */
+}
+
+#endif	/* NDB_GPU_METAL */

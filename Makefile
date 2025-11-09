@@ -6,6 +6,9 @@ EXTENSION = neurondb
 DATA = neurondb--1.0.sql
 DOCS = README.md
 
+PG_CPPFLAGS += -Wall -Wextra -Werror -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith
+PG_CFLAGS += -fmessage-length=80
+
 # Compiler-specific tweaks
 CC_VERSION := $(shell $(CC) --version 2>/dev/null | head -1)
 ifeq ($(findstring clang,$(CC_VERSION)),)
@@ -74,7 +77,10 @@ OBJS += \
 	src/gpu/gpu_quantization.o \
 	src/gpu/gpu_clustering.o \
 	src/gpu/gpu_inference.o \
-	src/gpu/gpu_sql.o
+	src/gpu/gpu_sql.o \
+	src/gpu/ml_gpu_context.o \
+	src/gpu/ml_gpu_buffer.o \
+	src/gpu/ml_gpu_support.o
 
 # Types and operations
 OBJS += \

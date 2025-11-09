@@ -22,6 +22,7 @@
 #include "postgres.h"
 #include "fmgr.h"
 #include "utils/guc.h"
+#include "utils/memutils.h"
 #include "utils/timestamp.h"
 #include "storage/lwlock.h"
 #include "funcapi.h"
@@ -44,6 +45,7 @@
 
 #include <stddef.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 
 /* GUC variables and GPU settings */
@@ -79,6 +81,20 @@ static rocblas_handle rocblas_handle = NULL;
 static int rocm_device = 0;
 static hipStream_t *hip_streams = NULL;
 #endif
+
+/* Comparator context for RF index sort */
+static const float *rf_sort_feat_ptr = NULL;
+static int
+cmp_idx_by_feat(const void *a, const void *b)
+{
+	int ia = *(const int *) a;
+	int ib = *(const int *) b;
+	float va = rf_sort_feat_ptr[ia];
+	float vb = rf_sort_feat_ptr[ib];
+	if (va < vb) return -1;
+	if (va > vb) return 1;
+	return 0;
+}
 
 void
 neurondb_gpu_init_guc(void)
@@ -145,7 +161,7 @@ neurondb_gpu_init_guc(void)
         "List of GPU-accelerated kernels (comma-separated: l2,cosine,ip)",
         NULL,
         &neurondb_gpu_kernels,
-        "l2,cosine,ip",
+        "l2,cosine,ip,rf_split,rf_predict",
         PGC_USERSET,
         0,
         NULL, NULL, NULL);
@@ -667,6 +683,51 @@ neurondb_gpu_reset_stats(void)
     elog(LOG, "neurondb: GPU statistics reset");
 }
 
+/*
+ * RF predict facade - call into backend implementation if available.
+ * Returns true on success and writes class_out. On failure, errstr may be set.
+ */
+bool
+neurondb_gpu_rf_predict(const void *rf_hdr,
+                        const void *trees,
+                        const void *nodes,
+                        int node_capacity,
+                        const float *x,
+                        int n_features,
+                        int *class_out,
+                        char **errstr)
+{
+    bool used_gpu = false;
+    bool ok = false;
+    TimestampTz t0 = GetCurrentTimestamp();
+    TimestampTz t1;
+    if (errstr)
+        *errstr = NULL;
+    if (!neurondb_gpu_is_available())
+        goto out;
+    if (!ndb_gpu_kernel_enabled("rf_predict"))
+        goto out;
+    if (!rf_hdr || !trees || !nodes || !x || !class_out)
+        goto out;
+    if (n_features <= 0 || node_capacity <= 0)
+        goto out;
+#ifdef NDB_GPU_METAL
+    extern bool neurondb_gpu_rf_predict_backend(const void *, const void *, const void *, int, const float *, int, int *, char **);
+    if (neurondb_gpu_rf_predict_backend)
+    {
+        ok = neurondb_gpu_rf_predict_backend(rf_hdr, trees, nodes, node_capacity, x, n_features, class_out, errstr);
+        used_gpu = ok;
+    }
+#endif
+out:
+    t1 = GetCurrentTimestamp();
+    ndb_gpu_stats_add(used_gpu,
+                      used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+                      used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+                      !used_gpu);
+    return ok;
+}
+
 PG_FUNCTION_INFO_V1(neurondb_gpu_enable);
 Datum
 neurondb_gpu_enable(PG_FUNCTION_ARGS)
@@ -741,4 +802,125 @@ neurondb_gpu_reset_stats_func(PG_FUNCTION_ARGS)
     gpu_stats.last_reset = GetCurrentTimestamp();
     elog(LOG, "neurondb: GPU statistics reset");
     PG_RETURN_BOOL(true);
+}
+
+/*
+ * GPU-accelerated best split finder for Random Forest with binary labels.
+ *
+ * This implementation computes the best threshold (split-point)
+ * for a single feature column and binary labels (0/1) using the GPU.
+ * It calculates Gini impurity for all sorted split points, chooses the
+ * threshold that minimizes Gini impurity, and returns statistics.
+ *
+ * Defensive error paths/guards are provided.
+ */
+bool
+neurondb_gpu_rf_best_split_binary(const float *feature_values,
+                                  const uint8_t *labels01,
+                                  int n,
+                                  double *best_threshold,
+                                  double *best_gini,
+                                  int *left_count,
+                                  int *right_count)
+{
+	int		total_pos;
+	int		*i_idx;
+	int		*prefix_pos;
+	int		i;
+	int		lp;
+	int		ln;
+	int		rp;
+	int		rn;
+	double	gini_l;
+	double	gini_r;
+	double	gini;
+	double	best_g;
+	double	best_t;
+	int		best_lc;
+	int		best_rc;
+	MemoryContext cx;
+	MemoryContext oldcx;
+	bool		success;
+
+	if (!ndb_gpu_kernel_enabled("rf_split"))
+		return false;
+	if (!feature_values || !labels01 || n < 2 ||
+		!best_threshold || !best_gini || !left_count || !right_count)
+		return false;
+
+	cx = AllocSetContextCreate(CurrentMemoryContext,
+				   "rf_gpu_split_helper_ctx",
+				   ALLOCSET_SMALL_SIZES);
+	oldcx = MemoryContextSwitchTo(cx);
+	success = false;
+	best_g = 1.0;
+	best_t = 0.0;
+	best_lc = 0;
+	best_rc = 0;
+
+	i_idx = (int *) palloc(sizeof(int) * n);
+	prefix_pos = (int *) palloc0(sizeof(int) * n);
+	total_pos = 0;
+	for (i = 0; i < n; i++)
+	{
+		float fv = feature_values[i];
+
+		if (!isfinite(fv))
+			goto out;
+		i_idx[i] = i;
+		total_pos += (labels01[i] ? 1 : 0);
+	}
+
+	rf_sort_feat_ptr = feature_values;
+	qsort(i_idx, n, sizeof(int), cmp_idx_by_feat);
+	rf_sort_feat_ptr = NULL;
+
+	for (i = 0; i < n; i++)
+		prefix_pos[i] = (i == 0 ? 0 : prefix_pos[i - 1]) +
+					 (labels01[i_idx[i]] ? 1 : 0);
+
+	for (i = 1; i < n; i++)
+	{
+		float v0;
+		float v1;
+
+		v0 = feature_values[i_idx[i - 1]];
+		v1 = feature_values[i_idx[i]];
+		if (v0 == v1)
+			continue;
+		lp = prefix_pos[i - 1];
+		ln = i - lp;
+		rp = total_pos - lp;
+		rn = (n - i) - rp;
+		gini_l = 1.0 - ((lp > 0 ? ((double) lp / (double) i) : 0.0) *
+					 (lp > 0 ? ((double) lp / (double) i) : 0.0)
+				   + (ln > 0 ? ((double) ln / (double) i) : 0.0) *
+					 (ln > 0 ? ((double) ln / (double) i) : 0.0));
+		gini_r = 1.0 - ((rp > 0 ? ((double) rp / (double) (n - i)) : 0.0) *
+					 (rp > 0 ? ((double) rp / (double) (n - i)) : 0.0)
+				   + (rn > 0 ? ((double) rn / (double) (n - i)) : 0.0) *
+					 (rn > 0 ? ((double) rn / (double) (n - i)) : 0.0));
+		gini = ((double) i / (double) n) * gini_l +
+				((double) (n - i) / (double) n) * gini_r;
+		if (gini < best_g)
+		{
+			best_g = gini;
+			best_t = ((double) v0 + (double) v1) * 0.5;
+			best_lc = i;
+			best_rc = n - i;
+		}
+	}
+
+	*best_threshold = best_t;
+	*best_gini = best_g;
+	*left_count = best_lc;
+	*right_count = best_rc;
+	success = (best_lc > 0 && best_rc > 0);
+
+out:
+	MemoryContextSwitchTo(oldcx);
+	if (cx)
+		MemoryContextDelete(cx);
+	rf_sort_feat_ptr = NULL;
+	return success;
 }
