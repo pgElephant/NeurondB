@@ -17,16 +17,17 @@
 #include "utils/timestamp.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include "neurondb_gpu_types.h"
+#include "neurondb_gpu_backend.h"
 
-/* GPU backend types */
-typedef enum GPUBackend
-{
-    GPU_BACKEND_NONE = 0,
-    GPU_BACKEND_CUDA,
-    GPU_BACKEND_ROCM,
-    GPU_BACKEND_OPENCL,
-    GPU_BACKEND_METAL
-} GPUBackend;
+/* Backwards-compatibility aliases for legacy enum names */
+typedef NDBGpuBackendKind GPUBackend;
+
+#define GPU_BACKEND_NONE   NDB_GPU_BACKEND_NONE
+#define GPU_BACKEND_CUDA   NDB_GPU_BACKEND_CUDA
+#define GPU_BACKEND_ROCM   NDB_GPU_BACKEND_ROCM
+#define GPU_BACKEND_OPENCL NDB_GPU_BACKEND_NONE
+#define GPU_BACKEND_METAL  NDB_GPU_BACKEND_METAL
 
 /* GPU statistics for monitoring */
 typedef struct GPUStats
@@ -145,5 +146,22 @@ void        ndb_gpu_memcpy_to_device(void *dst, const void *src, size_t bytes);
 void        ndb_gpu_memcpy_from_device(void *dst, const void *src, size_t bytes);
 void        ndb_gpu_synchronize(void);
 #endif
+
+extern void neurondb_gpu_matmul(const float *A, const float *B, float *C,
+                                 int m, int n, int k, bool use_gpu);
+extern void neurondb_gpu_vector_add(const float *a, const float *b, float *result,
+                                    int n, bool use_gpu);
+extern void neurondb_gpu_activation_relu(const float *input, float *output,
+                                         int n, bool use_gpu);
+extern void neurondb_gpu_kmeans_update(const float *data, const float *centroids,
+                                       int *assignments, float *new_centroids,
+                                       int n_samples, int n_features, int k,
+                                       bool use_gpu);
+extern void neurondb_gpu_compute_gradient(const float *weights, const float *X,
+                                          const float *y, float *gradient,
+                                          int n_samples, int n_features,
+                                          bool use_gpu);
+extern void neurondb_gpu_softmax(const float *input, float *output, int n,
+                                 bool use_gpu);
 
 #endif /* NEURONDB_GPU_H */

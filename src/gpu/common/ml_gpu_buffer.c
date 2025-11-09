@@ -16,6 +16,7 @@
 #include "ml_gpu_buffer.h"
 
 #include "utils/memutils.h"
+#include "neurondb_gpu_backend.h"
 
 Size
 ml_gpu_dtype_size(MLGpuDType dtype)
@@ -129,45 +130,87 @@ ml_gpu_buffer_invalidate_device(MLGpuBuffer *buf)
 bool
 ml_gpu_buffer_ensure_device(MLGpuBuffer *buf, bool copy_from_host)
 {
-	if (buf == NULL || buf->context == NULL)
-		return false;
+    const ndb_gpu_backend *backend;
+    Size required;
+    void *dev_ptr;
 
-	if (!ml_gpu_context_ready(buf->context))
-		return false;
+    if (buf == NULL || buf->context == NULL)
+        return false;
+    if (!ml_gpu_context_ready(buf->context))
+        return false;
 
-	/* Placeholder for future device allocation logic. */
-	(void) copy_from_host;
-	return false;
+    backend = ndb_gpu_get_active_backend();
+    if (backend == NULL || backend->mem_alloc == NULL)
+        return false;
+
+    required = buf->device_bytes ? buf->device_bytes : buf->host_bytes;
+    if (required == 0)
+        return false;
+
+    if (buf->device_ptr == NULL)
+    {
+        dev_ptr = NULL;
+        if (backend->mem_alloc(&dev_ptr, required) != 0 || dev_ptr == NULL)
+            return false;
+        buf->device_ptr = dev_ptr;
+        buf->device_bytes = required;
+        buf->device_owner = true;
+        buf->device_valid = false;
+    }
+
+    if (copy_from_host && buf->host_valid && buf->host_ptr != NULL)
+    {
+        if (backend->memcpy_h2d == NULL)
+            return false;
+        if (backend->memcpy_h2d(buf->device_ptr, buf->host_ptr, buf->host_bytes) != 0)
+            return false;
+        buf->device_valid = true;
+    }
+
+    return true;
 }
 
 bool
 ml_gpu_buffer_copy_to_host(MLGpuBuffer *buf)
 {
-	if (buf == NULL)
-		return false;
+    const ndb_gpu_backend *backend;
 
-	if (!ml_gpu_context_ready(buf->context))
-		return false;
+    if (buf == NULL || buf->context == NULL)
+        return false;
+    if (!ml_gpu_context_ready(buf->context))
+        return false;
+    if (!buf->device_valid || buf->device_ptr == NULL || buf->host_ptr == NULL)
+        return false;
 
-	if (!buf->device_valid || buf->host_ptr == NULL)
-		return false;
+    backend = ndb_gpu_get_active_backend();
+    if (backend == NULL || backend->memcpy_d2h == NULL)
+        return false;
 
-	/* Device copies not implemented yet. */
-	return false;
+    if (backend->memcpy_d2h(buf->host_ptr, buf->device_ptr, buf->host_bytes) != 0)
+        return false;
+
+    buf->host_valid = true;
+    return true;
 }
 
 void
 ml_gpu_buffer_release(MLGpuBuffer *buf)
 {
-	if (buf == NULL)
-		return;
+    const ndb_gpu_backend *backend;
 
-	if (buf->host_owner && buf->host_ptr != NULL)
-		pfree(buf->host_ptr);
+    if (buf == NULL)
+        return;
 
-	/* Device resource cleanup will be added in a later phase. */
+    if (buf->host_owner && buf->host_ptr != NULL)
+        pfree(buf->host_ptr);
 
-	ml_gpu_buffer_reset(buf);
+    backend = ndb_gpu_get_active_backend();
+    if (buf->device_owner && buf->device_ptr != NULL && backend && backend->mem_free)
+    {
+        backend->mem_free(buf->device_ptr);
+    }
+
+    ml_gpu_buffer_reset(buf);
 }
 
 

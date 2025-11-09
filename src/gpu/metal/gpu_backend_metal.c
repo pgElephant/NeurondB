@@ -19,8 +19,9 @@
 
 #include "utils/elog.h"
 #include "utils/palloc.h"
+#include "neurondb_gpu_backend.h"
+#include "neurondb_gpu_types.h"
 #include "neurondb_gpu.h"
-#include "gpu_backend_interface.h"
 
 #ifdef NDB_GPU_METAL
 
@@ -562,50 +563,47 @@ metal_backend_get_context_impl(void)
 
 /* Backend Interface Definition */
 
-static const GPUBackendInterface metal_backend_interface = {
-	.type = GPU_BACKEND_TYPE_METAL,
-	.name = "Metal",
-	.version = "3.0",
+static const ndb_gpu_backend ndb_metal_backend = {
+    .name = "Metal",
+    .provider = "Apple",
+    .kind = NDB_GPU_BACKEND_METAL,
+    .features = 0,
+    .priority = 100,
 
-	.init = metal_backend_init_impl,
-	.cleanup = metal_backend_cleanup_impl,
-	.is_available = metal_backend_is_available_impl,
+    .init = ndb_metal_init,
+    .shutdown = ndb_metal_shutdown,
+    .is_available = ndb_metal_is_available,
 
-	.get_device_count = metal_backend_get_device_count_impl,
-	.get_device_info = metal_backend_get_device_info_impl,
-	.set_device = metal_backend_set_device_impl,
+    .device_count = ndb_metal_device_count,
+    .device_info = ndb_metal_device_info,
+    .set_device = ndb_metal_set_device,
 
-	.mem_alloc = metal_backend_mem_alloc_impl,
-	.mem_free = metal_backend_mem_free_impl,
-	.mem_copy_h2d = metal_backend_mem_copy_h2d_impl,
-	.mem_copy_d2h = metal_backend_mem_copy_d2h_impl,
-	.synchronize = metal_backend_synchronize_impl,
+    .mem_alloc = ndb_metal_mem_alloc,
+    .mem_free = ndb_metal_mem_free,
+    .memcpy_h2d = ndb_metal_memcpy_h2d,
+    .memcpy_d2h = ndb_metal_memcpy_d2h,
 
-	.l2_distance = metal_backend_l2_distance_impl,
-	.cosine_distance = metal_backend_cosine_distance_impl,
-	.inner_product = metal_backend_inner_product_impl,
+    .launch_l2_distance = NULL,
+    .launch_cosine = NULL,
+    .launch_kmeans_assign = NULL,
+    .launch_kmeans_update = NULL,
+    .launch_quant_fp16 = NULL,
+    .launch_quant_int8 = NULL,
+    .launch_quant_binary = NULL,
+    .launch_pq_encode = NULL,
 
-	.batch_l2 = metal_backend_batch_l2_impl,
-	.batch_cosine = metal_backend_batch_cosine_impl,
-
-	.quantize_int8 = metal_backend_quantize_int8_impl,
-	.quantize_fp16 = metal_backend_quantize_fp16_impl,
-
-	.kmeans = metal_backend_kmeans_impl,
-	.dbscan = metal_backend_dbscan_impl,
-
-	.create_streams = metal_backend_create_streams_impl,
-	.destroy_streams = metal_backend_destroy_streams_impl,
-	.get_context = metal_backend_get_context_impl
+    .stream_create = ndb_metal_stream_create,
+    .stream_destroy = ndb_metal_stream_destroy,
+    .stream_synchronize = ndb_metal_stream_synchronize,
 };
 
 void
 neurondb_gpu_register_metal_backend(void)
 {
-	if (gpu_backend_register(&metal_backend_interface))
-		elog(DEBUG1, "neurondb: Metal GPU backend registered successfully");
-	else
-		elog(WARNING, "neurondb: Metal GPU backend registration failed");
+    if (ndb_gpu_register_backend(&ndb_metal_backend) == 0)
+        elog(DEBUG1, "neurondb: Metal GPU backend registered successfully");
+    else
+        elog(WARNING, "neurondb: Metal GPU backend registration failed");
 }
 
 /* ----------------------------
@@ -767,3 +765,129 @@ neurondb_gpu_register_metal_backend(void)
 }
 
 #endif	/* NDB_GPU_METAL */
+
+static int
+ndb_metal_init(void)
+{
+    return metal_backend_init_impl() ? 0 : -1;
+}
+
+static void
+ndb_metal_shutdown(void)
+{
+    metal_backend_cleanup_impl();
+}
+
+static int
+ndb_metal_is_available(void)
+{
+    return metal_backend_is_available_impl() ? 1 : 0;
+}
+
+static int
+ndb_metal_device_count(void)
+{
+    return metal_backend_get_device_count_impl();
+}
+
+static int
+ndb_metal_device_info(int device_id, NDBGpuDeviceInfo *info)
+{
+    uint64_t total_mem = 0;
+    uint64_t free_mem = 0;
+    char name_buf[256] = {0};
+    const char *device_name;
+
+    if (info == NULL)
+        return -1;
+
+    if (device_id != 0)
+        return -1;
+
+    if (!metal_backend_is_available())
+        return -1;
+
+    memset(info, 0, sizeof(NDBGpuDeviceInfo));
+
+    device_name = metal_backend_device_name();
+    metal_backend_device_info(name_buf, sizeof(name_buf), &total_mem, &free_mem);
+
+    if (name_buf[0])
+        strncpy(info->name, name_buf, sizeof(info->name) - 1);
+    else if (device_name && device_name[0])
+        strncpy(info->name, device_name, sizeof(info->name) - 1);
+    else
+        strncpy(info->name, "Apple GPU", sizeof(info->name) - 1);
+    info->name[sizeof(info->name) - 1] = '\0';
+
+    info->device_id = 0;
+    info->total_memory_bytes = (size_t) (total_mem > 0 ? total_mem : (8ULL << 30));
+    info->free_memory_bytes = (size_t) (free_mem > 0 ? free_mem : (4ULL << 30));
+    info->compute_major = 3;
+    info->compute_minor = 0;
+    info->is_available = true;
+
+    return 0;
+}
+
+static int
+ndb_metal_set_device(int device_id)
+{
+    return metal_backend_set_device_impl(device_id) ? 0 : -1;
+}
+
+static int
+ndb_metal_mem_alloc(void **ptr, size_t bytes)
+{
+    void *tmp;
+
+    if (ptr == NULL)
+        return -1;
+
+    tmp = metal_backend_mem_alloc_impl((Size) bytes);
+    if (tmp == NULL)
+        return -1;
+
+    *ptr = tmp;
+    return 0;
+}
+
+static int
+ndb_metal_mem_free(void *ptr)
+{
+    metal_backend_mem_free_impl(ptr);
+    return 0;
+}
+
+static int
+ndb_metal_memcpy_h2d(void *dst, const void *src, size_t bytes)
+{
+    return metal_backend_mem_copy_h2d_impl(dst, src, (Size) bytes) ? 0 : -1;
+}
+
+static int
+ndb_metal_memcpy_d2h(void *dst, const void *src, size_t bytes)
+{
+    return metal_backend_mem_copy_d2h_impl(dst, src, (Size) bytes) ? 0 : -1;
+}
+
+static int
+ndb_metal_stream_create(ndb_stream_t *stream)
+{
+    (void) stream;
+    return -1;
+}
+
+static int
+ndb_metal_stream_destroy(ndb_stream_t stream)
+{
+    (void) stream;
+    return 0;
+}
+
+static int
+ndb_metal_stream_synchronize(ndb_stream_t stream)
+{
+    (void) stream;
+    return 0;
+}

@@ -11,41 +11,25 @@
  *     src/gpu_core.c
  */
 
-#include "neurondb_config.h"
-#include "neurondb_cuda_runtime.h"
-
-#ifdef NDB_GPU_HIP
-#include <hip/hip_runtime.h>
-#include <rocblas/rocblas.h>
-#endif
-
 #include "postgres.h"
 #include "fmgr.h"
+#include "funcapi.h"
+#include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/timestamp.h"
-#include "storage/lwlock.h"
-#include "funcapi.h"
 #include "access/htup_details.h"
 #include "catalog/pg_type.h"
-#include "utils/builtins.h"
+#include "storage/lwlock.h"
 
+#include "neurondb_config.h"
 #include "neurondb_gpu.h"
-#include "gpu_backend_interface.h"
+#include "neurondb_gpu_backend.h"
 
-#ifdef NDB_GPU_CUDA
-#include "gpu_cuda.h"
-#endif
-#ifdef NDB_GPU_HIP
-#include "gpu_rocm.h"
-#endif
-#ifdef NDB_GPU_METAL
-#include "gpu_metal.h"
-#endif
-
-#include <stddef.h>
-#include <stdlib.h>
 #include <math.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* GUC variables and GPU settings */
@@ -64,23 +48,8 @@ static bool gpu_ready = false;
 static bool gpu_disabled = false;
 static GPUBackend current_backend = GPU_BACKEND_NONE;
 static GPUStats gpu_stats;
-
-#if defined(NDB_GPU_CUDA) || defined(NDB_GPU_HIP)
-static void *gpu_memory_pool = NULL;
-static size_t gpu_pool_bytes = 0;
-static int gpu_pool_size = 0;
-#endif
-
-#ifdef NDB_GPU_CUDA
-static int cuda_device = 0;
-static cudaStream_t *cuda_streams = NULL;
-#endif
-
-#ifdef NDB_GPU_HIP
-static rocblas_handle rocblas_handle = NULL;
-static int rocm_device = 0;
-static hipStream_t *hip_streams = NULL;
-#endif
+static const ndb_gpu_backend *active_backend = NULL;
+static int active_device_id = 0;
 
 /* Comparator context for RF index sort */
 static const float *rf_sort_feat_ptr = NULL;
@@ -94,6 +63,37 @@ cmp_idx_by_feat(const void *a, const void *b)
 	if (va < vb) return -1;
 	if (va > vb) return 1;
 	return 0;
+}
+
+static double
+ndb_elapsed_ms(TimestampTz start, TimestampTz end)
+{
+	long		secs;
+	int			usecs;
+
+	TimestampDifference(start, end, &secs, &usecs);
+	return ((double) secs * 1000.0) + ((double) usecs / 1000.0);
+}
+
+static void
+ndb_gpu_stats_add(bool used_gpu, double gpu_ms, double cpu_ms, bool fallback)
+{
+	gpu_stats.queries_executed++;
+
+	if (fallback)
+		gpu_stats.fallback_count++;
+
+	gpu_stats.total_gpu_time_ms += gpu_ms;
+	gpu_stats.total_cpu_time_ms += cpu_ms;
+
+	if (gpu_stats.queries_executed > 0)
+	{
+		gpu_stats.avg_latency_ms =
+			(gpu_stats.total_gpu_time_ms + gpu_stats.total_cpu_time_ms) /
+			(double) gpu_stats.queries_executed;
+	}
+	else
+		gpu_stats.avg_latency_ms = 0.0;
 }
 
 void
@@ -216,216 +216,88 @@ ndb_gpu_kernel_enabled(const char *kernel_name)
 int
 ndb_gpu_runtime_init(int *device_id)
 {
-    int rc = -1;
-#ifdef NDB_GPU_CUDA
-    cudaError_t err;
-    int device_count = 0;
-    err = cudaGetDeviceCount(&device_count);
-    if (err == cudaSuccess && device_count > 0)
+    const char *requested = neurondb_gpu_backend;
+    const ndb_gpu_backend *backend;
+
+    if (device_id)
+        *device_id = 0;
+
+    if (requested && pg_strcasecmp(requested, "cpu") == 0)
+        return -1;
+
+    backend = ndb_gpu_select_backend(requested);
+    if (backend == NULL)
+        return -1;
+
+    if (ndb_gpu_set_active_backend(backend) != 0)
+        return -1;
+
+    active_backend = ndb_gpu_get_active_backend();
+    if (active_backend == NULL)
+        return -1;
+
+    current_backend = (GPUBackend) active_backend->kind;
+
+    if (active_backend->set_device != NULL)
     {
-        cuda_device = neurondb_gpu_device % device_count;
-        err = cudaSetDevice(cuda_device);
-        if (err == cudaSuccess)
-        {
-            *device_id = cuda_device;
-            rc = 0;
-        }
+        int rc = active_backend->set_device(neurondb_gpu_device);
+        if (rc != 0)
+            return -1;
+        active_device_id = neurondb_gpu_device;
     }
-#endif
-#ifdef NDB_GPU_HIP
-    hipError_t hip_err;
-    int hip_device_count = 0;
-    hip_err = hipGetDeviceCount(&hip_device_count);
-    if (hip_err == hipSuccess && hip_device_count > 0)
+    else
     {
-        rocm_device = neurondb_gpu_device % hip_device_count;
-        hip_err = hipSetDevice(rocm_device);
-        if (hip_err == hipSuccess)
-        {
-            *device_id = rocm_device;
-            rc = 0;
-        }
+        active_device_id = 0;
     }
-#endif
-    return rc;
+
+    if (device_id)
+        *device_id = active_device_id;
+
+    return 0;
 }
 
 void
 ndb_gpu_mem_pool_init(int pool_size_mb)
 {
-    if (pool_size_mb <= 0)
-    {
-#if defined(NDB_GPU_CUDA) || defined(NDB_GPU_HIP)
-        gpu_pool_size = 0;
-        gpu_pool_bytes = 0;
-        if (gpu_memory_pool != NULL)
-        {
-#ifdef NDB_GPU_CUDA
-            if (current_backend == GPU_BACKEND_CUDA)
-                cudaFree(gpu_memory_pool);
-#endif
-#ifdef NDB_GPU_HIP
-            if (current_backend == GPU_BACKEND_ROCM)
-                hipFree(gpu_memory_pool);
-#endif
-        }
-        gpu_memory_pool = NULL;
-#endif
-        return;
-    }
+    (void) pool_size_mb;
 
-#if defined(NDB_GPU_CUDA) || defined(NDB_GPU_HIP)
-    size_t pool_bytes_local = (size_t) pool_size_mb * 1024 * 1024;
-#endif
-#ifdef NDB_GPU_CUDA
-    if (current_backend == GPU_BACKEND_CUDA)
-    {
-        if (gpu_memory_pool)
-        {
-            cudaFree(gpu_memory_pool);
-            gpu_memory_pool = NULL;
-        }
-        if (cudaMalloc(&gpu_memory_pool, pool_bytes_local) == cudaSuccess)
-        {
-            gpu_pool_size = pool_size_mb;
-            gpu_pool_bytes = pool_bytes_local;
-            elog(DEBUG1, "neurondb: GPU memory pool allocated: %d MB", pool_size_mb);
-        }
-        else
-        {
-            gpu_pool_size = 0;
-            gpu_pool_bytes = 0;
-            gpu_memory_pool = NULL;
-            elog(WARNING, "neurondb: GPU memory pool allocation failed");
-        }
-    }
-#endif
-#ifdef NDB_GPU_HIP
-    if (current_backend == GPU_BACKEND_ROCM)
-    {
-        if (gpu_memory_pool)
-        {
-            hipFree(gpu_memory_pool);
-            gpu_memory_pool = NULL;
-        }
-        if (hipMalloc(&gpu_memory_pool, pool_bytes_local) == hipSuccess)
-        {
-            gpu_pool_size = pool_size_mb;
-            gpu_pool_bytes = pool_bytes_local;
-            elog(DEBUG1, "neurondb: GPU memory pool allocated: %d MB", pool_size_mb);
-        }
-        else
-        {
-            gpu_pool_size = 0;
-            gpu_pool_bytes = 0;
-            gpu_memory_pool = NULL;
-            elog(WARNING, "neurondb: GPU memory pool allocation failed");
-        }
-    }
-#endif
+    if (!active_backend)
+        return;
+
+    /* Memory pooling will be wired up in a later revision once device
+     * allocation helpers are in place. For now, rely on per-operation
+     * allocations. */
 }
 
 void
 ndb_gpu_streams_init(int num_streams)
 {
-#ifdef NDB_GPU_CUDA
-    if (current_backend == GPU_BACKEND_CUDA)
-    {
-        if (cuda_streams)
-        {
-            for (int i = 0; i < neurondb_gpu_streams; i++)
-                cudaStreamDestroy(cuda_streams[i]);
-            free(cuda_streams);
-            cuda_streams = NULL;
-        }
-        cuda_streams = (cudaStream_t *) malloc(num_streams * sizeof(cudaStream_t));
-        if (!cuda_streams)
-        {
-            elog(WARNING, "neurondb: Unable to allocate CUDA streams array");
-            return;
-        }
-        for (int i = 0; i < num_streams; i++)
-        {
-            if (cudaStreamCreate(&cuda_streams[i]) != cudaSuccess)
-            {
-                elog(WARNING, "neurondb: Failed to create CUDA stream %d", i);
-                // Cleanup any streams created so far. No leak.
-                for (int j = 0; j < i; j++) cudaStreamDestroy(cuda_streams[j]);
-                free(cuda_streams);
-                cuda_streams = NULL;
-                return;
-            }
-        }
-        elog(DEBUG1, "neurondb: Created %d CUDA streams", num_streams);
-    }
-#endif
-#ifdef NDB_GPU_HIP
-    if (current_backend == GPU_BACKEND_ROCM)
-    {
-        if (hip_streams)
-        {
-            for (int i = 0; i < neurondb_gpu_streams; i++)
-                hipStreamDestroy(hip_streams[i]);
-            free(hip_streams);
-            hip_streams = NULL;
-        }
-        hip_streams = (hipStream_t *) malloc(num_streams * sizeof(hipStream_t));
-        if (!hip_streams)
-        {
-            elog(WARNING, "neurondb: Unable to allocate HIP streams array");
-            return;
-        }
-        for (int i = 0; i < num_streams; i++)
-        {
-            if (hipStreamCreate(&hip_streams[i]) != hipSuccess)
-            {
-                elog(WARNING, "neurondb: Failed to create HIP stream %d", i);
-                for (int j = 0; j < i; j++) hipStreamDestroy(hip_streams[j]);
-                free(hip_streams);
-                hip_streams = NULL;
-                return;
-            }
-        }
-        elog(DEBUG1, "neurondb: Created %d HIP streams", num_streams);
-    }
-#endif
+    (void) num_streams;
+
+    if (!active_backend)
+        return;
+
+    /* Stream creation will be delegated to backend stream helpers when wired. */
 }
 
 void
 ndb_gpu_init_if_needed(void)
 {
-    int device_id;
+    int device_id = 0;
     int rc;
 
-    if (gpu_ready)
+    if (gpu_ready || gpu_disabled)
         return;
-    if (!neurondb_gpu_enabled || gpu_disabled)
+    if (!neurondb_gpu_enabled)
         return;
-
-#ifdef NDB_GPU_METAL
-    /* Try Metal first on Apple Silicon */
-    if (!neurondb_gpu_backend || 
-        strcmp(neurondb_gpu_backend, "auto") == 0 ||
-        strcmp(neurondb_gpu_backend, "metal") == 0)
-    {
-        elog(DEBUG1, "neurondb: Attempting Metal GPU initialization");
-        if (neurondb_gpu_metal_init())
-        {
-            current_backend = GPU_BACKEND_METAL;
-            gpu_ready = true;
-            elog(LOG, "neurondb: ✅ Metal GPU backend active on %s",
-                 neurondb_gpu_metal_device_name());
-            return;
-        }
-        elog(DEBUG1, "neurondb: Metal init failed, trying other backends");
-    }
-#endif
 
     rc = ndb_gpu_runtime_init(&device_id);
     if (rc != 0)
     {
         gpu_ready = false;
         gpu_disabled = true;
+        current_backend = GPU_BACKEND_NONE;
+        active_backend = NULL;
         if (!neurondb_gpu_fail_open)
         {
             ereport(ERROR,
@@ -436,39 +308,26 @@ ndb_gpu_init_if_needed(void)
                 (errmsg("neurondb: GPU init failed. Using CPU fallback")));
         return;
     }
-#ifdef NDB_GPU_CUDA
-    if (!neurondb_gpu_cuda_init())
-    {
-        elog(WARNING, "neurondb: CUDA backend initialization failed");
-        gpu_disabled = true;
-        gpu_ready = false;
-        current_backend = GPU_BACKEND_NONE;
-        return;
-    }
-    current_backend = GPU_BACKEND_CUDA;
-#endif
-#ifdef NDB_GPU_HIP
-    if (rocblas_handle)
-    {
-        rocblas_destroy_handle(rocblas_handle);
-        rocblas_handle = NULL;
-    }
-    if (rocblas_create_handle(&rocblas_handle) != rocblas_status_success)
-    {
-        elog(WARNING, "neurondb: rocBLAS initialization failed");
-        gpu_disabled = true;
-        gpu_ready = false;
-        current_backend = GPU_BACKEND_NONE;
-        return;
-    }
-    current_backend = GPU_BACKEND_ROCM;
-#endif
-    ndb_gpu_mem_pool_init((int)neurondb_gpu_memory_pool_mb);
+
+    active_device_id = device_id;
+    gpu_ready = true;
+    gpu_disabled = false;
+
+    ndb_gpu_mem_pool_init((int) neurondb_gpu_memory_pool_mb);
     ndb_gpu_streams_init(neurondb_gpu_streams);
 
-    gpu_ready = true;
-
-    elog(LOG, "neurondb: GPU initialized successfully on device %d", device_id);
+    if (active_backend)
+    {
+        elog(LOG, "neurondb: GPU backend %s (%s) initialized on device %d",
+             active_backend->name ? active_backend->name : "unknown",
+             active_backend->provider ? active_backend->provider : "unknown",
+             active_device_id);
+    }
+    else
+    {
+        elog(LOG, "neurondb: GPU initialized successfully on device %d",
+             active_device_id);
+    }
 }
 
 void
@@ -483,75 +342,13 @@ neurondb_gpu_shutdown(void)
     if (!gpu_ready)
         return;
 
-#ifdef NDB_GPU_CUDA
-	if (current_backend == GPU_BACKEND_CUDA)
-	{
-		neurondb_gpu_cuda_cleanup();
-		elog(LOG, "neurondb: CUDA GPU backend shut down");
-	}
-#endif
-
-#ifdef NDB_GPU_HIP
-	if (current_backend == GPU_BACKEND_ROCM)
-	{
-		neurondb_gpu_rocm_cleanup();
-		elog(LOG, "neurondb: ROCm GPU backend shut down");
-	}
-#endif
-
-#ifdef NDB_GPU_METAL
-	if (current_backend == GPU_BACKEND_METAL)
-	{
-		neurondb_gpu_metal_cleanup();
-		elog(LOG, "neurondb: Metal GPU backend shut down");
-	}
-#endif
-
-#ifdef NDB_GPU_CUDA
-    if (current_backend == GPU_BACKEND_CUDA)
-    {
-        if (cuda_streams)
-        {
-            for (int i = 0; i < neurondb_gpu_streams; i++)
-                cudaStreamDestroy(cuda_streams[i]);
-            free(cuda_streams);
-            cuda_streams = NULL;
-        }
-        if (gpu_memory_pool)
-        {
-            cudaFree(gpu_memory_pool);
-            gpu_memory_pool = NULL;
-        }
-        cudaDeviceReset();
-    }
-#endif
-#ifdef NDB_GPU_HIP
-    if (current_backend == GPU_BACKEND_ROCM)
-    {
-        if (hip_streams)
-        {
-            for (int i = 0; i < neurondb_gpu_streams; i++)
-                hipStreamDestroy(hip_streams[i]);
-            free(hip_streams);
-            hip_streams = NULL;
-        }
-        if (rocblas_handle)
-        {
-            rocblas_destroy_handle(rocblas_handle);
-            rocblas_handle = NULL;
-        }
-        if (gpu_memory_pool)
-        {
-            hipFree(gpu_memory_pool);
-            gpu_memory_pool = NULL;
-        }
-        hipDeviceReset();
-    }
-#endif
-
+    ndb_gpu_set_active_backend(NULL);
+    active_backend = NULL;
     gpu_ready = false;
     gpu_disabled = false;
     current_backend = GPU_BACKEND_NONE;
+    active_device_id = 0;
+
     elog(DEBUG1, "neurondb: GPU backend shut down");
 }
 
@@ -570,97 +367,60 @@ neurondb_gpu_get_backend(void)
 int
 neurondb_gpu_get_device_count(void)
 {
-    (void)0; /* Reserved for device counting logic */
-#ifdef NDB_GPU_CUDA
-    if (cudaGetDeviceCount(&count) == cudaSuccess)
-        return count;
-#endif
-#ifdef NDB_GPU_HIP
-    if (hipGetDeviceCount(&count) == hipSuccess)
-        return count;
-#endif
-    return 0;
+    if (!active_backend || active_backend->device_count == NULL)
+        return 0;
+
+    return active_backend->device_count();
 }
 
 GPUDeviceInfo *
 neurondb_gpu_get_device_info(int device_id)
 {
     GPUDeviceInfo *info;
+    NDBGpuDeviceInfo native;
+
     info = (GPUDeviceInfo *) palloc0(sizeof(GPUDeviceInfo));
     info->device_id = device_id;
     info->is_available = false;
-#ifdef NDB_GPU_CUDA
-    cudaDeviceProp prop;
-    if (cudaGetDeviceProperties(&prop, device_id) == cudaSuccess)
-    {
-        strncpy(info->name, prop.name, sizeof(info->name) - 1);
-        info->name[sizeof(info->name)-1] = '\0';
-        info->total_memory = prop.totalGlobalMem;
-        info->compute_capability_major = prop.major;
-        info->compute_capability_minor = prop.minor;
-        info->is_available = true;
-        size_t free_mem, total_mem;
-        if (cudaMemGetInfo(&free_mem, &total_mem) == cudaSuccess)
-            info->free_memory = free_mem;
-    }
-#endif
-#ifdef NDB_GPU_HIP
-    hipDeviceProp_t hip_prop;
-    if (hipGetDeviceProperties(&hip_prop, device_id) == hipSuccess)
-    {
-        strncpy(info->name, hip_prop.name, sizeof(info->name) - 1);
-        info->name[sizeof(info->name)-1] = '\0';
-        info->total_memory = hip_prop.totalGlobalMem;
-        info->compute_capability_major = hip_prop.major;
-        info->compute_capability_minor = hip_prop.minor;
-        info->is_available = true;
-        size_t free_mem=0, total_mem=0;
-        if (hipMemGetInfo(&free_mem, &total_mem) == hipSuccess)
-            info->free_memory = free_mem;
-    }
-#endif
+
+    if (!active_backend || active_backend->device_info == NULL)
+        return info;
+
+    if (active_backend->device_info(device_id, &native) != 0)
+        return info;
+
+    info->device_id = native.device_id;
+    strncpy(info->name, native.name, sizeof(info->name) - 1);
+    info->name[sizeof(info->name) - 1] = '\0';
+    info->total_memory_mb = (int64) (native.total_memory_bytes / (1024 * 1024));
+    info->free_memory_mb = (int64) (native.free_memory_bytes / (1024 * 1024));
+    info->compute_major = native.compute_major;
+    info->compute_minor = native.compute_minor;
+    info->is_available = native.is_available;
+
     return info;
 }
 
 void
 neurondb_gpu_set_device(int device_id)
 {
-    int count = neurondb_gpu_get_device_count();
-    if (device_id < 0 || device_id >= count)
+    if (!active_backend || active_backend->set_device == NULL)
     {
-        elog(WARNING, "neurondb: Invalid GPU device ID %d", device_id);
+        elog(WARNING, "neurondb: no active GPU backend to set device");
         return;
     }
-#ifdef NDB_GPU_CUDA
-    if (current_backend == GPU_BACKEND_CUDA)
+
+    if (active_backend->set_device(device_id) != 0)
     {
-        if (cudaSetDevice(device_id) == cudaSuccess)
-        {
-            cuda_device = device_id;
-            neurondb_gpu_device = device_id;
-            elog(LOG, "neurondb: Switched to CUDA device %d", device_id);
-        }
-        else
-        {
-            elog(WARNING, "neurondb: Failed to switch to CUDA device %d", device_id);
-        }
+        elog(WARNING, "neurondb: failed to switch GPU device to %d", device_id);
+        return;
     }
-#endif
-#ifdef NDB_GPU_HIP
-    if (current_backend == GPU_BACKEND_ROCM)
-    {
-        if (hipSetDevice(device_id) == hipSuccess)
-        {
-            rocm_device = device_id;
-            neurondb_gpu_device = device_id;
-            elog(LOG, "neurondb: Switched to ROCm device %d", device_id);
-        }
-        else
-        {
-            elog(WARNING, "neurondb: Failed to switch to ROCm device %d", device_id);
-        }
-    }
-#endif
+
+    neurondb_gpu_device = device_id;
+    active_device_id = device_id;
+    elog(LOG, "neurondb: switched GPU backend %s to device %d",
+         active_backend->name ? active_backend->name : "unknown",
+         device_id);
 }
 
 GPUStats *
@@ -758,15 +518,20 @@ neurondb_gpu_info(PG_FUNCTION_ARGS)
     InitMaterializedSRF(fcinfo, 0);
 
     /* Return basic GPU info - simplified for now */
-    values[0] = Int32GetDatum(0);                    /* device_id */
-    values[1] = CStringGetTextDatum(gpu_ready ? "GPU Available" : "No GPU"); /* name */
-    values[2] = Int64GetDatum(gpu_ready ? 8192 : 0); /* total_memory (MB) */
-    values[3] = Int64GetDatum(gpu_ready ? 4096 : 0); /* free_memory (MB) */
-    values[4] = Int32GetDatum(gpu_ready ? 8 : 0);    /* compute_major */
-    values[5] = Int32GetDatum(gpu_ready ? 6 : 0);    /* compute_minor */
-    values[6] = BoolGetDatum(gpu_ready);             /* is_available */
+    GPUDeviceInfo *info = neurondb_gpu_get_device_info(active_device_id);
+
+    values[0] = Int32GetDatum(info->device_id);
+    values[1] = CStringGetTextDatum(info->name);
+    values[2] = Int64GetDatum(info->total_memory_mb);
+    values[3] = Int64GetDatum(info->free_memory_mb);
+    values[4] = Int32GetDatum(info->compute_major);
+    values[5] = Int32GetDatum(info->compute_minor);
+    values[6] = BoolGetDatum(info->is_available);
 
     tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+
+    if (info)
+        pfree(info);
 
     return (Datum) 0;
 }

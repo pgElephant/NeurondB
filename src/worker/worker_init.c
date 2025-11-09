@@ -25,6 +25,8 @@
 
 /* Include ONNX Runtime header */
 #include "neurondb_onnx.h"
+#include "neurondb_gpu_backend.h"
+#include "neurondb_config.h"
 
 /* Forward declarations from background worker modules */
 extern void neuranq_main(Datum main_arg);
@@ -190,6 +192,16 @@ _PG_init(void)
     RegisterBackgroundWorker(&worker);
     elog(LOG, "neurondb: registered neuranllm background worker");
 	elog(LOG, "neurondb: all background workers registered successfully");
+
+#ifdef NDB_GPU_CUDA
+    neurondb_gpu_register_cuda_backend();
+#endif
+#ifdef NDB_GPU_ROCM
+    neurondb_gpu_register_rocm_backend();
+#endif
+#ifdef NDB_GPU_METAL
+    neurondb_gpu_register_metal_backend();
+#endif
 }
 
 /*

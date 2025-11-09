@@ -14,6 +14,7 @@
 
 #include "neurondb_config.h"
 #include "neurondb_gpu.h"
+#include "neurondb_gpu_backend.h"
 #include "neurondb.h"
 
 #include <math.h>

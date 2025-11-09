@@ -1207,9 +1207,9 @@ CREATE FUNCTION apply_opq_rotation(float8[], float8[])
     LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION apply_opq_rotation IS 'OPQ apply: (vector, rotation_matrix) rotates vector for quantization';
 
--- =============================================================================
+-- ============================================================================
 -- Complex ML Algorithms (External Recommended)
--- =============================================================================
+-- ============================================================================
 
 -- HNSW Graph Construction:
 --   Already implemented as PostgreSQL index. Use:
@@ -1928,6 +1928,51 @@ EXCEPTION
     WHEN duplicate_object THEN NULL;
 END $$;
 
+DO $$
+DECLARE
+    val text;
+BEGIN
+    FOREACH val IN ARRAY ARRAY[
+        'random_forest',
+        'decision_tree',
+        'naive_bayes',
+        'svm',
+        'knn',
+        'logistic_regression',
+        'linear_regression',
+        'ridge',
+        'lasso',
+        'elastic_net',
+        'xgboost',
+        'neural_network',
+        'deep_learning',
+        'automl',
+        'isolation_forest',
+        'zscore',
+        'kmeans',
+        'minibatch_kmeans',
+        'dbscan',
+        'gmm',
+        'hierarchical',
+        'pca',
+        'custom'
+    ] LOOP
+        BEGIN
+            EXECUTE format('ALTER TYPE neurondb.ml_algorithm_type ADD VALUE IF NOT EXISTS %L', val);
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END;
+    END LOOP;
+END $$;
+
+DO $$ BEGIN
+    CREATE CAST (text AS neurondb.ml_algorithm_type)
+        WITH INOUT
+        AS ASSIGNMENT;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
 -- ML Model Status Enum
 DO $$ BEGIN
     CREATE TYPE neurondb.ml_model_status AS ENUM (
@@ -1936,6 +1981,14 @@ DO $$ BEGIN
         'failed',
         'deployed'
     );
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE CAST (text AS neurondb.ml_model_status)
+        WITH INOUT
+        AS ASSIGNMENT;
 EXCEPTION
     WHEN duplicate_object THEN NULL;
 END $$;

@@ -11,6 +11,7 @@
 #include "ml_gpu_support.h"
 
 #include "utils/builtins.h"
+#include "neurondb_gpu_backend.h"
 
 void
 ml_gpu_call_begin(MLGpuCallState *state,

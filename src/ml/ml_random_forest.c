@@ -21,6 +21,7 @@
  #include "miscadmin.h"
  #include "access/htup_details.h"
  #include "utils/jsonb.h"
+ #include "utils/bytea.h"
  #include "utils/elog.h"
  #include "utils/lsyscache.h"
  
@@ -33,7 +34,8 @@
  
  #include <math.h>
  #include <float.h>
- #include <stdlib.h>
+#include <stdlib.h>
+#include <string.h>
  #include <stdint.h>
  #include <sys/time.h>
  #include <unistd.h>
@@ -152,17 +154,19 @@
  }
  
  /** Random feature subset */
- static void
+static int
  rf_random_features(int n_features, int max_features, int **features_out)
  {
-	 int    *all_features;
-	 int    *features;
+	int    *all_features;
+	int    *features;
 	 int	i;
 	 int	j;
 	 int	temp;
  
 	 if (max_features <= 0 || max_features > n_features)
 		 max_features = (int) sqrt((double) n_features);
+	if (max_features < 1)
+		max_features = 1;
  
 	 features = (int *) palloc(sizeof(int) * max_features);
 	 all_features = (int *) palloc(sizeof(int) * n_features);
@@ -184,66 +188,78 @@
  
 	 pfree(all_features);
 	 *features_out = features;
+	return max_features;
  }
  
+typedef struct RFFeaturePair
+{
+	float	value;
+	int	index;
+} RFFeaturePair;
+
+static int
+rf_feature_pair_cmp(const void *a, const void *b)
+{
+	const RFFeaturePair *pa = (const RFFeaturePair *) a;
+	const RFFeaturePair *pb = (const RFFeaturePair *) b;
+
+	if (pa->value < pb->value)
+		return -1;
+	if (pa->value > pb->value)
+		return 1;
+	return 0;
+}
+
+typedef struct RFBuildFrame
+{
+	int	parent;
+	bool	is_left;
+	int    *indices;
+	int	n_indices;
+	int	depth;
+	bool	owns_indices;
+} RFBuildFrame;
+
+static inline float
+rf_matrix_at(const float *X, int stride, int row, int col)
+{
+#ifdef USE_ASSERT_CHECKING
+	Assert(row >= 0);
+	Assert(col >= 0);
+	Assert(col < stride);
+#endif
+	if (col < 0 || col >= stride)
+		ereport(ERROR,
+			(errmsg("random_forest: feature index %d out of range 0..%d",
+				col, stride - 1)));
+	return X[((Size) row * (Size) stride) + (Size) col];
+}
+
  /** Count classes in labels */
- static int
- rf_count_classes(double *labels, int n)
+static int
+rf_count_classes(const double *labels, int n)
  {
-	 int	maxclass;
-	 int	i;
- 
-	 maxclass = 0;
+	int	maxclass;
+	int	i;
+
+	maxclass = 0;
 	 for (i = 0; i < n; i++)
 	 {
 		 int	asint;
  
-		 asint = (int) labels[i];
-		 if (asint > maxclass)
-			 maxclass = asint;
+		asint = (int) labels[i];
+		if (asint < 0)
+			continue;
+		if (asint > maxclass)
+			maxclass = asint;
 	 }
 	 return maxclass + 1;
  }
  
- /** Gini impurity */
- static double
- rf_gini(double *labels, int *indices, int n_indices, int n_classes)
- {
-	 int	i;
-	 int	c;
-	 double *class_counts;
-	 double	gini;
-	 double	p;
- 
-	 if (n_indices == 0)
-		 return 0.0;
- 
-	 class_counts = (double *) palloc0(sizeof(double) * n_classes);
-	 gini = 1.0;
- 
-	 for (i = 0; i < n_indices; i++)
-	 {
-		 int	idx;
-		 int	label_idx;
- 
-		 CHECK_FOR_INTERRUPTS();
-		 idx = indices[i];
-		 label_idx = (int) labels[idx];
-		 if (label_idx >= 0 && label_idx < n_classes)
-			 class_counts[label_idx] += 1.0;
-	 }
-	 for (c = 0; c < n_classes; c++)
-	 {
-		 p = class_counts[c] / (double) n_indices;
-		 gini -= p * p;
-	 }
-	 pfree(class_counts);
-	 return gini;
- }
- 
  /** Choose best split for a node */
- static bool
- rf_find_best_split(float **X, double *y, int *indices, int n_indices,
+static bool
+rf_find_best_split(const float *X, int n_samples, const double *y,
+			const int *indices, int n_indices,
 			int n_features, int n_classes, int max_features,
 			int *best_feature, double *best_threshold,
 			double *best_gini, int **left_indices_out,
@@ -251,9 +267,9 @@
 			int *n_right_out, MLGpuContext *gpu_ctx)
  {
 	 int    *features;
-	 int	i;
-	 int	f;
-	 int	t;
+	int	i;
+	int	f;
+	int	fcount;
 	 double	min_gini;
 	 bool	found_split;
 	 MemoryContext cx;
@@ -261,6 +277,29 @@
 	 uint8_t *labels01;
 	 bool	try_gpu;
  
+	Assert(X != NULL);
+	Assert(y != NULL);
+	Assert(indices != NULL);
+	Assert(n_samples > 0);
+	Assert(n_features > 0);
+	Assert(n_indices > 0);
+	Assert(n_classes > 0);
+
+	if (n_indices > n_samples)
+		ereport(ERROR,
+			(errmsg("random_forest: index count %d exceeds sample count %d",
+				n_indices, n_samples)));
+
+	for (i = 0; i < n_indices; i++)
+	{
+		int	row = indices[i];
+
+		if (row < 0 || row >= n_samples)
+			ereport(ERROR,
+				(errmsg("random_forest: sample index %d out of range 0..%d",
+					row, n_samples - 1)));
+	}
+
 	 features = NULL;
 	 min_gini = 1.0;
 	 found_split = false;
@@ -306,12 +345,11 @@
 	 if (right_indices_out)
 		 *right_indices_out = NULL;
  
-	 rf_random_features(n_features, max_features, &features);
- 
-	 for (f = 0; f < max_features; f++)
+	fcount = rf_random_features(n_features, max_features, &features);
+
+	for (f = 0; f < fcount; f++)
 	 {
 		 int	feature_idx;
-		 double *feature_values;
 		 int	j;
  
 		 CHECK_FOR_INTERRUPTS();
@@ -321,18 +359,20 @@
 		/* GPU-assisted best split for binary labels */
 		if (try_gpu && cx != NULL)
 		{
-			float  *featf;
-			double gthr = 0.0;
-			double ggini = 1.0;
-			int lc = 0;
-			int rc = 0;
-			MLGpuBuffer feat_buf;
+			float	   *featf;
+			double		gthr = 0.0;
+			double		ggini = 1.0;
+			int		lc = 0;
+			int		rc = 0;
+			bool		gpu_ok = false;
+			MLGpuBuffer	feat_buf;
 
 			loop_oldcx = MemoryContextSwitchTo(cx);
-			featf = (float *) palloc(sizeof(float) * n_indices);
+			featf = (float *) MemoryContextAlloc(cx, sizeof(float) * (Size) n_indices);
 			for (i = 0; i < n_indices; i++)
 			{
-				float v = X[indices[i]][feature_idx];
+				int	row = indices[i];
+				float	v = rf_matrix_at(X, n_features, row, feature_idx);
 
 				if (!isfinite(v))
 				{
@@ -344,179 +384,248 @@
 			}
 			ml_gpu_buffer_bind_host(&feat_buf, gpu_ctx,
 						featf,
-						sizeof(float) * n_indices,
+						sizeof(float) * (Size) n_indices,
 						n_indices,
 						MLGPU_DTYPE_FLOAT32);
 			ml_gpu_buffer_invalidate_device(&feat_buf);
-			if (neurondb_gpu_rf_best_split_binary(featf, labels01, n_indices,
-								 &gthr, &ggini, &lc, &rc))
-			{
-				if (lc > 0 && rc > 0 && ggini < min_gini)
-				{
-					int *left;
-					int *right;
-
-					left = (int *) palloc(sizeof(int) * n_indices);
-					right = (int *) palloc(sizeof(int) * n_indices);
-					lc = 0;
-					rc = 0;
-					for (j = 0; j < n_indices; j++)
-					{
-						if (X[indices[j]][feature_idx] <= gthr)
-							left[lc++] = indices[j];
-						else
-							right[rc++] = indices[j];
-					}
-					MemoryContextSwitchTo(loop_oldcx);
-					ml_gpu_buffer_release(&feat_buf);
-					if (lc == 0 || rc == 0)
-					{
-						MemoryContextReset(cx);
-						goto cpu_feature_fallback;
-					}
-					if (best_feature)
-						*best_feature = feature_idx;
-					if (best_threshold)
-						*best_threshold = gthr;
-					if (best_gini)
-						*best_gini = ggini;
-					if (left_indices_out)
-					{
-						if (*left_indices_out)
-							pfree(*left_indices_out);
-						*left_indices_out = (int *) palloc(sizeof(int) * lc);
-						memcpy(*left_indices_out, left,
-							sizeof(int) * lc);
-					}
-					if (n_left_out)
-						*n_left_out = lc;
-					if (right_indices_out)
-					{
-						if (*right_indices_out)
-							pfree(*right_indices_out);
-						*right_indices_out = (int *) palloc(sizeof(int) * rc);
-						memcpy(*right_indices_out, right,
-							sizeof(int) * rc);
-					}
-					if (n_right_out)
-						*n_right_out = rc;
-					min_gini = ggini;
-					found_split = true;
-					MemoryContextReset(cx);
-					continue;
-				}
-			}
-			ml_gpu_buffer_release(&feat_buf);
+			gpu_ok = neurondb_gpu_rf_best_split_binary(featf, labels01, n_indices,
+								   &gthr, &ggini, &lc, &rc);
 			MemoryContextSwitchTo(loop_oldcx);
+			ml_gpu_buffer_release(&feat_buf);
+
+			if (!gpu_ok)
+			{
+				elog(WARNING,
+				     "neurondb: GPU random forest split failed for feature %d; using CPU fallback",
+				     feature_idx);
+				MemoryContextReset(cx);
+				goto cpu_feature_fallback;
+			}
+
+			if (lc > 0 && rc > 0 && ggini < min_gini)
+			{
+				int    *left_tmp;
+				int    *right_tmp;
+				int	left_fill = 0;
+				int	right_fill = 0;
+
+				loop_oldcx = MemoryContextSwitchTo(cx);
+				left_tmp = (int *) MemoryContextAlloc(cx, sizeof(int) * (Size) n_indices);
+				right_tmp = (int *) MemoryContextAlloc(cx, sizeof(int) * (Size) n_indices);
+				for (j = 0; j < n_indices; j++)
+				{
+					int	row = indices[j];
+					float	value = rf_matrix_at(X, n_features, row, feature_idx);
+
+					if (value <= gthr)
+						left_tmp[left_fill++] = indices[j];
+					else
+						right_tmp[right_fill++] = indices[j];
+				}
+				MemoryContextSwitchTo(loop_oldcx);
+
+				if (left_fill == 0 || right_fill == 0)
+				{
+					MemoryContextReset(cx);
+					goto cpu_feature_fallback;
+				}
+
+				if (best_feature)
+					*best_feature = feature_idx;
+				if (best_threshold)
+					*best_threshold = gthr;
+				if (best_gini)
+					*best_gini = ggini;
+
+				if (left_indices_out)
+				{
+					if (*left_indices_out)
+						pfree(*left_indices_out);
+					*left_indices_out = (int *) palloc(sizeof(int) * (Size) left_fill);
+					memcpy(*left_indices_out, left_tmp,
+						   sizeof(int) * (Size) left_fill);
+				}
+				if (n_left_out)
+					*n_left_out = left_fill;
+
+				if (right_indices_out)
+				{
+					if (*right_indices_out)
+						pfree(*right_indices_out);
+					*right_indices_out = (int *) palloc(sizeof(int) * (Size) right_fill);
+					memcpy(*right_indices_out, right_tmp,
+						   sizeof(int) * (Size) right_fill);
+				}
+				if (n_right_out)
+					*n_right_out = right_fill;
+
+				min_gini = ggini;
+				found_split = true;
+				MemoryContextReset(cx);
+				continue;
+			}
+
 			MemoryContextReset(cx);
 		}
 
 cpu_feature_fallback:
-		feature_values = (double *) palloc(sizeof(double) * n_indices);
- 
-		 for (i = 0; i < n_indices; i++)
-			 feature_values[i] = X[indices[i]][feature_idx];
- 
-		 for (i = 0; i < n_indices - 1; i++)
-		 {
-			 for (t = i + 1; t < n_indices; t++)
-			 {
-				 if (feature_values[i] > feature_values[t])
-				 {
-					 double	tmp;
- 
-					 tmp = feature_values[i];
-					 feature_values[i] = feature_values[t];
-					 feature_values[t] = tmp;
-				 }
-			 }
-		 }
- 
-		 for (i = 1; i < n_indices; i++)
-		 {
-			 double	threshold;
-			 int    *left;
-			 int    *right;
-			 int	n_left;
-			 int	n_right;
-			 double	gini_left;
-			 double	gini_right;
-			 double	gini;
- 
-			 if (feature_values[i] == feature_values[i - 1])
-				 continue;
- 
-			 threshold =
-				 (feature_values[i - 1] + feature_values[i]) / 2.0;
-			 left = (int *) palloc(sizeof(int) * n_indices);
-			 right = (int *) palloc(sizeof(int) * n_indices);
-			 n_left = 0;
-			 n_right = 0;
- 
-			 for (j = 0; j < n_indices; j++)
-			 {
-				 if (X[indices[j]][feature_idx] <= threshold)
-					 left[n_left++] = indices[j];
-				 else
-					 right[n_right++] = indices[j];
-			 }
- 
-			 if (n_left == 0 || n_right == 0)
-			 {
-				 pfree(left);
-				 pfree(right);
-				 continue;
-			 }
- 
-			 gini_left = rf_gini(y, left, n_left, n_classes);
-			 gini_right = rf_gini(y, right, n_right, n_classes);
- 
-			 gini = ((double) n_left / n_indices) * gini_left +
-					((double) n_right / n_indices) * gini_right;
- 
-			 if (gini < min_gini)
-			 {
-				 if (left_indices_out && *left_indices_out)
-					 pfree(*left_indices_out);
-				 if (right_indices_out && *right_indices_out)
-					 pfree(*right_indices_out);
- 
-				 if (best_feature)
-					 *best_feature = feature_idx;
-				 if (best_threshold)
-					 *best_threshold = threshold;
-				 if (best_gini)
-					 *best_gini = gini;
- 
-				 if (left_indices_out)
-				 {
-					 *left_indices_out =
-						 (int *) palloc(sizeof(int) *
-								 n_left);
-					 memcpy(*left_indices_out, left,
-							sizeof(int) * n_left);
-				 }
-				 if (n_left_out)
-					 *n_left_out = n_left;
- 
-				 if (right_indices_out)
-				 {
-					 *right_indices_out =
-						 (int *) palloc(sizeof(int) *
-								 n_right);
-					 memcpy(*right_indices_out, right,
-							sizeof(int) * n_right);
-				 }
-				 if (n_right_out)
-					 *n_right_out = n_right;
- 
-				 min_gini = gini;
-				 found_split = true;
-			 }
-			 pfree(left);
-			 pfree(right);
-		 }
-		 pfree(feature_values);
+	{
+		RFFeaturePair *pairs = NULL;
+		int    *left_counts = NULL;
+		int    *right_counts = NULL;
+		bool	skip_feature = false;
+		int	left_total = 0;
+
+		pairs = (RFFeaturePair *) palloc(sizeof(RFFeaturePair) * (Size) n_indices);
+		for (i = 0; i < n_indices; i++)
+		{
+			int	row = indices[i];
+			float	value = rf_matrix_at(X, n_features, row, feature_idx);
+
+			if (!isfinite(value))
+			{
+				skip_feature = true;
+				break;
+			}
+			pairs[i].value = value;
+			pairs[i].index = row;
+		}
+
+		if (!skip_feature)
+		{
+			left_counts = (int *) palloc0(sizeof(int) * n_classes);
+			right_counts = (int *) palloc0(sizeof(int) * n_classes);
+
+			for (i = 0; i < n_indices; i++)
+			{
+				int	label = (int) y[pairs[i].index];
+
+				if (label >= 0 && label < n_classes)
+					right_counts[label]++;
+			}
+
+			qsort(pairs, n_indices, sizeof(RFFeaturePair), rf_feature_pair_cmp);
+
+			left_total = 0;
+			for (i = 0; i < n_indices - 1; i++)
+			{
+				int	label = (int) y[pairs[i].index];
+
+				if (label >= 0 && label < n_classes)
+				{
+					right_counts[label]--;
+					left_counts[label]++;
+				}
+
+				left_total++;
+
+				if (pairs[i].value == pairs[i + 1].value)
+					continue;
+
+				int	right_total = n_indices - left_total;
+				double	gini_left = 1.0;
+				double	gini_right = 1.0;
+				double	threshold;
+				double	gini;
+
+				if (right_total <= 0)
+					break;
+
+				if (left_total > 0)
+				{
+					for (j = 0; j < n_classes; j++)
+					{
+						if (left_counts[j] > 0)
+						{
+							double	p = (double) left_counts[j] /
+								(double) left_total;
+
+							gini_left -= p * p;
+						}
+					}
+				}
+				else
+					gini_left = 0.0;
+
+				if (right_total > 0)
+				{
+					for (j = 0; j < n_classes; j++)
+					{
+						if (right_counts[j] > 0)
+						{
+							double	p = (double) right_counts[j] /
+								(double) right_total;
+
+							gini_right -= p * p;
+						}
+					}
+				}
+				else
+					gini_right = 0.0;
+
+				threshold =
+					((double) pairs[i].value +
+					 (double) pairs[i + 1].value) / 2.0;
+				gini = ((double) left_total / (double) n_indices) * gini_left +
+					((double) right_total / (double) n_indices) * gini_right;
+
+				if (gini < min_gini)
+				{
+					int	k;
+
+					if (left_indices_out && *left_indices_out)
+						pfree(*left_indices_out);
+					if (right_indices_out && *right_indices_out)
+						pfree(*right_indices_out);
+
+					if (best_feature)
+						*best_feature = feature_idx;
+					if (best_threshold)
+						*best_threshold = threshold;
+					if (best_gini)
+						*best_gini = gini;
+
+					if (left_indices_out)
+					{
+						int    *left_tmp;
+
+						left_tmp = (int *) palloc(sizeof(int) * (Size) left_total);
+						for (k = 0; k < left_total; k++)
+							left_tmp[k] = pairs[k].index;
+						*left_indices_out = left_tmp;
+					}
+					if (n_left_out)
+						*n_left_out = left_total;
+
+					if (right_indices_out)
+					{
+						int    *right_tmp;
+						int	right_total_local = n_indices - left_total;
+
+						right_tmp = (int *) palloc(sizeof(int) * (Size) right_total_local);
+						for (k = 0; k < right_total_local; k++)
+							right_tmp[k] = pairs[left_total + k].index;
+						*right_indices_out = right_tmp;
+					}
+					if (n_right_out)
+						*n_right_out = n_indices - left_total;
+
+					min_gini = gini;
+					found_split = true;
+				}
+			}
+		}
+
+		if (right_counts)
+			pfree(right_counts);
+		if (left_counts)
+			pfree(left_counts);
+		if (pairs)
+			pfree(pairs);
+
+		if (skip_feature)
+			continue;
+	}
 	 }
 	 if (features)
 		 pfree(features);
@@ -563,106 +672,168 @@ cpu_feature_fallback:
  }
  
  /** Recursively build a tree */
- static int
- rf_build_tree(DecisionTree *tree, float **X, double *y, int *indices,
-		   int n_indices, int n_features, int n_classes, int depth,
-		   int max_depth, int min_samples_split, int max_features,
-		   MLGpuContext *gpu_ctx)
- {
-	 int	i;
-	 int	left_child;
-	 int	right_child;
-	 int    *left_indices;
-	 int    *right_indices;
-	 int	n_left;
-	 int	n_right;
-	 int	best_feature;
-	 double	best_threshold;
-	 double	best_gini;
-	 int	node_id;
-	 int    *class_counts;
-	 double	majority;
-	 int	max_count;
- 
-	 left_child = -1;
-	 right_child = -1;
-	 left_indices = NULL;
-	 right_indices = NULL;
-	 n_left = 0;
-	 n_right = 0;
-	 best_feature = -1;
-	 best_threshold = 0.0;
-	 best_gini = 0.0;
-	 class_counts = NULL;
-	 majority = -1.0;
-	 max_count = 0;
- 
-	 class_counts =
-		 (int *) palloc0(sizeof(int) * Max(n_classes, 2));
- 
-	 for (i = 0; i < n_indices; i++)
-	 {
-		 int	ylab;
- 
-		 CHECK_FOR_INTERRUPTS();
-		 ylab = (int) y[indices[i]];
-		 if (ylab < 0 || ylab >= n_classes)
-			 continue;
-		 class_counts[ylab]++;
-	 }
- 
-	 for (i = 0; i < n_classes; i++)
-	 {
-		 if (class_counts[i] > max_count)
-		 {
-			 max_count = class_counts[i];
-			 majority = (double) i;
-		 }
-	 }
- 
-	 if (depth >= max_depth ||
-		 n_indices < min_samples_split ||
-		 max_count == n_indices)
-	 {
-		 node_id = rf_tree_add_node(tree, -1, 0, 1, majority);
-		 pfree(class_counts);
-		 return node_id;
-	 }
- 
-	 if (!rf_find_best_split(X, y, indices, n_indices, n_features,
-				 n_classes, max_features, &best_feature,
-				 &best_threshold, &best_gini, &left_indices,
-				 &n_left, &right_indices, &n_right, gpu_ctx))
-	 {
-		 node_id = rf_tree_add_node(tree, -1, 0, 1, majority);
-		 if (class_counts)
-			 pfree(class_counts);
-		 return node_id;
-	 }
- 
-	 node_id = rf_tree_add_node(tree, best_feature, best_threshold, 0, 0.0);
- 
-	 left_child =
-		 rf_build_tree(tree, X, y, left_indices, n_left, n_features,
-				   n_classes, depth + 1, max_depth,
-				   min_samples_split, max_features, gpu_ctx);
-	 right_child =
-		 rf_build_tree(tree, X, y, right_indices, n_right, n_features,
-				   n_classes, depth + 1, max_depth,
-				   min_samples_split, max_features, gpu_ctx);
- 
-	 tree->nodes[node_id].left = left_child;
-	 tree->nodes[node_id].right = right_child;
- 
-	 if (left_indices)
-		 pfree(left_indices);
-	 if (right_indices)
-		 pfree(right_indices);
-	 if (class_counts)
-		 pfree(class_counts);
- 
-	 return node_id;
- }
+static int
+rf_build_tree(DecisionTree *tree, const float *X, int n_samples,
+	      const double *y, const int *indices, int n_indices,
+	      int n_features, int n_classes, int depth,
+	      int max_depth, int min_samples_split, int max_features,
+	      MLGpuContext *gpu_ctx)
+{
+	RFBuildFrame *stack;
+	int		stack_cap;
+	int		stack_top;
+	int		root_node;
+
+	stack_cap = 16;
+	stack_top = 0;
+	root_node = -1;
+
+	stack = (RFBuildFrame *) palloc(sizeof(RFBuildFrame) * stack_cap);
+	stack[stack_top++] = (RFBuildFrame) {
+		.parent = -1,
+		.is_left = true,
+		.indices = (int *) indices,
+		.n_indices = n_indices,
+		.depth = depth,
+		.owns_indices = false
+	};
+
+	while (stack_top > 0)
+	{
+		RFBuildFrame	frame = stack[--stack_top];
+		int	       *current_indices = frame.indices;
+		int		current_count = frame.n_indices;
+		int		current_depth = frame.depth;
+		bool		owns_indices = frame.owns_indices;
+		int		node_id = -1;
+		int	       *class_counts = NULL;
+		double		majority = -1.0;
+		int		max_count = 0;
+		bool		make_leaf = false;
+		int	       *left_indices = NULL;
+		int	       *right_indices = NULL;
+		int		n_left = 0;
+		int		n_right = 0;
+		int		best_feature = -1;
+		double		best_threshold = 0.0;
+		double		best_gini = 0.0;
+		int		i;
+
+		CHECK_FOR_INTERRUPTS();
+
+		if (current_count <= 0)
+		{
+			make_leaf = true;
+			majority = 0.0;
+		}
+		else
+		{
+			class_counts = (int *) palloc0(sizeof(int) * Max(n_classes, 2));
+			for (i = 0; i < current_count; i++)
+			{
+				int row = current_indices[i];
+				int ylab;
+
+				if (row < 0 || row >= n_samples)
+					ereport(ERROR,
+						(errmsg("random_forest: sample index %d out of range 0..%d",
+							row, n_samples - 1)));
+
+				ylab = (int) y[row];
+				if (ylab < 0 || ylab >= n_classes)
+					continue;
+				class_counts[ylab]++;
+				if (class_counts[ylab] > max_count)
+				{
+					max_count = class_counts[ylab];
+					majority = (double) ylab;
+				}
+			}
+			if (majority < 0.0)
+				majority = 0.0;
+
+			if (current_count <= 1 || n_features <= 0 || n_classes <= 0)
+				make_leaf = true;
+			if (!make_leaf &&
+			    (current_depth >= max_depth ||
+			     current_count < min_samples_split ||
+			     max_count == current_count))
+				make_leaf = true;
+		}
+
+		if (!make_leaf)
+		{
+			if (!rf_find_best_split(X, n_samples, y, current_indices, current_count,
+						n_features, n_classes, max_features,
+						&best_feature, &best_threshold, &best_gini,
+						&left_indices, &n_left,
+						&right_indices, &n_right, gpu_ctx))
+			{
+				make_leaf = true;
+			}
+			else if (n_left <= 0 || n_right <= 0)
+			{
+				make_leaf = true;
+			}
+		}
+
+		if (make_leaf)
+		{
+			node_id = rf_tree_add_node(tree, -1, 0.0, 1, majority);
+			if (left_indices)
+				pfree(left_indices);
+			if (right_indices)
+				pfree(right_indices);
+		}
+		else
+		{
+			node_id = rf_tree_add_node(tree, best_feature, best_threshold, 0, 0.0);
+
+			if (stack_top + 2 > stack_cap)
+			{
+				stack_cap *= 2;
+				stack = (RFBuildFrame *) repalloc(stack,
+								  sizeof(RFBuildFrame) * stack_cap);
+			}
+
+			stack[stack_top++] = (RFBuildFrame) {
+				.parent = node_id,
+				.is_left = false,
+				.indices = right_indices,
+				.n_indices = n_right,
+				.depth = current_depth + 1,
+				.owns_indices = true
+			};
+			stack[stack_top++] = (RFBuildFrame) {
+				.parent = node_id,
+				.is_left = true,
+				.indices = left_indices,
+				.n_indices = n_left,
+				.depth = current_depth + 1,
+				.owns_indices = true
+			};
+		}
+
+		if (frame.parent >= 0)
+		{
+			if (frame.is_left)
+				tree->nodes[frame.parent].left = node_id;
+			else
+				tree->nodes[frame.parent].right = node_id;
+		}
+		else
+			root_node = node_id;
+
+		if (class_counts)
+			pfree(class_counts);
+		if (owns_indices && current_indices)
+			pfree(current_indices);
+	}
+
+	pfree(stack);
+
+	return root_node;
+}
  
  /** Safe walk over flat tree */
  static double
@@ -675,7 +846,7 @@ cpu_feature_fallback:
  
 	 curr = 0;
 	 num_steps = 0;
-	 max_tree_steps = 2048;
+	max_tree_steps = num_nodes + 8;
  
 	 while (curr >= 0 && curr < num_nodes && num_steps < max_tree_steps)
 	 {
@@ -725,13 +896,19 @@ cpu_feature_fallback:
 	 char	   *tbl_str;
 	 char	   *feat_str;
 	 char	   *label_str;
+	 char	   *quoted_tbl;
+	 char	   *quoted_feat;
+	 char	   *quoted_label;
+	 char	   *quoted_tbl;
+	 char	   *quoted_feat;
+	 char	   *quoted_label;
 	 int		ret;
 	 int		nvec;
 	 int		dim;
 	 int		n_classes;
 	 int		i;
 	 int		total_nodes;
-	 float	  **X;
+	float	   *X_storage;
 	 double	   *y;
 	 DecisionTree *trees;
 	 RFTreeFlat *blob_trees;
@@ -741,10 +918,12 @@ cpu_feature_fallback:
 	 int		nodes_offset;
 	 int		trees_offset;
 	 int		model_id;
+	 int		project_id;
+	 int		next_version;
 	 StringInfoData query;
 	 StringInfoData insert_query;
+	 StringInfoData helper_query;
 	 bool		isnull;
-	 Datum		result;
 	 MemoryContext oldcontext;
 	 MemoryContext traincx;
 	 Size		tlen_size;
@@ -759,12 +938,16 @@ cpu_feature_fallback:
 	 max_depth = PG_GETARG_INT32(4);
 	 min_samples_split = PG_NARGS() > 5 ? PG_GETARG_INT32(5) : 2;
 	 max_features = PG_NARGS() > 6 ? PG_GETARG_INT32(6) : 0;
-	 result = (Datum) 0;
+	 project_id = 0;
+	 next_version = 1;
+	X_storage = NULL;
 
 	 ml_gpu_call_begin(&gpu_state,
 				"random_forest_train",
 				"rf_split",
 				(neurondb_gpu_enabled && !neurondb_gpu_fail_open));
+
+	 gpu_ctx = ml_gpu_call_context(&gpu_state);
 
 	 if (neurondb_gpu_enabled && !ml_gpu_call_use_gpu(&gpu_state))
 		 elog(NOTICE,
@@ -773,6 +956,9 @@ cpu_feature_fallback:
 	 tbl_str = text_to_cstring(table_name);
 	 feat_str = text_to_cstring(feature_col);
 	 label_str = text_to_cstring(label_col);
+	 quoted_tbl = quote_identifier(tbl_str);
+	 quoted_feat = quote_identifier(feat_str);
+	 quoted_label = quote_identifier(label_str);
  
 	 if (n_trees < 1)
 		 ereport(ERROR,
@@ -803,7 +989,8 @@ cpu_feature_fallback:
 	 appendStringInfo(&query,
 			  "SELECT %s, %s FROM %s "
 			  "WHERE %s IS NOT NULL AND %s IS NOT NULL",
-			  feat_str, label_str, tbl_str, feat_str, label_str);
+			  quoted_feat, quoted_label, quoted_tbl,
+			  quoted_feat, quoted_label);
  
 	 ret = SPI_execute(query.data, true, 0);
 	 if (ret != SPI_OK_SELECT)
@@ -823,11 +1010,10 @@ cpu_feature_fallback:
 			 (errmsg("need at least 2 samples, have %d", nvec)));
 	 }
  
-	 X = (float **) palloc(sizeof(float *) * nvec);
 	 y = (double *) palloc(sizeof(double) * nvec);
 	 dim = 0;
  
-	 for (i = 0; i < nvec; i++)
+		for (i = 0; i < nvec; i++)
 	 {
 		 HeapTuple	tup;
 		 TupleDesc	tupdesc;
@@ -853,9 +1039,21 @@ cpu_feature_fallback:
 		 }
 		 vec = DatumGetVector(feat_datum);
  
-		 if (i == 0)
-			 dim = vec->dim;
-		 else if (vec->dim != dim)
+			if (dim == 0)
+			{
+				dim = vec->dim;
+				if (dim < 1)
+				{
+					SPI_finish();
+					rf_training_context_cleanup(&traincx, oldcontext);
+					ereport(ERROR,
+						(errmsg("feature dimension must be positive")));
+				}
+				X_storage = (float *) palloc(sizeof(float) *
+							     (Size) nvec *
+							     (Size) dim);
+			}
+			else if (vec->dim != dim)
 		 {
 			 SPI_finish();
 			 rf_training_context_cleanup(&traincx, oldcontext);
@@ -864,8 +1062,9 @@ cpu_feature_fallback:
 					 vec->dim, dim)));
 		 }
  
-		 X[i] = (float *) palloc(sizeof(float) * dim);
-		 memcpy(X[i], vec->data, sizeof(float) * dim);
+			Assert(X_storage != NULL);
+			memcpy(X_storage + ((Size) i * (Size) dim), vec->data,
+			       sizeof(float) * (Size) dim);
  
 		 label_datum = SPI_getbinval(tup, tupdesc, 2, &label_null);
 		 if (label_null)
@@ -876,7 +1075,9 @@ cpu_feature_fallback:
 		 }
 		 label_type = SPI_gettypeid(tupdesc, 2);
  
-		 if (label_type == INT2OID || label_type == INT4OID)
+		 if (label_type == INT2OID)
+			 y[i] = (double) DatumGetInt16(label_datum);
+		 else if (label_type == INT4OID)
 			 y[i] = (double) DatumGetInt32(label_datum);
 		 else if (label_type == INT8OID)
 			 y[i] = (double) DatumGetInt64(label_datum);
@@ -897,6 +1098,13 @@ cpu_feature_fallback:
 				 n_classes, dim, n_trees)));
 	 }
  
+	 if (max_features == 0)
+		 max_features = (int) sqrt((double) dim);
+	 if (max_features < 1)
+		 max_features = 1;
+	 if (max_features > dim)
+		 max_features = dim;
+
 	 trees = (DecisionTree *) palloc0(sizeof(DecisionTree) * n_trees);
 	 total_nodes = 0;
  
@@ -916,14 +1124,12 @@ cpu_feature_fallback:
 		 tree->num_nodes = 0;
 		 tree->allocated = 0;
  
-		 (void) rf_build_tree(tree, X, y, bootstrap_indices, nvec,
+		 (void) rf_build_tree(tree, X_storage, nvec, y,
+					  bootstrap_indices, nvec,
 					  dim, n_classes, 0, max_depth,
 					  min_samples_split,
-					  (max_features > 0)
-						? max_features
-						: (int) sqrt((double) dim),
-					  ml_gpu_call_use_gpu(&gpu_state) ?
-					  ml_gpu_call_context(&gpu_state) : NULL);
+					  max_features,
+					  ml_gpu_call_use_gpu(&gpu_state) ? gpu_ctx : NULL);
  
 		 total_nodes += tree->num_nodes;
  
@@ -957,10 +1163,7 @@ cpu_feature_fallback:
 		 rf_hdr->n_trees = n_trees;
 		 rf_hdr->max_depth = max_depth;
 		 rf_hdr->min_samples_split = min_samples_split;
-		 rf_hdr->max_features =
-			 (max_features > 0)
-				 ? max_features
-				 : (int) sqrt((double) dim);
+		 rf_hdr->max_features = max_features; /* already clamped */
 		 rf_hdr->n_classes = n_classes;
 		 rf_hdr->n_features = dim;
 		 rf_hdr->trees_offset = trees_offset;
@@ -1028,49 +1231,104 @@ cpu_feature_fallback:
 			 (errmsg("SPI_connect failed: %d", ret)));
 	 }
  
+	 initStringInfo(&helper_query);
+	 appendStringInfo(&helper_query,
+		  "INSERT INTO neurondb.ml_projects "
+		  "(project_name, model_type, description) "
+		  "VALUES ('default_project', 'classification', 'Auto-created by random_forest trainer') "
+		  "ON CONFLICT (project_name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP "
+		  "RETURNING project_id");
+
+	 ret = SPI_execute(helper_query.data, false, 0);
+	 if ((ret == SPI_OK_INSERT_RETURNING || ret == SPI_OK_UPDATE_RETURNING) && SPI_processed > 0)
+	 {
+		 project_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
+				      SPI_tuptable->tupdesc,
+				      1, &isnull));
+	 }
+
+	 if (project_id == 0)
+	 {
+		 resetStringInfo(&helper_query);
+		 appendStringInfo(&helper_query,
+			  "SELECT project_id FROM neurondb.ml_projects "
+			  "WHERE project_name = 'default_project' LIMIT 1");
+		 ret = SPI_execute(helper_query.data, true, 0);
+		 if (ret == SPI_OK_SELECT && SPI_processed > 0)
+		 {
+			 project_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
+					     SPI_tuptable->tupdesc,
+					     1, &isnull));
+		 }
+	 }
+
+	 if (project_id == 0)
+	 {
+		 rf_training_context_cleanup(&traincx, oldcontext);
+		 ereport(ERROR,
+			 (errmsg("failed to determine default project")));
+	 }
+
+	 resetStringInfo(&helper_query);
+	 appendStringInfo(&helper_query,
+		  "SELECT COALESCE(MAX(version), 0) + 1 FROM neurondb.ml_models WHERE project_id = %d",
+		  project_id);
+	 ret = SPI_execute(helper_query.data, true, 0);
+	 if (ret == SPI_OK_SELECT && SPI_processed > 0)
+	 {
+		 next_version = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
+					 SPI_tuptable->tupdesc,
+					 1, &isnull));
+	 }
+
 	 initStringInfo(&insert_query);
 	 appendStringInfo(&insert_query,
-			  "INSERT INTO neurondb.ml_models "
-			  "(algorithm, training_table, training_column, "
-			  " parameters, model_data, status) "
-			  "VALUES ($1, $2, $3, $4, $5, $6) "
-			  "RETURNING model_id");
+		  "INSERT INTO neurondb.ml_models "
+		  "(project_id, version, algorithm, training_table, training_column, "
+		  " parameters, model_data, status) "
+		  "VALUES ($1, $2, $3::neurondb.ml_algorithm_type, $4, $5, $6, $7, $8::neurondb.ml_model_status) "
+		  "RETURNING model_id");
  
 	 {
-		 Oid		argtypes[6];
-		 Datum		values[6];
+		 Oid		argtypes[8];
+		 Datum		values[8];
 		 const char *nulls;
 		 const char *algo_name;
 		 char		parambuf[128];
 		 Datum		params_jsonb;
  
-		 argtypes[0] = TEXTOID;
-		 argtypes[1] = TEXTOID;
+		 argtypes[0] = INT4OID;
+		 argtypes[1] = INT4OID;
 		 argtypes[2] = TEXTOID;
-		 argtypes[3] = JSONBOID;
-		 argtypes[4] = BYTEAOID;
-		 argtypes[5] = TEXTOID;
+		 argtypes[3] = TEXTOID;
+		 argtypes[4] = TEXTOID;
+		 argtypes[5] = JSONBOID;
+		 argtypes[6] = BYTEAOID;
+		 argtypes[7] = TEXTOID;
  
 		 nulls = NULL;
 		 algo_name = "random_forest";
  
-		 values[0] = CStringGetTextDatum(algo_name);
-		 values[1] = CStringGetTextDatum(tbl_str);
-		 values[2] = CStringGetTextDatum(feat_str);
+		 values[0] = Int32GetDatum(project_id);
+		 values[1] = Int32GetDatum(next_version);
+		 values[2] = CStringGetTextDatum(algo_name);
+		 values[3] = CStringGetTextDatum(tbl_str);
+		 values[4] = CStringGetTextDatum(feat_str);
  
 		 snprintf(parambuf, sizeof(parambuf),
-			  "{\"n_trees\": %d, \"max_depth\": %d}",
-			  n_trees, max_depth);
+		  "{\"n_trees\": %d, \"max_depth\": %d, "
+		   "\"min_samples_split\": %d, \"max_features\": %d}",
+		  n_trees, max_depth, min_samples_split, max_features);
 		 params_jsonb =
 			 DirectFunctionCall1(jsonb_in,
-						 CStringGetDatum(parambuf));
-		 values[3] = params_jsonb;
-		 values[4] = PointerGetDatum(model_bytea);
-		 values[5] = CStringGetTextDatum("completed");
+ 					 CStringGetDatum(parambuf));
+		 values[5] = params_jsonb;
+		 values[6] = PointerGetDatum(model_bytea);
+		 values[7] = CStringGetTextDatum("completed");
  
-		 ret = SPI_execute_with_args(insert_query.data, 6,
-						 argtypes, values, nulls,
-						 false, 1);
+		 ret = SPI_execute_with_args(insert_query.data, 8,
+ 				 argtypes, values, nulls,
+ 				 false, 1);
  
 		 if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0)
 		 {
@@ -1085,8 +1343,6 @@ cpu_feature_fallback:
 	 }
 	 SPI_finish();
  
-	 result = Int32GetDatum(model_id);
- 
 	 rf_training_context_cleanup(&traincx, oldcontext);
 	 }
 	 PG_CATCH();
@@ -1098,7 +1354,7 @@ cpu_feature_fallback:
 
 	 ml_gpu_call_end(&gpu_state);
 
-	 PG_RETURN_DATUM(result);
+	 PG_RETURN_INT32(model_id);
  }
  
  /** SQL: predict_random_forest */
@@ -1113,6 +1369,7 @@ cpu_feature_fallback:
 	 int		ret;
 	 bool		isnull;
 	 bytea	   *model_bytea;
+	 Datum		model_datum;
 	 int		i;
 	 int		t;
 	 int		n_trees;
@@ -1174,24 +1431,26 @@ cpu_feature_fallback:
 			  errmsg("model %d not found", model_id)));
 	 }
 
-	 model_bytea = (bytea *) DatumGetPointer(
-		 SPI_getbinval(SPI_tuptable->vals[0],
-			   SPI_tuptable->tupdesc, 1, &isnull));
+	 {
+		 bytea	   *tmp;
+		 Size		sz;
 
-	 if (isnull || model_bytea == NULL)
-	 {
-		 SPI_finish();
-		 spi_finished = true;
-		 ereport(ERROR,
-			 (errmsg("model data is NULL for id=%d", model_id)));
-	 }
-	 if (VARSIZE_ANY_EXHDR(model_bytea) <
-		 (int32) sizeof(RFModelFlat))
-	 {
-		 SPI_finish();
-		 spi_finished = true;
-		 ereport(ERROR,
-			 (errmsg("model blob too small for id=%d", model_id)));
+		 model_datum = SPI_getbinval(SPI_tuptable->vals[0],
+			 SPI_tuptable->tupdesc, 1, &isnull);
+		 tmp = DatumGetByteaPP(model_datum);
+		 if (isnull || tmp == NULL ||
+			 VARSIZE_ANY_EXHDR(tmp) < (int32) sizeof(RFModelFlat))
+		 {
+			 SPI_finish();
+			 spi_finished = true;
+			 ereport(ERROR,
+				 (errmsg("model data invalid for id=%d",
+					 model_id)));
+		 }
+
+		 sz = VARSIZE_ANY(tmp);
+		 model_bytea = (bytea *) palloc(sz);
+		 memcpy(model_bytea, tmp, sz);
 	 }
 
 	 {
@@ -1224,7 +1483,8 @@ cpu_feature_fallback:
 		 trees_off = (Size) rf->trees_offset;
 		 nodes_off = (Size) rf->nodes_offset;
 
-		 if (trees_off > payload || nodes_off > payload)
+		 if (trees_off > payload || nodes_off > payload ||
+		     trees_off < sizeof(RFModelFlat))
 		 {
 			 SPI_finish();
 			 spi_finished = true;
@@ -1465,9 +1725,24 @@ cpu_feature_fallback:
 			 (errmsg("model %d not found", model_id)));
 	 }
  
-	 model_bytea = (bytea *) DatumGetPointer(
-		 SPI_getbinval(SPI_tuptable->vals[0],
-				   SPI_tuptable->tupdesc, 1, NULL));
+	{
+		bytea *tmp = (bytea *) DatumGetPointer(
+			SPI_getbinval(SPI_tuptable->vals[0],
+				      SPI_tuptable->tupdesc, 1, NULL));
+		Size	sz;
+
+		if (!tmp || VARSIZE_ANY_EXHDR(tmp) < sizeof(RFModelFlat))
+		{
+			SPI_finish();
+			ereport(ERROR,
+				(errmsg("model %d truncated or NULL", model_id)));
+		}
+
+		sz = VARSIZE_ANY(tmp);
+		model_bytea = (bytea *) palloc(sz);
+		memcpy(model_bytea, tmp, sz);
+	}
+	/* safe now: model_bytea is ours */
 	 if (!model_bytea ||
 		 VARSIZE_ANY_EXHDR(model_bytea) < sizeof(RFModelFlat))
 	 {
@@ -1503,7 +1778,8 @@ cpu_feature_fallback:
 		 trees_off = (Size) rf_model->trees_offset;
 		 nodes_off = (Size) rf_model->nodes_offset;
  
-		 if (trees_off > payload || nodes_off > payload)
+		 if (trees_off > payload || nodes_off > payload ||
+		     trees_off < sizeof(RFModelFlat))
 		 {
 			 SPI_finish();
 			 ereport(ERROR,
@@ -1551,7 +1827,8 @@ cpu_feature_fallback:
 	 appendStringInfo(&query,
 			  "SELECT %s, %s FROM %s "
 			  "WHERE %s IS NOT NULL AND %s IS NOT NULL",
-			  feat_str, label_str, tbl_str, feat_str, label_str);
+			  quoted_feat, quoted_label, quoted_tbl,
+			  quoted_feat, quoted_label);
  
 	 ret = SPI_execute(query.data, true, 0);
 	 if (ret != SPI_OK_SELECT)
@@ -1562,7 +1839,7 @@ cpu_feature_fallback:
 	 }
  
 	 nvec = SPI_processed;
-	 X = (float **) palloc(sizeof(float *) * nvec);
+	 X = (float **) palloc0(sizeof(float *) * nvec);
 	 y = (double *) palloc(sizeof(double) * nvec);
  
 	 for (i = 0; i < nvec; i++)
@@ -1585,14 +1862,16 @@ cpu_feature_fallback:
 		 vec = DatumGetVector(feat_datum);
 		 if (vec->dim != model_n_features)
 		 {
-			 int	j;
- 
 			 SPI_finish();
-			 for (j = 0; j < i; j++)
-				 if (X[j])
-					 pfree(X[j]);
 			 if (X)
+			 {
+				 int	k;
+
+				 for (k = 0; k < i; k++)
+					 if (X[k])
+						 pfree(X[k]);
 				 pfree(X);
+			 }
 			 if (y)
 				 pfree(y);
 			 ereport(ERROR,
@@ -1604,13 +1883,15 @@ cpu_feature_fallback:
  
 		 X[i] = (float *) palloc(sizeof(float) * model_n_features);
 		 memcpy(X[i], vec->data, sizeof(float) * model_n_features);
- 
+
 		 label_datum = SPI_getbinval(tup, tupdesc, 2, &label_null);
 		 if (label_null)
 			 goto eval_label_null;
  
 		 label_type = SPI_gettypeid(tupdesc, 2);
-		 if (label_type == INT2OID || label_type == INT4OID)
+		 if (label_type == INT2OID)
+			 y[i] = (double) DatumGetInt16(label_datum);
+		 else if (label_type == INT4OID)
 			 y[i] = (double) DatumGetInt32(label_datum);
 		 else if (label_type == INT8OID)
 			 y[i] = (double) DatumGetInt64(label_datum);
@@ -1860,11 +2141,15 @@ cpu_feature_fallback:
 						 FLOAT8OID, 8,
 						 FLOAT8PASSBYVAL, 'd');
  
-			 for (i = 0; i < nvec; i++)
-				 if (X[i])
-					 pfree(X[i]);
 			 if (X)
+			 {
+				 int	l;
+
+				 for (l = 0; l < nvec; l++)
+					 if (X[l])
+						 pfree(X[l]);
 				 pfree(X);
+			 }
 			 if (y)
 				 pfree(y);
 			 if (label_values)

@@ -33,6 +33,7 @@
 
 #include <stdint.h>
 #include <float.h>
+#include "neurondb_cuda_launchers.h"
 
 /*
  * GPU kernel: PQ encoding

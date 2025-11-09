@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * ml_gpu_context.c
- *	  GPU context helpers for NeurondB ML subsystems.
+ *	  GPU context helpers for Neurondb ML subsystems.
  *
  * This module offers a small wrapper around neurondb_gpu.c so that ML
  * call-sites can acquire a resource-scoped GPU context, track availability,
@@ -17,6 +17,8 @@
 
 #include "miscadmin.h"
 #include "utils/memutils.h"
+#include "utils/builtins.h"
+#include "neurondb_gpu_backend.h"
 
 static const char *
 ml_gpu_context_default_tag(void)
@@ -34,7 +36,7 @@ ml_gpu_context_acquire(const char *tag)
 
 	parent = CurrentMemoryContext;
 	tagname = (tag != NULL && tag[0] != '\0') ? tag : ml_gpu_context_default_tag();
-	local = AllocSetContextCreate(parent, tagname, ALLOCSET_SMALL_SIZES);
+	local = AllocSetContextCreate(parent, "ML GPU context", ALLOCSET_SMALL_SIZES);
 
 	ctx = NULL;
 

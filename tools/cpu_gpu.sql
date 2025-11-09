@@ -4,7 +4,7 @@
 
 \if :{?sample_count}
 \else
-\set sample_count 2000
+\set sample_count 1000000
 \endif
 
 \echo Using sample_count = :sample_count
@@ -27,7 +27,7 @@ WHERE training_table IN ('neurondb_cpu_gpu_train', 'neurondb_cpu_gpu_test');
 \echo '   Cleanup complete.'
 \echo ''
 
-\echo 'Step 1: Generating synthetic dataset (~20 MB)...'
+\echo 'Step 1: Generating synthetic dataset (~1 GB)...'
 \echo '   Creating :sample_count samples with 256-dim float32 vectors.'
 CREATE TABLE neurondb_cpu_gpu_data AS
 SELECT
@@ -54,8 +54,32 @@ ANALYZE neurondb_cpu_gpu_test;
 
 \echo 'Step 3: GPU training (enable NeuronDB GPU acceleration)...'
 SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_fail_open = on;
+SET neurondb.gpu_device = 0;
 SELECT pg_stat_reset();
+
+\echo '   Preparing ML catalog (project + defaults)...'
+DO $$
+DECLARE
+    bench_project_id integer;
+BEGIN
+    INSERT INTO neurondb.ml_projects (project_name, model_type, description)
+    VALUES ('cpu_gpu_benchmark', 'classification'::neurondb.ml_model_type, 'CPU vs GPU benchmark project')
+    ON CONFLICT (project_name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+    RETURNING project_id INTO bench_project_id;
+
+    IF bench_project_id IS NULL THEN
+        SELECT project_id INTO bench_project_id
+        FROM neurondb.ml_projects
+        WHERE project_name = 'cpu_gpu_benchmark';
+    END IF;
+
+    IF bench_project_id IS NULL THEN
+        RAISE EXCEPTION 'Failed to provision benchmark project';
+    END IF;
+
+    EXECUTE format('ALTER TABLE neurondb.ml_models ALTER COLUMN project_id SET DEFAULT %s', bench_project_id);
+END;
+$$;
 
 \echo '   Initializing GPU runtime...'
 DO $$
@@ -87,26 +111,49 @@ SELECT neurondb.train(
 ) AS gpu_model_id \gset
 
 \echo '   Evaluating GPU model on test set...'
-SELECT neurondb.evaluate(
-    :gpu_model_id::integer,
-    'neurondb_cpu_gpu_test',
-    'features',
-    'label'
-) AS gpu_metrics \gset
+WITH preds AS (
+    SELECT
+        label::int AS actual,
+        CASE
+            WHEN predict_random_forest(:gpu_model_id::integer, features) >= 0.5 THEN 1
+            ELSE 0
+        END AS predicted
+    FROM neurondb_cpu_gpu_test
+), metrics AS (
+    SELECT
+        AVG((predicted = actual)::int)::float8 AS accuracy,
+        SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+        SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+        SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+    FROM preds
+), calc AS (
+    SELECT
+        accuracy,
+        CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+        CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+        CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+    FROM metrics
+)
+SELECT jsonb_build_object(
+    'accuracy', accuracy,
+    'precision', precision,
+    'recall', recall,
+    'f1_score', f1
+) AS gpu_metrics FROM calc \gset
 
 \echo '   GPU metrics:'
 SELECT 
     format('%-15s', 'Accuracy')  AS metric,
-    ROUND(((':' || 'gpu_metrics')::jsonb ->> 'accuracy')::numeric, 4)   AS value
+    ROUND((:'gpu_metrics'::jsonb ->> 'accuracy')::numeric, 4)   AS value
 UNION ALL SELECT 
     format('%-15s', 'Precision'),
-    ROUND(((':' || 'gpu_metrics')::jsonb ->> 'precision')::numeric, 4)
+    ROUND((:'gpu_metrics'::jsonb ->> 'precision')::numeric, 4)
 UNION ALL SELECT 
     format('%-15s', 'Recall'),
-    ROUND(((':' || 'gpu_metrics')::jsonb ->> 'recall')::numeric, 4)
+    ROUND((:'gpu_metrics'::jsonb ->> 'recall')::numeric, 4)
 UNION ALL SELECT 
     format('%-15s', 'F1 Score'),
-    ROUND(((':' || 'gpu_metrics')::jsonb ->> 'f1_score')::numeric, 4);
+    ROUND((:'gpu_metrics'::jsonb ->> 'f1_score')::numeric, 4);
 \echo ''
 
 \echo 'Step 4: CPU training (GPU disabled)...'
@@ -128,38 +175,61 @@ SELECT neurondb.train(
 ) AS cpu_model_id \gset
 
 \echo '   Evaluating CPU model on test set...'
-SELECT neurondb.evaluate(
-    :cpu_model_id::integer,
-    'neurondb_cpu_gpu_test',
-    'features',
-    'label'
-) AS cpu_metrics \gset
+WITH preds AS (
+    SELECT
+        label::int AS actual,
+        CASE
+            WHEN predict_random_forest(:cpu_model_id::integer, features) >= 0.5 THEN 1
+            ELSE 0
+        END AS predicted
+    FROM neurondb_cpu_gpu_test
+), metrics AS (
+    SELECT
+        AVG((predicted = actual)::int)::float8 AS accuracy,
+        SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+        SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+        SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+    FROM preds
+), calc AS (
+    SELECT
+        accuracy,
+        CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+        CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+        CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+    FROM metrics
+)
+SELECT jsonb_build_object(
+    'accuracy', accuracy,
+    'precision', precision,
+    'recall', recall,
+    'f1_score', f1
+) AS cpu_metrics FROM calc \gset
 
 \echo '   CPU metrics:'
 SELECT 
     format('%-15s', 'Accuracy')  AS metric,
-    ROUND(((':' || 'cpu_metrics')::jsonb ->> 'accuracy')::numeric, 4)   AS value
+    ROUND((:'cpu_metrics'::jsonb ->> 'accuracy')::numeric, 4)   AS value
 UNION ALL SELECT 
     format('%-15s', 'Precision'),
-    ROUND(((':' || 'cpu_metrics')::jsonb ->> 'precision')::numeric, 4)
+    ROUND((:'cpu_metrics'::jsonb ->> 'precision')::numeric, 4)
 UNION ALL SELECT 
     format('%-15s', 'Recall'),
-    ROUND(((':' || 'cpu_metrics')::jsonb ->> 'recall')::numeric, 4)
+    ROUND((:'cpu_metrics'::jsonb ->> 'recall')::numeric, 4)
 UNION ALL SELECT 
     format('%-15s', 'F1 Score'),
-    ROUND(((':' || 'cpu_metrics')::jsonb ->> 'f1_score')::numeric, 4);
+    ROUND((:'cpu_metrics'::jsonb ->> 'f1_score')::numeric, 4);
 \echo ''
 
 \echo 'Step 5: Summary'
 SELECT
     'GPU',
-    ROUND(((':' || 'gpu_metrics')::jsonb ->> 'accuracy')::numeric, 4),
-    ROUND(((':' || 'gpu_metrics')::jsonb ->> 'f1_score')::numeric, 4)
+    ROUND((:'gpu_metrics'::jsonb ->> 'accuracy')::numeric, 4),
+    ROUND((:'gpu_metrics'::jsonb ->> 'f1_score')::numeric, 4)
 UNION ALL
 SELECT
     'CPU' AS run,
-    ROUND(((':' || 'cpu_metrics')::jsonb ->> 'accuracy')::numeric, 4) AS accuracy,
-    ROUND(((':' || 'cpu_metrics')::jsonb ->> 'f1_score')::numeric, 4) AS f1_score;
+    ROUND((:'cpu_metrics'::jsonb ->> 'accuracy')::numeric, 4) AS accuracy,
+    ROUND((:'cpu_metrics'::jsonb ->> 'f1_score')::numeric, 4) AS f1_score;
 \echo ''
 
 \echo 'Step 6: Cleanup models created during benchmark...'

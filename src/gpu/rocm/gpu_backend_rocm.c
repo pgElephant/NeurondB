@@ -18,8 +18,9 @@
 
 #include "utils/elog.h"
 
+#include "neurondb_gpu_backend.h"
+#include "neurondb_gpu_types.h"
 #include "neurondb_gpu.h"
-#include "gpu_backend_interface.h"
 
 #ifdef NDB_GPU_HIP
 
@@ -531,60 +532,187 @@ rocm_backend_dbscan_impl(const float *vectors, int num_vectors, int dim,
 	return true;
 }
 
-/*
- * ROCm Backend Interface Definition
- */
-static const GPUBackendInterface rocm_backend_interface = {
-    .type = GPU_BACKEND_TYPE_ROCM,
+static const ndb_gpu_backend ndb_rocm_backend = {
     .name = "ROCm",
-    .version = "6.0",
-    
-    .init = rocm_backend_init_impl,
-    .cleanup = rocm_backend_cleanup_impl,
-    .is_available = rocm_backend_is_available_impl,
-    
-    .get_device_count = rocm_backend_get_device_count_impl,
-    .get_device_info = rocm_backend_get_device_info_impl,
-    .set_device = rocm_backend_set_device_impl,
-    
-    .mem_alloc = rocm_backend_mem_alloc_impl,
-    .mem_free = rocm_backend_mem_free_impl,
-    .mem_copy_h2d = rocm_backend_mem_copy_h2d_impl,
-    .mem_copy_d2h = rocm_backend_mem_copy_d2h_impl,
-    .synchronize = rocm_backend_synchronize_impl,
-    
-    .l2_distance = rocm_backend_l2_distance_impl,
-    .cosine_distance = rocm_backend_cosine_distance_impl,
-    .inner_product = rocm_backend_inner_product_impl,
-    
-    .batch_l2 = rocm_backend_batch_l2_impl,
-    .batch_cosine = rocm_backend_batch_cosine_impl,
-    
-    .quantize_int8 = rocm_backend_quantize_int8_impl,
-    .quantize_fp16 = rocm_backend_quantize_fp16_impl,
-    
-    .kmeans = rocm_backend_kmeans_impl,
-    .dbscan = rocm_backend_dbscan_impl,
-    
-    .create_streams = rocm_backend_create_streams_impl,
-    .destroy_streams = rocm_backend_destroy_streams_impl,
-    .get_context = rocm_backend_get_context_impl
+    .provider = "AMD",
+    .kind = NDB_GPU_BACKEND_ROCM,
+    .features = 0,
+    .priority = 80,
+
+    .init = ndb_rocm_init,
+    .shutdown = ndb_rocm_shutdown,
+    .is_available = ndb_rocm_is_available,
+
+    .device_count = ndb_rocm_device_count,
+    .device_info = ndb_rocm_device_info,
+    .set_device = ndb_rocm_set_device,
+
+    .mem_alloc = ndb_rocm_mem_alloc,
+    .mem_free = ndb_rocm_mem_free,
+    .memcpy_h2d = ndb_rocm_memcpy_h2d,
+    .memcpy_d2h = ndb_rocm_memcpy_d2h,
+
+    .launch_l2_distance = NULL,
+    .launch_cosine = NULL,
+    .launch_kmeans_assign = NULL,
+    .launch_kmeans_update = NULL,
+    .launch_quant_fp16 = NULL,
+    .launch_quant_int8 = NULL,
+    .launch_quant_binary = NULL,
+    .launch_pq_encode = NULL,
+
+    .stream_create = ndb_rocm_stream_create,
+    .stream_destroy = ndb_rocm_stream_destroy,
+    .stream_synchronize = ndb_rocm_stream_synchronize,
 };
 
-/*
- * Register ROCm backend
- */
 void
 neurondb_gpu_register_rocm_backend(void)
 {
-    if (gpu_backend_register(&rocm_backend_interface))
+    if (ndb_gpu_register_backend(&ndb_rocm_backend) == 0)
     {
         elog(DEBUG1, "neurondb: ROCm GPU backend registered successfully");
     }
     else
     {
-        elog(WARNING, "neurondb: Failed to register ROCm GPU backend");
+        elog(WARNING, "neurondb: failed to register ROCm GPU backend");
     }
+}
+
+static int
+ndb_rocm_init(void)
+{
+    return rocm_backend_init_impl() ? 0 : -1;
+}
+
+static void
+ndb_rocm_shutdown(void)
+{
+    rocm_backend_cleanup_impl();
+}
+
+static int
+ndb_rocm_is_available(void)
+{
+    return rocm_backend_is_available_impl() ? 1 : 0;
+}
+
+static int
+ndb_rocm_device_count(void)
+{
+    return rocm_backend_get_device_count_impl();
+}
+
+static int
+ndb_rocm_device_info(int device_id, NDBGpuDeviceInfo *info)
+{
+    hipDeviceProp_t prop;
+    size_t free_mem = 0;
+    size_t total_mem = 0;
+
+    if (info == NULL)
+        return -1;
+
+    if (hipGetDeviceProperties(&prop, device_id) != hipSuccess)
+        return -1;
+
+    if (hipMemGetInfo(&free_mem, &total_mem) != hipSuccess)
+    {
+        free_mem = 0;
+        total_mem = prop.totalGlobalMem;
+    }
+
+    memset(info, 0, sizeof(NDBGpuDeviceInfo));
+    info->device_id = device_id;
+    strncpy(info->name, prop.name, sizeof(info->name) - 1);
+    info->name[sizeof(info->name) - 1] = '\0';
+    info->total_memory_bytes = total_mem;
+    info->free_memory_bytes = free_mem;
+    info->compute_major = prop.major;
+    info->compute_minor = prop.minor;
+    info->is_available = true;
+
+    return 0;
+}
+
+static int
+ndb_rocm_set_device(int device_id)
+{
+    return rocm_backend_set_device_impl(device_id) ? 0 : -1;
+}
+
+static int
+ndb_rocm_mem_alloc(void **ptr, size_t bytes)
+{
+    void *tmp;
+
+    if (ptr == NULL)
+        return -1;
+
+    tmp = rocm_backend_mem_alloc_impl(bytes);
+    if (tmp == NULL)
+        return -1;
+
+    *ptr = tmp;
+    return 0;
+}
+
+static int
+ndb_rocm_mem_free(void *ptr)
+{
+    rocm_backend_mem_free_impl(ptr);
+    return 0;
+}
+
+static int
+ndb_rocm_memcpy_h2d(void *dst, const void *src, size_t bytes)
+{
+    return rocm_backend_mem_copy_h2d_impl(dst, src, bytes) ? 0 : -1;
+}
+
+static int
+ndb_rocm_memcpy_d2h(void *dst, const void *src, size_t bytes)
+{
+    return rocm_backend_mem_copy_d2h_impl(dst, src, bytes) ? 0 : -1;
+}
+
+static int
+ndb_rocm_stream_create(ndb_stream_t *stream)
+{
+    hipStream_t native;
+
+    if (hipStreamCreate(&native) != hipSuccess)
+        return -1;
+
+    if (stream)
+        *stream = (ndb_stream_t) native;
+
+    return 0;
+}
+
+static int
+ndb_rocm_stream_destroy(ndb_stream_t stream)
+{
+    hipStream_t native = (hipStream_t) stream;
+
+    if (native == NULL)
+        return 0;
+
+    if (hipStreamDestroy(native) != hipSuccess)
+        return -1;
+
+    return 0;
+}
+
+static int
+ndb_rocm_stream_synchronize(ndb_stream_t stream)
+{
+    hipStream_t native = (hipStream_t) stream;
+
+    if (native == NULL)
+        return hipDeviceSynchronize() == hipSuccess ? 0 : -1;
+
+    return hipStreamSynchronize(native) == hipSuccess ? 0 : -1;
 }
 
 #else /* !NDB_GPU_HIP */

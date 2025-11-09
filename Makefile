@@ -70,17 +70,21 @@ OBJS += \
 	src/onnx/neurondb_hf.o
 
 # GPU acceleration
-OBJS += \
-	src/gpu/gpu_core.o \
-	src/gpu/gpu_distance.o \
-	src/gpu/gpu_batch.o \
-	src/gpu/gpu_quantization.o \
-	src/gpu/gpu_clustering.o \
-	src/gpu/gpu_inference.o \
-	src/gpu/gpu_sql.o \
-	src/gpu/ml_gpu_context.o \
-	src/gpu/ml_gpu_buffer.o \
-	src/gpu/ml_gpu_support.o
+COMMON_GPU_SRCS := $(wildcard src/gpu/common/*.c)
+COMMON_GPU_OBJS := $(COMMON_GPU_SRCS:.c=.o)
+
+CUDA_GPU_C_SRCS := $(wildcard src/gpu/cuda/*.c)
+CUDA_GPU_C_OBJS := $(CUDA_GPU_C_SRCS:.c=.o)
+CUDA_GPU_CU_SRCS := $(wildcard src/gpu/cuda/*.cu)
+CUDA_GPU_CU_OBJS := $(CUDA_GPU_CU_SRCS:.cu=.o)
+
+ROCM_GPU_C_SRCS := $(wildcard src/gpu/rocm/*.c)
+ROCM_GPU_C_OBJS := $(ROCM_GPU_C_SRCS:.c=.o)
+ROCM_GPU_CU_SRCS := $(wildcard src/gpu/rocm/*.cu)
+ROCM_GPU_CU_OBJS := $(ROCM_GPU_CU_SRCS:.cu=.o)
+
+OBJS += $(COMMON_GPU_OBJS) $(CUDA_GPU_C_OBJS) $(ROCM_GPU_C_OBJS)
+OBJS += $(CUDA_GPU_CU_OBJS) $(ROCM_GPU_CU_OBJS)
 
 # Types and operations
 OBJS += \
@@ -208,7 +212,13 @@ PGFILEDESC = "neurondb - Advanced AI Database with ML Integration"
 
 # GPU support detection (optional, controlled via make arguments)
 # Usage: make CUDA_PATH=/custom/cuda ROCM_PATH=/custom/rocm
-# If not specified, auto-detect in common paths
+# Example: make clean && make CUDA_PATH=/opt/cuda
+
+# CUDA defaults
+CUDA_PATH ?= /usr/local/cuda
+CUDA_ARCH_FLAGS ?= -gencode arch=compute_70,code=sm_70 \
+                   -gencode arch=compute_75,code=sm_75 \
+                   -gencode arch=compute_86,code=sm_86
 
 # Auto-detect CUDA if not specified
 ifndef CUDA_PATH
@@ -245,23 +255,18 @@ ifdef CUDA_PATH
 	HAVE_CUDA := $(shell test -f $(CUDA_PATH)/include/cuda_runtime.h && echo "yes" || echo "no")
 	ifeq ($(HAVE_CUDA),yes)
 		NVCC := $(CUDA_PATH)/bin/nvcc
+		NVCCFLAGS ?= -O3 -Xcompiler "-fPIC" -Iinclude -I$(CUDA_PATH)/include -DNDB_GPU_CUDA
 		PG_CPPFLAGS += -DNDB_GPU_CUDA -DHAVE_CUDA -I$(CUDA_PATH)/include
-		CUDA_LIBDIR := $(shell \
-			for d in lib64 lib lib/x86_64-linux-gnu; do \
-				if test -d $(CUDA_PATH)/$$d; then echo $(CUDA_PATH)/$$d; break; fi; \
-			done)
+		CUDA_LIBDIR := $(shell if test -d $(CUDA_PATH)/lib64; then echo $(CUDA_PATH)/lib64; fi)
 		ifeq ($(CUDA_LIBDIR),)
 			CUDA_LIBDIR := $(shell if test -d /usr/lib/x86_64-linux-gnu; then echo /usr/lib/x86_64-linux-gnu; fi)
 		endif
 		ifneq ($(CUDA_LIBDIR),)
-			SHLIB_LINK += -L$(CUDA_LIBDIR) -lcudart -lcublas -lcublasLt
+			SHLIB_LINK += -L$(CUDA_LIBDIR) -lcudart -lcublas -lcublasLt -Wl,-rpath,$(CUDA_LIBDIR)
 		else
-			SHLIB_LINK += -L$(CUDA_PATH)/lib -lcudart -lcublas -lcublasLt
+			SHLIB_LINK += -L$(CUDA_PATH)/lib -lcudart -lcublas -lcublasLt -Wl,-rpath,$(CUDA_PATH)/lib
 		endif
-		NVCC_FLAGS = -O3 -arch=sm_80 -Xcompiler -fPIC
-		GPU_OBJS = src/gpu_kernels.o
-		
-		# ONNX Runtime with CUDA provider
+				# ONNX Runtime with CUDA provider
 		ifdef ONNX_PATH
 			ifneq ($(wildcard $(ONNX_PATH)/include/onnxruntime/core/session/onnxruntime_cxx_api.h),)
 				PG_CPPFLAGS += -DHAVE_ONNXRUNTIME_GPU -I$(ONNX_PATH)/include
@@ -277,9 +282,8 @@ ifdef ROCM_PATH
 	HAVE_ROCM := $(shell test -f $(ROCM_PATH)/include/hip/hip_runtime.h && echo "yes" || echo "no")
 	ifeq ($(HAVE_ROCM),yes)
 		HIPCC := $(ROCM_PATH)/bin/hipcc
-		PG_CPPFLAGS += -DNDB_GPU_HIP -I$(ROCM_PATH)/include
+		PG_CPPFLAGS += -DNDB_GPU_ROCM -I$(ROCM_PATH)/include
 		SHLIB_LINK += -L$(ROCM_PATH)/lib -lamdhip64 -lrocblas
-		GPU_OBJS = src/gpu_kernels_hip.o
 	endif
 endif
 
@@ -289,19 +293,13 @@ METAL_OBJS :=
 # Check for Metal (Apple Silicon)
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
-# Check for Metal (Apple Silicon)
 ifeq ($(UNAME_S),Darwin)
 	ifeq ($(UNAME_M),arm64)
 		HAVE_METAL := yes
 		PG_CPPFLAGS += -DNDB_GPU_METAL
 		SHLIB_LINK += -framework Metal -framework MetalPerformanceShaders -framework Accelerate -framework Foundation
-		METAL_OBJS = src/gpu/gpu_metal.o src/gpu/gpu_metal_impl.o
+		METAL_OBJS = src/gpu/metal/gpu_metal.o src/gpu/metal/gpu_metal_impl.o
 	endif
-endif
-
-# Add GPU objects if available
-ifdef GPU_OBJS
-	OBJS += $(GPU_OBJS)
 endif
 
 # Add Metal objects if available
@@ -311,8 +309,27 @@ endif
 
 # Special rule for Metal implementation to avoid Protocol conflicts
 ifneq ($(strip $(METAL_OBJS)),)
-src/gpu/gpu_metal_impl.o: src/gpu/gpu_metal_impl.m
+src/gpu/metal/gpu_metal_impl.o: src/gpu/metal/gpu_metal_impl.m
 	$(CC) $(filter-out -I/usr/local/include, $(PG_CPPFLAGS)) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
+endif
+
+
+# CUDA compilation rule
+ifeq ($(HAVE_CUDA),yes)
+ifdef CUDA_GPU_CU_OBJS
+src/gpu/cuda/%.o: src/gpu/cuda/%.cu
+	$(NVCC) $(NVCCFLAGS) $(CUDA_ARCH_FLAGS) -c $< -o $@
+endif
+endif
+
+# ROCm compilation rule
+ifeq ($(HAVE_ROCM),yes)
+HIPCC ?= $(ROCM_PATH)/bin/hipcc
+HIPCCFLAGS ?= -O3 -fPIC -Iinclude -DNDB_GPU_ROCM
+ifdef ROCM_GPU_CU_OBJS
+src/gpu/rocm/%.o: src/gpu/rocm/%.cu
+	$(HIPCC) $(HIPCCFLAGS) -c $< -o $@
+endif
 endif
 
 # Optimization flags for production with SIMD
@@ -434,14 +451,14 @@ installcheck-gpu:
 
 # Custom rule for CUDA kernel compilation
 ifdef NVCC
-src/gpu_kernels.o: src/gpu_kernels.cu
-	$(NVCC) $(NVCC_FLAGS) -I$(shell $(PG_CONFIG) --includedir-server) -Iinclude -c -o $@ $<
+src/gpu/gpu_kernels.o: src/gpu/gpu_kernels.cu
+	$(NVCC) $(NVCCFLAGS) $(CUDA_ARCH_FLAGS) -c $< -o $@
 endif
 
 # Custom rule for HIP kernel compilation
 ifdef HIPCC
-src/gpu_kernels_hip.o: src/gpu_kernels.cu
-	$(HIPCC) -O3 -fPIC -I$(shell $(PG_CONFIG) --includedir-server) -Iinclude -c -o $@ $<
+src/gpu/gpu_kernels_hip.o: src/gpu/gpu_kernels.cu
+	$(HIPCC) -O3 -fPIC -DNDB_GPU_HIP -I$(shell $(PG_CONFIG) --includedir-server) -Iinclude -c -o $@ $<
 endif
 # include Makefile.metal  # Removed - conflicting with main Makefile rules
 include Makefile.metal.precompile

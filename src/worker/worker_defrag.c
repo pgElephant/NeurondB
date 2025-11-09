@@ -232,8 +232,7 @@ neurandefrag_main(Datum main_arg)
 	MemoryContext	worker_memctx;
 	MemoryContext	oldctx;
 	bool		found;
-	volatile bool	got_sigterm = false;
-	volatile bool	got_sighup = false;
+	int			wait_events;
 
 	BackgroundWorkerUnblockSignals();
 	pqsignal(SIGTERM, neurandefrag_sigterm);
@@ -280,21 +279,29 @@ neurandefrag_main(Datum main_arg)
 
 	while (!got_sigterm)
 	{
+		long timeout_ms = Max(neurandefrag_naptime, 1000);
+		wait_events = WaitLatch(MyLatch,
+							 WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+							 timeout_ms,
+							 PG_WAIT_EXTENSION);
 		ResetLatch(MyLatch);
+		CHECK_FOR_INTERRUPTS();
+
+		if (wait_events & WL_POSTMASTER_DEATH)
+			proc_exit(1);
+
+		if (got_sigterm)
+			break;
 
 		if (got_sighup)
 		{
+			got_sighup = 0;
 			ProcessConfigFile(PGC_SIGHUP);
-			got_sighup = false;
 			ereport(LOG, (errmsg("neurondb: neurandefrag worker processed SIGHUP")));
 		}
 
-		/* Check if worker is enabled */
 		if (!neurandefrag_enabled)
-		{
-			pg_usleep(1000000L); /* sleep 1s */
 			continue;
-		}
 
 		oldctx = MemoryContextSwitchTo(worker_memctx);
 
@@ -311,15 +318,8 @@ neurandefrag_main(Datum main_arg)
 		 */
 		ereport(DEBUG1, (errmsg("neurondb: neurandefrag worker heartbeat (PID %d)", MyProcPid)));
 
-		/* Simulate work for now */
-		pg_usleep(5000000L); /* sleep 5s in absence of real work */
-
 		MemoryContextSwitchTo(oldctx);
 		MemoryContextReset(worker_memctx);
-
-		/* Check for interrupts and latch wakeups */
-		CHECK_FOR_INTERRUPTS();
-		WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, 1000L, PG_WAIT_EXTENSION);
 	}
 
 	ereport(LOG, (errmsg("neurondb: neurandefrag worker shutting down (PID %d)", MyProcPid)));
