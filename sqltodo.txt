@@ -1,0 +1,91 @@
+Missing or thin
+
+Versioning control. Add set_default_model(name, version), list_models(project, status, tags), promote_model, rollback_model.
+
+Updates. Add rename_model, update_model_metadata, archive_model, purge_model_artifacts.
+
+Import paths. Add import_model(format, bytes | url, tokenizer, config), import_tokenizer, export_tokenizer.
+
+Caching and lifecycle. Add warm_model, unload_model, set_cache_policy(model_id, policy, ttl).
+
+Concurrency and scheduling. Add queue_job(type, args), job_status(id), cancel_job(id). Useful for long train or quantize.
+
+Telemetry. Add reset_metrics(scope), model_stats(model_id), last_error(model_id).
+
+Governance. Add grant_model(model_id, role, privilege), revoke_model(...). Model-scoped ACLs.
+
+Resource placement. Add set_device(model_id, device_id), list_devices, reserve_device, release_device.
+
+Limits and timeouts. Add set_runtime_limits(model_id, timeout_ms, batch_max, memory_mb).
+
+Tokenization utilities. Add tokenize, detokenize, vocab_size, embeddings_dim(model_id).
+
+RAG plumbing. Add upsert_document, delete_document, reindex(namespace), rag_plan(query) to show steps, not only rag_query.
+
+Explainability. Add explain_predict(model_id, features) for feature weights or SHAP-style output.
+
+Validation. Add validate_dataset(table, expected_schema, missing_ok boolean) and split_dataset.
+
+Overdone, overlapping, or vague
+
+load vs load_model. One verb. Keep load_model. Drop load.
+
+gpu. Too generic. Replace with list_devices, set_device, device_health.
+
+similarity and distance. Keep similarity for cosine, distance for L2 only if needed. Otherwise fold into one with metric arg.
+
+create_index. Better rely on CREATE INDEX with your opclass. Provide neurondb.index_ops opclass and an advisor function suggest_index(table, column, metric).
+
+preprocess. Too open-ended. Split into tokenize_text, normalize_text, strip_html, etc. Or document exact transforms.
+
+rag_query. Tries to do everything. Keep, but also expose lower-level steps: retrieve, rerank, synthesize.
+
+compare. Define scope. Model vs model, or run vs run. Add compare_models(a, b, dataset, metric).
+
+predict vs predict_batch. Keep both, but ensure same options signature. Add options jsonb to both.
+
+models vs model_info. Keep model_info(id or name, version). Make models a view with filters.
+
+Security and roles
+
+Granting EXECUTE to PUBLIC on everything is risky. Create roles:
+
+neurondb_user for predict, embed, search.
+
+neurondb_trainer for train, quantize, dequantize, load_model, export_model, create_pipeline.
+
+neurondb_admin for drop_model, purge, grant_model, set_device, set_runtime_limits.
+
+Revoke EXECUTE from PUBLIC by default. Grant selectively.
+
+API shape tweaks
+
+Consistent naming. Use verbs with direct objects: train_model, drop_model, export_model, load_model, list_models, get_model, set_default_model.
+
+Options via jsonb across the board for future flags. Example: predict(model_id int, features vector, opts jsonb default '{}').
+
+Deterministic IDs. Model key as (project, name, version). Provide UUID too.
+
+Operational hardening
+
+Idempotency. drop_model returns success if already removed. load_model validates duplicates.
+
+Transactions. Long jobs enqueue, return job_id. Workers perform, store artifacts, update state.
+
+Errors. Stable error codes class neurondbXX. Add get_last_error(job_id).
+
+Minimal, tight core set
+
+train_model, load_model, drop_model, export_model
+
+predict, predict_batch
+
+embed, embed_batch, similarity
+
+list_models, get_model, set_default_model, promote_model, rollback_model
+
+list_devices, set_device
+
+model_stats, reset_metrics
+
+grant_model, revoke_model

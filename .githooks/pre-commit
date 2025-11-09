@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# NeurondB pre-commit hook
+#  - Reject // comments in staged C sources.
+#  - Run clang-format on staged C headers/sources and restage if modified.
+
+set -eu
+
+if ! command -v clang-format >/dev/null 2>&1; then
+	echo "pre-commit: clang-format not found in PATH" >&2
+	exit 1
+fi
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(c|h)$' || true)
+
+if [ -z "${staged_files}" ]; then
+	exit 0
+fi
+
+tmpdir=$(mktemp -d 2>/dev/null || mktemp -d -t neurondb-precommit)
+trap 'rm -rf "${tmpdir}"' EXIT INT TERM
+
+error=0
+
+for file in ${staged_files}; do
+	if [ ! -f "${file}" ]; then
+		continue
+	fi
+
+	if grep -n -- '//' "${file}" >/dev/null 2>&1; then
+		echo "pre-commit: // comment found in ${file}" >&2
+		error=1
+	fi
+
+	clang-format -style=file "${file}" > "${tmpdir}/formatted"
+	if ! cmp -s "${file}" "${tmpdir}/formatted"; then
+		cat "${tmpdir}/formatted" > "${file}"
+		git add "${file}"
+	fi
+done
+
+exit ${error}
+
+

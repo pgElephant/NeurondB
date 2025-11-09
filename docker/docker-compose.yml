@@ -1,0 +1,67 @@
+version: "3.9"
+
+services:
+  neurondb:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PG_MAJOR: 17
+        ONNX_VERSION: 1.17.0
+    image: neurondb:cpu
+    container_name: neurondb
+    environment:
+      POSTGRES_USER: neurondb
+      POSTGRES_PASSWORD: neurondb
+      POSTGRES_DB: neurondb
+    ports:
+      - "5433:5432"
+    volumes:
+      - neurondb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neurondb"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  neurondb-gpu:
+    profiles: ["gpu"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu
+      args:
+        PG_MAJOR: 17
+        CUDA_VERSION: 12.4.1
+        ONNX_VERSION: 1.17.0
+        ENABLE_RAPIDS: 0
+    image: neurondb:gpu
+    container_name: neurondb-gpu
+    environment:
+      POSTGRES_USER: neurondb
+      POSTGRES_PASSWORD: neurondb
+      POSTGRES_DB: neurondb
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      NEURONDB_GPU_ENABLED: "on"
+    ports:
+      - "5434:5432"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    runtime: nvidia
+    volumes:
+      - neurondb-gpu-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neurondb"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  neurondb-data:
+  neurondb-gpu-data:
+

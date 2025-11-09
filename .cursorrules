@@ -1,0 +1,66 @@
+# Cursor Guardrails for NeurondB
+version: 1
+rules:
+  - id: general-style
+    applies_to:
+      - "**/*.c"
+      - "**/*.h"
+      - "**/*.sql"
+    directives:
+      - "Always indent with tabs (8-space visual width)."
+      - "Keep lines within 80 columns."
+      - "Use C-style block comments (/* ... */); never emit // comments."
+      - "Prefer defensive checks and explicit error paths."
+      - "Place all typedefs, structs, enums, and macros before the first function definition."
+      - "Ensure exactly one blank line separates function definitions."
+
+  - id: file-header
+    applies_to:
+      - "**/*.c"
+    header: |
+      /*-------------------------------------------------------------------------
+       *
+       * ${filename}
+       *    pgElephant NeurondB module
+       *
+       * Copyright (c) 2024-2025, pgElephant, Inc.
+       *
+       * IDENTIFICATION
+       *    ${relativePath}
+       *
+       *-------------------------------------------------------------------------
+       */
+
+  - id: review-discipline
+    applies_to:
+      - "**/*"
+    directives:
+      - "Run clang-format and clang-tidy when touching C sources."
+      - "Do not accept commits that violate style or introduce warnings."
+      - "Respect repository-specific build flags and GUC policies."
+
+# Global
+Always write C for PostgreSQL extensions. Follow PostgreSQL coding style.
+Use tabs for indentation. Line length 80. Variables declared at start of
+functions only. Only C-style comments /** */. Minimal comments that say
+what, not how. Defensive checks and error paths.
+
+# File templates
+When creating a new .c file, start with this header verbatim:
+
+/*-------------------------------------------------------------------------
+ *
+ * ${filename}
+ *    Random Forest implementation for classification and regression
+ *
+ * Implements Random Forest as an ensemble of decision trees using
+ * bootstrap aggregating (bagging) and random feature selection.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    ${relativePath}
+ *
+ *-------------------------------------------------------------------------
+ */
+
