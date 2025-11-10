@@ -167,13 +167,14 @@ neural_network_backward(NeuralNetwork *net, float *input, float *target,
 
 		for (j = 0; j < curr_layer->n_outputs; j++)
 		{
-			float sum = 0.0f;
+			float		sum = 0.0f;
+			float		activation;
+			float		derivative;
 
 			for (k = 0; k < next_layer->n_outputs; k++)
 				sum += next_layer->weights[k][j] * next_layer->deltas[k];
 
-			float activation = curr_layer->activations[j];
-			float derivative;
+			activation = curr_layer->activations[j];
 
 			if (strcmp(net->activation_func, "relu") == 0)
 				derivative = activation_derivative_relu(activation);
@@ -222,6 +223,10 @@ neural_network_init(int n_inputs, int n_outputs, int *hidden_layers, int n_hidde
 					const char *activation, float learning_rate)
 {
 	int			i;
+	int			j;
+	int			k;
+	int			prev_size;
+	NeuralLayer *output_layer;
 	NeuralNetwork *net = (NeuralNetwork *) palloc(sizeof(NeuralNetwork));
 
 	net->n_inputs = n_inputs;
@@ -233,7 +238,7 @@ neural_network_init(int n_inputs, int n_outputs, int *hidden_layers, int n_hidde
 	net->layers = (NeuralLayer *) palloc(net->n_layers * sizeof(NeuralLayer));
 
 	/* Initialize hidden layers */
-	int			prev_size = n_inputs;
+	prev_size = n_inputs;
 
 	for (i = 0; i < n_hidden; i++)
 	{
@@ -245,11 +250,11 @@ neural_network_init(int n_inputs, int n_outputs, int *hidden_layers, int n_hidde
 		layer->activations = (float *) palloc(layer->n_outputs * sizeof(float));
 		layer->deltas = (float *) palloc(layer->n_outputs * sizeof(float));
 
-		for (int j = 0; j < layer->n_outputs; j++)
+		for (j = 0; j < layer->n_outputs; j++)
 		{
 			layer->weights[j] = (float *) palloc((layer->n_inputs + 1) * sizeof(float));
 			/* Initialize weights randomly (small values) */
-			for (int k = 0; k <= layer->n_inputs; k++)
+			for (k = 0; k <= layer->n_inputs; k++)
 				layer->weights[j][k] = ((float) rand() / RAND_MAX) * 0.1f - 0.05f;
 		}
 
@@ -257,17 +262,17 @@ neural_network_init(int n_inputs, int n_outputs, int *hidden_layers, int n_hidde
 	}
 
 	/* Initialize output layer */
-	NeuralLayer *output_layer = &net->layers[n_hidden];
+	output_layer = &net->layers[n_hidden];
 	output_layer->n_inputs = prev_size;
 	output_layer->n_outputs = n_outputs;
 	output_layer->weights = (float **) palloc(output_layer->n_outputs * sizeof(float *));
 	output_layer->activations = (float *) palloc(output_layer->n_outputs * sizeof(float));
 	output_layer->deltas = (float *) palloc(output_layer->n_outputs * sizeof(float));
 
-	for (int j = 0; j < output_layer->n_outputs; j++)
+	for (j = 0; j < output_layer->n_outputs; j++)
 	{
 		output_layer->weights[j] = (float *) palloc((output_layer->n_inputs + 1) * sizeof(float));
-		for (int k = 0; k <= output_layer->n_inputs; k++)
+		for (k = 0; k <= output_layer->n_inputs; k++)
 			output_layer->weights[j][k] = ((float) rand() / RAND_MAX) * 0.1f - 0.05f;
 	}
 
@@ -327,16 +332,10 @@ train_neural_network(PG_FUNCTION_ARGS)
 	text	   *activation_text = PG_ARGISNULL(4) ? NULL : PG_GETARG_TEXT_PP(4);
 	float8		learning_rate = PG_ARGISNULL(5) ? 0.01 : PG_GETARG_FLOAT8(5);
 	int32		epochs = PG_ARGISNULL(6) ? 100 : PG_GETARG_INT32(6);
-	/* batch_size not yet used in training loop - will be implemented */
-	if (PG_ARGISNULL(7))
-		(void) 32;
-	else
-		(void) PG_GETARG_INT32(7);
-
-	char	   *table_name_str = text_to_cstring(table_name);
-	char	   *feature_col_str = text_to_cstring(feature_col);
-	char	   *label_col_str = text_to_cstring(label_col);
-	char	   *activation = activation_text ? text_to_cstring(activation_text) : pstrdup("relu");
+	char	   *table_name_str;
+	char	   *feature_col_str;
+	char	   *label_col_str;
+	char	   *activation;
 	int			n_hidden;
 	int		   *hidden_layers;
 	int			n_inputs = 0;
@@ -354,6 +353,19 @@ train_neural_network(PG_FUNCTION_ARGS)
 	int			epoch,
 				sample;
 	float		loss;
+	int			i;
+	int			j;
+
+	table_name_str = text_to_cstring(table_name);
+	feature_col_str = text_to_cstring(feature_col);
+	label_col_str = text_to_cstring(label_col);
+	activation = activation_text ? text_to_cstring(activation_text) : pstrdup("relu");
+
+	/* batch_size not yet used in training loop - will be implemented */
+	if (PG_ARGISNULL(7))
+		(void) 32;
+	else
+		(void) PG_GETARG_INT32(7);
 
 	/* Validate activation function */
 	if (strcmp(activation, "relu") != 0 &&
@@ -368,10 +380,12 @@ train_neural_network(PG_FUNCTION_ARGS)
 	n_hidden = ArrayGetNItems(ARR_NDIM(hidden_layers_array), ARR_DIMS(hidden_layers_array));
 	hidden_layers = (int *) palloc(n_hidden * sizeof(int));
 
-	for (int i = 0; i < n_hidden; i++)
+	for (i = 0; i < n_hidden; i++)
 	{
 		bool		isnull;
-		Datum		elem = array_ref(hidden_layers_array, 1, &i, -1, -1, false, 'i', &isnull);
+		Datum		elem;
+
+		elem = array_ref(hidden_layers_array, 1, &i, -1, -1, false, 'i', &isnull);
 
 		if (isnull)
 			ereport(ERROR,
@@ -431,17 +445,19 @@ train_neural_network(PG_FUNCTION_ARGS)
 	X = (float **) palloc(n_samples * sizeof(float *));
 	y = (float *) palloc(n_samples * sizeof(float));
 
-	for (int i = 0; i < n_samples; i++)
+	for (i = 0; i < n_samples; i++)
 	{
-		HeapTuple tuple = tuptable->vals[i];
+		HeapTuple	tuple = tuptable->vals[i];
 		bool		isnull;
+		Datum		label_datum;
+
 		/* feature_datum will be used when extracting actual vector data */
 		(void) SPI_getbinval(tuple, tupdesc, 1, &isnull);	/* feature_datum */
-		Datum		label_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
+		label_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
 
 		/* Extract vector features (simplified) */
 		X[i] = (float *) palloc(n_inputs * sizeof(float));
-		for (int j = 0; j < n_inputs; j++)
+		for (j = 0; j < n_inputs; j++)
 			X[i][j] = (float) (i + j) / n_samples;	/* Placeholder */
 
 		y[i] = DatumGetFloat8(label_datum);
@@ -459,16 +475,18 @@ train_neural_network(PG_FUNCTION_ARGS)
 		for (sample = 0; sample < n_samples; sample++)
 		{
 			float		predicted[1];
+			float		error;
+			float		target[1];
 
 			/* Forward pass */
 			neural_network_forward(net, X[sample], predicted);
 
 			/* Compute loss */
-			float error = y[sample] - predicted[0];
+			error = y[sample] - predicted[0];
 			loss += error * error;
 
 			/* Backward pass */
-			float target[1] = {y[sample]};
+			target[0] = y[sample];
 			neural_network_backward(net, X[sample], target, predicted);
 
 			/* Update weights */
@@ -488,7 +506,7 @@ train_neural_network(PG_FUNCTION_ARGS)
 	MemoryContextDelete(callcontext);
 
 	/* Cleanup */
-	for (int i = 0; i < n_samples; i++)
+	for (i = 0; i < n_samples; i++)
 		pfree(X[i]);
 	pfree(X);
 	pfree(y);
@@ -511,9 +529,10 @@ Datum
 predict_neural_network(PG_FUNCTION_ARGS)
 {
 	/* Simplified placeholder - will be implemented fully */
+	float		result[1];
+
 	(void) PG_GETARG_POINTER(0);	/* features */
 	(void) PG_GETARG_INT32(1);		/* model_id */
-	float		result[1];
 
 	/* Load model from database (simplified) */
 	/* For now, return placeholder */

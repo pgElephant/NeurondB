@@ -233,7 +233,10 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 		/* Log progress every 100 iterations */
 		if (iter % 100 == 0)
 		{
-			double *preds = (double *) palloc(sizeof(double) * nvec);
+			double	   *preds;
+			double		loss;
+
+			preds = (double *) palloc(sizeof(double) * nvec);
 			for (i = 0; i < nvec; i++)
 			{
 				double z = bias;
@@ -241,7 +244,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 					z += weights[j] * X[i][j];
 				preds[i] = sigmoid(z);
 			}
-			double loss = compute_log_loss(y, preds, nvec);
+			loss = compute_log_loss(y, preds, nvec);
 			elog(NOTICE, "Iteration %d: loss = %f", iter, loss);
 			pfree(preds);
 		}

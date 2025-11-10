@@ -412,20 +412,23 @@ PG_FUNCTION_INFO_V1(neurondb_feature_engineering);
 Datum
 neurondb_feature_engineering(PG_FUNCTION_ARGS)
 {
-    int32       store_id = PG_GETARG_INT32(0);
-    (void) PG_GETARG_JSONB_P(1); /* unused for now */
-    text       *source_table_text = PG_GETARG_TEXT_PP(2);
+	int32		store_id = PG_GETARG_INT32(0);
+	text	   *source_table_text;
+	char	   *source_table;
+	char	   *entity_key = entity_key_for_store(store_id);
+	char	   *entity_table = entity_table_for_store(store_id);
+	char	  **feature_names = NULL;
+	char	  **feature_types = NULL;
+	char	  **feature_transforms = NULL;
+	int			ndefs, i, ret, updated = 0;
+	StringInfoData sql;
 
-    char       *source_table = text_to_cstring(source_table_text);
-    char       *entity_key = entity_key_for_store(store_id);
-    char       *entity_table = entity_table_for_store(store_id);
-    char      **feature_names = NULL;
-    char      **feature_types = NULL;
-    char      **feature_transforms = NULL;
-    int         ndefs, i, ret, updated = 0;
-    StringInfoData sql;
+	(void) PG_GETARG_JSONB_P(1); /* unused for now */
+	source_table_text = PG_GETARG_TEXT_PP(2);
+	source_table = text_to_cstring(source_table_text);
 
-    get_feature_definitions(store_id, &feature_names, &feature_types, &feature_transforms, &ndefs);
+	get_feature_definitions(store_id, &feature_names, &feature_types,
+				&feature_transforms, &ndefs);
 
     if (SPI_connect() != SPI_OK_CONNECT)
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),

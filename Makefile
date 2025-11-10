@@ -6,14 +6,8 @@ EXTENSION = neurondb
 DATA = neurondb--1.0.sql
 DOCS = README.md
 
-PG_CPPFLAGS += -Wall -Wextra -Werror -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -Wpointer-arith
-PG_CFLAGS += -fmessage-length=80
+PG_CPPFLAGS += -I$(srcdir)/include
 
-# Compiler-specific tweaks
-CC_VERSION := $(shell $(CC) --version 2>/dev/null | head -1)
-ifeq ($(findstring clang,$(CC_VERSION)),)
-PG_CPPFLAGS += -Wno-sign-compare -Wno-shadow=compatible-local -Wno-clobbered -Wno-dangling-pointer
-endif
 
 # Source files organized by subdirectory
 # Core vector types and operations
@@ -83,8 +77,7 @@ ROCM_GPU_C_OBJS := $(ROCM_GPU_C_SRCS:.c=.o)
 ROCM_GPU_CU_SRCS := $(wildcard src/gpu/rocm/*.cu)
 ROCM_GPU_CU_OBJS := $(ROCM_GPU_CU_SRCS:.cu=.o)
 
-OBJS += $(COMMON_GPU_OBJS) $(CUDA_GPU_C_OBJS) $(ROCM_GPU_C_OBJS)
-OBJS += $(CUDA_GPU_CU_OBJS) $(ROCM_GPU_CU_OBJS)
+OBJS += $(COMMON_GPU_OBJS)
 
 # Types and operations
 OBJS += \
@@ -173,7 +166,8 @@ OBJS += \
 	src/util/hooks.o \
 	src/util/distributed.o \
 	src/util/usability.o \
-	src/util/data_management.o
+	src/util/data_management.o \
+	src/util/gtree.o
 
 REGRESS = \
 	00_create \
@@ -255,7 +249,7 @@ ifdef CUDA_PATH
 	HAVE_CUDA := $(shell test -f $(CUDA_PATH)/include/cuda_runtime.h && echo "yes" || echo "no")
 	ifeq ($(HAVE_CUDA),yes)
 		NVCC := $(CUDA_PATH)/bin/nvcc
-		NVCCFLAGS ?= -O3 -Xcompiler "-fPIC" -Iinclude -I$(CUDA_PATH)/include -DNDB_GPU_CUDA
+		NVCCFLAGS ?= -O3 -Xcompiler "-fPIC" -I$(srcdir)/include -I$(CUDA_PATH)/include -DNDB_GPU_CUDA
 		PG_CPPFLAGS += -DNDB_GPU_CUDA -DHAVE_CUDA -I$(CUDA_PATH)/include
 		CUDA_LIBDIR := $(shell if test -d $(CUDA_PATH)/lib64; then echo $(CUDA_PATH)/lib64; fi)
 		ifeq ($(CUDA_LIBDIR),)
@@ -266,7 +260,8 @@ ifdef CUDA_PATH
 		else
 			SHLIB_LINK += -L$(CUDA_PATH)/lib -lcudart -lcublas -lcublasLt -Wl,-rpath,$(CUDA_PATH)/lib
 		endif
-				# ONNX Runtime with CUDA provider
+					OBJS += $(CUDA_GPU_C_OBJS) $(CUDA_GPU_CU_OBJS)
+	# ONNX Runtime with CUDA provider
 		ifdef ONNX_PATH
 			ifneq ($(wildcard $(ONNX_PATH)/include/onnxruntime/core/session/onnxruntime_cxx_api.h),)
 				PG_CPPFLAGS += -DHAVE_ONNXRUNTIME_GPU -I$(ONNX_PATH)/include
@@ -284,6 +279,7 @@ ifdef ROCM_PATH
 		HIPCC := $(ROCM_PATH)/bin/hipcc
 		PG_CPPFLAGS += -DNDB_GPU_ROCM -I$(ROCM_PATH)/include
 		SHLIB_LINK += -L$(ROCM_PATH)/lib -lamdhip64 -lrocblas
+		OBJS += $(ROCM_GPU_C_OBJS) $(ROCM_GPU_CU_OBJS)
 	endif
 endif
 
@@ -325,52 +321,13 @@ endif
 # ROCm compilation rule
 ifeq ($(HAVE_ROCM),yes)
 HIPCC ?= $(ROCM_PATH)/bin/hipcc
-HIPCCFLAGS ?= -O3 -fPIC -Iinclude -DNDB_GPU_ROCM
+HIPCCFLAGS ?= -O3 -fPIC -I$(srcdir)/include -DNDB_GPU_ROCM
 ifdef ROCM_GPU_CU_OBJS
 src/gpu/rocm/%.o: src/gpu/rocm/%.cu
 	$(HIPCC) $(HIPCCFLAGS) -c $< -o $@
 endif
 endif
 
-# Optimization flags for production with SIMD
-PG_CPPFLAGS += -Iinclude -I$(libpq_srcdir) -I/usr/include \
-               -march=native -O3 -Wall -Wextra \
-               -fno-math-errno -fstrict-aliasing -funroll-loops \
-               -fomit-frame-pointer -ffp-contract=fast -fopenmp-simd \
-               -mtune=native -fno-trapping-math \
-               -Wno-unused-parameter -Wno-missing-field-initializers \
-               -Wno-declaration-after-statement
-
-# Check if compiler supports -fno-signaling-nans (GCC supports it, clang doesn't)
-# Test by compiling empty file - if it fails with "unsupported", don't use the flag
-# Check if compiler is clang (which warns about -fno-signaling-nans)
-# Use $(CC) from PostgreSQL, check if it's actually clang
-IS_CLANG := $(shell $(CC) --version 2>&1 | head -1 | grep -qi "clang" && echo yes || echo no)
-ifeq ($(IS_CLANG),yes)
-	# clang - skip -fno-signaling-nans to avoid warnings
-else
-	# GCC - safe to use
-	PG_CPPFLAGS += -fno-signaling-nans
-endif
-
-# Detect architecture and add appropriate SIMD flags
-ARCH := $(shell uname -m)
-ifeq ($(ARCH),x86_64)
-	# x86_64: Enable AVX2
-	PG_CPPFLAGS += -mavx2 -mfma -DUSE_AVX2
-	
-	# Detect AVX512
-	HAS_AVX512 := $(shell $(CC) -march=native -dM -E - < /dev/null 2>/dev/null | grep -q AVX512F && echo yes || echo no)
-	ifeq ($(HAS_AVX512),yes)
-		PG_CPPFLAGS += -mavx512f -mavx512vl -mavx512bw -DUSE_AVX512
-	endif
-else ifeq ($(ARCH),arm64)
-	# ARM64: Enable NEON (always available on ARM64)
-	PG_CPPFLAGS += -DUSE_NEON
-else ifeq ($(ARCH),aarch64)
-	# ARM64: Enable NEON (Linux naming)
-	PG_CPPFLAGS += -DUSE_NEON
-endif
 SHLIB_LINK += -lm -lz -lcrypto -lcurl -lssl
 
 # macOS: Note - symbol export issue being investigated
@@ -458,7 +415,7 @@ endif
 # Custom rule for HIP kernel compilation
 ifdef HIPCC
 src/gpu/gpu_kernels_hip.o: src/gpu/gpu_kernels.cu
-	$(HIPCC) -O3 -fPIC -DNDB_GPU_HIP -I$(shell $(PG_CONFIG) --includedir-server) -Iinclude -c -o $@ $<
+	$(HIPCC) -O3 -fPIC -DNDB_GPU_HIP -I$(shell $(PG_CONFIG) --includedir-server) -I$(srcdir)/include -c -o $@ $<
 endif
 # include Makefile.metal  # Removed - conflicting with main Makefile rules
 include Makefile.metal.precompile

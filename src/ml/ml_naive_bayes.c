@@ -83,6 +83,8 @@ train_naive_bayes_classifier(PG_FUNCTION_ARGS)
 	double	   *y = NULL;
 	GaussianNBModel model;
 	int			i, j, class;
+	int			n_params;
+	int			idx;
 	int		   *class_counts;
 	double	 ***class_samples;		/* [class][sample_idx][feature] */
 	int		   *class_sizes;
@@ -225,7 +227,7 @@ train_naive_bayes_classifier(PG_FUNCTION_ARGS)
 	
 	/* Serialize model parameters to array */
 	/* Format: [n_classes, n_features, prior0, prior1, mean0_0, mean0_1, ..., var0_0, var0_1, ...] */
-	int n_params = 2 + 2 + (2 * dim) + (2 * dim);  /* metadata + priors + means + variances */
+	n_params = 2 + 2 + (2 * dim) + (2 * dim);  /* metadata + priors + means + variances */
 	result_datums = (Datum *) palloc(sizeof(Datum) * n_params);
 	
 	result_datums[0] = Float8GetDatum(model.n_classes);
@@ -233,7 +235,7 @@ train_naive_bayes_classifier(PG_FUNCTION_ARGS)
 	result_datums[2] = Float8GetDatum(model.class_priors[0]);
 	result_datums[3] = Float8GetDatum(model.class_priors[1]);
 	
-	int idx = 4;
+	idx = 4;
 	for (class = 0; class < 2; class++)
 		for (j = 0; j < dim; j++)
 			result_datums[idx++] = Float8GetDatum(model.means[class][j]);

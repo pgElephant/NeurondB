@@ -29,6 +29,14 @@
 #include "utils/varlena.h"
 #include "utils/elog.h"
 
+typedef struct mmr_cand_t
+{
+	char	   *id;
+	Vector	   *vec;
+	float		rel;
+	bool		selected;
+} mmr_cand_t;
+
 /*
  * Helper: Build SQL safe literal for text input
  */
@@ -719,6 +727,7 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 	bool	   *nulls;
 	int			n_candidates;
 	int			select_count = 0;
+	mmr_cand_t *cands;
 
 	elog(NOTICE, "neurondb: Diverse search on '%s' with lambda=%.2f, top_k=%d (vec_dim=%d)",
 		 tbl_str, lambda, top_k, query_vec->dim);
@@ -766,15 +775,8 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 	n_candidates = proc;
 
 	/* MMR greedy selection */
-	typedef struct mmr_cand_t
-	{
-		char   *id;
-		Vector *vec;
-		float	rel;
-		bool	selected;
-	} mmr_cand_t;
 
-	mmr_cand_t *cands = palloc0(sizeof(mmr_cand_t) * n_candidates);
+	cands = palloc0(sizeof(mmr_cand_t) * n_candidates);
 
 	for (i = 0; i < n_candidates; i++)
 	{

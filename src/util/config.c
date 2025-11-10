@@ -221,6 +221,8 @@ show_vector_config(PG_FUNCTION_ARGS)
 	Datum					values[3];
 	bool					nulls[3];
 	HeapTuple				tuple;
+	StringInfoData			valbuf;
+	char				   *curr_value;
 
 	if (SRF_IS_FIRSTCALL())
 	{
@@ -251,9 +253,6 @@ show_vector_config(PG_FUNCTION_ARGS)
 		SRF_RETURN_DONE(funcctx);
 
 	/* Compose 'name=value' as in SHOW ALL GUCs */
-	StringInfoData	valbuf;
-	char		   *curr_value;
-
 	initStringInfo(&valbuf);
 	curr_value = get_neurondb_guc(catalog_row);
 	appendStringInfo(&valbuf, "%s=%s", catalog_row->name,

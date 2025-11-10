@@ -89,6 +89,7 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 	double	   *alphas = NULL;
 	double		bias = 0.0;
 	int			iter, i, j;
+	int			n_support;
 	Datum	   *result_datums;
 	ArrayType  *result_array;
 	MemoryContext oldcontext;
@@ -173,12 +174,13 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 		for (i = 0; i < nvec; i++)
 		{
 			/* Compute prediction for sample i */
-			double f_i = bias;
+			double		f_i = bias;
+			double		error_i;
 			for (j = 0; j < nvec; j++)
 				f_i += alphas[j] * y[j] * linear_kernel(X[j], X[i], dim);
 			
 			/* Check KKT conditions */
-			double error_i = f_i - y[i];
+			error_i = f_i - y[i];
 			
 			if ((y[i] * error_i < -0.001 && alphas[i] < C) ||
 				(y[i] * error_i > 0.001 && alphas[i] > 0))
@@ -197,7 +199,7 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 	}
 	
 	/* Compute bias */
-	int n_support = 0;
+	n_support = 0;
 	for (i = 0; i < nvec; i++)
 	{
 		if (alphas[i] > 0 && alphas[i] < C)

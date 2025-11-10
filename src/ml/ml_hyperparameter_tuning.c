@@ -400,8 +400,8 @@ neurondb_random_search(PG_FUNCTION_ARGS)
 		int model_id = 1;
 		TupleDesc tupdesc = NULL;
 		Oid argtypes[3] = {JSONBOID, FLOAT8OID, INT4OID};
-		(void) argtypes;
 		int i;
+		(void) argtypes;
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
@@ -427,13 +427,15 @@ neurondb_random_search(PG_FUNCTION_ARGS)
 			random_sample_parameters(param_distributions, &names, &vals);
 
 			{
-				Jsonb *jbcomb = build_param_jsonb(names, vals);
-				float8 score = actual_crossval(algo, jbcomb, cv_folds);
+				Jsonb	   *jbcomb;
+				float8		score;
+				Datum		values[3];
+				bool		nulls[3] = {false, false, false};
+				HeapTuple	tuple;
+				Datum		result;
 
-				Datum values[3];
-				bool nulls[3] = {false, false, false};
-				HeapTuple tuple;
-				Datum result;
+				jbcomb = build_param_jsonb(names, vals);
+				score = actual_crossval(algo, jbcomb, cv_folds);
 
 				values[0] = PointerGetDatum(jbcomb);
 				values[1] = Float8GetDatum(score);
@@ -545,8 +547,8 @@ neurondb_bayesian_optimize(PG_FUNCTION_ARGS)
 		int best_model_idx = -1;
 		TupleDesc tupdesc = NULL;
 		Oid argtypes[3] = {JSONBOID, FLOAT8OID, INT4OID};
-		(void) argtypes;
 		int i;
+		(void) argtypes;
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
@@ -575,19 +577,21 @@ neurondb_bayesian_optimize(PG_FUNCTION_ARGS)
 			bayes_sample_parameters(param_space, i, &names, &vals);
 
 			{
-				Jsonb *jbcomb = build_param_jsonb(names, vals);
-				float8 score = actual_crossval(algo, jbcomb, 5);
+				Jsonb	   *jbcomb;
+				float8		score;
+				Datum		values[3];
+				bool		nulls[3] = {false, false, false};
+				HeapTuple	tuple;
+				Datum		result;
+
+				jbcomb = build_param_jsonb(names, vals);
+				score = actual_crossval(algo, jbcomb, 5);
 
 				if (score > best_score)
 				{
 					best_score = score;
 					best_model_idx = model_id - 1;
 				}
-
-				Datum values[3];
-				bool nulls[3] = {false, false, false};
-				HeapTuple tuple;
-				Datum result;
 
 				values[0] = PointerGetDatum(jbcomb);
 				values[1] = Float8GetDatum(score);

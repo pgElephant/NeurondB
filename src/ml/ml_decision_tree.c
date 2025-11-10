@@ -94,6 +94,7 @@ extract_training_data(const char *table_name, const char *feature_col, const cha
 	{
 		bool	isnull;
 		Datum	arr_datum;
+		Datum	label_datum;
 		ArrayType *arr;
 		Oid		eltype;
 		int		ndim;
@@ -163,7 +164,6 @@ extract_training_data(const char *table_name, const char *feature_col, const cha
 		}
 
 		/* label */
-		Datum label_datum;
 		label_datum = SPI_getbinval(SPI_tuptable->vals[i],
 									SPI_tuptable->tupdesc,
 									2,

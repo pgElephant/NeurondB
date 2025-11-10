@@ -207,11 +207,14 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 		/* Swap rows */
 		if (max_row != k)
 		{
-			double *temp = XtX[k];
+			double		*temp;
+			double		temp_val;
+
+			temp = XtX[k];
 			XtX[k] = XtX[max_row];
 			XtX[max_row] = temp;
-			
-			double temp_val = Xty[k];
+
+			temp_val = Xty[k];
 			Xty[k] = Xty[max_row];
 			Xty[max_row] = temp_val;
 		}
@@ -380,13 +383,16 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 	/* Coordinate descent */
 	for (iter = 0; iter < max_iters && !converged; iter++)
 	{
+		double		diff;
+
 		memcpy(weights_old, weights, sizeof(double) * dim);
 		
 		/* Update each coordinate */
 		for (j = 0; j < dim; j++)
 		{
-			double rho = 0.0;
-			double z = 0.0;
+			double		rho = 0.0;
+			double		z = 0.0;
+			double		old_weight;
 			
 			/* Compute rho = X_j^T * residuals */
 			for (i = 0; i < nvec; i++)
@@ -400,7 +406,7 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 				continue;
 			
 			/* Soft thresholding */
-			double old_weight = weights[j];
+			old_weight = weights[j];
 			weights[j] = soft_threshold(rho / z, lambda / z);
 			
 			/* Update residuals */
@@ -412,7 +418,7 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 		}
 		
 		/* Check convergence */
-		double diff = 0.0;
+		diff = 0.0;
 		for (j = 0; j < dim; j++)
 		{
 			double d = weights[j] - weights_old[j];

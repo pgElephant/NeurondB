@@ -127,8 +127,25 @@ install_ubuntu_deps() {
             fi
         done
         if [ -z "$CUDA_PATH" ]; then
-            log_warning "CUDA not found. Install CUDA Toolkit from: https://developer.nvidia.com/cuda-downloads"
-            log_warning "NeurondB will build without GPU support"
+            log_warning "CUDA toolkit not found. Attempting to install nvidia-cuda-toolkit via apt."
+            if $SUDO apt-get install -y nvidia-cuda-toolkit; then
+                for path in /usr/local/cuda /usr/lib/cuda; do
+                    if [ -d "$path/include" ] && [ -f "$path/include/cuda_runtime.h" ]; then
+                        CUDA_PATH="$path"
+                        log_success "CUDA toolkit installed at $CUDA_PATH"
+                        break
+                    fi
+                done
+                if [ -z "$CUDA_PATH" ]; then
+                    log_warning "Installed nvidia-cuda-toolkit but cuda_runtime.h still not found"
+                fi
+            else
+                log_warning "Automatic CUDA installation failed. Install CUDA Toolkit from: https://developer.nvidia.com/cuda-downloads"
+            fi
+        fi
+        
+        if [ -z "$CUDA_PATH" ]; then
+            log_warning "CUDA not available. NeurondB will build without GPU kernels."
         fi
         
         # Install ONNX Runtime with CUDA support
