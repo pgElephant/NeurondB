@@ -15,16 +15,63 @@
 #include "utils/array.h"
 #include "utils/memutils.h"
 
+#include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <float.h>
 
 #include "neurondb.h"
 #include "neurondb_ml.h"
 #include "gtree.h"
 
+#define RF_STUB_MAX_FEATURES 4
+
 PG_FUNCTION_INFO_V1(train_random_forest_classifier);
 PG_FUNCTION_INFO_V1(predict_random_forest);
 PG_FUNCTION_INFO_V1(evaluate_random_forest);
+
+typedef struct RFSplitPair
+{
+	double	value;
+	int		cls;
+} RFSplitPair;
+
+static int
+rf_split_pair_cmp(const void *a, const void *b)
+{
+	const RFSplitPair *pa = (const RFSplitPair *) a;
+	const RFSplitPair *pb = (const RFSplitPair *) b;
+
+	if (pa->value < pb->value)
+		return -1;
+	if (pa->value > pb->value)
+		return 1;
+	if (pa->cls < pb->cls)
+		return -1;
+	if (pa->cls > pb->cls)
+		return 1;
+	return 0;
+}
+
+static double
+rf_gini_from_counts(const int *counts, int n_classes, int total)
+{
+	double	sum_sq = 0.0;
+	int		i;
+
+	if (total <= 0)
+		return 0.0;
+
+	for (i = 0; i < n_classes; i++)
+	{
+		if (counts[i] > 0)
+		{
+			double p = (double) counts[i] / (double) total;
+			sum_sq += p * p;
+		}
+	}
+	return 1.0 - sum_sq;
+}
 
 typedef struct RFStubModel
 {
@@ -50,6 +97,9 @@ typedef struct RFStubModel
 	double		left_branch_fraction;/* fraction for left branch */
 	double		right_branch_value;	/* predicted value for right branch */
 	double		right_branch_fraction;/* fraction for right branch */
+	int			feature_limit;		/* number of per-branch means stored */
+	double	   *left_branch_means;	/* per-feature left branch means */
+	double	   *right_branch_means;	/* per-feature right branch means */
 } RFStubModel;
 
 
@@ -65,7 +115,8 @@ rf_stub_store_model(int32 model_id, int n_features, int n_samples, int n_classes
 	 int split_feature, double split_threshold, double second_value,
 	 double second_fraction, double left_value, double left_fraction,
 	 double right_value, double right_fraction,
-	 double max_deviation, double max_split_deviation)
+	 double max_deviation, double max_split_deviation,
+	 int feature_limit, const double *left_means, const double *right_means)
 {
 	MemoryContext oldctx = MemoryContextSwitchTo(TopMemoryContext);
 	int i;
@@ -125,6 +176,25 @@ rf_stub_store_model(int32 model_id, int n_features, int n_samples, int n_classes
 	rf_stub_models[rf_stub_model_count].right_branch_fraction = right_fraction;
 	rf_stub_models[rf_stub_model_count].max_deviation = max_deviation;
 	rf_stub_models[rf_stub_model_count].max_split_deviation = max_split_deviation;
+	rf_stub_models[rf_stub_model_count].feature_limit = (feature_limit > 0) ? feature_limit : 0;
+	rf_stub_models[rf_stub_model_count].left_branch_means = NULL;
+	rf_stub_models[rf_stub_model_count].right_branch_means = NULL;
+
+	if (rf_stub_models[rf_stub_model_count].feature_limit > 0 && left_means != NULL)
+	{
+		double *copy = (double *) palloc(sizeof(double) * rf_stub_models[rf_stub_model_count].feature_limit);
+
+		memcpy(copy, left_means, sizeof(double) * rf_stub_models[rf_stub_model_count].feature_limit);
+		rf_stub_models[rf_stub_model_count].left_branch_means = copy;
+	}
+
+	if (rf_stub_models[rf_stub_model_count].feature_limit > 0 && right_means != NULL)
+	{
+		double *copy = (double *) palloc(sizeof(double) * rf_stub_models[rf_stub_model_count].feature_limit);
+
+		memcpy(copy, right_means, sizeof(double) * rf_stub_models[rf_stub_model_count].feature_limit);
+		rf_stub_models[rf_stub_model_count].right_branch_means = copy;
+	}
 
 	rf_stub_model_count++;
 
@@ -179,64 +249,84 @@ rf_count_classes(double *labels, int n_samples)
 Datum
 train_random_forest_classifier(PG_FUNCTION_ARGS)
 {
-	text		*table_name_text;
-	text		*feature_col_text;
-	text		*label_col_text;
+	text			*table_name_text;
+	text			*feature_col_text;
+	text			*label_col_text;
 
-	char		*table_name;
-	char		*feature_col;
-	char		*label_col;
-	const char	*quoted_tbl;
-	const char	*quoted_feat;
-	const char	*quoted_label;
+	char			*table_name;
+	char			*feature_col;
+	char			*label_col;
+	const char		*quoted_tbl;
+	const char		*quoted_feat;
+	const char		*quoted_label;
 
-	StringInfoData	query;
-	int		feature_dim		= 0;
-	double	   *labels		= NULL;
-	int		n_classes		= 0;
-	double		majority_value		= 0.0;
-	double		majority_fraction	= 0.0;
-	double		gini_impurity		= 0.0;
-	double		label_entropy		= 0.0;
-	int		majority_count		= 0;
-	int		second_count		= 0;
-	int		second_idx		= -1;
-	double		second_value		= 0.0;
-	int	      *class_counts_tmp		= NULL;
-	double   *feature_means_tmp	= NULL;
-	double   *feature_vars_tmp	= NULL;
-	double   *feature_sums		= NULL;
-	double   *feature_sums_sq	= NULL;
-double   *class_feature_sums0 = NULL;
-int      *class_feature_counts0 = NULL;
-	int	feature_sum_count	= 0;
-	GTree   *stub_tree		= NULL;
-	int	split_feature		= -1;
-	double	split_threshold	= 0.0;
-	double	second_fraction	= 0.0;
-	double	max_deviation		= 0.0;
-	double	max_split_deviation	= 0.0;
-	int    *left_counts		= NULL;
-	int    *right_counts	= NULL;
-	int	left_majority_idx	= -1;
-	int	right_majority_idx	= -1;
-	int	left_total		= 0;
-	int	right_total		= 0;
-	double	left_leaf_value	= 0.0;
-	double	right_leaf_value	= 0.0;
-	double	left_sum		= 0.0;
-	double	right_sum		= 0.0;
-	bool	branch_threshold_valid = false;
-	double	branch_threshold	= 0.0;
-	double	left_branch_fraction	= 0.0;
-	double	right_branch_fraction	= 0.0;
-int	majority_idx		= -1;
-double	class_majority_mean	= 0.0;
-double	class_second_mean	= 0.0;
-double	class_mean_threshold	= 0.0;
-bool	class_mean_threshold_valid = false;
-	int32	model_id;
-	int	n_samples		= 0;
+	StringInfoData		query;
+
+	int			feature_dim = 0;
+	int			n_classes = 0;
+	int			majority_count = 0;
+	int			second_count = 0;
+	int			second_idx = -1;
+	int			*class_counts_tmp = NULL;
+	int			feature_sum_count = 0;
+	int			split_feature = -1;
+	int			*left_counts = NULL;
+	int			*right_counts = NULL;
+	int			left_majority_idx = -1;
+	int			right_majority_idx = -1;
+	int			left_total = 0;
+	int			right_total = 0;
+	int			majority_idx = -1;
+	int			feature_limit = 0;
+	int			best_feature = -1;
+	int			*left_feature_counts_vec = NULL;
+	int			*right_feature_counts_vec = NULL;
+	int			n_samples = 0;
+	int			split_pair_count = 0;
+	int32			model_id;
+
+	double			*labels = NULL;
+	double			majority_value = 0.0;
+	double			majority_fraction = 0.0;
+	double			gini_impurity = 0.0;
+	double			label_entropy = 0.0;
+	double			second_value = 0.0;
+	double			*feature_means_tmp = NULL;
+	double			*feature_vars_tmp = NULL;
+	double			*feature_sums = NULL;
+	double			*feature_sums_sq = NULL;
+	double			*class_feature_sums = NULL;
+	double			*left_feature_sums_vec = NULL;
+	double			*right_feature_sums_vec = NULL;
+	double			left_leaf_value = 0.0;
+	double			right_leaf_value = 0.0;
+	double			left_sum = 0.0;
+	double			right_sum = 0.0;
+	double			branch_threshold = 0.0;
+	double			left_branch_fraction = 0.0;
+	double			right_branch_fraction = 0.0;
+	double			class_majority_mean = 0.0;
+	double			class_second_mean = 0.0;
+	double			class_mean_threshold = 0.0;
+	double			best_majority_mean = 0.0;
+	double			best_second_mean = 0.0;
+	double			best_score = -1.0;
+	double			max_deviation = 0.0;
+	double			max_split_deviation = 0.0;
+	double			split_threshold = 0.0;
+	double			second_fraction = 0.0;
+	double			*left_branch_means_vec = NULL;
+	double			*right_branch_means_vec = NULL;
+	double			best_split_impurity = DBL_MAX;
+	double			best_split_threshold = 0.0;
+
+	bool			branch_threshold_valid = false;
+	bool			class_mean_threshold_valid = false;
+	bool			best_score_valid = false;
+	bool			best_split_valid = false;
+
+	GTree			*stub_tree = NULL;
+	RFSplitPair		*split_pairs = NULL;
 
 	if (PG_NARGS() < 3)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -491,9 +581,228 @@ bool	class_mean_threshold_valid = false;
 			pfree(var_log.data);
 		}
 
+		if (feature_dim > 0 && n_samples > 0 && n_classes > 0)
+		{
+			TupleDesc data_tupdesc = SPI_tuptable->tupdesc;
+
+			feature_limit = Min(feature_dim, RF_STUB_MAX_FEATURES);
+			if (feature_limit < 1)
+				feature_limit = 1;
+
+			class_feature_sums = (double *) palloc0(sizeof(double) * n_classes * feature_limit);
+			class_feature_counts = (int *) palloc0(sizeof(int) * n_classes * feature_limit);
+
+			for (i = 0; i < n_samples; i++)
+			{
+				int cls;
+				int f;
+				Datum feat_datum;
+				bool feat_null;
+				Vector *vec;
+
+				if (!isfinite(labels[i]))
+					continue;
+				cls = (int) rint(labels[i]);
+				if (cls < 0 || cls >= n_classes)
+					continue;
+
+				feat_datum = SPI_getbinval(SPI_tuptable->vals[i], data_tupdesc, 1, &feat_null);
+				if (feat_null)
+					continue;
+
+				vec = DatumGetVector(feat_datum);
+				if (vec->dim <= 0)
+					continue;
+
+				for (f = 0; f < feature_limit && f < vec->dim; f++)
+				{
+					double val = (double) vec->data[f];
+					class_feature_sums[cls * feature_limit + f] += val;
+					class_feature_counts[cls * feature_limit + f]++;
+				}
+			}
+
+			if (majority_idx >= 0)
+			{
+				int f;
+
+				for (f = 0; f < feature_limit; f++)
+				{
+					int idx = majority_idx * feature_limit + f;
+					if (class_feature_counts[idx] > 0)
+					{
+						double maj_mean = class_feature_sums[idx] /
+							(double) class_feature_counts[idx];
+						double sec_mean = 0.0;
+						int sec_idx = -1;
+						int sec_count = 0;
+
+						if (second_idx >= 0)
+						{
+							sec_idx = second_idx * feature_limit + f;
+							sec_count = class_feature_counts[sec_idx];
+						}
+
+						if (sec_count > 0)
+						{
+							sec_mean = class_feature_sums[sec_idx] /
+								(double) sec_count;
+
+							if (fabs(maj_mean - sec_mean) > best_score)
+							{
+								best_score = fabs(maj_mean - sec_mean);
+								best_feature = f;
+								best_majority_mean = maj_mean;
+								best_second_mean = sec_mean;
+								best_score_valid = true;
+							}
+						}
+					}
+				}
+			}
+
+			if (!best_score_valid && majority_idx >= 0)
+			{
+				int idx = majority_idx * feature_limit;
+				if (class_feature_counts[idx] > 0)
+					best_majority_mean = class_feature_sums[idx] /
+						(double) class_feature_counts[idx];
+			}
+
+			if (best_score_valid)
+			{
+				class_majority_mean = best_majority_mean;
+				class_second_mean = best_second_mean;
+				class_mean_threshold =
+					0.5 * (class_majority_mean + class_second_mean);
+				class_mean_threshold_valid = true;
+				split_feature = best_feature;
+				elog(DEBUG1,
+					"random_forest stub: best feature=%d majority_mean=%.3f second_mean=%.3f threshold=%.3f score=%.3f",
+					split_feature,
+					class_majority_mean,
+					class_second_mean,
+					class_mean_threshold,
+					best_score);
+			}
+		}
+
+		/* Refine threshold using sorted split candidates on the chosen feature */
+		if (feature_dim > 0 && n_samples > 0 && n_classes > 0)
+		{
+			int sf_idx = (split_feature >= 0 && split_feature < feature_dim)
+				? split_feature
+				: 0;
+			TupleDesc data_tupdesc = SPI_tuptable->tupdesc;
+
+			split_pairs = (RFSplitPair *) palloc(sizeof(RFSplitPair) * n_samples);
+			split_pair_count = 0;
+
+			for (i = 0; i < n_samples; i++)
+			{
+				Datum feat_datum;
+				bool feat_null;
+				Vector *vec;
+				int cls;
+
+				cls = (int) rint(labels[i]);
+				if (!isfinite(labels[i]) || cls < 0 || cls >= n_classes)
+					continue;
+
+				feat_datum = SPI_getbinval(SPI_tuptable->vals[i], data_tupdesc, 1, &feat_null);
+				if (feat_null)
+					continue;
+
+				vec = DatumGetVector(feat_datum);
+				if (vec->dim <= sf_idx)
+					continue;
+
+				split_pairs[split_pair_count].value = (double) vec->data[sf_idx];
+				split_pairs[split_pair_count].cls = cls;
+				split_pair_count++;
+			}
+
+			if (split_pair_count > 1)
+			{
+				int *left_counts_tmp = (int *) palloc0(sizeof(int) * n_classes);
+				int *right_counts_tmp = (int *) palloc0(sizeof(int) * n_classes);
+				int right_total_eval = 0;
+				int left_total_eval = 0;
+
+				qsort(split_pairs, split_pair_count, sizeof(RFSplitPair), rf_split_pair_cmp);
+
+				if (class_counts_tmp != NULL)
+				{
+					for (i = 0; i < n_classes; i++)
+						right_counts_tmp[i] = class_counts_tmp[i];
+				}
+				else
+				{
+					for (i = 0; i < split_pair_count; i++)
+						right_counts_tmp[split_pairs[i].cls]++;
+				}
+
+				for (i = 0; i < n_classes; i++)
+					right_total_eval += right_counts_tmp[i];
+
+				for (i = 0; i < split_pair_count - 1; i++)
+				{
+					int cls = split_pairs[i].cls;
+
+					left_counts_tmp[cls]++;
+					right_counts_tmp[cls]--;
+					left_total_eval++;
+					right_total_eval--;
+
+					if (split_pairs[i].value == split_pairs[i + 1].value)
+						continue;
+					if (left_total_eval <= 0 || right_total_eval <= 0)
+						continue;
+
+					{
+						double left_imp = rf_gini_from_counts(left_counts_tmp, n_classes, left_total_eval);
+						double right_imp = rf_gini_from_counts(right_counts_tmp, n_classes, right_total_eval);
+						double weighted = ((double) left_total_eval / (double) split_pair_count) * left_imp +
+							((double) right_total_eval / (double) split_pair_count) * right_imp;
+
+						if (weighted < best_split_impurity)
+						{
+							best_split_impurity = weighted;
+							best_split_threshold =
+								0.5 * (split_pairs[i].value + split_pairs[i + 1].value);
+							best_split_valid = true;
+						}
+					}
+				}
+
+				pfree(left_counts_tmp);
+				pfree(right_counts_tmp);
+			}
+
+			if (best_split_valid)
+			{
+				class_mean_threshold = best_split_threshold;
+				class_mean_threshold_valid = true;
+				split_feature = sf_idx;
+				elog(DEBUG1,
+					"random_forest stub: refined threshold feature=%d threshold=%.3f impurity=%.6f",
+					split_feature,
+					class_mean_threshold,
+					best_split_impurity);
+			}
+
+			if (split_pairs)
+			{
+				pfree(split_pairs);
+				split_pairs = NULL;
+			}
+		}
+
 		if (feature_dim > 0 && feature_means_tmp != NULL && n_classes > 0)
 		{
-			int sf = 0;
+			int sf = (split_feature >= 0 && split_feature < feature_dim)
+				? split_feature
+				: 0;
 			double threshold = feature_means_tmp[sf];
 			TupleDesc tupdesc = SPI_tuptable->tupdesc;
 			Vector *vec;
@@ -508,12 +817,23 @@ bool	class_mean_threshold_valid = false;
 			left_majority_idx = -1;
 			right_majority_idx = -1;
 
+			if (class_mean_threshold_valid)
+				threshold = class_mean_threshold;
+
 			left_counts = (int *) palloc0(sizeof(int) * n_classes);
 			right_counts = (int *) palloc0(sizeof(int) * n_classes);
+			if (feature_limit > 0)
+			{
+				left_feature_sums_vec = (double *) palloc0(sizeof(double) * feature_limit);
+				right_feature_sums_vec = (double *) palloc0(sizeof(double) * feature_limit);
+				left_feature_counts_vec = (int *) palloc0(sizeof(int) * feature_limit);
+				right_feature_counts_vec = (int *) palloc0(sizeof(int) * feature_limit);
+			}
 
 			for (i = 0; i < n_samples; i++)
 			{
 				int cls;
+				int f;
 
 				if (!isfinite(labels[i]))
 					continue;
@@ -535,12 +855,28 @@ bool	class_mean_threshold_valid = false;
 					left_counts[cls]++;
 					left_total++;
 					left_sum += (double) vec_data[sf];
+					if (feature_limit > 0)
+					{
+						for (f = 0; f < feature_limit && f < vec->dim; f++)
+						{
+							left_feature_sums_vec[f] += (double) vec_data[f];
+							left_feature_counts_vec[f]++;
+						}
+					}
 				}
 				else
 				{
 					right_counts[cls]++;
 					right_total++;
 					right_sum += (double) vec_data[sf];
+					if (feature_limit > 0)
+					{
+						for (f = 0; f < feature_limit && f < vec->dim; f++)
+						{
+							right_feature_sums_vec[f] += (double) vec_data[f];
+							right_feature_counts_vec[f]++;
+						}
+					}
 				}
 			}
 
@@ -577,8 +913,38 @@ bool	class_mean_threshold_valid = false;
 					right_branch_fraction = ((double) right_total) / (double) n_samples;
 			}
 
+			if (feature_limit > 0 && left_feature_sums_vec != NULL && right_feature_sums_vec != NULL)
+			{
+				int f;
+
+				left_branch_means_vec = (double *) palloc(sizeof(double) * feature_limit);
+				right_branch_means_vec = (double *) palloc(sizeof(double) * feature_limit);
+
+				for (f = 0; f < feature_limit; f++)
+				{
+					if (left_feature_counts_vec != NULL && left_feature_counts_vec[f] > 0)
+						left_branch_means_vec[f] =
+							left_feature_sums_vec[f] /
+							(double) left_feature_counts_vec[f];
+					else if (feature_means_tmp != NULL && f < feature_dim)
+						left_branch_means_vec[f] = feature_means_tmp[f];
+					else
+						left_branch_means_vec[f] = 0.0;
+
+					if (right_feature_counts_vec != NULL && right_feature_counts_vec[f] > 0)
+						right_branch_means_vec[f] =
+							right_feature_sums_vec[f] /
+							(double) right_feature_counts_vec[f];
+					else if (feature_means_tmp != NULL && f < feature_dim)
+						right_branch_means_vec[f] = feature_means_tmp[f];
+					else
+						right_branch_means_vec[f] = left_branch_means_vec[f];
+				}
+			}
+
 			if ((left_total == 0 || right_total == 0) &&
 				feature_vars_tmp != NULL &&
+				sf < feature_dim &&
 				feature_vars_tmp[sf] > 0.0)
 			{
 				double adjust;
@@ -666,11 +1032,20 @@ bool	class_mean_threshold_valid = false;
 		{
 			if (feature_dim > 0 && feature_means_tmp != NULL)
 			{
-				double var0 = (feature_vars_tmp != NULL) ? feature_vars_tmp[0] : 0.0;
+				int tree_feature;
+				double var0 = 0.0;
 				double pivot;
 
-				split_feature = 0;
-				pivot = branch_threshold_valid ? branch_threshold : feature_means_tmp[0];
+				tree_feature = (split_feature >= 0 && split_feature < feature_dim)
+					? split_feature
+					: 0;
+				if (feature_vars_tmp != NULL)
+					var0 = feature_vars_tmp[tree_feature];
+
+				pivot = branch_threshold_valid
+					? branch_threshold
+					: feature_means_tmp[tree_feature];
+				split_feature = tree_feature;
 				split_threshold = pivot;
 				node_idx = gtree_add_split(stub_tree, split_feature, split_threshold);
 				left_idx = gtree_add_leaf(stub_tree, left_leaf_value);
@@ -697,12 +1072,20 @@ bool	class_mean_threshold_valid = false;
 	}
 
 	model_id = rf_stub_next_model_id++;
+	if (feature_limit > 0 &&
+		left_branch_means_vec == NULL &&
+		right_branch_means_vec == NULL)
+		feature_limit = 0;
+
 	rf_stub_store_model(model_id, feature_dim, n_samples, n_classes,
 		majority_value, majority_fraction, gini_impurity, label_entropy, class_counts_tmp,
 		feature_means_tmp, feature_vars_tmp, stub_tree,
 		split_feature, split_threshold, second_value, second_fraction,
 		left_leaf_value, left_branch_fraction, right_leaf_value, right_branch_fraction,
-		max_deviation, max_split_deviation);
+	max_deviation, max_split_deviation,
+	feature_limit,
+	left_branch_means_vec,
+	right_branch_means_vec);
 
 	elog(NOTICE,
 		"train_random_forest_classifier(minimal stub): rows=%d, classes=%d, dim=%d, majority=%.3f, frac=%.3f, second=%.3f, sfrac=%.3f, gini=%.3f, entropy=%.3f",
@@ -728,6 +1111,22 @@ bool	class_mean_threshold_valid = false;
 		pfree(feature_sums);
 	if (feature_sums_sq)
 		pfree(feature_sums_sq);
+	if (class_feature_sums)
+		pfree(class_feature_sums);
+	if (class_feature_counts)
+		pfree(class_feature_counts);
+	if (left_feature_sums_vec)
+		pfree(left_feature_sums_vec);
+	if (right_feature_sums_vec)
+		pfree(right_feature_sums_vec);
+	if (left_feature_counts_vec)
+		pfree(left_feature_counts_vec);
+	if (right_feature_counts_vec)
+		pfree(right_feature_counts_vec);
+	if (left_branch_means_vec)
+		pfree(left_branch_means_vec);
+	if (right_branch_means_vec)
+		pfree(right_branch_means_vec);
 
 	SPI_finish();
 
@@ -860,6 +1259,9 @@ predict_random_forest(PG_FUNCTION_ARGS)
 	const char *branch_name = "majority";
 	double branch_fraction = 0.0;
 	double branch_value = 0.0;
+	double left_mean_dist = -1.0;
+	double right_mean_dist = -1.0;
+	int mean_limit = 0;
 
 	if (!rf_stub_lookup_model(model_id, &model))
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -954,7 +1356,75 @@ predict_random_forest(PG_FUNCTION_ARGS)
 		}
 	}
 
+	if (feature_vec != NULL &&
+		model->feature_limit > 0 &&
+		model->left_branch_means != NULL &&
+		model->right_branch_means != NULL)
+	{
+		int limit = model->feature_limit;
+
+		if (feature_vec->dim < limit)
+			limit = feature_vec->dim;
+		if (model->n_features < limit)
+			limit = model->n_features;
+		if (limit > RF_STUB_MAX_FEATURES)
+			limit = RF_STUB_MAX_FEATURES;
+
+		if (limit > 0)
+		{
+			float *vec_data = feature_vec->data;
+			double ldist = 0.0;
+			double rdist = 0.0;
+			int f;
+
+			for (f = 0; f < limit; f++)
+			{
+				double val = (double) vec_data[f];
+				double lmean = model->left_branch_means[f];
+				double rmean = model->right_branch_means[f];
+				double diff_left = val - lmean;
+				double diff_right = val - rmean;
+
+				ldist += diff_left * diff_left;
+				rdist += diff_right * diff_right;
+			}
+
+			left_mean_dist = sqrt(ldist);
+			right_mean_dist = sqrt(rdist);
+			mean_limit = limit;
+		}
+	}
+
 	result = rf_stub_tree_predict(model, feature_vec);
+
+	if (mean_limit > 0)
+	{
+		elog(DEBUG1,
+			"random_forest stub: branch mean distances left=%.3f right=%.3f limit=%d",
+			left_mean_dist,
+			right_mean_dist,
+			mean_limit);
+
+		if (right_mean_dist >= 0.0 && left_mean_dist >= 0.0 &&
+			model->right_branch_fraction > 0.0 &&
+			right_mean_dist + 0.10 < left_mean_dist)
+		{
+			result = model->right_branch_value;
+			branch_name = "right-mean";
+			branch_fraction = model->right_branch_fraction;
+			branch_value = model->right_branch_value;
+		}
+		else if (left_mean_dist >= 0.0 && right_mean_dist >= 0.0 &&
+			model->left_branch_fraction > 0.0 &&
+			left_mean_dist + 0.10 < right_mean_dist)
+		{
+			result = model->left_branch_value;
+			branch_name = "left-mean";
+			branch_fraction = model->left_branch_fraction;
+			branch_value = model->left_branch_value;
+		}
+	}
+
 	if (model->feature_variances != NULL && model->second_fraction > 0.0 && !PG_ARGISNULL(1) &&
 		model->max_deviation > 2.0 && model->label_entropy > 0.1)
 	{
@@ -1003,14 +1473,16 @@ predict_random_forest(PG_FUNCTION_ARGS)
 				model->right_branch_fraction);
 	}
 
-	elog(NOTICE, "predict_random_forest stub: returning %.3f (branch %s leaf %.3f frac %.3f majority %.3f frac %.3f gini %.3f)",
+	elog(NOTICE, "predict_random_forest stub: returning %.3f (branch %s leaf %.3f frac %.3f majority %.3f frac %.3f gini %.3f ldist %.3f rdist %.3f)",
 		result,
 		branch_name,
 		branch_value,
 		branch_fraction,
 		model->majority_value,
 		model->majority_fraction,
-		model->gini_impurity);
+		model->gini_impurity,
+		left_mean_dist,
+		right_mean_dist);
 	PG_RETURN_FLOAT8(result);
 }
 
