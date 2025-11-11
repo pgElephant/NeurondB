@@ -204,6 +204,30 @@ _PG_init(void)
 #endif
 }
 
+#ifndef NDB_GPU_CUDA
+void
+neurondb_gpu_register_cuda_backend(void)
+{
+	/* CUDA backend not available; noop stub to satisfy loader. */
+}
+#endif
+
+#ifndef NDB_GPU_ROCM
+void
+neurondb_gpu_register_rocm_backend(void)
+{
+	/* ROCm backend not available; noop stub to satisfy loader. */
+}
+#endif
+
+#ifndef NDB_GPU_METAL
+void
+neurondb_gpu_register_metal_backend(void)
+{
+	/* Metal backend not available; noop stub to satisfy loader. */
+}
+#endif
+
 /*
  * Module unload callback
  */
