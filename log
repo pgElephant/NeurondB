@@ -1,0 +1,2181 @@
+2025-11-11 15:52:42.782 PKT [234573] LOG:  neurondb: initializing background workers
+2025-11-11 15:52:42.790 PKT [234573] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 15:52:42.790 PKT [234573] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 15:52:42.790 PKT [234573] LOG:  neurondb: registered neuranq background worker
+2025-11-11 15:52:42.790 PKT [234573] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 15:52:42.790 PKT [234573] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 15:52:42.790 PKT [234573] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 15:52:42.790 PKT [234573] LOG:  neurondb: all background workers registered successfully
+2025-11-11 15:52:42.823 PKT [234573] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 15:52:42.823 PKT [234573] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 15:52:42.823 PKT [234573] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 15:52:42.824 PKT [234573] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 15:52:42.830 PKT [234579] LOG:  database system was shut down at 2025-11-11 15:52:42 PKT
+2025-11-11 15:52:42.840 PKT [234573] LOG:  database system is ready to accept connections
+2025-11-11 15:52:42.845 PKT [234583] LOG:  neurondb: neurandefrag worker started (PID 234583)
+2025-11-11 15:52:42.853 PKT [234584] LOG:  neurondb: neuranmon worker started (PID 234584)
+2025-11-11 15:52:42.853 PKT [234585] LOG:  neurondb: neuranq worker started (PID 234585)
+2025-11-11 15:52:42.853 PKT [234582] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 15:52:42.857 PKT [234584] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 15:53:07.291 PKT [234640] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 15:53:07.291 PKT [234640] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 15:53:42.922 PKT [234584] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 15:54:43.007 PKT [234584] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 15:55:43.131 PKT [234584] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 15:56:43.230 PKT [234584] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 15:57:42.929 PKT [234577] LOG:  checkpoint starting: time
+2025-11-11 15:57:43.161 PKT [234577] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.121 s, sync=0.073 s, total=0.233 s; sync files=3, longest=0.072 s, average=0.025 s; distance=5 kB, estimate=5 kB; lsn=3/1A17F918, redo lsn=3/1A17F8C0
+2025-11-11 15:57:43.331 PKT [234584] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 15:58:43.439 PKT [234584] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 15:59:43.546 PKT [234584] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-11 16:00:43.649 PKT [234584] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-11 16:01:43.690 PKT [234584] LOG:  neurondb: tuned ef_search=385 (latency=0.00ms, recall=0.000)
+2025-11-11 16:02:05.872 PKT [234573] LOG:  received fast shutdown request
+2025-11-11 16:02:05.877 PKT [234573] LOG:  aborting any active transactions
+2025-11-11 16:02:05.877 PKT [234584] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:02:05.877 PKT [234585] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:02:05.877 PKT [234582] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:02:05.877 PKT [234583] LOG:  neurondb: neurandefrag worker shutting down (PID 234583)
+2025-11-11 16:02:05.912 PKT [234573] LOG:  background worker "logical replication launcher" (PID 234586) exited with exit code 1
+2025-11-11 16:02:05.913 PKT [234577] LOG:  shutting down
+2025-11-11 16:02:05.914 PKT [234577] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:02:05.920 PKT [234577] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.001 s, total=0.007 s; sync files=2, longest=0.001 s, average=0.001 s; distance=7 kB, estimate=7 kB; lsn=3/1A1816E8, redo lsn=3/1A1816E8
+2025-11-11 16:02:05.963 PKT [234573] LOG:  database system is shut down
+2025-11-11 16:02:06.002 PKT [241531] LOG:  neurondb: initializing background workers
+2025-11-11 16:02:06.009 PKT [241531] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:02:06.009 PKT [241531] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:02:06.010 PKT [241531] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:02:06.010 PKT [241531] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:02:06.010 PKT [241531] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:02:06.010 PKT [241531] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:02:06.010 PKT [241531] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:02:06.036 PKT [241531] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:02:06.036 PKT [241531] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:02:06.036 PKT [241531] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:02:06.037 PKT [241531] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:02:06.042 PKT [241537] LOG:  database system was shut down at 2025-11-11 16:02:05 PKT
+2025-11-11 16:02:06.051 PKT [241531] LOG:  database system is ready to accept connections
+2025-11-11 16:02:06.053 PKT [241541] LOG:  neurondb: neurandefrag worker started (PID 241541)
+2025-11-11 16:02:06.061 PKT [241543] LOG:  neurondb: neuranq worker started (PID 241543)
+2025-11-11 16:02:06.063 PKT [241540] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:02:06.065 PKT [241542] LOG:  neurondb: neuranmon worker started (PID 241542)
+2025-11-11 16:02:06.068 PKT [241542] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:02:29.356 PKT [241548] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 16:02:29.356 PKT [241548] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 16:03:06.091 PKT [241542] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:04:06.195 PKT [241542] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 16:05:06.296 PKT [241542] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 16:06:06.404 PKT [241542] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 16:07:06.133 PKT [241535] LOG:  checkpoint starting: time
+2025-11-11 16:07:06.365 PKT [241535] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.125 s, sync=0.067 s, total=0.233 s; sync files=3, longest=0.066 s, average=0.023 s; distance=9 kB, estimate=9 kB; lsn=3/1A183BA8, redo lsn=3/1A183B50
+2025-11-11 16:07:06.512 PKT [241542] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 16:08:06.618 PKT [241542] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 16:08:22.816 PKT [241531] LOG:  received fast shutdown request
+2025-11-11 16:08:22.853 PKT [241531] LOG:  aborting any active transactions
+2025-11-11 16:08:22.853 PKT [241540] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:08:22.853 PKT [241541] LOG:  neurondb: neurandefrag worker shutting down (PID 241541)
+2025-11-11 16:08:22.853 PKT [241542] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:08:22.853 PKT [241543] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:08:22.865 PKT [241531] LOG:  background worker "logical replication launcher" (PID 241544) exited with exit code 1
+2025-11-11 16:08:22.868 PKT [241535] LOG:  shutting down
+2025-11-11 16:08:22.869 PKT [241535] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:08:22.881 PKT [241535] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.005 s, total=0.013 s; sync files=2, longest=0.005 s, average=0.003 s; distance=8 kB, estimate=9 kB; lsn=3/1A185EB8, redo lsn=3/1A185EB8
+2025-11-11 16:08:22.933 PKT [241531] LOG:  database system is shut down
+2025-11-11 16:08:23.131 PKT [243303] LOG:  neurondb: initializing background workers
+2025-11-11 16:08:23.139 PKT [243303] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:08:23.139 PKT [243303] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:08:23.139 PKT [243303] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:08:23.139 PKT [243303] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:08:23.139 PKT [243303] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:08:23.139 PKT [243303] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:08:23.139 PKT [243303] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:08:23.166 PKT [243303] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:08:23.166 PKT [243303] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:08:23.166 PKT [243303] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:08:23.167 PKT [243303] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:08:23.173 PKT [243309] LOG:  database system was shut down at 2025-11-11 16:08:22 PKT
+2025-11-11 16:08:23.181 PKT [243303] LOG:  database system is ready to accept connections
+2025-11-11 16:08:23.184 PKT [243313] LOG:  neurondb: neurandefrag worker started (PID 243313)
+2025-11-11 16:08:23.190 PKT [243312] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:08:23.191 PKT [243314] LOG:  neurondb: neuranmon worker started (PID 243314)
+2025-11-11 16:08:23.194 PKT [243315] LOG:  neurondb: neuranq worker started (PID 243315)
+2025-11-11 16:08:23.195 PKT [243314] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:08:42.962 PKT [243320] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 16:08:42.962 PKT [243320] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 16:09:23.261 PKT [243314] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:10:23.366 PKT [243314] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 16:11:23.473 PKT [243314] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 16:12:23.483 PKT [243314] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 16:13:23.200 PKT [243307] LOG:  checkpoint starting: time
+2025-11-11 16:13:23.424 PKT [243307] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.107 s, sync=0.079 s, total=0.224 s; sync files=3, longest=0.078 s, average=0.027 s; distance=4 kB, estimate=4 kB; lsn=3/1A1872B8, redo lsn=3/1A187260
+2025-11-11 16:13:23.589 PKT [243314] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 16:14:12.784 PKT [243303] LOG:  received fast shutdown request
+2025-11-11 16:14:12.785 PKT [243303] LOG:  aborting any active transactions
+2025-11-11 16:14:12.785 PKT [243314] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:14:12.785 PKT [243313] LOG:  neurondb: neurandefrag worker shutting down (PID 243313)
+2025-11-11 16:14:12.785 PKT [243315] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:14:12.785 PKT [243312] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:14:12.794 PKT [243303] LOG:  background worker "logical replication launcher" (PID 243316) exited with exit code 1
+2025-11-11 16:14:12.798 PKT [243307] LOG:  shutting down
+2025-11-11 16:14:12.799 PKT [243307] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:14:12.805 PKT [243307] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.001 s, total=0.007 s; sync files=2, longest=0.001 s, average=0.001 s; distance=3 kB, estimate=4 kB; lsn=3/1A188110, redo lsn=3/1A188110
+2025-11-11 16:14:12.843 PKT [243303] LOG:  database system is shut down
+2025-11-11 16:14:12.922 PKT [245038] LOG:  neurondb: initializing background workers
+2025-11-11 16:14:12.930 PKT [245038] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:14:12.930 PKT [245038] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:14:12.930 PKT [245038] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:14:12.930 PKT [245038] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:14:12.930 PKT [245038] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:14:12.930 PKT [245038] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:14:12.930 PKT [245038] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:14:12.957 PKT [245038] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:14:12.957 PKT [245038] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:14:12.957 PKT [245038] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:14:12.959 PKT [245038] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:14:12.964 PKT [245044] LOG:  database system was shut down at 2025-11-11 16:14:12 PKT
+2025-11-11 16:14:12.974 PKT [245038] LOG:  database system is ready to accept connections
+2025-11-11 16:14:12.977 PKT [245048] LOG:  neurondb: neurandefrag worker started (PID 245048)
+2025-11-11 16:14:12.984 PKT [245049] LOG:  neurondb: neuranmon worker started (PID 245049)
+2025-11-11 16:14:12.988 PKT [245050] LOG:  neurondb: neuranq worker started (PID 245050)
+2025-11-11 16:14:12.988 PKT [245047] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:14:12.989 PKT [245049] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:14:32.277 PKT [245055] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 16:14:32.277 PKT [245055] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 16:15:13.050 PKT [245049] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:15:50.219 PKT [245038] LOG:  received fast shutdown request
+2025-11-11 16:15:50.256 PKT [245038] LOG:  aborting any active transactions
+2025-11-11 16:15:50.256 PKT [245049] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:15:50.256 PKT [245050] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:15:50.256 PKT [245047] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:15:50.256 PKT [245048] LOG:  neurondb: neurandefrag worker shutting down (PID 245048)
+2025-11-11 16:15:50.270 PKT [245038] LOG:  background worker "logical replication launcher" (PID 245051) exited with exit code 1
+2025-11-11 16:15:50.273 PKT [245042] LOG:  shutting down
+2025-11-11 16:15:50.273 PKT [245042] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:15:50.286 PKT [245042] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.011 s, sync=0.001 s, total=0.014 s; sync files=3, longest=0.001 s, average=0.001 s; distance=4 kB, estimate=4 kB; lsn=3/1A1893A8, redo lsn=3/1A1893A8
+2025-11-11 16:15:50.325 PKT [245038] LOG:  database system is shut down
+2025-11-11 16:15:50.547 PKT [246518] LOG:  neurondb: initializing background workers
+2025-11-11 16:15:50.554 PKT [246518] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:15:50.554 PKT [246518] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:15:50.554 PKT [246518] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:15:50.554 PKT [246518] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:15:50.554 PKT [246518] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:15:50.554 PKT [246518] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:15:50.554 PKT [246518] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:15:50.580 PKT [246518] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:15:50.580 PKT [246518] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:15:50.580 PKT [246518] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:15:50.581 PKT [246518] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:15:50.586 PKT [246524] LOG:  database system was shut down at 2025-11-11 16:15:50 PKT
+2025-11-11 16:15:50.594 PKT [246518] LOG:  database system is ready to accept connections
+2025-11-11 16:15:50.597 PKT [246528] LOG:  neurondb: neurandefrag worker started (PID 246528)
+2025-11-11 16:15:50.604 PKT [246530] LOG:  neurondb: neuranq worker started (PID 246530)
+2025-11-11 16:15:50.605 PKT [246529] LOG:  neurondb: neuranmon worker started (PID 246529)
+2025-11-11 16:15:50.607 PKT [246527] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:15:50.608 PKT [246529] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:15:55.123 PKT [246540] WARNING:  detected write past chunk end in SPI Proc 0x73d1aa837038
+2025-11-11 16:15:55.123 PKT [246540] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 44 at RETURN
+2025-11-11 16:15:55.196 PKT [246540] WARNING:  problem in alloc set SPI TupTable: corrupt header in block 0x73d1aaaa9010
+2025-11-11 16:15:55.196 PKT [246540] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 44 at RETURN
+TRAP: failed Assert("!HdrMaskIsExternal(chunk->hdrmask) || HdrMaskCheckMagic(chunk->hdrmask)"), File: "/home/pge/src/postgresql-18/build/../src/include/utils/memutils_memorychunk.h", Line: 210, PID: 246540
+postgres: pge postgres [local] SELECT(ExceptionalCondition+0xbb)[0x645814f99c10]
+postgres: pge postgres [local] SELECT(+0x95960f)[0x645814fd260f]
+postgres: pge postgres [local] SELECT(AllocSetCheck+0x1bd)[0x645814fd4723]
+postgres: pge postgres [local] SELECT(AllocSetDelete+0x62)[0x645814fd2e12]
+postgres: pge postgres [local] SELECT(+0x967613)[0x645814fe0613]
+postgres: pge postgres [local] SELECT(MemoryContextDelete+0xa4)[0x645814fe04d3]
+postgres: pge postgres [local] SELECT(SPI_finish+0x6f)[0x645814af5b09]
+/usr/local/pgsql.18/lib/neurondb.so(train_random_forest_classifier+0x3f0d)[0x73d2866bcd8a]
+postgres: pge postgres [local] SELECT(+0x400fd7)[0x645814a79fd7]
+postgres: pge postgres [local] SELECT(ExecInterpExprStillValid+0x5b)[0x645814a7cdfc]
+/usr/local/pgsql.18/lib/plpgsql.so(+0xdc79)[0x73d283d8cc79]
+/usr/local/pgsql.18/lib/plpgsql.so(+0x199bf)[0x73d283d989bf]
+/usr/local/pgsql.18/lib/plpgsql.so(+0x18c8b)[0x73d283d97c8b]
+/usr/local/pgsql.18/lib/plpgsql.so(+0x13c60)[0x73d283d92c60]
+/usr/local/pgsql.18/lib/plpgsql.so(+0x112da)[0x73d283d902da]
+/usr/local/pgsql.18/lib/plpgsql.so(+0x12544)[0x73d283d91544]
+/usr/local/pgsql.18/lib/plpgsql.so(+0x11202)[0x73d283d90202]
+/usr/local/pgsql.18/lib/plpgsql.so(+0x10f12)[0x73d283d8ff12]
+/usr/local/pgsql.18/lib/plpgsql.so(+0x10616)[0x73d283d8f616]
+/usr/local/pgsql.18/lib/plpgsql.so(+0xe2a5)[0x73d283d8d2a5]
+/usr/local/pgsql.18/lib/plpgsql.so(plpgsql_call_handler+0x25f)[0x73d283dac640]
+postgres: pge postgres [local] SELECT(+0x400fd7)[0x645814a79fd7]
+postgres: pge postgres [local] SELECT(ExecInterpExprStillValid+0x5b)[0x645814a7cdfc]
+postgres: pge postgres [local] SELECT(+0x4681a6)[0x645814ae11a6]
+postgres: pge postgres [local] SELECT(+0x468264)[0x645814ae1264]
+postgres: pge postgres [local] SELECT(+0x4682c5)[0x645814ae12c5]
+postgres: pge postgres [local] SELECT(+0x4684e8)[0x645814ae14e8]
+postgres: pge postgres [local] SELECT(+0x41de1a)[0x645814a96e1a]
+postgres: pge postgres [local] SELECT(+0x410374)[0x645814a89374]
+postgres: pge postgres [local] SELECT(+0x413327)[0x645814a8c327]
+postgres: pge postgres [local] SELECT(standard_ExecutorRun+0x19f)[0x645814a89a37]
+postgres: pge postgres [local] SELECT(ExecutorRun+0x54)[0x645814a89895]
+postgres: pge postgres [local] SELECT(+0x71543b)[0x645814d8e43b]
+postgres: pge postgres [local] SELECT(PortalRun+0x26b)[0x645814d8e06f]
+postgres: pge postgres [local] SELECT(+0x70d7e0)[0x645814d867e0]
+postgres: pge postgres [local] SELECT(PostgresMain+0xb43)[0x645814d8bf95]
+postgres: pge postgres [local] SELECT(+0x708d7f)[0x645814d81d7f]
+postgres: pge postgres [local] SELECT(postmaster_child_launch+0x174)[0x645814c81048]
+postgres: pge postgres [local] SELECT(+0x60eb3a)[0x645814c87b3a]
+postgres: pge postgres [local] SELECT(+0x60c009)[0x645814c85009]
+postgres: pge postgres [local] SELECT(PostmasterMain+0x1546)[0x645814c848f8]
+postgres: pge postgres [local] SELECT(main+0x38c)[0x645814b208a8]
+/lib/x86_64-linux-gnu/libc.so.6(+0x2a1ca)[0x73d28602a1ca]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x8b)[0x73d28602a28b]
+postgres: pge postgres [local] SELECT(_start+0x25)[0x64581475fb35]
+2025-11-11 16:15:55.371 PKT [246518] LOG:  client backend (PID 246540) was terminated by signal 6: Aborted
+2025-11-11 16:15:55.371 PKT [246518] DETAIL:  Failed process was running: SELECT neurondb.train(
+		'random_forest',
+		'neurondb_cpu_gpu_train',
+		'features',
+		'label',
+		jsonb_build_object(
+			'n_trees', 120,
+			'max_depth', 12,
+			'min_samples_split', 2,
+			'max_features', 0
+		)
+	) AS cpu_model_id 
+2025-11-11 16:15:55.371 PKT [246518] LOG:  terminating any other active server processes
+2025-11-11 16:15:55.373 PKT [246518] LOG:  all server processes terminated; reinitializing
+2025-11-11 16:15:55.407 PKT [246518] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:15:55.409 PKT [246556] LOG:  database system was interrupted; last known up at 2025-11-11 16:15:50 PKT
+2025-11-11 16:15:55.429 PKT [246556] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 16:15:55.430 PKT [246556] LOG:  redo starts at 3/1A189420
+2025-11-11 16:15:55.430 PKT [246556] LOG:  invalid record length at 3/1A18A5C8: expected at least 24, got 0
+2025-11-11 16:15:55.430 PKT [246556] LOG:  redo done at 3/1A18A5A0 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-11 16:15:55.432 PKT [246557] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 16:15:55.440 PKT [246557] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.001 s, total=0.009 s; sync files=3, longest=0.001 s, average=0.001 s; distance=4 kB, estimate=4 kB; lsn=3/1A18A5C8, redo lsn=3/1A18A5C8
+2025-11-11 16:15:55.448 PKT [246518] LOG:  database system is ready to accept connections
+2025-11-11 16:15:55.451 PKT [246562] LOG:  neurondb: neurandefrag worker started (PID 246562)
+2025-11-11 16:15:55.458 PKT [246563] LOG:  neurondb: neuranmon worker started (PID 246563)
+2025-11-11 16:15:55.462 PKT [246561] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:15:55.462 PKT [246564] LOG:  neurondb: neuranq worker started (PID 246564)
+2025-11-11 16:15:55.462 PKT [246563] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:16:55.474 PKT [246563] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:17:55.576 PKT [246563] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 16:18:55.620 PKT [246563] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 16:19:55.699 PKT [246563] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 16:20:55.509 PKT [246557] LOG:  checkpoint starting: time
+2025-11-11 16:20:55.665 PKT [246557] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.110 s, sync=0.008 s, total=0.157 s; sync files=2, longest=0.005 s, average=0.004 s; distance=7 kB, estimate=7 kB; lsn=3/1A18C548, redo lsn=3/1A18C4F0
+2025-11-11 16:20:55.748 PKT [246563] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 16:21:51.781 PKT [246518] LOG:  received fast shutdown request
+2025-11-11 16:21:51.817 PKT [246518] LOG:  aborting any active transactions
+2025-11-11 16:21:51.818 PKT [246563] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:21:51.818 PKT [246562] LOG:  neurondb: neurandefrag worker shutting down (PID 246562)
+2025-11-11 16:21:51.818 PKT [246564] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:21:51.818 PKT [246561] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:21:51.831 PKT [246518] LOG:  background worker "logical replication launcher" (PID 246565) exited with exit code 1
+2025-11-11 16:21:51.833 PKT [246557] LOG:  shutting down
+2025-11-11 16:21:51.833 PKT [246557] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:21:51.845 PKT [246557] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.005 s, total=0.013 s; sync files=2, longest=0.005 s, average=0.003 s; distance=6 kB, estimate=7 kB; lsn=3/1A18DF10, redo lsn=3/1A18DF10
+2025-11-11 16:21:51.884 PKT [246518] LOG:  database system is shut down
+2025-11-11 16:21:52.104 PKT [248521] LOG:  neurondb: initializing background workers
+2025-11-11 16:21:52.111 PKT [248521] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:21:52.111 PKT [248521] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:21:52.111 PKT [248521] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:21:52.111 PKT [248521] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:21:52.111 PKT [248521] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:21:52.111 PKT [248521] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:21:52.111 PKT [248521] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:21:52.137 PKT [248521] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:21:52.137 PKT [248521] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:21:52.137 PKT [248521] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:21:52.138 PKT [248521] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:21:52.143 PKT [248527] LOG:  database system was shut down at 2025-11-11 16:21:51 PKT
+2025-11-11 16:21:52.151 PKT [248521] LOG:  database system is ready to accept connections
+2025-11-11 16:21:52.154 PKT [248531] LOG:  neurondb: neurandefrag worker started (PID 248531)
+2025-11-11 16:21:52.160 PKT [248533] LOG:  neurondb: neuranq worker started (PID 248533)
+2025-11-11 16:21:52.162 PKT [248532] LOG:  neurondb: neuranmon worker started (PID 248532)
+2025-11-11 16:21:52.162 PKT [248530] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:21:52.165 PKT [248532] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:22:11.774 PKT [248542] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 16:22:11.774 PKT [248542] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 16:22:52.224 PKT [248532] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:23:52.328 PKT [248532] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 16:24:52.389 PKT [248532] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 16:25:52.487 PKT [248532] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 16:26:52.207 PKT [248525] LOG:  checkpoint starting: time
+2025-11-11 16:26:52.375 PKT [248525] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.115 s, sync=0.011 s, total=0.169 s; sync files=3, longest=0.010 s, average=0.004 s; distance=10 kB, estimate=10 kB; lsn=3/1A190778, redo lsn=3/1A190720
+2025-11-11 16:26:52.585 PKT [248532] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 16:27:52.682 PKT [248532] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 16:28:52.784 PKT [248532] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-11 16:29:52.880 PKT [248532] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-11 16:30:52.959 PKT [248532] LOG:  neurondb: tuned ef_search=385 (latency=0.00ms, recall=0.000)
+2025-11-11 16:31:52.476 PKT [248525] LOG:  checkpoint starting: time
+2025-11-11 16:31:52.711 PKT [248525] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.119 s, sync=0.077 s, total=0.236 s; sync files=2, longest=0.076 s, average=0.039 s; distance=4 kB, estimate=9 kB; lsn=3/1A191B48, redo lsn=3/1A191AF0
+2025-11-11 16:31:53.061 PKT [248532] LOG:  neurondb: tuned ef_search=462 (latency=0.00ms, recall=0.000)
+2025-11-11 16:32:53.114 PKT [248532] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 16:33:53.179 PKT [248532] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 16:34:53.286 PKT [248532] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 16:35:53.391 PKT [248532] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 16:36:38.356 PKT [248521] LOG:  received fast shutdown request
+2025-11-11 16:36:38.395 PKT [248521] LOG:  aborting any active transactions
+2025-11-11 16:36:38.396 PKT [248532] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:36:38.396 PKT [248531] LOG:  neurondb: neurandefrag worker shutting down (PID 248531)
+2025-11-11 16:36:38.396 PKT [248533] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:36:38.396 PKT [248530] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:36:38.409 PKT [248521] LOG:  background worker "logical replication launcher" (PID 248534) exited with exit code 1
+2025-11-11 16:36:38.412 PKT [248525] LOG:  shutting down
+2025-11-11 16:36:38.413 PKT [248525] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:36:38.432 PKT [248525] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.010 s, sync=0.001 s, total=0.020 s; sync files=2, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=9 kB; lsn=3/1A193570, redo lsn=3/1A193570
+2025-11-11 16:36:38.481 PKT [248521] LOG:  database system is shut down
+2025-11-11 16:36:38.686 PKT [250950] LOG:  neurondb: initializing background workers
+2025-11-11 16:36:38.693 PKT [250950] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:36:38.693 PKT [250950] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:36:38.693 PKT [250950] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:36:38.693 PKT [250950] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:36:38.693 PKT [250950] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:36:38.693 PKT [250950] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:36:38.693 PKT [250950] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:36:38.718 PKT [250950] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:36:38.718 PKT [250950] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:36:38.718 PKT [250950] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:36:38.720 PKT [250950] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:36:38.724 PKT [250956] LOG:  database system was shut down at 2025-11-11 16:36:38 PKT
+2025-11-11 16:36:38.733 PKT [250950] LOG:  database system is ready to accept connections
+2025-11-11 16:36:38.735 PKT [250960] LOG:  neurondb: neurandefrag worker started (PID 250960)
+2025-11-11 16:36:38.743 PKT [250962] LOG:  neurondb: neuranq worker started (PID 250962)
+2025-11-11 16:36:38.744 PKT [250959] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:36:38.744 PKT [250961] LOG:  neurondb: neuranmon worker started (PID 250961)
+2025-11-11 16:36:38.747 PKT [250961] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:36:54.262 PKT [250972] LOG:  could not send data to client: Broken pipe
+2025-11-11 16:36:54.262 PKT [250972] STATEMENT:  WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(1::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc
+2025-11-11 16:36:54.262 PKT [250972] FATAL:  connection to client lost
+2025-11-11 16:36:54.262 PKT [250972] STATEMENT:  WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(1::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc
+2025-11-11 16:37:33.793 PKT [250950] LOG:  received fast shutdown request
+2025-11-11 16:37:33.831 PKT [250950] LOG:  aborting any active transactions
+2025-11-11 16:37:33.831 PKT [250961] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:37:33.831 PKT [250960] LOG:  neurondb: neurandefrag worker shutting down (PID 250960)
+2025-11-11 16:37:33.831 PKT [250962] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:37:33.831 PKT [250959] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:37:33.848 PKT [250950] LOG:  background worker "logical replication launcher" (PID 250963) exited with exit code 1
+2025-11-11 16:37:33.848 PKT [250954] LOG:  shutting down
+2025-11-11 16:37:33.849 PKT [250954] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:37:33.872 PKT [250954] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.022 s, sync=0.001 s, total=0.025 s; sync files=3, longest=0.001 s, average=0.001 s; distance=5 kB, estimate=5 kB; lsn=3/1A194A78, redo lsn=3/1A194A78
+2025-11-11 16:37:33.921 PKT [250950] LOG:  database system is shut down
+2025-11-11 16:37:34.115 PKT [252996] LOG:  neurondb: initializing background workers
+2025-11-11 16:37:34.123 PKT [252996] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:37:34.123 PKT [252996] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:37:34.123 PKT [252996] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:37:34.123 PKT [252996] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:37:34.123 PKT [252996] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:37:34.123 PKT [252996] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:37:34.123 PKT [252996] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:37:34.151 PKT [252996] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:37:34.151 PKT [252996] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:37:34.151 PKT [252996] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:37:34.152 PKT [252996] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:37:34.156 PKT [253002] LOG:  database system was shut down at 2025-11-11 16:37:33 PKT
+2025-11-11 16:37:34.169 PKT [252996] LOG:  database system is ready to accept connections
+2025-11-11 16:37:34.171 PKT [253006] LOG:  neurondb: neurandefrag worker started (PID 253006)
+2025-11-11 16:37:34.180 PKT [253005] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:37:34.180 PKT [253008] LOG:  neurondb: neuranq worker started (PID 253008)
+2025-11-11 16:37:34.180 PKT [253007] LOG:  neurondb: neuranmon worker started (PID 253007)
+2025-11-11 16:37:34.184 PKT [253007] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:37:55.921 PKT [253022] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 16:37:55.921 PKT [253022] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 16:38:34.251 PKT [253007] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:39:34.354 PKT [253007] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 16:40:34.435 PKT [253007] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 16:41:34.479 PKT [253007] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 16:42:34.237 PKT [253000] LOG:  checkpoint starting: time
+2025-11-11 16:42:34.436 PKT [253000] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.124 s, sync=0.072 s, total=0.200 s; sync files=3, longest=0.071 s, average=0.024 s; distance=8 kB, estimate=8 kB; lsn=3/1A196CA0, redo lsn=3/1A196C48
+2025-11-11 16:42:34.583 PKT [253007] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 16:43:34.675 PKT [253007] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 16:44:34.779 PKT [253007] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-11 16:45:34.884 PKT [253007] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-11 16:45:53.537 PKT [252996] LOG:  received fast shutdown request
+2025-11-11 16:45:53.573 PKT [252996] LOG:  aborting any active transactions
+2025-11-11 16:45:53.573 PKT [253006] LOG:  neurondb: neurandefrag worker shutting down (PID 253006)
+2025-11-11 16:45:53.573 PKT [253008] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:45:53.573 PKT [253007] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:45:53.573 PKT [253005] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:45:53.582 PKT [252996] LOG:  background worker "logical replication launcher" (PID 253009) exited with exit code 1
+2025-11-11 16:45:53.585 PKT [253000] LOG:  shutting down
+2025-11-11 16:45:53.585 PKT [253000] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:45:53.592 PKT [253000] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.001 s, total=0.007 s; sync files=2, longest=0.001 s, average=0.001 s; distance=9 kB, estimate=9 kB; lsn=3/1A1992E8, redo lsn=3/1A1992E8
+2025-11-11 16:45:53.632 PKT [252996] LOG:  database system is shut down
+2025-11-11 16:45:53.663 PKT [254891] LOG:  neurondb: initializing background workers
+2025-11-11 16:45:53.671 PKT [254891] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:45:53.671 PKT [254891] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:45:53.671 PKT [254891] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:45:53.671 PKT [254891] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:45:53.671 PKT [254891] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:45:53.671 PKT [254891] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:45:53.671 PKT [254891] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:45:53.698 PKT [254891] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:45:53.698 PKT [254891] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:45:53.699 PKT [254891] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:45:53.700 PKT [254891] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:45:53.705 PKT [254897] LOG:  database system was shut down at 2025-11-11 16:45:53 PKT
+2025-11-11 16:45:53.717 PKT [254891] LOG:  database system is ready to accept connections
+2025-11-11 16:45:53.720 PKT [254901] LOG:  neurondb: neurandefrag worker started (PID 254901)
+2025-11-11 16:45:53.727 PKT [254902] LOG:  neurondb: neuranmon worker started (PID 254902)
+2025-11-11 16:45:53.727 PKT [254900] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:45:53.727 PKT [254903] LOG:  neurondb: neuranq worker started (PID 254903)
+2025-11-11 16:45:53.731 PKT [254902] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:46:15.720 PKT [254913] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 16:46:15.720 PKT [254913] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 16:46:53.798 PKT [254902] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:47:22.339 PKT [254891] LOG:  received fast shutdown request
+2025-11-11 16:47:22.376 PKT [254891] LOG:  aborting any active transactions
+2025-11-11 16:47:22.376 PKT [254901] LOG:  neurondb: neurandefrag worker shutting down (PID 254901)
+2025-11-11 16:47:22.376 PKT [254902] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:47:22.376 PKT [254903] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:47:22.376 PKT [254900] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:47:22.385 PKT [254891] LOG:  background worker "logical replication launcher" (PID 254904) exited with exit code 1
+2025-11-11 16:47:22.387 PKT [254895] LOG:  shutting down
+2025-11-11 16:47:22.388 PKT [254895] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:47:22.404 PKT [254895] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.007 s, sync=0.001 s, total=0.017 s; sync files=3, longest=0.001 s, average=0.001 s; distance=2 kB, estimate=2 kB; lsn=3/1A199DD0, redo lsn=3/1A199DD0
+2025-11-11 16:47:22.445 PKT [254891] LOG:  database system is shut down
+2025-11-11 16:47:22.633 PKT [256339] LOG:  neurondb: initializing background workers
+2025-11-11 16:47:22.640 PKT [256339] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:47:22.640 PKT [256339] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:47:22.640 PKT [256339] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:47:22.640 PKT [256339] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:47:22.640 PKT [256339] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:47:22.640 PKT [256339] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:47:22.640 PKT [256339] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:47:22.667 PKT [256339] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:47:22.667 PKT [256339] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:47:22.667 PKT [256339] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:47:22.668 PKT [256339] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:47:22.673 PKT [256345] LOG:  database system was shut down at 2025-11-11 16:47:22 PKT
+2025-11-11 16:47:22.684 PKT [256339] LOG:  database system is ready to accept connections
+2025-11-11 16:47:22.687 PKT [256349] LOG:  neurondb: neurandefrag worker started (PID 256349)
+2025-11-11 16:47:22.693 PKT [256351] LOG:  neurondb: neuranq worker started (PID 256351)
+2025-11-11 16:47:22.694 PKT [256350] LOG:  neurondb: neuranmon worker started (PID 256350)
+2025-11-11 16:47:22.696 PKT [256348] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:47:22.698 PKT [256350] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:47:43.853 PKT [256356] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 16:47:43.853 PKT [256356] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 16:48:22.764 PKT [256350] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:49:22.814 PKT [256350] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 16:50:22.920 PKT [256350] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 16:51:22.990 PKT [256350] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 16:52:22.773 PKT [256343] LOG:  checkpoint starting: time
+2025-11-11 16:52:23.007 PKT [256343] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.122 s, sync=0.072 s, total=0.235 s; sync files=3, longest=0.072 s, average=0.024 s; distance=5 kB, estimate=5 kB; lsn=3/1A19B458, redo lsn=3/1A19B400
+2025-11-11 16:52:23.097 PKT [256350] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 16:53:23.169 PKT [256350] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 16:54:23.256 PKT [256350] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-11 16:55:23.356 PKT [256350] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-11 16:55:51.145 PKT [256339] LOG:  received fast shutdown request
+2025-11-11 16:55:51.151 PKT [256339] LOG:  aborting any active transactions
+2025-11-11 16:55:51.152 PKT [256349] LOG:  neurondb: neurandefrag worker shutting down (PID 256349)
+2025-11-11 16:55:51.152 PKT [256348] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:55:51.152 PKT [256351] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:55:51.152 PKT [256350] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:55:51.184 PKT [256339] LOG:  background worker "logical replication launcher" (PID 256352) exited with exit code 1
+2025-11-11 16:55:51.192 PKT [256343] LOG:  shutting down
+2025-11-11 16:55:51.192 PKT [256343] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:55:51.203 PKT [256343] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.009 s, sync=0.001 s, total=0.011 s; sync files=2, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=6 kB; lsn=3/1A19CDE8, redo lsn=3/1A19CDE8
+2025-11-11 16:55:51.247 PKT [256339] LOG:  database system is shut down
+2025-11-11 16:55:51.394 PKT [258199] LOG:  neurondb: initializing background workers
+2025-11-11 16:55:51.402 PKT [258199] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:55:51.402 PKT [258199] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:55:51.402 PKT [258199] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:55:51.402 PKT [258199] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:55:51.402 PKT [258199] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:55:51.402 PKT [258199] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:55:51.402 PKT [258199] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:55:51.430 PKT [258199] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:55:51.430 PKT [258199] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:55:51.430 PKT [258199] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:55:51.431 PKT [258199] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:55:51.436 PKT [258205] LOG:  database system was shut down at 2025-11-11 16:55:51 PKT
+2025-11-11 16:55:51.448 PKT [258199] LOG:  database system is ready to accept connections
+2025-11-11 16:55:51.452 PKT [258209] LOG:  neurondb: neurandefrag worker started (PID 258209)
+2025-11-11 16:55:51.459 PKT [258208] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:55:51.459 PKT [258211] LOG:  neurondb: neuranq worker started (PID 258211)
+2025-11-11 16:55:51.459 PKT [258210] LOG:  neurondb: neuranmon worker started (PID 258210)
+2025-11-11 16:55:51.464 PKT [258210] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:56:16.170 PKT [258221] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 16:56:16.170 PKT [258221] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 16:56:51.503 PKT [258210] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:57:19.796 PKT [258199] LOG:  received fast shutdown request
+2025-11-11 16:57:19.818 PKT [258199] LOG:  aborting any active transactions
+2025-11-11 16:57:19.818 PKT [258210] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:57:19.818 PKT [258209] LOG:  neurondb: neurandefrag worker shutting down (PID 258209)
+2025-11-11 16:57:19.818 PKT [258211] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:57:19.818 PKT [258208] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:57:19.834 PKT [258199] LOG:  background worker "logical replication launcher" (PID 258212) exited with exit code 1
+2025-11-11 16:57:19.839 PKT [258203] LOG:  shutting down
+2025-11-11 16:57:19.845 PKT [258203] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:57:19.860 PKT [258203] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.011 s, sync=0.001 s, total=0.021 s; sync files=3, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=6 kB; lsn=3/1A19E708, redo lsn=3/1A19E708
+2025-11-11 16:57:19.912 PKT [258199] LOG:  database system is shut down
+2025-11-11 16:57:20.107 PKT [261111] LOG:  neurondb: initializing background workers
+2025-11-11 16:57:20.115 PKT [261111] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:57:20.115 PKT [261111] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:57:20.115 PKT [261111] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:57:20.115 PKT [261111] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:57:20.115 PKT [261111] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:57:20.115 PKT [261111] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:57:20.115 PKT [261111] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:57:20.143 PKT [261111] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:57:20.143 PKT [261111] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:57:20.143 PKT [261111] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:57:20.144 PKT [261111] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:57:20.149 PKT [261117] LOG:  database system was shut down at 2025-11-11 16:57:19 PKT
+2025-11-11 16:57:20.157 PKT [261111] LOG:  database system is ready to accept connections
+2025-11-11 16:57:20.160 PKT [261121] LOG:  neurondb: neurandefrag worker started (PID 261121)
+2025-11-11 16:57:20.166 PKT [261120] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:57:20.166 PKT [261122] LOG:  neurondb: neuranmon worker started (PID 261122)
+2025-11-11 16:57:20.167 PKT [261123] LOG:  neurondb: neuranq worker started (PID 261123)
+2025-11-11 16:57:20.171 PKT [261122] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:57:37.280 PKT [261128] ERROR:  canceling statement due to user request
+2025-11-11 16:57:37.280 PKT [261128] STATEMENT:  WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(1::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc
+2025-11-11 16:58:20.237 PKT [261122] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 16:58:22.595 PKT [261111] LOG:  received fast shutdown request
+2025-11-11 16:58:22.632 PKT [261111] LOG:  aborting any active transactions
+2025-11-11 16:58:22.632 PKT [261123] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 16:58:22.632 PKT [261120] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 16:58:22.632 PKT [261121] LOG:  neurondb: neurandefrag worker shutting down (PID 261121)
+2025-11-11 16:58:22.632 PKT [261122] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 16:58:22.657 PKT [261111] LOG:  background worker "logical replication launcher" (PID 261124) exited with exit code 1
+2025-11-11 16:58:22.658 PKT [261115] LOG:  shutting down
+2025-11-11 16:58:22.659 PKT [261115] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 16:58:22.669 PKT [261115] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.008 s, sync=0.001 s, total=0.012 s; sync files=3, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=6 kB; lsn=3/1A1A02A8, redo lsn=3/1A1A02A8
+2025-11-11 16:58:22.706 PKT [261111] LOG:  database system is shut down
+2025-11-11 16:58:22.907 PKT [262584] LOG:  neurondb: initializing background workers
+2025-11-11 16:58:22.914 PKT [262584] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 16:58:22.914 PKT [262584] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 16:58:22.914 PKT [262584] LOG:  neurondb: registered neuranq background worker
+2025-11-11 16:58:22.914 PKT [262584] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 16:58:22.914 PKT [262584] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 16:58:22.914 PKT [262584] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 16:58:22.914 PKT [262584] LOG:  neurondb: all background workers registered successfully
+2025-11-11 16:58:22.941 PKT [262584] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 16:58:22.941 PKT [262584] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 16:58:22.941 PKT [262584] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 16:58:22.942 PKT [262584] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 16:58:22.947 PKT [262590] LOG:  database system was shut down at 2025-11-11 16:58:22 PKT
+2025-11-11 16:58:22.959 PKT [262584] LOG:  database system is ready to accept connections
+2025-11-11 16:58:22.962 PKT [262594] LOG:  neurondb: neurandefrag worker started (PID 262594)
+2025-11-11 16:58:22.970 PKT [262593] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 16:58:22.970 PKT [262596] LOG:  neurondb: neuranq worker started (PID 262596)
+2025-11-11 16:58:22.972 PKT [262595] LOG:  neurondb: neuranmon worker started (PID 262595)
+2025-11-11 16:58:22.975 PKT [262595] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 16:58:46.854 PKT [262606] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 16:58:46.854 PKT [262606] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 16:59:23.024 PKT [262595] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:00:22.640 PKT [262584] LOG:  received fast shutdown request
+2025-11-11 17:00:22.641 PKT [262584] LOG:  aborting any active transactions
+2025-11-11 17:00:22.641 PKT [262593] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 17:00:22.641 PKT [262595] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 17:00:22.641 PKT [262596] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 17:00:22.641 PKT [262594] LOG:  neurondb: neurandefrag worker shutting down (PID 262594)
+2025-11-11 17:00:22.654 PKT [262584] LOG:  background worker "logical replication launcher" (PID 262597) exited with exit code 1
+2025-11-11 17:00:22.657 PKT [262588] LOG:  shutting down
+2025-11-11 17:00:22.657 PKT [262588] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 17:00:22.672 PKT [262588] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.012 s, sync=0.001 s, total=0.016 s; sync files=3, longest=0.001 s, average=0.001 s; distance=7 kB, estimate=7 kB; lsn=3/1A1A20D8, redo lsn=3/1A1A20D8
+2025-11-11 17:00:22.715 PKT [262584] LOG:  database system is shut down
+2025-11-11 17:00:22.774 PKT [264091] LOG:  neurondb: initializing background workers
+2025-11-11 17:00:22.781 PKT [264091] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 17:00:22.781 PKT [264091] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 17:00:22.781 PKT [264091] LOG:  neurondb: registered neuranq background worker
+2025-11-11 17:00:22.781 PKT [264091] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 17:00:22.781 PKT [264091] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 17:00:22.781 PKT [264091] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 17:00:22.781 PKT [264091] LOG:  neurondb: all background workers registered successfully
+2025-11-11 17:00:22.808 PKT [264091] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:00:22.808 PKT [264091] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 17:00:22.808 PKT [264091] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 17:00:22.809 PKT [264091] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 17:00:22.814 PKT [264097] LOG:  database system was shut down at 2025-11-11 17:00:22 PKT
+2025-11-11 17:00:22.821 PKT [264091] LOG:  database system is ready to accept connections
+2025-11-11 17:00:22.824 PKT [264101] LOG:  neurondb: neurandefrag worker started (PID 264101)
+2025-11-11 17:00:22.831 PKT [264102] LOG:  neurondb: neuranmon worker started (PID 264102)
+2025-11-11 17:00:22.831 PKT [264100] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:00:22.831 PKT [264103] LOG:  neurondb: neuranq worker started (PID 264103)
+2025-11-11 17:00:22.835 PKT [264102] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:00:45.464 PKT [264108] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 17:00:45.464 PKT [264108] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 17:01:22.899 PKT [264102] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:02:22.986 PKT [264102] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 17:03:23.021 PKT [264102] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 17:04:23.124 PKT [264102] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 17:05:22.821 PKT [264095] LOG:  checkpoint starting: time
+2025-11-11 17:05:23.012 PKT [264095] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.121 s, sync=0.065 s, total=0.191 s; sync files=3, longest=0.064 s, average=0.022 s; distance=10 kB, estimate=10 kB; lsn=3/1A1A4BB0, redo lsn=3/1A1A4B58
+2025-11-11 17:05:23.231 PKT [264102] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 17:06:23.339 PKT [264102] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 17:07:23.443 PKT [264102] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-11 17:07:57.644 PKT [264091] LOG:  received fast shutdown request
+2025-11-11 17:07:57.681 PKT [264091] LOG:  aborting any active transactions
+2025-11-11 17:07:57.681 PKT [264103] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 17:07:57.681 PKT [264100] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 17:07:57.681 PKT [264102] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 17:07:57.681 PKT [264101] LOG:  neurondb: neurandefrag worker shutting down (PID 264101)
+2025-11-11 17:07:57.694 PKT [264091] LOG:  background worker "logical replication launcher" (PID 264104) exited with exit code 1
+2025-11-11 17:07:57.697 PKT [264095] LOG:  shutting down
+2025-11-11 17:07:57.697 PKT [264095] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 17:07:57.709 PKT [264095] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.007 s, sync=0.003 s, total=0.013 s; sync files=2, longest=0.003 s, average=0.002 s; distance=4 kB, estimate=9 kB; lsn=3/1A1A5BF0, redo lsn=3/1A1A5BF0
+2025-11-11 17:07:57.764 PKT [264091] LOG:  database system is shut down
+2025-11-11 17:07:57.952 PKT [267725] LOG:  neurondb: initializing background workers
+2025-11-11 17:07:57.959 PKT [267725] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 17:07:57.959 PKT [267725] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 17:07:57.959 PKT [267725] LOG:  neurondb: registered neuranq background worker
+2025-11-11 17:07:57.959 PKT [267725] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 17:07:57.959 PKT [267725] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 17:07:57.959 PKT [267725] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 17:07:57.959 PKT [267725] LOG:  neurondb: all background workers registered successfully
+2025-11-11 17:07:57.986 PKT [267725] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:07:57.986 PKT [267725] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 17:07:57.986 PKT [267725] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 17:07:57.987 PKT [267725] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 17:07:57.993 PKT [267736] LOG:  database system was shut down at 2025-11-11 17:07:57 PKT
+2025-11-11 17:07:58.001 PKT [267725] LOG:  database system is ready to accept connections
+2025-11-11 17:07:58.004 PKT [267740] LOG:  neurondb: neurandefrag worker started (PID 267740)
+2025-11-11 17:07:58.010 PKT [267742] LOG:  neurondb: neuranq worker started (PID 267742)
+2025-11-11 17:07:58.010 PKT [267741] LOG:  neurondb: neuranmon worker started (PID 267741)
+2025-11-11 17:07:58.014 PKT [267739] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:07:58.015 PKT [267741] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:08:58.081 PKT [267741] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:09:58.183 PKT [267741] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 17:10:58.262 PKT [267741] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 17:11:58.363 PKT [267741] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 17:12:58.004 PKT [267734] LOG:  checkpoint starting: time
+2025-11-11 17:12:58.114 PKT [267734] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.107 s, sync=0.002 s, total=0.111 s; sync files=3, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=6 kB; lsn=3/1A1A7668, redo lsn=3/1A1A7610
+2025-11-11 17:12:58.462 PKT [267741] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 17:13:15.399 PKT [267725] LOG:  received fast shutdown request
+2025-11-11 17:13:15.402 PKT [267725] LOG:  aborting any active transactions
+2025-11-11 17:13:15.402 PKT [267741] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 17:13:15.402 PKT [267739] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 17:13:15.402 PKT [267742] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 17:13:15.402 PKT [267740] LOG:  neurondb: neurandefrag worker shutting down (PID 267740)
+2025-11-11 17:13:15.418 PKT [267725] LOG:  background worker "logical replication launcher" (PID 267743) exited with exit code 1
+2025-11-11 17:13:15.419 PKT [267734] LOG:  shutting down
+2025-11-11 17:13:15.419 PKT [267734] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 17:13:15.430 PKT [267734] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.008 s, sync=0.001 s, total=0.012 s; sync files=2, longest=0.001 s, average=0.001 s; distance=5 kB, estimate=6 kB; lsn=3/1A1A8B40, redo lsn=3/1A1A8B40
+2025-11-11 17:13:15.458 PKT [267725] LOG:  database system is shut down
+2025-11-11 17:13:15.563 PKT [272110] LOG:  neurondb: initializing background workers
+2025-11-11 17:13:15.569 PKT [272110] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 17:13:15.569 PKT [272110] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 17:13:15.569 PKT [272110] LOG:  neurondb: registered neuranq background worker
+2025-11-11 17:13:15.569 PKT [272110] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 17:13:15.569 PKT [272110] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 17:13:15.569 PKT [272110] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 17:13:15.569 PKT [272110] LOG:  neurondb: all background workers registered successfully
+2025-11-11 17:13:15.596 PKT [272110] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:13:15.596 PKT [272110] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 17:13:15.596 PKT [272110] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 17:13:15.597 PKT [272110] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 17:13:15.602 PKT [272116] LOG:  database system was shut down at 2025-11-11 17:13:15 PKT
+2025-11-11 17:13:15.612 PKT [272110] LOG:  database system is ready to accept connections
+2025-11-11 17:13:15.615 PKT [272120] LOG:  neurondb: neurandefrag worker started (PID 272120)
+2025-11-11 17:13:15.622 PKT [272121] LOG:  neurondb: neuranmon worker started (PID 272121)
+2025-11-11 17:13:15.625 PKT [272119] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:13:15.625 PKT [272122] LOG:  neurondb: neuranq worker started (PID 272122)
+2025-11-11 17:13:15.626 PKT [272121] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:13:26.678 PKT [272110] LOG:  client backend (PID 272127) was terminated by signal 11: Segmentation fault
+2025-11-11 17:13:26.678 PKT [272110] DETAIL:  Failed process was running: WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(1::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc
+2025-11-11 17:13:26.678 PKT [272110] LOG:  terminating any other active server processes
+2025-11-11 17:13:26.679 PKT [272110] LOG:  all server processes terminated; reinitializing
+2025-11-11 17:13:26.763 PKT [272110] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:13:26.765 PKT [272169] LOG:  database system was interrupted; last known up at 2025-11-11 17:13:15 PKT
+2025-11-11 17:13:26.786 PKT [272169] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 17:13:26.786 PKT [272169] LOG:  redo starts at 3/1A1A8BB8
+2025-11-11 17:13:26.787 PKT [272169] LOG:  invalid record length at 3/1A1AA158: expected at least 24, got 0
+2025-11-11 17:13:26.787 PKT [272169] LOG:  redo done at 3/1A1AA130 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-11 17:13:26.788 PKT [272170] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 17:13:26.798 PKT [272170] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.008 s, sync=0.001 s, total=0.011 s; sync files=3, longest=0.001 s, average=0.001 s; distance=5 kB, estimate=5 kB; lsn=3/1A1AA158, redo lsn=3/1A1AA158
+2025-11-11 17:13:26.812 PKT [272110] LOG:  database system is ready to accept connections
+2025-11-11 17:13:26.817 PKT [272175] LOG:  neurondb: neurandefrag worker started (PID 272175)
+2025-11-11 17:13:26.828 PKT [272174] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:13:26.829 PKT [272176] LOG:  neurondb: neuranmon worker started (PID 272176)
+2025-11-11 17:13:26.830 PKT [272177] LOG:  neurondb: neuranq worker started (PID 272177)
+2025-11-11 17:13:26.833 PKT [272176] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:14:26.897 PKT [272176] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:15:26.999 PKT [272176] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 17:15:45.018 PKT [272402] FATAL:  database "pge" does not exist
+2025-11-11 17:15:56.797 PKT [272110] LOG:  client backend (PID 272441) was terminated by signal 11: Segmentation fault
+2025-11-11 17:15:56.797 PKT [272110] DETAIL:  Failed process was running: WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(1::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc
+2025-11-11 17:15:56.797 PKT [272110] LOG:  terminating any other active server processes
+2025-11-11 17:15:56.799 PKT [272110] LOG:  all server processes terminated; reinitializing
+2025-11-11 17:15:56.870 PKT [272110] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:15:56.873 PKT [272464] LOG:  database system was interrupted; last known up at 2025-11-11 17:13:26 PKT
+2025-11-11 17:15:56.894 PKT [272464] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 17:15:56.896 PKT [272464] LOG:  redo starts at 3/1A1AA1D0
+2025-11-11 17:15:56.896 PKT [272464] LOG:  invalid record length at 3/1A1ABE98: expected at least 24, got 0
+2025-11-11 17:15:56.896 PKT [272464] LOG:  redo done at 3/1A1ABE60 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-11 17:15:56.898 PKT [272465] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 17:15:56.918 PKT [272465] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.017 s, sync=0.001 s, total=0.021 s; sync files=3, longest=0.001 s, average=0.001 s; distance=7 kB, estimate=7 kB; lsn=3/1A1ABE98, redo lsn=3/1A1ABE98
+2025-11-11 17:15:56.934 PKT [272110] LOG:  database system is ready to accept connections
+2025-11-11 17:15:56.939 PKT [272470] LOG:  neurondb: neurandefrag worker started (PID 272470)
+2025-11-11 17:15:56.956 PKT [272469] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:15:56.957 PKT [272472] LOG:  neurondb: neuranq worker started (PID 272472)
+2025-11-11 17:15:56.960 PKT [272471] LOG:  neurondb: neuranmon worker started (PID 272471)
+2025-11-11 17:15:56.964 PKT [272471] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:16:56.994 PKT [272471] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:17:57.102 PKT [272471] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 17:18:57.204 PKT [272471] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 17:19:22.155 PKT [273058] ERROR:  random_forest: model 1 not found
+2025-11-11 17:19:22.155 PKT [273058] STATEMENT:  SELECT pg_backend_pid(); SELECT pg_sleep(5); SELECT predict_random_forest(1, features) FROM neurondb_cpu_gpu_test LIMIT 1;
+2025-11-11 17:19:57.279 PKT [272471] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 17:20:57.018 PKT [272465] LOG:  checkpoint starting: time
+2025-11-11 17:20:57.140 PKT [272465] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.105 s, sync=0.008 s, total=0.123 s; sync files=2, longest=0.004 s, average=0.004 s; distance=10 kB, estimate=10 kB; lsn=3/1A1AE718, redo lsn=3/1A1AE6C0
+2025-11-11 17:20:57.381 PKT [272471] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 17:21:03.050 PKT [272110] LOG:  client backend (PID 273254) was terminated by signal 11: Segmentation fault
+2025-11-11 17:21:03.050 PKT [272110] DETAIL:  Failed process was running: WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(1::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc
+2025-11-11 17:21:03.050 PKT [272110] LOG:  terminating any other active server processes
+2025-11-11 17:21:03.052 PKT [272110] LOG:  all server processes terminated; reinitializing
+2025-11-11 17:21:03.088 PKT [272110] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:21:03.091 PKT [273283] LOG:  database system was interrupted; last known up at 2025-11-11 17:20:57 PKT
+2025-11-11 17:21:03.114 PKT [273283] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 17:21:03.115 PKT [273283] LOG:  redo starts at 3/1A1AE6C0
+2025-11-11 17:21:03.115 PKT [273283] LOG:  invalid record length at 3/1A1AEEB8: expected at least 24, got 0
+2025-11-11 17:21:03.115 PKT [273283] LOG:  redo done at 3/1A1AEE90 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-11 17:21:03.116 PKT [273284] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 17:21:03.125 PKT [273284] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.007 s, sync=0.001 s, total=0.010 s; sync files=3, longest=0.001 s, average=0.001 s; distance=1 kB, estimate=1 kB; lsn=3/1A1AEEB8, redo lsn=3/1A1AEEB8
+2025-11-11 17:21:03.133 PKT [272110] LOG:  database system is ready to accept connections
+2025-11-11 17:21:03.137 PKT [273289] LOG:  neurondb: neurandefrag worker started (PID 273289)
+2025-11-11 17:21:03.144 PKT [273291] LOG:  neurondb: neuranq worker started (PID 273291)
+2025-11-11 17:21:03.145 PKT [273288] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:21:03.147 PKT [273290] LOG:  neurondb: neuranmon worker started (PID 273290)
+2025-11-11 17:21:03.150 PKT [273290] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:21:27.893 PKT [272110] LOG:  received fast shutdown request
+2025-11-11 17:21:27.894 PKT [272110] LOG:  aborting any active transactions
+2025-11-11 17:21:27.894 PKT [273291] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 17:21:27.894 PKT [273289] LOG:  neurondb: neurandefrag worker shutting down (PID 273289)
+2025-11-11 17:21:27.894 PKT [273290] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 17:21:27.894 PKT [273288] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 17:21:27.903 PKT [272110] LOG:  background worker "logical replication launcher" (PID 273292) exited with exit code 1
+2025-11-11 17:21:27.907 PKT [273284] LOG:  shutting down
+2025-11-11 17:21:27.907 PKT [273284] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 17:21:27.913 PKT [273284] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.001 s, total=0.007 s; sync files=2, longest=0.001 s, average=0.001 s; distance=2 kB, estimate=2 kB; lsn=3/1A1AF808, redo lsn=3/1A1AF808
+2025-11-11 17:21:27.939 PKT [272110] LOG:  database system is shut down
+2025-11-11 17:21:30.766 PKT [274579] LOG:  neurondb: initializing background workers
+2025-11-11 17:21:30.774 PKT [274579] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 17:21:30.774 PKT [274579] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 17:21:30.774 PKT [274579] LOG:  neurondb: registered neuranq background worker
+2025-11-11 17:21:30.774 PKT [274579] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 17:21:30.774 PKT [274579] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 17:21:30.774 PKT [274579] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 17:21:30.774 PKT [274579] LOG:  neurondb: all background workers registered successfully
+2025-11-11 17:21:30.802 PKT [274579] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:21:30.802 PKT [274579] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 17:21:30.802 PKT [274579] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 17:21:30.803 PKT [274579] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 17:21:30.808 PKT [274585] LOG:  database system was shut down at 2025-11-11 17:21:27 PKT
+2025-11-11 17:21:30.819 PKT [274579] LOG:  database system is ready to accept connections
+2025-11-11 17:21:30.822 PKT [274589] LOG:  neurondb: neurandefrag worker started (PID 274589)
+2025-11-11 17:21:30.829 PKT [274591] LOG:  neurondb: neuranq worker started (PID 274591)
+2025-11-11 17:21:30.829 PKT [274588] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:21:30.830 PKT [274590] LOG:  neurondb: neuranmon worker started (PID 274590)
+2025-11-11 17:21:30.834 PKT [274590] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:21:40.742 PKT [274579] LOG:  client backend (PID 274596) was terminated by signal 11: Segmentation fault
+2025-11-11 17:21:40.742 PKT [274579] DETAIL:  Failed process was running: WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(1::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc
+2025-11-11 17:21:40.742 PKT [274579] LOG:  terminating any other active server processes
+2025-11-11 17:21:40.744 PKT [274579] LOG:  all server processes terminated; reinitializing
+2025-11-11 17:21:40.777 PKT [274579] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:21:40.780 PKT [274637] LOG:  database system was interrupted; last known up at 2025-11-11 17:21:30 PKT
+2025-11-11 17:21:40.802 PKT [274637] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 17:21:40.803 PKT [274637] LOG:  redo starts at 3/1A1AF880
+2025-11-11 17:21:40.804 PKT [274637] LOG:  invalid record length at 3/1A1B0278: expected at least 24, got 0
+2025-11-11 17:21:40.804 PKT [274637] LOG:  redo done at 3/1A1B0250 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-11 17:21:40.805 PKT [274638] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 17:21:40.816 PKT [274638] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.009 s, sync=0.001 s, total=0.012 s; sync files=3, longest=0.001 s, average=0.001 s; distance=2 kB, estimate=2 kB; lsn=3/1A1B0278, redo lsn=3/1A1B0278
+2025-11-11 17:21:40.829 PKT [274579] LOG:  database system is ready to accept connections
+2025-11-11 17:21:40.833 PKT [274643] LOG:  neurondb: neurandefrag worker started (PID 274643)
+2025-11-11 17:21:40.843 PKT [274642] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:21:40.843 PKT [274644] LOG:  neurondb: neuranmon worker started (PID 274644)
+2025-11-11 17:21:40.843 PKT [274645] LOG:  neurondb: neuranq worker started (PID 274645)
+2025-11-11 17:21:40.847 PKT [274644] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:22:40.865 PKT [274644] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:23:40.937 PKT [274644] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 17:24:41.012 PKT [274644] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 17:25:19.409 PKT [274579] LOG:  received fast shutdown request
+2025-11-11 17:25:19.446 PKT [274579] LOG:  aborting any active transactions
+2025-11-11 17:25:19.446 PKT [274642] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 17:25:19.447 PKT [274643] LOG:  neurondb: neurandefrag worker shutting down (PID 274643)
+2025-11-11 17:25:19.447 PKT [274645] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 17:25:19.447 PKT [274644] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 17:25:19.459 PKT [274579] LOG:  background worker "logical replication launcher" (PID 274646) exited with exit code 1
+2025-11-11 17:25:19.463 PKT [274638] LOG:  shutting down
+2025-11-11 17:25:19.464 PKT [274638] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 17:25:19.493 PKT [274638] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.015 s, sync=0.003 s, total=0.031 s; sync files=2, longest=0.002 s, average=0.002 s; distance=5 kB, estimate=5 kB; lsn=3/1A1B16F8, redo lsn=3/1A1B16F8
+2025-11-11 17:25:19.534 PKT [274579] LOG:  database system is shut down
+2025-11-11 17:25:19.746 PKT [276462] LOG:  neurondb: initializing background workers
+2025-11-11 17:25:19.753 PKT [276462] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 17:25:19.753 PKT [276462] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 17:25:19.753 PKT [276462] LOG:  neurondb: registered neuranq background worker
+2025-11-11 17:25:19.753 PKT [276462] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 17:25:19.753 PKT [276462] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 17:25:19.753 PKT [276462] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 17:25:19.753 PKT [276462] LOG:  neurondb: all background workers registered successfully
+2025-11-11 17:25:19.779 PKT [276462] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:25:19.780 PKT [276462] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 17:25:19.780 PKT [276462] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 17:25:19.782 PKT [276462] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 17:25:19.789 PKT [276468] LOG:  database system was shut down at 2025-11-11 17:25:19 PKT
+2025-11-11 17:25:19.798 PKT [276462] LOG:  database system is ready to accept connections
+2025-11-11 17:25:19.801 PKT [276472] LOG:  neurondb: neurandefrag worker started (PID 276472)
+2025-11-11 17:25:19.808 PKT [276471] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:25:19.808 PKT [276473] LOG:  neurondb: neuranmon worker started (PID 276473)
+2025-11-11 17:25:19.812 PKT [276474] LOG:  neurondb: neuranq worker started (PID 276474)
+2025-11-11 17:25:19.812 PKT [276473] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:25:29.610 PKT [276462] LOG:  client backend (PID 276484) was terminated by signal 11: Segmentation fault
+2025-11-11 17:25:29.610 PKT [276462] DETAIL:  Failed process was running: WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(1::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc
+2025-11-11 17:25:29.610 PKT [276462] LOG:  terminating any other active server processes
+2025-11-11 17:25:29.612 PKT [276462] LOG:  all server processes terminated; reinitializing
+2025-11-11 17:25:29.692 PKT [276462] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:25:29.695 PKT [276510] LOG:  database system was interrupted; last known up at 2025-11-11 17:25:19 PKT
+2025-11-11 17:25:29.715 PKT [276510] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 17:25:29.716 PKT [276510] LOG:  redo starts at 3/1A1B1770
+2025-11-11 17:25:29.716 PKT [276510] LOG:  invalid record length at 3/1A1B27D0: expected at least 24, got 0
+2025-11-11 17:25:29.716 PKT [276510] LOG:  redo done at 3/1A1B27A8 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-11 17:25:29.718 PKT [276511] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 17:25:29.727 PKT [276511] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.007 s, sync=0.001 s, total=0.010 s; sync files=3, longest=0.001 s, average=0.001 s; distance=4 kB, estimate=4 kB; lsn=3/1A1B27D0, redo lsn=3/1A1B27D0
+2025-11-11 17:25:29.735 PKT [276462] LOG:  database system is ready to accept connections
+2025-11-11 17:25:29.737 PKT [276516] LOG:  neurondb: neurandefrag worker started (PID 276516)
+2025-11-11 17:25:29.745 PKT [276518] LOG:  neurondb: neuranq worker started (PID 276518)
+2025-11-11 17:25:29.746 PKT [276515] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:25:29.747 PKT [276517] LOG:  neurondb: neuranmon worker started (PID 276517)
+2025-11-11 17:25:29.750 PKT [276517] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:26:29.815 PKT [276517] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:27:29.903 PKT [276517] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 17:28:30.009 PKT [276517] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 17:29:30.109 PKT [276517] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 17:30:29.771 PKT [276511] LOG:  checkpoint starting: time
+2025-11-11 17:30:29.996 PKT [276511] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.119 s, sync=0.067 s, total=0.225 s; sync files=2, longest=0.066 s, average=0.034 s; distance=7 kB, estimate=7 kB; lsn=3/1A1B4608, redo lsn=3/1A1B45B0
+2025-11-11 17:30:30.214 PKT [276517] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 17:31:30.302 PKT [276517] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 17:31:37.488 PKT [276462] LOG:  received fast shutdown request
+2025-11-11 17:31:37.524 PKT [276462] LOG:  aborting any active transactions
+2025-11-11 17:31:37.524 PKT [276515] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 17:31:37.524 PKT [276516] LOG:  neurondb: neurandefrag worker shutting down (PID 276516)
+2025-11-11 17:31:37.524 PKT [276517] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 17:31:37.524 PKT [276518] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 17:31:37.535 PKT [276462] LOG:  background worker "logical replication launcher" (PID 276519) exited with exit code 1
+2025-11-11 17:31:37.539 PKT [276511] LOG:  shutting down
+2025-11-11 17:31:37.539 PKT [276511] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 17:31:37.552 PKT [276511] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.008 s, total=0.014 s; sync files=2, longest=0.008 s, average=0.004 s; distance=6 kB, estimate=7 kB; lsn=3/1A1B6180, redo lsn=3/1A1B6180
+2025-11-11 17:31:37.574 PKT [276462] LOG:  database system is shut down
+2025-11-11 17:31:37.597 PKT [279076] FATAL:  could not load library "/usr/local/pgsql.18/lib/neurondb.so": /usr/local/pgsql.18/lib/neurondb.so: undefined symbol: neurondb_gpu_register_cuda_backend
+2025-11-11 17:31:37.597 PKT [279076] LOG:  database system is shut down
+2025-11-11 17:31:39.931 PKT [279100] FATAL:  could not load library "/usr/local/pgsql.18/lib/neurondb.so": /usr/local/pgsql.18/lib/neurondb.so: undefined symbol: neurondb_gpu_register_cuda_backend
+2025-11-11 17:31:39.931 PKT [279100] LOG:  database system is shut down
+2025-11-11 17:31:55.128 PKT [279151] FATAL:  could not load library "/usr/local/pgsql.18/lib/neurondb.so": /usr/local/pgsql.18/lib/neurondb.so: undefined symbol: neurondb_gpu_register_cuda_backend
+2025-11-11 17:31:55.128 PKT [279151] LOG:  database system is shut down
+2025-11-11 17:32:14.596 PKT [280397] LOG:  neurondb: initializing background workers
+2025-11-11 17:32:14.603 PKT [280397] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 17:32:14.603 PKT [280397] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 17:32:14.603 PKT [280397] LOG:  neurondb: registered neuranq background worker
+2025-11-11 17:32:14.603 PKT [280397] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 17:32:14.603 PKT [280397] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 17:32:14.603 PKT [280397] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 17:32:14.603 PKT [280397] LOG:  neurondb: all background workers registered successfully
+2025-11-11 17:32:14.630 PKT [280397] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:32:14.630 PKT [280397] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 17:32:14.630 PKT [280397] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 17:32:14.631 PKT [280397] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 17:32:14.637 PKT [280403] LOG:  database system was shut down at 2025-11-11 17:31:37 PKT
+2025-11-11 17:32:14.646 PKT [280397] LOG:  database system is ready to accept connections
+2025-11-11 17:32:14.649 PKT [280407] LOG:  neurondb: neurandefrag worker started (PID 280407)
+2025-11-11 17:32:14.655 PKT [280409] LOG:  neurondb: neuranq worker started (PID 280409)
+2025-11-11 17:32:14.658 PKT [280406] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:32:14.659 PKT [280408] LOG:  neurondb: neuranmon worker started (PID 280408)
+2025-11-11 17:32:14.663 PKT [280408] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:33:14.727 PKT [280408] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:33:21.740 PKT [280397] LOG:  client backend (PID 280443) was terminated by signal 11: Segmentation fault
+2025-11-11 17:33:21.740 PKT [280397] DETAIL:  Failed process was running: WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(1::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc
+2025-11-11 17:33:21.740 PKT [280397] LOG:  terminating any other active server processes
+2025-11-11 17:33:21.742 PKT [280397] LOG:  all server processes terminated; reinitializing
+2025-11-11 17:33:21.823 PKT [280397] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:33:21.826 PKT [280907] LOG:  database system was interrupted; last known up at 2025-11-11 17:32:14 PKT
+2025-11-11 17:33:21.846 PKT [280907] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 17:33:21.846 PKT [280907] LOG:  redo starts at 3/1A1B61F8
+2025-11-11 17:33:21.847 PKT [280907] LOG:  invalid record length at 3/1A1B7FA0: expected at least 24, got 0
+2025-11-11 17:33:21.847 PKT [280907] LOG:  redo done at 3/1A1B7F68 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-11 17:33:21.848 PKT [280908] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 17:33:21.856 PKT [280908] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.001 s, total=0.009 s; sync files=3, longest=0.001 s, average=0.001 s; distance=7 kB, estimate=7 kB; lsn=3/1A1B7FA0, redo lsn=3/1A1B7FA0
+2025-11-11 17:33:21.864 PKT [280397] LOG:  database system is ready to accept connections
+2025-11-11 17:33:21.866 PKT [280913] LOG:  neurondb: neurandefrag worker started (PID 280913)
+2025-11-11 17:33:21.874 PKT [280915] LOG:  neurondb: neuranq worker started (PID 280915)
+2025-11-11 17:33:21.875 PKT [280914] LOG:  neurondb: neuranmon worker started (PID 280914)
+2025-11-11 17:33:21.877 PKT [280912] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:33:21.878 PKT [280914] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:34:21.904 PKT [280914] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:35:21.959 PKT [280914] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 17:36:22.064 PKT [280914] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 17:37:22.165 PKT [280914] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 17:38:21.900 PKT [280908] LOG:  checkpoint starting: time
+2025-11-11 17:38:22.057 PKT [280908] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.109 s, sync=0.007 s, total=0.158 s; sync files=2, longest=0.006 s, average=0.004 s; distance=10 kB, estimate=10 kB; lsn=3/1A1BAA90, redo lsn=3/1A1BAA38
+2025-11-11 17:38:22.265 PKT [280914] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 17:39:22.369 PKT [280914] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 17:40:22.472 PKT [280914] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-11 17:41:22.577 PKT [280914] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-11 17:42:22.677 PKT [280914] LOG:  neurondb: tuned ef_search=385 (latency=0.00ms, recall=0.000)
+2025-11-11 17:42:46.836 PKT [280397] LOG:  received fast shutdown request
+2025-11-11 17:42:46.873 PKT [280397] LOG:  aborting any active transactions
+2025-11-11 17:42:46.873 PKT [280913] LOG:  neurondb: neurandefrag worker shutting down (PID 280913)
+2025-11-11 17:42:46.873 PKT [280912] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 17:42:46.873 PKT [280915] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 17:42:46.873 PKT [280914] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 17:42:46.887 PKT [280397] LOG:  background worker "logical replication launcher" (PID 280916) exited with exit code 1
+2025-11-11 17:42:46.888 PKT [280908] LOG:  shutting down
+2025-11-11 17:42:46.888 PKT [280908] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 17:42:46.901 PKT [280908] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.008 s, total=0.014 s; sync files=2, longest=0.007 s, average=0.004 s; distance=5 kB, estimate=10 kB; lsn=3/1A1BC0B0, redo lsn=3/1A1BC0B0
+2025-11-11 17:42:46.925 PKT [280397] LOG:  database system is shut down
+2025-11-11 17:42:46.966 PKT [284578] LOG:  neurondb: initializing background workers
+2025-11-11 17:42:46.974 PKT [284578] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 17:42:46.974 PKT [284578] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 17:42:46.974 PKT [284578] LOG:  neurondb: registered neuranq background worker
+2025-11-11 17:42:46.974 PKT [284578] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 17:42:46.974 PKT [284578] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 17:42:46.974 PKT [284578] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 17:42:46.974 PKT [284578] LOG:  neurondb: all background workers registered successfully
+2025-11-11 17:42:46.998 PKT [284578] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 17:42:46.999 PKT [284578] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 17:42:46.999 PKT [284578] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 17:42:47.001 PKT [284578] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 17:42:47.006 PKT [284584] LOG:  database system was shut down at 2025-11-11 17:42:46 PKT
+2025-11-11 17:42:47.013 PKT [284578] LOG:  database system is ready to accept connections
+2025-11-11 17:42:47.016 PKT [284588] LOG:  neurondb: neurandefrag worker started (PID 284588)
+2025-11-11 17:42:47.023 PKT [284587] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 17:42:47.023 PKT [284589] LOG:  neurondb: neuranmon worker started (PID 284589)
+2025-11-11 17:42:47.027 PKT [284590] LOG:  neurondb: neuranq worker started (PID 284590)
+2025-11-11 17:42:47.027 PKT [284589] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 17:42:58.524 PKT [284595] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 17:42:58.524 PKT [284595] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 17:43:47.065 PKT [284589] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 17:44:47.159 PKT [284589] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 17:45:47.259 PKT [284589] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 17:46:47.366 PKT [284589] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 17:47:47.088 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 17:47:47.285 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.121 s, sync=0.074 s, total=0.198 s; sync files=3, longest=0.073 s, average=0.025 s; distance=7 kB, estimate=7 kB; lsn=3/1A1BDDA8, redo lsn=3/1A1BDD50
+2025-11-11 17:47:47.472 PKT [284589] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 17:48:47.521 PKT [284589] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 17:49:47.619 PKT [284589] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-11 17:50:47.722 PKT [284589] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-11 17:51:47.830 PKT [284589] LOG:  neurondb: tuned ef_search=385 (latency=0.00ms, recall=0.000)
+2025-11-11 17:52:47.385 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 17:52:47.616 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.118 s, sync=0.074 s, total=0.231 s; sync files=2, longest=0.074 s, average=0.037 s; distance=8 kB, estimate=8 kB; lsn=3/1A1C0108, redo lsn=3/1A1C00B0
+2025-11-11 17:52:47.936 PKT [284589] LOG:  neurondb: tuned ef_search=462 (latency=0.00ms, recall=0.000)
+2025-11-11 17:53:48.044 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 17:54:48.150 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 17:55:05.976 PKT [284861] ERROR:  syntax error at or near "ITH" at character 1
+2025-11-11 17:55:05.976 PKT [284861] STATEMENT:  ITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(:cpu_model_id::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc;
+2025-11-11 17:55:48.204 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 17:55:56.852 PKT [284861] ERROR:  syntax error at or near ":" at character 86
+2025-11-11 17:55:56.852 PKT [284861] STATEMENT:  WITH preds AS (
+		SELECT
+			label::int AS actual,
+			CASE
+				WHEN predict_random_forest(:cpu_model_id::integer, features) >= 0.5 THEN 1
+				ELSE 0
+			END AS predicted
+		FROM neurondb_cpu_gpu_test
+	), metrics AS (
+		SELECT
+			AVG((predicted = actual)::int)::float8 AS accuracy,
+			SUM(CASE WHEN predicted = 1 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS tp,
+			SUM(CASE WHEN predicted = 1 AND actual = 0 THEN 1 ELSE 0 END)::float8 AS fp,
+			SUM(CASE WHEN predicted = 0 AND actual = 1 THEN 1 ELSE 0 END)::float8 AS fn
+		FROM preds
+	), calc AS (
+		SELECT
+			accuracy,
+			CASE WHEN tp + fp > 0 THEN tp / (tp + fp) ELSE 0 END AS precision,
+			CASE WHEN tp + fn > 0 THEN tp / (tp + fn) ELSE 0 END AS recall,
+			CASE WHEN (2 * tp + fp + fn) > 0 THEN (2 * tp) / (2 * tp + fp + fn) ELSE 0 END AS f1
+		FROM metrics
+	)
+	SELECT
+		accuracy AS cpu_accuracy,
+		precision AS cpu_precision,
+		recall AS cpu_recall,
+		f1 AS cpu_f1
+	FROM calc;
+2025-11-11 17:56:48.306 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 17:57:47.630 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 17:57:47.861 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.118 s, sync=0.074 s, total=0.232 s; sync files=2, longest=0.074 s, average=0.037 s; distance=10 kB, estimate=10 kB; lsn=3/1A1C2BC8, redo lsn=3/1A1C2B70
+2025-11-11 17:57:48.403 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 17:58:48.510 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 17:59:48.618 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:00:48.721 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:01:48.829 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:02:47.962 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:02:48.186 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.118 s, sync=0.067 s, total=0.225 s; sync files=2, longest=0.066 s, average=0.034 s; distance=5 kB, estimate=10 kB; lsn=3/1A1C4220, redo lsn=3/1A1C41C8
+2025-11-11 18:02:48.901 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:03:48.959 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:03:59.801 PKT [288747] ERROR:  syntax error at or near ":" at character 415
+2025-11-11 18:03:59.801 PKT [288747] STATEMENT:  DO $$
+	DECLARE
+		gpu_acc numeric := NULL;
+		gpu_f1 numeric := NULL;
+		cpu_acc numeric := NULL;
+		cpu_f1 numeric := NULL;
+	BEGIN
+		BEGIN
+			gpu_acc := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'accuracy')::numeric, 4);
+			gpu_f1 := ROUND((current_setting('gpu_metrics', true)::jsonb ->> 'f1_score')::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			gpu_acc := NULL;
+			gpu_f1 := NULL;
+		END;
+	
+		BEGIN
+			cpu_acc := ROUND(:cpu_accuracy::numeric, 4);
+			cpu_f1 := ROUND(:cpu_f1::numeric, 4);
+		EXCEPTION WHEN OTHERS THEN
+			cpu_acc := NULL;
+			cpu_f1 := NULL;
+		END;
+	
+		RAISE NOTICE 'run     | accuracy | f1_score';
+		IF gpu_acc IS NOT NULL AND gpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'GPU     | %        | %', gpu_acc, gpu_f1;
+		END IF;
+		IF cpu_acc IS NOT NULL AND cpu_f1 IS NOT NULL THEN
+			RAISE NOTICE 'CPU     | %        | %', cpu_acc, cpu_f1;
+		END IF;
+	END
+	$$;
+2025-11-11 18:04:49.038 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:05:48.988 PKT [289059] ERROR:  syntax error at or near "ELECT" at character 1
+2025-11-11 18:05:48.988 PKT [289059] STATEMENT:  ELECT neurondb.train(
+		'random_forest',
+		'neurondb_cpu_gpu_train',
+		'features',
+		'label',
+		jsonb_build_object(
+			'n_trees', 120,
+			'max_depth', 12,
+			'min_samples_split', 2,
+			'max_features', 0
+		)
+	) AS cpu_model_id;
+2025-11-11 18:05:49.141 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:06:49.247 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:07:47.286 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:07:47.455 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.121 s, sync=0.007 s, total=0.169 s; sync files=2, longest=0.007 s, average=0.004 s; distance=7 kB, estimate=9 kB; lsn=3/1A1C5F00, redo lsn=3/1A1C5E70
+2025-11-11 18:07:49.303 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:08:49.407 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:09:49.469 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:10:49.573 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:11:49.677 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:12:47.500 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:12:47.738 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.122 s, sync=0.076 s, total=0.238 s; sync files=2, longest=0.075 s, average=0.038 s; distance=8 kB, estimate=9 kB; lsn=3/1A1C8240, redo lsn=3/1A1C81E8
+2025-11-11 18:12:49.776 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:13:49.881 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:14:49.989 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:15:50.056 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:16:50.138 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:17:47.838 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:17:48.002 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.108 s, sync=0.014 s, total=0.165 s; sync files=2, longest=0.010 s, average=0.007 s; distance=10 kB, estimate=10 kB; lsn=3/1A1CACF0, redo lsn=3/1A1CAC98
+2025-11-11 18:17:50.205 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:18:50.304 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:19:50.402 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:20:50.487 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:21:50.557 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:22:47.102 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:22:47.251 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.006 s, total=0.150 s; sync files=2, longest=0.005 s, average=0.003 s; distance=5 kB, estimate=10 kB; lsn=3/1A1CC398, redo lsn=3/1A1CC340
+2025-11-11 18:22:50.655 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:23:50.744 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:24:50.815 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:25:50.913 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:26:50.960 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:27:47.352 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:27:47.505 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.105 s, sync=0.007 s, total=0.154 s; sync files=2, longest=0.006 s, average=0.004 s; distance=7 kB, estimate=9 kB; lsn=3/1A1CE070, redo lsn=3/1A1CE018
+2025-11-11 18:27:51.009 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:28:51.107 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:29:51.201 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:30:51.277 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:31:51.375 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:32:47.605 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:32:47.755 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.006 s, total=0.150 s; sync files=2, longest=0.005 s, average=0.003 s; distance=8 kB, estimate=9 kB; lsn=3/1A1D03B0, redo lsn=3/1A1D0358
+2025-11-11 18:32:51.429 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:33:51.517 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:34:51.616 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:35:51.678 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:36:51.761 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:37:47.855 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:37:48.078 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.081 s, total=0.224 s; sync files=2, longest=0.080 s, average=0.041 s; distance=10 kB, estimate=10 kB; lsn=3/1A1D2EA8, redo lsn=3/1A1D2E50
+2025-11-11 18:37:51.801 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:38:51.899 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:39:51.997 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:40:52.094 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:41:52.193 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:42:47.135 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:42:47.278 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.002 s, total=0.144 s; sync files=2, longest=0.001 s, average=0.001 s; distance=5 kB, estimate=10 kB; lsn=3/1A1D4500, redo lsn=3/1A1D44A8
+2025-11-11 18:42:52.245 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:43:52.294 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:44:52.339 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:45:52.438 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:46:52.503 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:47:47.293 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:47:47.517 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.081 s, total=0.224 s; sync files=2, longest=0.080 s, average=0.041 s; distance=7 kB, estimate=9 kB; lsn=3/1A1D61F8, redo lsn=3/1A1D61A0
+2025-11-11 18:47:52.569 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:48:52.630 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:49:52.673 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:50:52.771 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:51:52.870 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:52:47.617 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:52:47.761 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.002 s, total=0.145 s; sync files=2, longest=0.002 s, average=0.001 s; distance=8 kB, estimate=9 kB; lsn=3/1A1D8520, redo lsn=3/1A1D84C8
+2025-11-11 18:52:52.968 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:53:52.998 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:54:53.097 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:55:53.159 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:56:53.230 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:57:47.861 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 18:57:48.005 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.002 s, total=0.144 s; sync files=2, longest=0.001 s, average=0.001 s; distance=10 kB, estimate=10 kB; lsn=3/1A1DB000, redo lsn=3/1A1DAFA8
+2025-11-11 18:57:53.307 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:58:53.388 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 18:59:53.405 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:00:53.476 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:01:53.574 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:02:47.105 PKT [284582] LOG:  checkpoint starting: time
+2025-11-11 19:02:47.255 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.105 s, sync=0.006 s, total=0.150 s; sync files=2, longest=0.006 s, average=0.003 s; distance=5 kB, estimate=10 kB; lsn=3/1A1DC6A8, redo lsn=3/1A1DC650
+2025-11-11 19:02:53.672 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:03:53.735 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:04:53.817 PKT [284589] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:05:37.451 PKT [284578] LOG:  received fast shutdown request
+2025-11-11 19:05:37.488 PKT [284578] LOG:  aborting any active transactions
+2025-11-11 19:05:37.488 PKT [284589] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 19:05:37.488 PKT [284587] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 19:05:37.488 PKT [284590] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 19:05:37.488 PKT [284588] LOG:  neurondb: neurandefrag worker shutting down (PID 284588)
+2025-11-11 19:05:37.497 PKT [284578] LOG:  background worker "logical replication launcher" (PID 284591) exited with exit code 1
+2025-11-11 19:05:37.500 PKT [284582] LOG:  shutting down
+2025-11-11 19:05:37.500 PKT [284582] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 19:05:37.506 PKT [284582] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.001 s, total=0.007 s; sync files=2, longest=0.001 s, average=0.001 s; distance=5 kB, estimate=9 kB; lsn=3/1A1DDD88, redo lsn=3/1A1DDD88
+2025-11-11 19:05:37.547 PKT [284578] LOG:  database system is shut down
+2025-11-11 19:05:37.579 PKT [297139] LOG:  neurondb: initializing background workers
+2025-11-11 19:05:37.586 PKT [297139] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:05:37.586 PKT [297139] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:05:37.587 PKT [297139] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:05:37.587 PKT [297139] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:05:37.587 PKT [297139] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:05:37.587 PKT [297139] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:05:37.587 PKT [297139] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:05:37.614 PKT [297139] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:05:37.614 PKT [297139] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:05:37.614 PKT [297139] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:05:37.615 PKT [297139] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:05:37.620 PKT [297145] LOG:  database system was shut down at 2025-11-11 19:05:37 PKT
+2025-11-11 19:05:37.629 PKT [297139] LOG:  database system is ready to accept connections
+2025-11-11 19:05:37.632 PKT [297149] LOG:  neurondb: neurandefrag worker started (PID 297149)
+2025-11-11 19:05:37.639 PKT [297150] LOG:  neurondb: neuranmon worker started (PID 297150)
+2025-11-11 19:05:37.641 PKT [297151] LOG:  neurondb: neuranq worker started (PID 297151)
+2025-11-11 19:05:37.643 PKT [297148] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:05:37.643 PKT [297150] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:06:37.707 PKT [297150] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 19:07:44.192 PKT [298756] LOG:  neurondb: initializing background workers
+2025-11-11 19:07:44.200 PKT [298756] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:07:44.200 PKT [298756] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:07:44.200 PKT [298756] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:07:44.200 PKT [298756] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:07:44.200 PKT [298756] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:07:44.200 PKT [298756] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:07:44.200 PKT [298756] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:07:44.225 PKT [298756] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:07:44.225 PKT [298756] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:07:44.226 PKT [298756] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:07:44.227 PKT [298756] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:07:44.231 PKT [298762] LOG:  database system was interrupted; last known up at 2025-11-11 19:05:37 PKT
+2025-11-11 19:07:44.252 PKT [298762] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 19:07:44.253 PKT [298762] LOG:  redo starts at 3/1A1DDE00
+2025-11-11 19:07:44.253 PKT [298762] LOG:  invalid record length at 3/1A1E4A58: expected at least 24, got 0
+2025-11-11 19:07:44.253 PKT [298762] LOG:  redo done at 3/1A1E4A20 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-11 19:07:44.254 PKT [298760] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 19:07:44.262 PKT [298760] LOG:  checkpoint complete: wrote 5 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.001 s, total=0.009 s; sync files=6, longest=0.001 s, average=0.001 s; distance=27 kB, estimate=27 kB; lsn=3/1A1E4A58, redo lsn=3/1A1E4A58
+2025-11-11 19:07:44.270 PKT [298756] LOG:  database system is ready to accept connections
+2025-11-11 19:07:44.274 PKT [298766] LOG:  neurondb: neurandefrag worker started (PID 298766)
+2025-11-11 19:07:44.281 PKT [298768] LOG:  neurondb: neuranq worker started (PID 298768)
+2025-11-11 19:07:44.283 PKT [298767] LOG:  neurondb: neuranmon worker started (PID 298767)
+2025-11-11 19:07:44.283 PKT [298765] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:07:44.286 PKT [298767] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:08:37.014 PKT [298957] LOG:  neurondb: initializing background workers
+2025-11-11 19:08:37.021 PKT [298957] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:08:37.021 PKT [298957] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:08:37.021 PKT [298957] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:08:37.021 PKT [298957] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:08:37.021 PKT [298957] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:08:37.021 PKT [298957] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:08:37.021 PKT [298957] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:08:37.049 PKT [298957] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:08:37.049 PKT [298957] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:08:37.049 PKT [298957] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:08:37.050 PKT [298957] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:08:37.056 PKT [298963] LOG:  database system was interrupted; last known up at 2025-11-11 19:07:44 PKT
+2025-11-11 19:08:37.076 PKT [298963] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 19:08:37.077 PKT [298963] LOG:  redo starts at 3/1A1E4AD0
+2025-11-11 19:08:37.077 PKT [298963] LOG:  invalid record length at 3/1A1E61E8: expected at least 24, got 0
+2025-11-11 19:08:37.077 PKT [298963] LOG:  redo done at 3/1A1E61B0 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-11 19:08:37.079 PKT [298961] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 19:08:37.087 PKT [298961] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.001 s, total=0.009 s; sync files=3, longest=0.001 s, average=0.001 s; distance=5 kB, estimate=5 kB; lsn=3/1A1E61E8, redo lsn=3/1A1E61E8
+2025-11-11 19:08:37.095 PKT [298957] LOG:  database system is ready to accept connections
+2025-11-11 19:08:37.098 PKT [298967] LOG:  neurondb: neurandefrag worker started (PID 298967)
+2025-11-11 19:08:37.106 PKT [298968] LOG:  neurondb: neuranmon worker started (PID 298968)
+2025-11-11 19:08:37.106 PKT [298969] LOG:  neurondb: neuranq worker started (PID 298969)
+2025-11-11 19:08:37.106 PKT [298966] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:08:37.110 PKT [298968] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:09:10.978 PKT [298957] LOG:  received fast shutdown request
+2025-11-11 19:09:11.014 PKT [298957] LOG:  aborting any active transactions
+2025-11-11 19:09:11.014 PKT [298969] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 19:09:11.014 PKT [298967] LOG:  neurondb: neurandefrag worker shutting down (PID 298967)
+2025-11-11 19:09:11.014 PKT [298966] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 19:09:11.014 PKT [298968] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 19:09:11.023 PKT [298957] LOG:  background worker "logical replication launcher" (PID 298970) exited with exit code 1
+2025-11-11 19:09:11.025 PKT [298961] LOG:  shutting down
+2025-11-11 19:09:11.026 PKT [298961] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 19:09:11.033 PKT [298961] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.001 s, total=0.008 s; sync files=2, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=6 kB; lsn=3/1A1E7AA8, redo lsn=3/1A1E7AA8
+2025-11-11 19:09:11.056 PKT [298957] LOG:  database system is shut down
+2025-11-11 19:09:11.108 PKT [299043] LOG:  neurondb: initializing background workers
+2025-11-11 19:09:11.115 PKT [299043] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:09:11.115 PKT [299043] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:09:11.115 PKT [299043] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:09:11.115 PKT [299043] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:09:11.115 PKT [299043] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:09:11.115 PKT [299043] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:09:11.115 PKT [299043] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:09:11.144 PKT [299043] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:09:11.144 PKT [299043] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:09:11.144 PKT [299043] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:09:11.145 PKT [299043] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:09:11.151 PKT [299049] LOG:  database system was shut down at 2025-11-11 19:09:11 PKT
+2025-11-11 19:09:11.160 PKT [299043] LOG:  database system is ready to accept connections
+2025-11-11 19:09:11.163 PKT [299053] LOG:  neurondb: neurandefrag worker started (PID 299053)
+2025-11-11 19:09:11.171 PKT [299055] LOG:  neurondb: neuranq worker started (PID 299055)
+2025-11-11 19:09:11.172 PKT [299054] LOG:  neurondb: neuranmon worker started (PID 299054)
+2025-11-11 19:09:11.174 PKT [299052] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:09:11.175 PKT [299054] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:09:37.273 PKT [299047] LOG:  checkpoints are occurring too frequently (26 seconds apart)
+2025-11-11 19:09:37.273 PKT [299047] HINT:  Consider increasing the configuration parameter "max_wal_size".
+2025-11-11 19:09:37.273 PKT [299047] LOG:  checkpoint starting: wal
+2025-11-11 19:09:40.565 PKT [299047] LOG:  checkpoint complete: wrote 26 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 2 removed, 31 recycled; write=2.615 s, sync=0.642 s, total=3.292 s; sync files=24, longest=0.614 s, average=0.027 s; distance=552712 kB, estimate=552712 kB; lsn=3/5BA596C8, redo lsn=3/3BDA9B80
+2025-11-11 19:09:40.565 PKT [299047] LOG:  checkpoints are occurring too frequently (3 seconds apart)
+2025-11-11 19:09:40.565 PKT [299047] HINT:  Consider increasing the configuration parameter "max_wal_size".
+2025-11-11 19:09:40.565 PKT [299047] LOG:  checkpoint starting: wal
+2025-11-11 19:09:42.214 PKT [299047] LOG:  checkpoint complete: wrote 1996 buffers (0.8%), wrote 1 SLRU buffers; 0 WAL file(s) added, 3 removed, 30 recycled; write=1.328 s, sync=0.270 s, total=1.650 s; sync files=8, longest=0.166 s, average=0.034 s; distance=528233 kB, estimate=550264 kB; lsn=3/7D8A8FF0, redo lsn=3/5C184210
+2025-11-11 19:09:42.215 PKT [299047] LOG:  checkpoints are occurring too frequently (2 seconds apart)
+2025-11-11 19:09:42.215 PKT [299047] HINT:  Consider increasing the configuration parameter "max_wal_size".
+2025-11-11 19:09:42.215 PKT [299047] LOG:  checkpoint starting: wal
+2025-11-11 19:09:43.764 PKT [299047] LOG:  checkpoint complete: wrote 23645 buffers (9.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 3 removed, 31 recycled; write=1.322 s, sync=0.178 s, total=1.549 s; sync files=22, longest=0.177 s, average=0.009 s; distance=560026 kB, estimate=560026 kB; lsn=3/9E002758, redo lsn=3/7E46AB20
+2025-11-11 19:09:43.797 PKT [299047] LOG:  checkpoints are occurring too frequently (1 second apart)
+2025-11-11 19:09:43.797 PKT [299047] HINT:  Consider increasing the configuration parameter "max_wal_size".
+2025-11-11 19:09:43.797 PKT [299047] LOG:  checkpoint starting: wal
+2025-11-11 19:09:45.328 PKT [299047] LOG:  checkpoint complete: wrote 36643 buffers (14.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 2 removed, 31 recycled; write=1.310 s, sync=0.173 s, total=1.532 s; sync files=2, longest=0.173 s, average=0.087 s; distance=550705 kB, estimate=559094 kB; lsn=3/BF003350, redo lsn=3/9FE371A0
+2025-11-11 19:09:45.363 PKT [299047] LOG:  checkpoints are occurring too frequently (2 seconds apart)
+2025-11-11 19:09:45.363 PKT [299047] HINT:  Consider increasing the configuration parameter "max_wal_size".
+2025-11-11 19:09:45.363 PKT [299047] LOG:  checkpoint starting: wal
+2025-11-11 19:09:47.143 PKT [299047] LOG:  checkpoint complete: wrote 35892 buffers (13.7%), wrote 0 SLRU buffers; 0 WAL file(s) added, 2 removed, 31 recycled; write=1.508 s, sync=0.244 s, total=1.780 s; sync files=7, longest=0.121 s, average=0.035 s; distance=539614 kB, estimate=557146 kB; lsn=3/E09BF560, redo lsn=3/C0D2ED68
+2025-11-11 19:09:47.144 PKT [299047] LOG:  checkpoints are occurring too frequently (2 seconds apart)
+2025-11-11 19:09:47.144 PKT [299047] HINT:  Consider increasing the configuration parameter "max_wal_size".
+2025-11-11 19:09:47.144 PKT [299047] LOG:  checkpoint starting: wal
+2025-11-11 19:09:52.858 PKT [299047] LOG:  checkpoint complete: wrote 21143 buffers (8.1%), wrote 1 SLRU buffers; 0 WAL file(s) added, 4 removed, 29 recycled; write=5.396 s, sync=0.276 s, total=5.715 s; sync files=22, longest=0.147 s, average=0.013 s; distance=530637 kB, estimate=554495 kB; lsn=4/3172D18, redo lsn=3/E1362298
+2025-11-11 19:09:52.858 PKT [299047] LOG:  checkpoints are occurring too frequently (5 seconds apart)
+2025-11-11 19:09:52.858 PKT [299047] HINT:  Consider increasing the configuration parameter "max_wal_size".
+2025-11-11 19:09:52.858 PKT [299047] LOG:  checkpoint starting: wal
+2025-11-11 19:10:17.723 PKT [299500] LOG:  neurondb: initializing background workers
+2025-11-11 19:10:17.730 PKT [299500] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:10:17.730 PKT [299500] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:10:17.730 PKT [299500] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:10:17.730 PKT [299500] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:10:17.730 PKT [299500] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:10:17.730 PKT [299500] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:10:17.730 PKT [299500] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:10:17.755 PKT [299500] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:10:17.755 PKT [299500] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:10:17.755 PKT [299500] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:10:17.756 PKT [299500] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:10:17.762 PKT [299506] LOG:  database system was interrupted; last known up at 2025-11-11 19:09:52 PKT
+2025-11-11 19:10:17.781 PKT [299506] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 19:10:17.782 PKT [299506] LOG:  redo starts at 3/E1362298
+2025-11-11 19:10:18.525 PKT [299506] LOG:  invalid record length at 4/1CE24C78: expected at least 24, got 0
+2025-11-11 19:10:18.525 PKT [299506] LOG:  redo done at 4/1CE24C40 system usage: CPU: user: 0.35 s, system: 0.38 s, elapsed: 0.74 s
+2025-11-11 19:10:18.532 PKT [299504] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 19:10:19.536 PKT [299504] LOG:  checkpoint complete: wrote 132179 buffers (50.4%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 59 recycled; write=0.983 s, sync=0.001 s, total=1.008 s; sync files=8, longest=0.001 s, average=0.001 s; distance=977674 kB, estimate=977674 kB; lsn=4/1CE24C78, redo lsn=4/1CE24C78
+2025-11-11 19:10:19.556 PKT [299500] LOG:  database system is ready to accept connections
+2025-11-11 19:10:19.561 PKT [299527] LOG:  neurondb: neurandefrag worker started (PID 299527)
+2025-11-11 19:10:19.572 PKT [299526] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:10:19.572 PKT [299528] LOG:  neurondb: neuranmon worker started (PID 299528)
+2025-11-11 19:10:19.572 PKT [299529] LOG:  neurondb: neuranq worker started (PID 299529)
+2025-11-11 19:10:19.576 PKT [299528] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:11:19.581 PKT [299528] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 19:12:19.601 PKT [299528] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 19:13:19.645 PKT [299528] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 19:13:22.478 PKT [299504] LOG:  checkpoint starting: wal
+2025-11-11 19:14:19.690 PKT [299528] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 19:15:50.149 PKT [301748] FATAL:  could not load library "/usr/local/pgsql.18/lib/neurondb.so": /usr/local/pgsql.18/lib/neurondb.so: undefined symbol: JsonbGetDatum
+2025-11-11 19:15:50.149 PKT [301748] LOG:  database system is shut down
+2025-11-11 19:15:51.625 PKT [301757] FATAL:  could not load library "/usr/local/pgsql.18/lib/neurondb.so": /usr/local/pgsql.18/lib/neurondb.so: undefined symbol: JsonbGetDatum
+2025-11-11 19:15:51.625 PKT [301757] LOG:  database system is shut down
+2025-11-11 19:18:46.422 PKT [303813] LOG:  neurondb: initializing background workers
+2025-11-11 19:18:46.430 PKT [303813] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:18:46.430 PKT [303813] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:18:46.430 PKT [303813] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:18:46.430 PKT [303813] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:18:46.430 PKT [303813] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:18:46.430 PKT [303813] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:18:46.430 PKT [303813] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:18:46.457 PKT [303813] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:18:46.457 PKT [303813] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:18:46.457 PKT [303813] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:18:46.458 PKT [303813] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:18:46.463 PKT [303819] LOG:  database system was shut down at 2025-11-11 19:18:46 PKT
+2025-11-11 19:18:46.473 PKT [303813] LOG:  database system is ready to accept connections
+2025-11-11 19:18:46.476 PKT [303823] LOG:  neurondb: neurandefrag worker started (PID 303823)
+2025-11-11 19:18:46.483 PKT [303824] LOG:  neurondb: neuranmon worker started (PID 303824)
+2025-11-11 19:18:46.483 PKT [303822] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:18:46.484 PKT [303825] LOG:  neurondb: neuranq worker started (PID 303825)
+2025-11-11 19:18:46.487 PKT [303824] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:18:53.881 PKT [303817] LOG:  checkpoints are occurring too frequently (7 seconds apart)
+2025-11-11 19:18:53.881 PKT [303817] HINT:  Consider increasing the configuration parameter "max_wal_size".
+2025-11-11 19:18:53.881 PKT [303817] LOG:  checkpoint starting: wal
+2025-11-11 19:19:17.623 PKT [303823] LOG:  neurondb: neurandefrag worker shutting down (PID 303823)
+2025-11-11 19:19:17.623 PKT [303822] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 19:19:17.623 PKT [303813] LOG:  received smart shutdown request
+2025-11-11 19:19:17.623 PKT [303824] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 19:19:17.623 PKT [303825] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 19:19:17.660 PKT [303813] LOG:  background worker "logical replication launcher" (PID 303826) exited with exit code 1
+2025-11-11 19:19:39.690 PKT [304121] LOG:  neurondb: initializing background workers
+2025-11-11 19:19:39.697 PKT [304121] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:19:39.697 PKT [304121] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:19:39.697 PKT [304121] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:19:39.697 PKT [304121] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:19:39.697 PKT [304121] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:19:39.697 PKT [304121] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:19:39.697 PKT [304121] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:19:39.724 PKT [304121] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:19:39.724 PKT [304121] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:19:39.724 PKT [304121] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:19:39.725 PKT [304121] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:19:39.730 PKT [304127] LOG:  database system was interrupted; last known up at 2025-11-11 19:18:46 PKT
+2025-11-11 19:19:39.749 PKT [304127] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 19:19:39.750 PKT [304127] LOG:  redo starts at 4/4C90FB40
+2025-11-11 19:19:40.338 PKT [304127] LOG:  invalid record length at 4/7C3F4A58: expected at least 24, got 0
+2025-11-11 19:19:40.338 PKT [304127] LOG:  redo done at 4/7C3F4A20 system usage: CPU: user: 0.27 s, system: 0.31 s, elapsed: 0.58 s
+2025-11-11 19:19:40.377 PKT [304125] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 19:19:41.151 PKT [304125] LOG:  checkpoint complete: wrote 105617 buffers (40.3%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 48 recycled; write=0.750 s, sync=0.002 s, total=0.775 s; sync files=5, longest=0.001 s, average=0.001 s; distance=781203 kB, estimate=781203 kB; lsn=4/7C3F4A58, redo lsn=4/7C3F4A58
+2025-11-11 19:19:41.172 PKT [304121] LOG:  database system is ready to accept connections
+2025-11-11 19:19:41.176 PKT [304156] LOG:  neurondb: neurandefrag worker started (PID 304156)
+2025-11-11 19:19:41.183 PKT [304158] LOG:  neurondb: neuranq worker started (PID 304158)
+2025-11-11 19:19:41.183 PKT [304157] LOG:  neurondb: neuranmon worker started (PID 304157)
+2025-11-11 19:19:41.184 PKT [304155] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:19:41.188 PKT [304157] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:19:46.768 PKT [304125] LOG:  checkpoints are occurring too frequently (6 seconds apart)
+2025-11-11 19:19:46.768 PKT [304125] HINT:  Consider increasing the configuration parameter "max_wal_size".
+2025-11-11 19:19:46.768 PKT [304125] LOG:  checkpoint starting: wal
+2025-11-11 19:20:41.235 PKT [304157] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 19:21:41.250 PKT [304157] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 19:22:50.544 PKT [304638] LOG:  neurondb: initializing background workers
+2025-11-11 19:22:50.552 PKT [304638] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:22:50.552 PKT [304638] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:22:50.552 PKT [304638] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:22:50.552 PKT [304638] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:22:50.552 PKT [304638] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:22:50.552 PKT [304638] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:22:50.552 PKT [304638] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:22:50.580 PKT [304638] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:22:50.580 PKT [304638] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:22:50.580 PKT [304638] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:22:50.581 PKT [304638] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:22:50.586 PKT [304644] LOG:  database system was interrupted; last known up at 2025-11-11 19:19:41 PKT
+2025-11-11 19:22:50.605 PKT [304644] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-11 19:22:50.606 PKT [304644] LOG:  redo starts at 4/7C3F4AD0
+2025-11-11 19:22:51.197 PKT [304644] LOG:  invalid record length at 4/ABEDB5F0: expected at least 24, got 0
+2025-11-11 19:22:51.197 PKT [304644] LOG:  redo done at 4/ABEDB5B8 system usage: CPU: user: 0.27 s, system: 0.31 s, elapsed: 0.59 s
+2025-11-11 19:22:51.242 PKT [304642] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-11 19:22:52.038 PKT [304642] LOG:  checkpoint complete: wrote 105617 buffers (40.3%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 47 recycled; write=0.778 s, sync=0.002 s, total=0.797 s; sync files=5, longest=0.001 s, average=0.001 s; distance=781210 kB, estimate=781210 kB; lsn=4/ABEDB5F0, redo lsn=4/ABEDB5F0
+2025-11-11 19:22:52.060 PKT [304638] LOG:  database system is ready to accept connections
+2025-11-11 19:22:52.064 PKT [304665] LOG:  neurondb: neurandefrag worker started (PID 304665)
+2025-11-11 19:22:52.071 PKT [304667] LOG:  neurondb: neuranq worker started (PID 304667)
+2025-11-11 19:22:52.075 PKT [304666] LOG:  neurondb: neuranmon worker started (PID 304666)
+2025-11-11 19:22:52.075 PKT [304664] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:22:52.078 PKT [304666] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:23:52.093 PKT [304666] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 19:24:52.192 PKT [304666] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 19:25:52.291 PKT [304666] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 19:26:52.389 PKT [304666] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 19:27:51.135 PKT [304642] LOG:  checkpoint starting: time
+2025-11-11 19:27:52.487 PKT [304666] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 19:27:57.101 PKT [304642] LOG:  checkpoint complete: wrote 58 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=5.889 s, sync=0.038 s, total=5.967 s; sync files=29, longest=0.037 s, average=0.002 s; distance=389 kB, estimate=703128 kB; lsn=4/ABF3E1A0, redo lsn=4/ABF3CD68
+2025-11-11 19:28:52.586 PKT [304666] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 19:29:14.712 PKT [304638] LOG:  received fast shutdown request
+2025-11-11 19:29:14.748 PKT [304638] LOG:  aborting any active transactions
+2025-11-11 19:29:14.748 PKT [304667] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 19:29:14.748 PKT [304666] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 19:29:14.748 PKT [304665] LOG:  neurondb: neurandefrag worker shutting down (PID 304665)
+2025-11-11 19:29:14.748 PKT [304664] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 19:29:14.759 PKT [304638] LOG:  background worker "logical replication launcher" (PID 304668) exited with exit code 1
+2025-11-11 19:29:14.759 PKT [304642] LOG:  shutting down
+2025-11-11 19:29:14.760 PKT [304642] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 19:29:14.766 PKT [304642] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.001 s, total=0.007 s; sync files=2, longest=0.001 s, average=0.001 s; distance=5 kB, estimate=632816 kB; lsn=4/ABF3E530, redo lsn=4/ABF3E530
+2025-11-11 19:29:14.855 PKT [304638] LOG:  database system is shut down
+2025-11-11 19:29:14.986 PKT [305467] LOG:  neurondb: initializing background workers
+2025-11-11 19:29:14.993 PKT [305467] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:29:14.993 PKT [305467] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:29:14.993 PKT [305467] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:29:14.993 PKT [305467] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:29:14.993 PKT [305467] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:29:14.993 PKT [305467] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:29:14.993 PKT [305467] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:29:15.020 PKT [305467] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:29:15.020 PKT [305467] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:29:15.021 PKT [305467] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:29:15.022 PKT [305467] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:29:15.026 PKT [305473] LOG:  database system was shut down at 2025-11-11 19:29:14 PKT
+2025-11-11 19:29:15.036 PKT [305467] LOG:  database system is ready to accept connections
+2025-11-11 19:29:15.039 PKT [305477] LOG:  neurondb: neurandefrag worker started (PID 305477)
+2025-11-11 19:29:15.046 PKT [305479] LOG:  neurondb: neuranq worker started (PID 305479)
+2025-11-11 19:29:15.046 PKT [305478] LOG:  neurondb: neuranmon worker started (PID 305478)
+2025-11-11 19:29:15.048 PKT [305476] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:29:15.050 PKT [305478] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:30:15.114 PKT [305478] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 19:30:32.198 PKT [305467] LOG:  received fast shutdown request
+2025-11-11 19:30:32.234 PKT [305467] LOG:  aborting any active transactions
+2025-11-11 19:30:32.234 PKT [305477] LOG:  neurondb: neurandefrag worker shutting down (PID 305477)
+2025-11-11 19:30:32.234 PKT [305479] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 19:30:32.234 PKT [305478] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 19:30:32.234 PKT [305476] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 19:30:32.243 PKT [305467] LOG:  background worker "logical replication launcher" (PID 305480) exited with exit code 1
+2025-11-11 19:30:32.245 PKT [305471] LOG:  shutting down
+2025-11-11 19:30:32.245 PKT [305471] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 19:30:32.261 PKT [305471] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.007 s, sync=0.001 s, total=0.017 s; sync files=4, longest=0.001 s, average=0.001 s; distance=13 kB, estimate=13 kB; lsn=4/ABF41D00, redo lsn=4/ABF41D00
+2025-11-11 19:30:32.288 PKT [305467] LOG:  database system is shut down
+2025-11-11 19:30:32.328 PKT [307226] LOG:  neurondb: initializing background workers
+2025-11-11 19:30:32.336 PKT [307226] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:30:32.336 PKT [307226] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:30:32.336 PKT [307226] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:30:32.336 PKT [307226] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:30:32.336 PKT [307226] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:30:32.336 PKT [307226] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:30:32.336 PKT [307226] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:30:32.364 PKT [307226] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:30:32.364 PKT [307226] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:30:32.364 PKT [307226] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:30:32.365 PKT [307226] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:30:32.370 PKT [307232] LOG:  database system was shut down at 2025-11-11 19:30:32 PKT
+2025-11-11 19:30:32.380 PKT [307226] LOG:  database system is ready to accept connections
+2025-11-11 19:30:32.383 PKT [307236] LOG:  neurondb: neurandefrag worker started (PID 307236)
+2025-11-11 19:30:32.391 PKT [307238] LOG:  neurondb: neuranq worker started (PID 307238)
+2025-11-11 19:30:32.392 PKT [307235] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:30:32.393 PKT [307237] LOG:  neurondb: neuranmon worker started (PID 307237)
+2025-11-11 19:30:32.396 PKT [307237] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:30:56.025 PKT [307226] LOG:  received fast shutdown request
+2025-11-11 19:30:56.062 PKT [307226] LOG:  aborting any active transactions
+2025-11-11 19:30:56.062 PKT [307237] LOG:  neurondb: neuranmon worker shutting down
+2025-11-11 19:30:56.062 PKT [307236] LOG:  neurondb: neurandefrag worker shutting down (PID 307236)
+2025-11-11 19:30:56.062 PKT [307238] LOG:  neurondb: neuranq worker shutting down
+2025-11-11 19:30:56.062 PKT [307235] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-11 19:30:56.071 PKT [307226] LOG:  background worker "logical replication launcher" (PID 307239) exited with exit code 1
+2025-11-11 19:30:56.074 PKT [307230] LOG:  shutting down
+2025-11-11 19:30:56.074 PKT [307230] LOG:  checkpoint starting: shutdown immediate
+2025-11-11 19:30:56.090 PKT [307230] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.008 s, total=0.016 s; sync files=3, longest=0.008 s, average=0.003 s; distance=6 kB, estimate=6 kB; lsn=4/ABF43708, redo lsn=4/ABF43708
+2025-11-11 19:30:56.114 PKT [307226] LOG:  database system is shut down
+2025-11-11 19:30:56.152 PKT [307357] LOG:  neurondb: initializing background workers
+2025-11-11 19:30:56.160 PKT [307357] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-11 19:30:56.160 PKT [307357] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-11 19:30:56.160 PKT [307357] LOG:  neurondb: registered neuranq background worker
+2025-11-11 19:30:56.160 PKT [307357] LOG:  neurondb: registered neuranmon background worker
+2025-11-11 19:30:56.160 PKT [307357] LOG:  neurondb: registered neurandefrag background worker
+2025-11-11 19:30:56.160 PKT [307357] LOG:  neurondb: registered neuranllm background worker
+2025-11-11 19:30:56.160 PKT [307357] LOG:  neurondb: all background workers registered successfully
+2025-11-11 19:30:56.187 PKT [307357] LOG:  neurondb: shared memory initialized for all workers
+2025-11-11 19:30:56.188 PKT [307357] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-11 19:30:56.188 PKT [307357] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-11 19:30:56.189 PKT [307357] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-11 19:30:56.194 PKT [307363] LOG:  database system was shut down at 2025-11-11 19:30:56 PKT
+2025-11-11 19:30:56.202 PKT [307357] LOG:  database system is ready to accept connections
+2025-11-11 19:30:56.205 PKT [307367] LOG:  neurondb: neurandefrag worker started (PID 307367)
+2025-11-11 19:30:56.211 PKT [307368] LOG:  neurondb: neuranmon worker started (PID 307368)
+2025-11-11 19:30:56.213 PKT [307369] LOG:  neurondb: neuranq worker started (PID 307369)
+2025-11-11 19:30:56.214 PKT [307366] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-11 19:30:56.215 PKT [307368] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-11 19:31:56.279 PKT [307368] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-11 19:32:56.378 PKT [307368] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-11 19:33:56.476 PKT [307368] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-11 19:34:56.556 PKT [307368] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-11 19:35:56.293 PKT [307361] LOG:  checkpoint starting: time
+2025-11-11 19:35:56.518 PKT [307361] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.107 s, sync=0.080 s, total=0.226 s; sync files=3, longest=0.079 s, average=0.027 s; distance=9 kB, estimate=9 kB; lsn=4/ABF45F50, redo lsn=4/ABF45EF8
+2025-11-11 19:35:56.612 PKT [307368] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-11 19:36:56.635 PKT [307368] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-11 19:37:56.690 PKT [307368] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-11 19:38:56.760 PKT [307368] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-11 19:39:56.858 PKT [307368] LOG:  neurondb: tuned ef_search=385 (latency=0.00ms, recall=0.000)
+2025-11-11 19:40:56.618 PKT [307361] LOG:  checkpoint starting: time
+2025-11-11 19:40:56.762 PKT [307361] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.002 s, total=0.144 s; sync files=2, longest=0.001 s, average=0.001 s; distance=4 kB, estimate=9 kB; lsn=4/ABF47338, redo lsn=4/ABF472E0
+2025-11-11 19:40:56.957 PKT [307368] LOG:  neurondb: tuned ef_search=462 (latency=0.00ms, recall=0.000)
+2025-11-11 19:41:57.054 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:42:57.153 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:43:57.251 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:44:57.350 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:45:56.859 PKT [307361] LOG:  checkpoint starting: time
+2025-11-11 19:45:57.002 PKT [307361] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.002 s, total=0.144 s; sync files=2, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=9 kB; lsn=4/ABF48DB8, redo lsn=4/ABF48D60
+2025-11-11 19:45:57.449 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:46:57.493 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:47:57.533 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:48:57.632 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:49:57.678 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:50:56.094 PKT [307361] LOG:  checkpoint starting: time
+2025-11-11 19:50:56.238 PKT [307361] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.002 s, total=0.144 s; sync files=2, longest=0.001 s, average=0.001 s; distance=8 kB, estimate=9 kB; lsn=4/ABF4AE68, redo lsn=4/ABF4AE10
+2025-11-11 19:50:57.776 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:51:57.874 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:52:57.972 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:53:58.068 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:54:58.166 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:55:56.301 PKT [307361] LOG:  checkpoint starting: time
+2025-11-11 19:55:56.488 PKT [307361] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.105 s, sync=0.081 s, total=0.188 s; sync files=2, longest=0.080 s, average=0.041 s; distance=10 kB, estimate=10 kB; lsn=4/ABF4D698, redo lsn=4/ABF4D640
+2025-11-11 19:55:58.253 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:56:58.352 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:57:58.450 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:58:58.525 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 19:59:58.623 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 20:00:56.589 PKT [307361] LOG:  checkpoint starting: time
+2025-11-11 20:00:56.740 PKT [307361] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.007 s, total=0.152 s; sync files=2, longest=0.007 s, average=0.004 s; distance=4 kB, estimate=9 kB; lsn=4/ABF4EA60, redo lsn=4/ABF4EA08
+2025-11-11 20:00:58.722 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 20:01:58.820 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-11 20:02:58.918 PKT [307368] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)

@@ -1,19 +1,87 @@
-BasedOnStyle: LLVM
+# .clang-format — PostgreSQL-style C formatting
+
+BasedOnStyle: WebKit
+
+# Indentation, width, wrapping
 UseTab: Always
 IndentWidth: 8
 TabWidth: 8
 ContinuationIndentWidth: 8
 ColumnLimit: 80
-AllowShortIfStatementsOnASingleLine: false
-AllowShortFunctionsOnASingleLine: None
-AllowShortLoopsOnASingleLine: false
-BreakBeforeBraces: Linux
 IndentCaseLabels: false
-SpaceBeforeParens: ControlStatements
-AlignOperands: false
-PointerAlignment: Right
-SortIncludes: false
 KeepEmptyLinesAtTheStartOfBlocks: false
 MaxEmptyLinesToKeep: 1
+AlignOperands: false
+AlignAfterOpenBracket: DontAlign
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignConsecutiveMacros: None
+AlignEscapedNewlines: DontAlign
 
+# Braces — Allman-like for PG (brace on the next line)
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterControlStatement: true
+  AfterFunction: true
+  AfterEnum: true
+  AfterStruct: true
+  AfterClass: true
+  BeforeElse: false
+  BeforeCatch: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
 
+# One-liners and flow statements
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortBlocksOnASingleLine: false
+
+# Spaces and punctuation
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: false
+SpaceInEmptyParentheses: false
+SpacesInCStyleCastParentheses: false
+SpaceAfterCStyleCast: false
+SpaceBeforeSquareBrackets: false
+SpacesInSquareBrackets: false
+SpacesInConditionalStatement: false
+SpacesInAngles: false
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceAroundPointerQualifiers: After
+PointerAlignment: Right
+ReferenceAlignment: Right
+
+# Functions and return types (PG splits return type)
+AlwaysBreakAfterDefinitionReturnType: All
+AlwaysBreakAfterReturnType: None
+
+# Calls, params, and bin-packing
+BinPackArguments: false
+BinPackParameters: false
+AllowAllParametersOfDeclarationOnNextLine: false
+
+# Operators and line breaks
+BreakBeforeBinaryOperators: NonAssignment
+BreakConstructorInitializers: BeforeColon
+BreakInheritanceList: BeforeColon
+
+# Includes and preprocessor
+SortIncludes: false
+IncludeBlocks: Preserve
+IncludeCategories:
+  - Regex: '.*'
+    Priority: 1
+IndentPPDirectives: None
+MacroBlockBegin: ''
+MacroBlockEnd: ''
+
+# Comments
+ReflowComments: false
+SpacesBeforeTrailingComments: 1
+
+# Misc
+Cpp11BracedListStyle: false
+DerivePointerAlignment: false
+NamespaceIndentation: None
