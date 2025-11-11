@@ -25,6 +25,7 @@
 #include "neurondb_config.h"
 #include "neurondb_gpu.h"
 #include "neurondb_gpu_backend.h"
+#include "neurondb_gpu_model.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -75,8 +76,8 @@ ndb_elapsed_ms(TimestampTz start, TimestampTz end)
 	return ((double) secs * 1000.0) + ((double) usecs / 1000.0);
 }
 
-static void
-ndb_gpu_stats_add(bool used_gpu, double gpu_ms, double cpu_ms, bool fallback)
+void
+ndb_gpu_stats_record(bool used_gpu, double gpu_ms, double cpu_ms, bool fallback)
 {
 	gpu_stats.queries_executed++;
 
@@ -348,6 +349,7 @@ neurondb_gpu_shutdown(void)
     gpu_disabled = false;
     current_backend = GPU_BACKEND_NONE;
     active_device_id = 0;
+	ndb_gpu_clear_model_registry();
 
     elog(DEBUG1, "neurondb: GPU backend shut down");
 }
@@ -481,12 +483,13 @@ neurondb_gpu_rf_predict(const void *rf_hdr,
 #endif
 out:
     t1 = GetCurrentTimestamp();
-    ndb_gpu_stats_add(used_gpu,
-                      used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
-                      used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
-                      !used_gpu);
+	ndb_gpu_stats_record(used_gpu,
+		used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+		used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+		!used_gpu);
     return ok;
 }
+
 
 PG_FUNCTION_INFO_V1(neurondb_gpu_enable);
 Datum
@@ -513,12 +516,13 @@ neurondb_gpu_info(PG_FUNCTION_ARGS)
     ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
     Datum values[7];
     bool nulls[7] = {false, false, false, false, false, false, false};
+    GPUDeviceInfo *info;
 
     /* Initialize tuple store */
     InitMaterializedSRF(fcinfo, 0);
 
     /* Return basic GPU info - simplified for now */
-    GPUDeviceInfo *info = neurondb_gpu_get_device_info(active_device_id);
+    info = neurondb_gpu_get_device_info(active_device_id);
 
     values[0] = Int32GetDatum(info->device_id);
     values[1] = CStringGetTextDatum(info->name);

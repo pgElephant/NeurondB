@@ -24,6 +24,7 @@ regression.diffs
 regression.out
 tmp_check/
 tmp_check_iso/
+/log
 log/
 output_iso/
 

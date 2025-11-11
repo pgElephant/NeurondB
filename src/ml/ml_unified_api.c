@@ -34,6 +34,7 @@
 
 #include "neurondb.h"
 #include "neurondb_ml.h"
+#include "neurondb_gpu_bridge.h"
 
 /* PG_MODULE_MAGIC is in neurondb.c only */
 
@@ -81,6 +82,11 @@ neurondb_train(PG_FUNCTION_ARGS)
 	ArrayType *feature_columns_array =
 		PG_ARGISNULL(4) ? NULL : PG_GETARG_ARRAYTYPE_P(4);
 	Jsonb *hyperparams = PG_ARGISNULL(5) ? NULL : PG_GETARG_JSONB_P(5);
+	const char **feature_names = NULL;
+	int feature_name_count = 0;
+	char *model_name = NULL;
+	MLGpuTrainResult gpu_result;
+	char *gpu_errmsg = NULL;
 
 	MemoryContext callcontext;
 	MemoryContext oldcontext;
@@ -180,6 +186,11 @@ neurondb_train(PG_FUNCTION_ARGS)
 					appendStringInfoString(
 						&feature_list, ", ");
 				appendStringInfoString(&feature_list, col);
+				if (feature_names == NULL)
+					feature_names = (const char **)palloc(
+						sizeof(char *) * nelems);
+				feature_names[feature_name_count++] =
+					pstrdup(col);
 				pfree(col);
 			}
 		}
@@ -191,7 +202,62 @@ neurondb_train(PG_FUNCTION_ARGS)
 	} else
 	{
 		appendStringInfoString(&feature_list, "*");
+		feature_names = (const char **)palloc(sizeof(char *));
+		feature_names[0] = pstrdup("*");
+		feature_name_count = 1;
 	}
+
+	if (feature_name_count == 0)
+	{
+		feature_names = (const char **)palloc(sizeof(char *));
+		feature_names[0] = pstrdup("*");
+		feature_name_count = 1;
+	}
+
+	MemSet(&gpu_result, 0, sizeof(MLGpuTrainResult));
+	model_name = psprintf("%s_%s", algorithm, project_name);
+	if (ndb_gpu_try_train_model(algorithm,
+		    project_name,
+		    model_name,
+		    table_name,
+		    target_column,
+		    feature_names,
+		    feature_name_count,
+		    hyperparams,
+		    NULL,
+		    NULL,
+		    0,
+		    0,
+		    0,
+		    &gpu_result,
+		    &gpu_errmsg))
+	{
+		model_id = ml_catalog_register_model(&gpu_result.spec);
+		gpu_result.model_id = model_id;
+		elog(NOTICE,
+			"neurondb.train: GPU model_id=%d created "
+			"successfully",
+			model_id);
+		ndb_gpu_free_train_result(&gpu_result);
+		if (feature_names != NULL)
+		{
+			for (i = 0; i < feature_name_count; i++)
+				pfree((void *)feature_names[i]);
+			pfree(feature_names);
+		}
+		neurondb_cleanup(oldcontext, callcontext, true);
+		pfree(model_name);
+		PG_RETURN_INT32(model_id);
+	}
+	if (gpu_errmsg != NULL)
+	{
+		elog(WARNING,
+			"neurondb: GPU training failed (%s), using CPU "
+			"fallback",
+			gpu_errmsg);
+		pfree(gpu_errmsg);
+	}
+	ndb_gpu_free_train_result(&gpu_result);
 
 	resetStringInfo(&sql);
 
@@ -548,6 +614,9 @@ neurondb_train(PG_FUNCTION_ARGS)
 					&isnull));
 		}
 	}
+
+	if (model_name != NULL)
+		pfree(model_name);
 
 	neurondb_cleanup(oldcontext, callcontext, true);
 

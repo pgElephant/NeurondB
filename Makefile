@@ -88,6 +88,7 @@ OBJS += \
 OBJS += \
 	src/ml/ml_unified_api.o \
 	src/ml/ml_catalog.o \
+	src/ml/ml_gpu_registry.o \
 	src/ml/ml_ridge_lasso.o \
 	src/ml/ml_random_forest.o \
 	src/ml/ml_svm.o \

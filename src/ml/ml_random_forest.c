@@ -22,11 +22,17 @@
 #include <math.h>
 #include <string.h>
 #include <float.h>
+#include <stdint.h>
 
 #include "neurondb.h"
 #include "neurondb_ml.h"
+#include "neurondb_gpu_model.h"
+#include "neurondb_gpu_bridge.h"
+#include "ml_gpu_random_forest.h"
+#include "neurondb_gpu.h"
 #include "ml_catalog.h"
 #include "gtree.h"
+#include "ml_random_forest_internal.h"
 
 #define RF_STUB_MAX_FEATURES 4
 #define RF_BOOTSTRAP_FRACTION 0.8
@@ -44,7 +50,13 @@ typedef struct RFSplitPair
 	int cls;
 } RFSplitPair;
 
-typedef struct RFModel RFModel;
+typedef struct RFDataset
+{
+	float *features;
+	double *labels;
+	int n_samples;
+	int feature_dim;
+} RFDataset;
 
 static bool rf_select_split(const float *features,
 	const double *labels,
@@ -79,6 +91,18 @@ static bytea *rf_model_serialize(const RFModel *model);
 static RFModel *rf_model_deserialize(const bytea *data);
 static void rf_free_deserialized_model(RFModel *model);
 static bool rf_load_model_from_catalog(int32 model_id, RFModel **out);
+static bool rf_metadata_is_gpu(Jsonb *metadata);
+static bool rf_try_gpu_predict_catalog(int32 model_id,
+	const Vector *feature_vec,
+	double *result_out);
+static void rf_dataset_init(RFDataset *dataset);
+static void rf_dataset_free(RFDataset *dataset);
+static void rf_dataset_load(const char *quoted_tbl,
+	const char *quoted_feat,
+	const char *quoted_label,
+	RFDataset *dataset,
+	StringInfo query);
+void neurondb_gpu_register_rf_model(void);
 
 static int
 rf_split_pair_cmp(const void *a, const void *b)
@@ -213,6 +237,68 @@ rf_select_split(const float *features,
 			pairs[pair_count].value = (double)value;
 			pairs[pair_count].cls = cls;
 			pair_count++;
+		}
+
+		if (pair_count > 1)
+		{
+			bool try_gpu = (n_classes == 2 && neurondb_gpu_enabled
+				&& neurondb_gpu_is_available()
+				&& ndb_gpu_kernel_enabled("rf_split"));
+
+			if (try_gpu)
+			{
+				float *gpu_features = (float *)palloc(
+					sizeof(float) * pair_count);
+				uint8_t *gpu_labels = (uint8_t *)palloc(
+					sizeof(uint8_t) * pair_count);
+				bool labels_ok = true;
+				double gpu_threshold = 0.0;
+				double gpu_gini = DBL_MAX;
+				int gpu_left = 0;
+				int gpu_right = 0;
+
+				for (i = 0; i < pair_count; i++)
+				{
+					int cls = pairs[i].cls;
+
+					gpu_features[i] = (float)pairs[i].value;
+					if (cls == 0)
+						gpu_labels[i] = 0;
+					else if (cls == 1)
+						gpu_labels[i] = 1;
+					else
+					{
+						labels_ok = false;
+						break;
+					}
+				}
+
+				if (labels_ok
+					&& neurondb_gpu_rf_best_split_binary(
+						gpu_features,
+						gpu_labels,
+						pair_count,
+						&gpu_threshold,
+						&gpu_gini,
+						&gpu_left,
+						&gpu_right))
+				{
+					if (gpu_gini < *best_impurity)
+					{
+						*best_impurity = gpu_gini;
+						*best_threshold = gpu_threshold;
+						*best_feature = feature_idx;
+					}
+
+					pfree(gpu_features);
+					pfree(gpu_labels);
+					pfree(pairs);
+					continue;
+				}
+
+				pfree(gpu_features);
+				pfree(gpu_labels);
+			}
 		}
 
 		if (pair_count <= 1)
@@ -508,44 +594,6 @@ rf_tree_predict_row(const GTree *tree, const float *row, int dim)
 
 	return 0.0;
 }
-
-typedef struct RFModel
-{
-	int32 model_id; /* model identifier */
-	int n_features; /* number of features */
-	int n_samples; /* number of samples */
-	int n_classes; /* number of classes */
-	double majority_value; /* most frequent class value */
-	double majority_fraction; /* fraction of majority class */
-	double gini_impurity; /* Gini impurity for root */
-	int *class_counts; /* class histogram */
-	double *feature_means; /* mean for each feature */
-	double *feature_variances; /* variance for each feature */
-	GTree *tree; /* tree structure pointer */
-	int split_feature; /* feature index for split */
-	double split_threshold; /* threshold used for split */
-	double second_value; /* value for 2nd class by frequency */
-	double second_fraction; /* fraction for 2nd class by frequency */
-	double *feature_importance; /* global feature importance scores */
-	double label_entropy; /* entropy of labels at root */
-	double max_deviation; /* max deviation among features */
-	double max_split_deviation; /* max deviation at split */
-	double left_branch_value; /* predicted value for left branch */
-	double left_branch_fraction; /* fraction for left branch */
-	double right_branch_value; /* predicted value for right branch */
-	double right_branch_fraction; /* fraction for right branch */
-	int feature_limit; /* number of per-branch means stored */
-	double *left_branch_means; /* per-feature left branch means */
-	double *right_branch_means; /* per-feature right branch means */
-	int tree_count; /* number of trained trees */
-	GTree **trees; /* array of tree pointers */
-	double *tree_majority; /* per-tree majority class */
-	double *tree_majority_fraction; /* per-tree majority fraction */
-	double *tree_second; /* per-tree second class */
-	double *tree_second_fraction; /* per-tree second fraction */
-	double *tree_oob_accuracy; /* per-tree out-of-bag accuracy */
-	double oob_accuracy; /* forest-level OOB accuracy */
-} RFModel;
 
 static RFModel *rf_models = NULL;
 static int rf_model_count = 0;
@@ -851,6 +899,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	int *feature_order = NULL;
 	pg_prng_state rng;
 	int32 model_id;
+	RFDataset dataset;
 
 	double *labels = NULL;
 	double majority_value = 0.0;
@@ -906,7 +955,6 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	bool class_mean_threshold_valid = false;
 	bool best_score_valid = false;
 	bool best_split_valid = false;
-
 	GTree *primary_tree = NULL;
 	RFSplitPair *split_pairs = NULL;
 
@@ -965,6 +1013,8 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		min_samples_arg = arg_min_samples;
 	}
 
+	rf_dataset_init(&dataset);
+
 	table_name = text_to_cstring(table_name_text);
 	feature_col = text_to_cstring(feature_col_text);
 	label_col = text_to_cstring(label_col_text);
@@ -973,11 +1023,6 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	quoted_label = quote_identifier(label_col);
 
 	initStringInfo(&query);
-	appendStringInfo(&query,
-		"SELECT vector_dims(%s) FROM %s WHERE %s IS NOT NULL LIMIT 1",
-		quoted_feat,
-		quoted_tbl,
-		quoted_feat);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 	{
@@ -988,56 +1033,114 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("random_forest: SPI_connect failed")));
 	}
 
-	if (SPI_execute(query.data, true, 1) == SPI_OK_SELECT
-		&& SPI_processed > 0)
+	rf_dataset_load(
+		quoted_tbl, quoted_feat, quoted_label, &dataset, &query);
+
+	feature_dim = dataset.feature_dim;
+	n_samples = dataset.n_samples;
+	labels = dataset.labels;
+	stage_features = dataset.features;
+	if (neurondb_gpu_is_available() && n_samples > 0 && feature_dim > 0)
 	{
-		HeapTuple tup = SPI_tuptable->vals[0];
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
-		Datum dim_datum;
-		bool dim_null;
+		int gpu_class_count =
+			rf_count_classes(dataset.labels, dataset.n_samples);
 
-		dim_datum = SPI_getbinval(tup, tupdesc, 1, &dim_null);
-		if (!dim_null)
-			feature_dim = DatumGetInt32(dim_datum);
+		if (gpu_class_count > 0)
+		{
+			StringInfoData hyperbuf;
+			Jsonb *gpu_hyperparams = NULL;
+			char *gpu_err = NULL;
+			const char *gpu_features[1];
+			MLGpuTrainResult gpu_result;
+
+			memset(&gpu_result, 0, sizeof(MLGpuTrainResult));
+			gpu_features[0] = feature_col;
+
+			initStringInfo(&hyperbuf);
+			appendStringInfo(&hyperbuf,
+				"{\"n_trees\":%d,\"max_depth\":%d,"
+				"\"min_samples_split\":%d}",
+				forest_trees_arg,
+				max_depth_arg,
+				min_samples_arg);
+			gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(
+				jsonb_in, CStringGetDatum(hyperbuf.data)));
+
+			if (ndb_gpu_try_train_model("random_forest",
+				    NULL,
+				    NULL,
+				    table_name,
+				    label_col,
+				    gpu_features,
+				    1,
+				    gpu_hyperparams,
+				    stage_features,
+				    labels,
+				    n_samples,
+				    feature_dim,
+				    gpu_class_count,
+				    &gpu_result,
+				    &gpu_err)
+				&& gpu_result.spec.model_data != NULL)
+			{
+				MLCatalogModelSpec spec = gpu_result.spec;
+
+				if (spec.training_table == NULL)
+					spec.training_table = table_name;
+				if (spec.training_column == NULL)
+					spec.training_column = label_col;
+				if (spec.parameters == NULL)
+				{
+					spec.parameters =
+						gpu_hyperparams;
+					gpu_hyperparams = NULL;
+				}
+
+				spec.training_time_ms = -1;
+				spec.num_samples = n_samples;
+				spec.num_features = feature_dim;
+
+				model_id = ml_catalog_register_model(&spec);
+				ndb_gpu_free_train_result(&gpu_result);
+
+				if (gpu_hyperparams)
+					pfree(gpu_hyperparams);
+				pfree(hyperbuf.data);
+				if (gpu_err)
+					pfree(gpu_err);
+
+				rf_dataset_free(&dataset);
+				SPI_finish();
+
+				if (table_name)
+					pfree(table_name);
+				if (feature_col)
+					pfree(feature_col);
+				if (label_col)
+					pfree(label_col);
+				if (query.data)
+					pfree(query.data);
+
+				PG_RETURN_INT32(model_id);
+			}
+
+			if (gpu_err != NULL)
+			{
+				elog(DEBUG1,
+					"random_forest: GPU training unavailable "
+					"(%s)",
+					gpu_err);
+				pfree(gpu_err);
+			}
+
+			if (gpu_hyperparams != NULL)
+				pfree(gpu_hyperparams);
+			pfree(hyperbuf.data);
+		}
 	}
-
-	resetStringInfo(&query);
-	appendStringInfo(&query,
-		"SELECT %s, (%s)::float8 FROM %s WHERE %s IS NOT NULL "
-		"AND %s IS NOT NULL",
-		quoted_feat,
-		quoted_label,
-		quoted_tbl,
-		quoted_feat,
-		quoted_label);
-
-	if (SPI_execute(query.data, true, 0) != SPI_OK_SELECT)
-	{
-		SPI_finish();
-		pfree(table_name);
-		pfree(feature_col);
-		pfree(label_col);
-		pfree(query.data);
-		ereport(ERROR,
-			(errmsg("random_forest: failed to fetch training "
-				"data")));
-	}
-
-	n_samples = SPI_processed;
 	if (n_samples > 0)
 	{
 		int i;
-
-		labels = (double *)palloc(sizeof(double) * n_samples);
-		/* Stage feature matrix and labels */
-		if (feature_dim > 0 && n_samples > 0)
-		{
-			stage_features = (float *)palloc(
-				sizeof(float) * feature_dim * n_samples);
-			memset(stage_features,
-				0,
-				sizeof(float) * feature_dim * n_samples);
-		}
 
 		if (feature_dim > 0)
 			feature_importance_tmp =
@@ -1051,48 +1154,6 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				(int *)palloc(sizeof(int) * feature_dim);
 			for (j = 0; j < feature_dim; j++)
 				feature_order[j] = j;
-		}
-
-		for (i = 0; i < n_samples; i++)
-		{
-			HeapTuple tup = SPI_tuptable->vals[i];
-			TupleDesc tupdesc = SPI_tuptable->tupdesc;
-			Datum feat_datum;
-			Datum label_datum;
-			bool feat_null;
-			bool label_null;
-
-			feat_datum = SPI_getbinval(tup, tupdesc, 1, &feat_null);
-			label_datum =
-				SPI_getbinval(tup, tupdesc, 2, &label_null);
-
-			if (feat_null || label_null)
-			{
-				labels[i] = NAN;
-				continue;
-			}
-
-			labels[i] = DatumGetFloat8(label_datum);
-
-			if (stage_features != NULL)
-			{
-				Vector *vec;
-				float *vec_data;
-				int j;
-				float *dest_row;
-
-				vec = DatumGetVector(feat_datum);
-				if (vec->dim != feature_dim)
-				{
-					labels[i] = NAN;
-					continue;
-				}
-
-				vec_data = vec->data;
-				dest_row = stage_features + (i * feature_dim);
-				for (j = 0; j < feature_dim; j++)
-					dest_row[j] = vec_data[j];
-			}
 		}
 
 		sample_count =
@@ -2680,14 +2741,17 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	{
 		RFModel *stored_model;
 		MLCatalogModelSpec spec;
-		bytea *serialized;
+		bytea *serialized = NULL;
 		Jsonb *params_jsonb = NULL;
 		Jsonb *metrics_jsonb = NULL;
 		StringInfoData params_buf;
 		StringInfoData metrics_buf;
+		bytea *gpu_payload = NULL;
+		Jsonb *gpu_metrics = NULL;
+		char *gpu_err = NULL;
+		bool gpu_packed = false;
 
 		stored_model = &rf_models[rf_model_count - 1];
-		serialized = rf_model_serialize(stored_model);
 
 		initStringInfo(&params_buf);
 		appendStringInfo(&params_buf,
@@ -2708,6 +2772,36 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			majority_fraction);
 		metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(
 			jsonb_in, CStringGetDatum(metrics_buf.data)));
+
+		if (neurondb_gpu_is_available())
+		{
+			if (ndb_gpu_rf_pack_model(stored_model,
+				    &gpu_payload,
+				    &gpu_metrics,
+				    &gpu_err)
+				== 0)
+			{
+				serialized = gpu_payload;
+				gpu_packed = true;
+				if (gpu_metrics != NULL)
+				{
+					if (metrics_jsonb)
+						pfree(metrics_jsonb);
+					metrics_jsonb = gpu_metrics;
+					gpu_metrics = NULL;
+				}
+			} else if (gpu_err != NULL)
+			{
+				elog(DEBUG1,
+					"random_forest: GPU pack failed (%s)",
+					gpu_err);
+				pfree(gpu_err);
+				gpu_err = NULL;
+			}
+		}
+
+		if (!gpu_packed)
+			serialized = rf_model_serialize(stored_model);
 
 		memset(&spec, 0, sizeof(spec));
 		spec.algorithm = "random_forest";
@@ -2733,6 +2827,10 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			pfree(metrics_jsonb);
 		pfree(params_buf.data);
 		pfree(metrics_buf.data);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+		if (!gpu_packed && gpu_payload)
+			pfree(gpu_payload);
 	}
 
 	elog(NOTICE,
@@ -2749,11 +2847,8 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		gini_impurity,
 		label_entropy,
 		forest_oob_accuracy);
-
 	if (class_counts_tmp)
 		pfree(class_counts_tmp);
-	if (labels)
-		pfree(labels);
 	if (feature_means_tmp)
 		pfree(feature_means_tmp);
 	if (feature_vars_tmp)
@@ -2796,8 +2891,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		pfree(tree_oob_accuracy);
 	if (bootstrap_indices)
 		pfree(bootstrap_indices);
-	if (stage_features)
-		pfree(stage_features);
+	rf_dataset_free(&dataset);
 
 	SPI_finish();
 
@@ -3012,6 +3106,8 @@ predict_random_forest(PG_FUNCTION_ARGS)
 
 	if (!rf_lookup_model(model_id, &model))
 	{
+		if (rf_try_gpu_predict_catalog(model_id, feature_vec, &result))
+			PG_RETURN_FLOAT8(result);
 		if (!rf_load_model_from_catalog(model_id, &model))
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -3774,6 +3870,136 @@ rf_free_deserialized_model(RFModel *model)
 	pfree(model);
 }
 
+static void
+rf_dataset_init(RFDataset *dataset)
+{
+	if (dataset == NULL)
+		return;
+	dataset->features = NULL;
+	dataset->labels = NULL;
+	dataset->n_samples = 0;
+	dataset->feature_dim = 0;
+}
+
+static void
+rf_dataset_free(RFDataset *dataset)
+{
+	if (dataset == NULL)
+		return;
+	if (dataset->features != NULL)
+		pfree(dataset->features);
+	if (dataset->labels != NULL)
+		pfree(dataset->labels);
+	rf_dataset_init(dataset);
+}
+
+static void
+rf_dataset_load(const char *quoted_tbl,
+	const char *quoted_feat,
+	const char *quoted_label,
+	RFDataset *dataset,
+	StringInfo query)
+{
+	int feature_dim = 0;
+	int n_samples = 0;
+	int i;
+
+	if (dataset == NULL || query == NULL)
+		elog(ERROR, "random_forest: invalid dataset load arguments");
+
+	rf_dataset_free(dataset);
+
+	resetStringInfo(query);
+	appendStringInfo(query,
+		"SELECT vector_dims(%s) FROM %s WHERE %s IS NOT NULL LIMIT 1",
+		quoted_feat,
+		quoted_tbl,
+		quoted_feat);
+
+	if (SPI_execute(query->data, true, 1) == SPI_OK_SELECT
+		&& SPI_processed > 0)
+	{
+		HeapTuple tup = SPI_tuptable->vals[0];
+		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+		Datum dim_datum;
+		bool dim_null;
+
+		dim_datum = SPI_getbinval(tup, tupdesc, 1, &dim_null);
+		if (!dim_null)
+			feature_dim = DatumGetInt32(dim_datum);
+	}
+
+	dataset->feature_dim = feature_dim;
+
+	resetStringInfo(query);
+	appendStringInfo(query,
+		"SELECT %s, (%s)::float8 FROM %s WHERE %s IS NOT NULL "
+		"AND %s IS NOT NULL",
+		quoted_feat,
+		quoted_label,
+		quoted_tbl,
+		quoted_feat,
+		quoted_label);
+
+	if (SPI_execute(query->data, true, 0) != SPI_OK_SELECT)
+		ereport(ERROR,
+			(errmsg("random_forest: failed to fetch training "
+				"data")));
+
+	n_samples = SPI_processed;
+	dataset->n_samples = n_samples;
+
+	if (n_samples <= 0)
+		return;
+
+	dataset->labels = (double *)palloc(sizeof(double) * n_samples);
+	if (feature_dim > 0)
+	{
+		dataset->features = (float *)palloc0(
+			sizeof(float) * feature_dim * n_samples);
+	}
+
+	for (i = 0; i < n_samples; i++)
+	{
+		HeapTuple tup = SPI_tuptable->vals[i];
+		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+		Datum feat_datum;
+		Datum label_datum;
+		bool feat_null;
+		bool label_null;
+
+		feat_datum = SPI_getbinval(tup, tupdesc, 1, &feat_null);
+		label_datum = SPI_getbinval(tup, tupdesc, 2, &label_null);
+
+		if (feat_null || label_null)
+		{
+			dataset->labels[i] = NAN;
+			continue;
+		}
+
+		dataset->labels[i] = DatumGetFloat8(label_datum);
+
+		if (dataset->features != NULL)
+		{
+			Vector *vec = DatumGetVector(feat_datum);
+			float *vec_data;
+			float *dest_row;
+			int j;
+
+			if (vec->dim != feature_dim)
+			{
+				dataset->labels[i] = NAN;
+				continue;
+			}
+
+			vec_data = vec->data;
+			dest_row = dataset->features + (i * feature_dim);
+			for (j = 0; j < feature_dim; j++)
+				dest_row[j] = vec_data[j];
+		}
+	}
+}
+
 static bool
 rf_load_model_from_catalog(int32 model_id, RFModel **out)
 {
@@ -3788,6 +4014,17 @@ rf_load_model_from_catalog(int32 model_id, RFModel **out)
 
 	if (payload == NULL)
 		return false;
+
+	if (rf_metadata_is_gpu(metrics))
+	{
+		if (payload != NULL)
+			pfree(payload);
+		if (parameters != NULL)
+			pfree(parameters);
+		if (metrics != NULL)
+			pfree(metrics);
+		return false;
+	}
 
 	decoded = rf_model_deserialize(payload);
 
@@ -3841,4 +4078,355 @@ rf_load_model_from_catalog(int32 model_id, RFModel **out)
 		return rf_lookup_model(model_id, out);
 
 	return true;
+}
+
+static bool
+rf_metadata_is_gpu(Jsonb *metadata)
+{
+	char *meta_txt;
+	bool is_gpu = false;
+
+	if (metadata == NULL)
+		return false;
+
+	meta_txt = DatumGetCString(
+		DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metadata)));
+	if (meta_txt != NULL)
+	{
+		if (strstr(meta_txt, "\"storage\":\"gpu\"") != NULL
+			|| strstr(meta_txt, "\"storage\": \"gpu\"") != NULL)
+			is_gpu = true;
+		pfree(meta_txt);
+	}
+
+	return is_gpu;
+}
+
+static bool
+rf_try_gpu_predict_catalog(int32 model_id,
+	const Vector *feature_vec,
+	double *result_out)
+{
+	bytea *payload = NULL;
+	Jsonb *parameters = NULL;
+	Jsonb *metrics = NULL;
+	char *gpu_err = NULL;
+	int class_out = -1;
+	bool success = false;
+
+	if (!neurondb_gpu_is_available())
+		return false;
+	if (feature_vec == NULL)
+		return false;
+	if (feature_vec->dim <= 0)
+		return false;
+
+	if (!ml_catalog_fetch_model_payload(
+		    model_id, &payload, &parameters, &metrics))
+		return false;
+
+	if (payload == NULL)
+		goto cleanup;
+
+	if (!rf_metadata_is_gpu(metrics))
+		goto cleanup;
+
+	if (ndb_gpu_rf_predict(payload,
+		    feature_vec->data,
+		    feature_vec->dim,
+		    &class_out,
+		    &gpu_err)
+		== 0)
+	{
+		if (result_out != NULL)
+			*result_out = (double)class_out;
+		elog(DEBUG1,
+			"random_forest: GPU prediction used for model %d "
+			"class=%d",
+			model_id,
+			class_out);
+		success = true;
+	} else if (gpu_err != NULL)
+	{
+		elog(WARNING,
+			"random_forest: GPU prediction failed for model %d "
+			"(%s)",
+			model_id,
+			gpu_err);
+	}
+
+cleanup:
+	if (gpu_err != NULL)
+		pfree(gpu_err);
+	if (payload != NULL)
+		pfree(payload);
+	if (parameters != NULL)
+		pfree(parameters);
+	if (metrics != NULL)
+		pfree(metrics);
+
+	return success;
+}
+
+typedef struct RFGpuModelState
+{
+	bytea *model_blob;
+	Jsonb *metrics;
+	int feature_dim;
+	int class_count;
+	int sample_count;
+} RFGpuModelState;
+
+static void
+rf_gpu_release_state(RFGpuModelState *state)
+{
+	if (state == NULL)
+		return;
+	if (state->model_blob != NULL)
+		pfree(state->model_blob);
+	if (state->metrics != NULL)
+		pfree(state->metrics);
+	pfree(state);
+}
+
+static bool
+rf_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
+{
+	RFGpuModelState *state;
+	bytea *payload;
+	Jsonb *metrics;
+	int rc;
+
+	if (errstr != NULL)
+		*errstr = NULL;
+	if (model == NULL || spec == NULL)
+		return false;
+	if (!neurondb_gpu_is_available())
+		return false;
+	if (spec->feature_matrix == NULL || spec->label_vector == NULL)
+		return false;
+	if (spec->sample_count <= 0 || spec->feature_dim <= 0)
+		return false;
+	if (spec->class_count <= 0)
+		return false;
+
+	payload = NULL;
+	metrics = NULL;
+
+	rc = ndb_gpu_rf_train(spec->feature_matrix,
+		spec->label_vector,
+		spec->sample_count,
+		spec->feature_dim,
+		spec->class_count,
+		spec->hyperparameters,
+		&payload,
+		&metrics,
+		errstr);
+	if (rc != 0 || payload == NULL)
+	{
+		if (payload != NULL)
+			pfree(payload);
+		if (metrics != NULL)
+			pfree(metrics);
+		return false;
+	}
+
+	if (model->backend_state != NULL)
+	{
+		rf_gpu_release_state((RFGpuModelState *)model->backend_state);
+		model->backend_state = NULL;
+	}
+
+	state = (RFGpuModelState *)palloc0(sizeof(RFGpuModelState));
+	state->model_blob = payload;
+	state->metrics = metrics;
+	state->feature_dim = spec->feature_dim;
+	state->class_count = spec->class_count;
+	state->sample_count = spec->sample_count;
+
+	model->backend_state = state;
+	model->gpu_ready = true;
+	model->is_gpu_resident = true;
+
+	return true;
+}
+
+static bool
+rf_gpu_predict(const MLGpuModel *model,
+	const float *input,
+	int input_dim,
+	float *output,
+	int output_dim,
+	char **errstr)
+{
+	const RFGpuModelState *state;
+	int rc;
+	int class_id;
+
+	if (errstr != NULL)
+		*errstr = NULL;
+	if (output != NULL && output_dim > 0)
+		output[0] = -1.0f;
+	if (model == NULL || input == NULL || output == NULL)
+		return false;
+	if (output_dim <= 0)
+		return false;
+	if (!model->gpu_ready || model->backend_state == NULL)
+		return false;
+
+	state = (const RFGpuModelState *)model->backend_state;
+	class_id = -1;
+
+	rc = ndb_gpu_rf_predict(state->model_blob,
+		input,
+		state->feature_dim > 0 ? state->feature_dim : input_dim,
+		&class_id,
+		errstr);
+	if (rc != 0)
+		return false;
+
+	output[0] = (float)class_id;
+	return true;
+}
+
+static bool
+rf_gpu_evaluate(const MLGpuModel *model,
+	const MLGpuEvalSpec *spec,
+	MLGpuMetrics *out,
+	char **errstr)
+{
+	if (errstr != NULL)
+		*errstr =
+			pstrdup("random_forest GPU evaluation not implemented");
+	if (out != NULL)
+		out->payload = NULL;
+	(void)model;
+	(void)spec;
+	return false;
+}
+
+static bool
+rf_gpu_serialize(const MLGpuModel *model,
+	bytea **payload_out,
+	Jsonb **metadata_out,
+	char **errstr)
+{
+	const RFGpuModelState *state;
+	bytea *payload_copy;
+	int payload_size;
+
+	if (errstr != NULL)
+		*errstr = NULL;
+	if (payload_out != NULL)
+		*payload_out = NULL;
+	if (metadata_out != NULL)
+		*metadata_out = NULL;
+	if (model == NULL || model->backend_state == NULL)
+		return false;
+
+	state = (const RFGpuModelState *)model->backend_state;
+	if (state->model_blob == NULL)
+		return false;
+
+	payload_size = VARSIZE(state->model_blob);
+	payload_copy = (bytea *)palloc(payload_size);
+	memcpy(payload_copy, state->model_blob, payload_size);
+
+	if (payload_out != NULL)
+		*payload_out = payload_copy;
+	else
+		pfree(payload_copy);
+
+	if (metadata_out != NULL && state->metrics != NULL)
+	{
+		int metadata_size;
+		Jsonb *metadata_copy;
+
+		metadata_size = VARSIZE(state->metrics);
+		metadata_copy = (Jsonb *)palloc(metadata_size);
+		memcpy(metadata_copy, state->metrics, metadata_size);
+		*metadata_out = metadata_copy;
+	}
+
+	return true;
+}
+
+static bool
+rf_gpu_deserialize(MLGpuModel *model,
+	const bytea *payload,
+	const Jsonb *metadata,
+	char **errstr)
+{
+	RFGpuModelState *state;
+	bytea *payload_copy;
+	int payload_size;
+
+	if (errstr != NULL)
+		*errstr = NULL;
+	if (model == NULL || payload == NULL)
+		return false;
+
+	payload_size = VARSIZE(payload);
+	payload_copy = (bytea *)palloc(payload_size);
+	memcpy(payload_copy, payload, payload_size);
+
+	state = (RFGpuModelState *)palloc0(sizeof(RFGpuModelState));
+	state->model_blob = payload_copy;
+	state->feature_dim = -1;
+	state->class_count = -1;
+	state->sample_count = -1;
+
+	if (metadata != NULL)
+	{
+		int metadata_size;
+		Jsonb *metadata_copy;
+
+		metadata_size = VARSIZE(metadata);
+		metadata_copy = (Jsonb *)palloc(metadata_size);
+		memcpy(metadata_copy, metadata, metadata_size);
+		state->metrics = metadata_copy;
+	}
+
+	if (model->backend_state != NULL)
+		rf_gpu_release_state((RFGpuModelState *)model->backend_state);
+
+	model->backend_state = state;
+	model->gpu_ready = true;
+	model->is_gpu_resident = true;
+
+	return true;
+}
+
+static void
+rf_gpu_destroy(MLGpuModel *model)
+{
+	if (model == NULL)
+		return;
+	if (model->backend_state != NULL)
+		rf_gpu_release_state((RFGpuModelState *)model->backend_state);
+	model->backend_state = NULL;
+	model->gpu_ready = false;
+	model->is_gpu_resident = false;
+}
+
+static const MLGpuModelOps rf_gpu_model_ops = {
+	.algorithm = "random_forest",
+	.train = rf_gpu_train,
+	.predict = rf_gpu_predict,
+	.evaluate = rf_gpu_evaluate,
+	.serialize = rf_gpu_serialize,
+	.deserialize = rf_gpu_deserialize,
+	.destroy = rf_gpu_destroy,
+};
+
+void
+neurondb_gpu_register_rf_model(void)
+{
+	static bool registered = false;
+
+	if (registered)
+		return;
+
+	ndb_gpu_register_model_ops(&rf_gpu_model_ops);
+	registered = true;
 }

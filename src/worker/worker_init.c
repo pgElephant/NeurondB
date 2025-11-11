@@ -26,6 +26,7 @@
 /* Include ONNX Runtime header */
 #include "neurondb_onnx.h"
 #include "neurondb_gpu_backend.h"
+#include "ml_gpu_registry.h"
 #include "neurondb_config.h"
 
 /* Forward declarations from background worker modules */
@@ -47,10 +48,11 @@ extern void neurandefrag_shmem_init(void);
 /* GPU module declarations */
 extern void neurondb_gpu_init_guc(void);
 extern void neurondb_gpu_init(void);
+extern void neurondb_gpu_register_models(void);
 extern void neurondb_llm_init_guc(void);
 extern Size neurondb_llm_shmem_size(void);
 extern void neurondb_llm_shmem_init(void);
-extern void neuranllm_main(Datum main_arg); 
+extern void neuranllm_main(Datum main_arg);
 
 /* Prometheus and cache declarations */
 extern Size entrypoint_cache_shmem_size(void);
@@ -78,7 +80,9 @@ _PG_init(void)
 
 	if (!process_shared_preload_libraries_in_progress)
 	{
-		elog(WARNING, "neurondb: background workers require shared_preload_libraries");
+		elog(WARNING,
+			"neurondb: background workers require "
+			"shared_preload_libraries");
 		return;
 	}
 
@@ -88,33 +92,31 @@ _PG_init(void)
 	neuranq_init_guc();
 	neuranmon_init_guc();
 	neurandefrag_init_guc();
-	
+
 	/* Initialize GPU and LLM GUC variables */
 	neurondb_gpu_init_guc();
 	neurondb_llm_init_guc();
-	
+
 	/* Initialize ONNX Runtime for HuggingFace models */
 	neurondb_onnx_define_gucs();
 	neurondb_onnx_init();
 
-    /* Install shared memory request hook or request directly (older PG) */
+	/* Install shared memory request hook or request directly (older PG) */
 #if PG_VERSION_NUM >= 150000
-    prev_shmem_request_hook = shmem_request_hook;
-    shmem_request_hook = neurondb_shmem_request;
+	prev_shmem_request_hook = shmem_request_hook;
+	shmem_request_hook = neurondb_shmem_request;
 #else
-    /* Request shared memory and LWLocks directly for older versions */
-    RequestAddinShmemSpace(neuranq_shmem_size() +
-                           neuranmon_shmem_size() +
-                           neurandefrag_shmem_size() +
-                           neurondb_llm_shmem_size() +
-                           entrypoint_cache_shmem_size() +
-                           8192); /* prometheus metrics */
-    RequestNamedLWLockTranche("neurondb_queue", 1);
-    RequestNamedLWLockTranche("neurondb_tuner", 1);
-    RequestNamedLWLockTranche("neurondb_defrag", 1);
-    RequestNamedLWLockTranche("neurondb_llm", 1);
-    RequestNamedLWLockTranche("neurondb_prometheus", 1);
-    RequestNamedLWLockTranche("neurondb_entrypoint_cache", 1);
+	/* Request shared memory and LWLocks directly for older versions */
+	RequestAddinShmemSpace(neuranq_shmem_size() + neuranmon_shmem_size()
+		+ neurandefrag_shmem_size() + neurondb_llm_shmem_size()
+		+ entrypoint_cache_shmem_size()
+		+ 8192); /* prometheus metrics */
+	RequestNamedLWLockTranche("neurondb_queue", 1);
+	RequestNamedLWLockTranche("neurondb_tuner", 1);
+	RequestNamedLWLockTranche("neurondb_defrag", 1);
+	RequestNamedLWLockTranche("neurondb_llm", 1);
+	RequestNamedLWLockTranche("neurondb_prometheus", 1);
+	RequestNamedLWLockTranche("neurondb_entrypoint_cache", 1);
 #endif
 
 	/* Install shared memory startup hook */
@@ -125,8 +127,8 @@ _PG_init(void)
 	 * Register background worker: neuranq (Queue Executor)
 	 */
 	memset(&worker, 0, sizeof(worker));
-	worker.bgw_flags = BGWORKER_SHMEM_ACCESS |
-					   BGWORKER_BACKEND_DATABASE_CONNECTION;
+	worker.bgw_flags =
+		BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
 	snprintf(worker.bgw_library_name, BGW_MAXLEN, "neurondb");
 	snprintf(worker.bgw_function_name, BGW_MAXLEN, "neuranq_main");
@@ -134,7 +136,7 @@ _PG_init(void)
 	snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_queue");
 	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
 	worker.bgw_notify_pid = 0;
-	worker.bgw_main_arg = (Datum) 0;
+	worker.bgw_main_arg = (Datum)0;
 
 	RegisterBackgroundWorker(&worker);
 
@@ -144,8 +146,8 @@ _PG_init(void)
 	 * Register background worker: neuranmon (Auto-Tuner)
 	 */
 	memset(&worker, 0, sizeof(worker));
-	worker.bgw_flags = BGWORKER_SHMEM_ACCESS |
-					   BGWORKER_BACKEND_DATABASE_CONNECTION;
+	worker.bgw_flags =
+		BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
 	snprintf(worker.bgw_library_name, BGW_MAXLEN, "neurondb");
 	snprintf(worker.bgw_function_name, BGW_MAXLEN, "neuranmon_main");
@@ -153,7 +155,7 @@ _PG_init(void)
 	snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_tuner");
 	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
 	worker.bgw_notify_pid = 0;
-	worker.bgw_main_arg = (Datum) 0;
+	worker.bgw_main_arg = (Datum)0;
 
 	RegisterBackgroundWorker(&worker);
 
@@ -163,8 +165,8 @@ _PG_init(void)
 	 * Register background worker: neurandefrag (Index Maintenance)
 	 */
 	memset(&worker, 0, sizeof(worker));
-	worker.bgw_flags = BGWORKER_SHMEM_ACCESS |
-					   BGWORKER_BACKEND_DATABASE_CONNECTION;
+	worker.bgw_flags =
+		BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
 	snprintf(worker.bgw_library_name, BGW_MAXLEN, "neurondb");
 	snprintf(worker.bgw_function_name, BGW_MAXLEN, "neurandefrag_main");
@@ -172,36 +174,39 @@ _PG_init(void)
 	snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_defrag");
 	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
 	worker.bgw_notify_pid = 0;
-	worker.bgw_main_arg = (Datum) 0;
+	worker.bgw_main_arg = (Datum)0;
 
 	RegisterBackgroundWorker(&worker);
 
-    elog(LOG, "neurondb: registered neurandefrag background worker");
-    
-    /* Register background worker: neuranllm (LLM jobs) */
-    memset(&worker, 0, sizeof(worker));
-    worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
-    worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
-    snprintf(worker.bgw_library_name, BGW_MAXLEN, "neurondb");
-    snprintf(worker.bgw_function_name, BGW_MAXLEN, "neuranllm_main");
-    snprintf(worker.bgw_name, BGW_MAXLEN, "neurondb: llm worker");
-    snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_llm");
-    worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
-    worker.bgw_notify_pid = 0;
-    worker.bgw_main_arg = (Datum) 0;
-    RegisterBackgroundWorker(&worker);
-    elog(LOG, "neurondb: registered neuranllm background worker");
+	elog(LOG, "neurondb: registered neurandefrag background worker");
+
+	/* Register background worker: neuranllm (LLM jobs) */
+	memset(&worker, 0, sizeof(worker));
+	worker.bgw_flags =
+		BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
+	snprintf(worker.bgw_library_name, BGW_MAXLEN, "neurondb");
+	snprintf(worker.bgw_function_name, BGW_MAXLEN, "neuranllm_main");
+	snprintf(worker.bgw_name, BGW_MAXLEN, "neurondb: llm worker");
+	snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_llm");
+	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
+	worker.bgw_notify_pid = 0;
+	worker.bgw_main_arg = (Datum)0;
+	RegisterBackgroundWorker(&worker);
+	elog(LOG, "neurondb: registered neuranllm background worker");
 	elog(LOG, "neurondb: all background workers registered successfully");
 
 #ifdef NDB_GPU_CUDA
-    neurondb_gpu_register_cuda_backend();
+	neurondb_gpu_register_cuda_backend();
 #endif
 #ifdef NDB_GPU_ROCM
-    neurondb_gpu_register_rocm_backend();
+	neurondb_gpu_register_rocm_backend();
 #endif
 #ifdef NDB_GPU_METAL
-    neurondb_gpu_register_metal_backend();
+	neurondb_gpu_register_metal_backend();
 #endif
+
+	neurondb_gpu_register_models();
 }
 
 #ifndef NDB_GPU_CUDA
@@ -236,7 +241,7 @@ _PG_fini(void)
 {
 	/* Cleanup ONNX Runtime */
 	neurondb_onnx_cleanup();
-	
+
 	/* Restore previous hooks */
 #if PG_VERSION_NUM >= 150000
 	shmem_request_hook = prev_shmem_request_hook;
@@ -253,25 +258,23 @@ _PG_fini(void)
 static void
 neurondb_shmem_request(void)
 {
-    /* Call previous hook if any */
-    if (prev_shmem_request_hook)
-        prev_shmem_request_hook();
+	/* Call previous hook if any */
+	if (prev_shmem_request_hook)
+		prev_shmem_request_hook();
 
-    /* Request shared memory */
-    RequestAddinShmemSpace(neuranq_shmem_size() +
-                           neuranmon_shmem_size() +
-                           neurandefrag_shmem_size() +
-                           neurondb_llm_shmem_size() +
-                           entrypoint_cache_shmem_size() +
-                           8192); /* prometheus metrics */
+	/* Request shared memory */
+	RequestAddinShmemSpace(neuranq_shmem_size() + neuranmon_shmem_size()
+		+ neurandefrag_shmem_size() + neurondb_llm_shmem_size()
+		+ entrypoint_cache_shmem_size()
+		+ 8192); /* prometheus metrics */
 
-    /* Request LWLocks */
-    RequestNamedLWLockTranche("neurondb_queue", 1);
-    RequestNamedLWLockTranche("neurondb_tuner", 1);
-    RequestNamedLWLockTranche("neurondb_defrag", 1);
-    RequestNamedLWLockTranche("neurondb_llm", 1);
-    RequestNamedLWLockTranche("neurondb_prometheus", 1);
-    RequestNamedLWLockTranche("neurondb_entrypoint_cache", 1);
+	/* Request LWLocks */
+	RequestNamedLWLockTranche("neurondb_queue", 1);
+	RequestNamedLWLockTranche("neurondb_tuner", 1);
+	RequestNamedLWLockTranche("neurondb_defrag", 1);
+	RequestNamedLWLockTranche("neurondb_llm", 1);
+	RequestNamedLWLockTranche("neurondb_prometheus", 1);
+	RequestNamedLWLockTranche("neurondb_entrypoint_cache", 1);
 }
 #endif
 
@@ -289,9 +292,8 @@ neurondb_shmem_startup(void)
 	neuranq_shmem_init();
 	neuranmon_shmem_init();
 	neurandefrag_shmem_init();
-    neurondb_llm_shmem_init();
-    entrypoint_cache_shmem_init();
+	neurondb_llm_shmem_init();
+	entrypoint_cache_shmem_init();
 
 	elog(LOG, "neurondb: shared memory initialized for all workers");
 }
-
