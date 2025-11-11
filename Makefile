@@ -87,6 +87,7 @@ OBJS += \
 # Machine learning (NEW supervised learning modules FIRST for better loading)
 OBJS += \
 	src/ml/ml_unified_api.o \
+	src/ml/ml_catalog.o \
 	src/ml/ml_ridge_lasso.o \
 	src/ml/ml_random_forest.o \
 	src/ml/ml_svm.o \

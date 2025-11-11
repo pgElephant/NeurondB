@@ -42,12 +42,12 @@ PG_FUNCTION_INFO_V1(neurondb_predict);
 PG_FUNCTION_INFO_V1(neurondb_deploy);
 PG_FUNCTION_INFO_V1(neurondb_load_model);
 
-extern void rf_promote_model_to_catalog(
-	int32 internal_id, int32 catalog_id, const char *hyperparams_json);
-
 /* Helper: clean up context and SPI */
-static void neurondb_cleanup(
-	MemoryContext oldcontext, MemoryContext callcontext, bool finish_spi) {
+static void
+neurondb_cleanup(MemoryContext oldcontext,
+	MemoryContext callcontext,
+	bool finish_spi)
+{
 	if (finish_spi)
 		SPI_finish();
 	MemoryContextSwitchTo(oldcontext);
@@ -55,7 +55,9 @@ static void neurondb_cleanup(
 }
 
 /* Helper: quote literal for SQL safely and free after use */
-static char *neurondb_quote_literal_cstr(const char *str) {
+static char *
+neurondb_quote_literal_cstr(const char *str)
+{
 	char *ret;
 	text *txt = cstring_to_text(str);
 	ret = TextDatumGetCString(
@@ -69,13 +71,15 @@ static char *neurondb_quote_literal_cstr(const char *str) {
  * Unified model training interface.
  * ----------
  */
-Datum neurondb_train(PG_FUNCTION_ARGS) {
+Datum
+neurondb_train(PG_FUNCTION_ARGS)
+{
 	text *project_name_text = PG_GETARG_TEXT_PP(0);
 	text *algorithm_text = PG_GETARG_TEXT_PP(1);
 	text *table_name_text = PG_GETARG_TEXT_PP(2);
 	text *target_column_text = PG_GETARG_TEXT_PP(3);
-	ArrayType *feature_columns_array
-		= PG_ARGISNULL(4) ? NULL : PG_GETARG_ARRAYTYPE_P(4);
+	ArrayType *feature_columns_array =
+		PG_ARGISNULL(4) ? NULL : PG_GETARG_ARRAYTYPE_P(4);
 	Jsonb *hyperparams = PG_ARGISNULL(5) ? NULL : PG_GETARG_JSONB_P(5);
 
 	MemoryContext callcontext;
@@ -92,23 +96,24 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 	bool isnull = false;
 	int32 k_value = 5;
 	int i;
-	int32 rf_internal_id = 0;
-	char *rf_hyperparams_json = NULL;
 
 	project_name = text_to_cstring(project_name_text);
 	algorithm = text_to_cstring(algorithm_text);
 	table_name = text_to_cstring(table_name_text);
 	target_column = text_to_cstring(target_column_text);
-	rf_hyperparams_json = NULL;
 
 	elog(NOTICE,
 		"neurondb.train: project=\"%s\", algorithm=\"%s\", "
 		"table=\"%s\", "
 		"target=\"%s\"",
-		project_name, algorithm, table_name, target_column);
+		project_name,
+		algorithm,
+		table_name,
+		target_column);
 
 	callcontext = AllocSetContextCreate(CurrentMemoryContext,
-		"neurondb_train memory context", ALLOCSET_DEFAULT_SIZES);
+		"neurondb_train memory context",
+		ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(callcontext);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -129,7 +134,8 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 	ret = SPI_execute(sql.data, false, 0);
 
 	if ((ret != SPI_OK_INSERT_RETURNING && ret != SPI_OK_UPDATE_RETURNING)
-		|| SPI_processed == 0) {
+		|| SPI_processed == 0)
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -143,7 +149,8 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 	initStringInfo(&feature_list);
 
 	/* Build feature list */
-	if (feature_columns_array != NULL) {
+	if (feature_columns_array != NULL)
+	{
 		Oid elemtype = ARR_ELEMTYPE(feature_columns_array);
 		int16 typlen;
 		bool typbyval;
@@ -155,11 +162,19 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 		bool *elem_nulls;
 
 		get_typlenbyvalalign(elemtype, &typlen, &typbyval, &typalign);
-		deconstruct_array(feature_columns_array, TEXTOID, typlen,
-			typbyval, typalign, &elem_values, &elem_nulls, &nelems);
+		deconstruct_array(feature_columns_array,
+			TEXTOID,
+			typlen,
+			typbyval,
+			typalign,
+			&elem_values,
+			&elem_nulls,
+			&nelems);
 
-		for (i = 0; i < nelems; ++i) {
-			if (!elem_nulls[i]) {
+		for (i = 0; i < nelems; ++i)
+		{
+			if (!elem_nulls[i])
+			{
 				char *col = TextDatumGetCString(elem_values[i]);
 				if (feature_list.len > 0)
 					appendStringInfoString(
@@ -173,37 +188,43 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 
 		if (feature_list.len == 0)
 			appendStringInfoString(&feature_list, "*");
-	} else {
+	} else
+	{
 		appendStringInfoString(&feature_list, "*");
 	}
 
 	resetStringInfo(&sql);
 
 	/* Algorithm branching */
-	if (strcmp(algorithm, "linear_regression") == 0) {
+	if (strcmp(algorithm, "linear_regression") == 0)
+	{
 		appendStringInfo(&sql,
 			"SELECT train_linear_regression(%s, %s, %s)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
 			neurondb_quote_literal_cstr(target_column));
-	} else if (strcmp(algorithm, "logistic_regression") == 0) {
+	} else if (strcmp(algorithm, "logistic_regression") == 0)
+	{
 		appendStringInfo(&sql,
 			"SELECT train_logistic_regression(%s, %s, %s)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
 			neurondb_quote_literal_cstr(target_column));
-	} else if (strcmp(algorithm, "random_forest") == 0) {
+	} else if (strcmp(algorithm, "random_forest") == 0)
+	{
 		int n_trees = 10, max_depth = 10, min_samples = 100;
-		if (hyperparams != NULL) {
+		if (hyperparams != NULL)
+		{
 			JsonbIterator *it;
 			JsonbValue v;
 			int r;
-			Datum json_cstr;
 
 			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false))
-				!= WJB_DONE) {
-				if (r == WJB_KEY) {
+				!= WJB_DONE)
+			{
+				if (r == WJB_KEY)
+				{
 					char *key = pnstrdup(v.val.string.val,
 						v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
@@ -234,33 +255,37 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 					pfree(key);
 				}
 			}
-			json_cstr = DirectFunctionCall1(
-				jsonb_out, JsonbPGetDatum(hyperparams));
-			rf_hyperparams_json = TextDatumGetCString(json_cstr);
 		}
 		appendStringInfo(&sql,
 			"SELECT train_random_forest_classifier(%s, "
 			"%s, %s, %d, %d, %d)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
-			neurondb_quote_literal_cstr(target_column), n_trees,
-			max_depth, min_samples);
-	} else if (strcmp(algorithm, "svm") == 0) {
+			neurondb_quote_literal_cstr(target_column),
+			n_trees,
+			max_depth,
+			min_samples);
+	} else if (strcmp(algorithm, "svm") == 0)
+	{
 		appendStringInfo(&sql,
 			"SELECT train_svm_classifier(%s, %s, %s)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
 			neurondb_quote_literal_cstr(target_column));
-	} else if (strcmp(algorithm, "decision_tree") == 0) {
+	} else if (strcmp(algorithm, "decision_tree") == 0)
+	{
 		int max_depth = 10, min_samples = 100;
-		if (hyperparams != NULL) {
-			JsonbIterator *it
-				= JsonbIteratorInit(&hyperparams->root);
+		if (hyperparams != NULL)
+		{
+			JsonbIterator *it =
+				JsonbIteratorInit(&hyperparams->root);
 			JsonbValue v;
 			int r;
 			while ((r = JsonbIteratorNext(&it, &v, false))
-				!= WJB_DONE) {
-				if (r == WJB_KEY) {
+				!= WJB_DONE)
+			{
+				if (r == WJB_KEY)
+				{
 					char *key = pnstrdup(v.val.string.val,
 						v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
@@ -285,24 +310,30 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 			"%s, %s, %d, %d)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
-			neurondb_quote_literal_cstr(target_column), max_depth,
+			neurondb_quote_literal_cstr(target_column),
+			max_depth,
 			min_samples);
-	} else if (strcmp(algorithm, "naive_bayes") == 0) {
+	} else if (strcmp(algorithm, "naive_bayes") == 0)
+	{
 		appendStringInfo(&sql,
 			"SELECT train_naive_bayes_classifier(%s, %s, %s)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
 			neurondb_quote_literal_cstr(target_column));
 	} else if (strcmp(algorithm, "knn") == 0
-		|| strcmp(algorithm, "knn_classifier") == 0) {
-		if (hyperparams != NULL) {
-			JsonbIterator *it
-				= JsonbIteratorInit(&hyperparams->root);
+		|| strcmp(algorithm, "knn_classifier") == 0)
+	{
+		if (hyperparams != NULL)
+		{
+			JsonbIterator *it =
+				JsonbIteratorInit(&hyperparams->root);
 			JsonbValue v;
 			int r;
 			while ((r = JsonbIteratorNext(&it, &v, false))
-				!= WJB_DONE) {
-				if (r == WJB_KEY) {
+				!= WJB_DONE)
+			{
+				if (r == WJB_KEY)
+				{
 					char *key = pnstrdup(v.val.string.val,
 						v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
@@ -321,38 +352,47 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 			"INSERT INTO neurondb.ml_models (project_id, "
 			"model_name, algorithm, training_table, "
 			"training_column, status, metadata) "
-			"VALUES (%d, %s, 'knn', %s, %s, 'trained', "
+			"VALUES (%d, %s, 'knn', %s, %s, 'completed', "
 			"'{\"algorithm\": \"knn\", \"k\": %d}'::jsonb) "
 			"RETURNING model_id",
 			project_id,
 			neurondb_quote_literal_cstr(
 				psprintf("knn_%s", project_name)),
 			neurondb_quote_literal_cstr(table_name),
-			neurondb_quote_literal_cstr(target_column), k_value);
+			neurondb_quote_literal_cstr(target_column),
+			k_value);
 		ret = SPI_execute(sql.data, false, 0);
-		if (ret == SPI_OK_INSERT_RETURNING && SPI_processed > 0) {
+		if (ret == SPI_OK_INSERT_RETURNING && SPI_processed > 0)
+		{
 			model_id = DatumGetInt32(
 				SPI_getbinval(SPI_tuptable->vals[0],
-					SPI_tuptable->tupdesc, 1, &isnull));
+					SPI_tuptable->tupdesc,
+					1,
+					&isnull));
 			neurondb_cleanup(oldcontext, callcontext, true);
 			PG_RETURN_INT32(model_id);
-		} else {
+		} else
+		{
 			neurondb_cleanup(oldcontext, callcontext, true);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 					errmsg("failed to register knn "
 					       "model")));
 		}
-	} else if (strcmp(algorithm, "ridge") == 0) {
+	} else if (strcmp(algorithm, "ridge") == 0)
+	{
 		double alpha = 1.0;
-		if (hyperparams != NULL) {
-			JsonbIterator *it
-				= JsonbIteratorInit(&hyperparams->root);
+		if (hyperparams != NULL)
+		{
+			JsonbIterator *it =
+				JsonbIteratorInit(&hyperparams->root);
 			JsonbValue v;
 			int r;
 			while ((r = JsonbIteratorNext(&it, &v, false))
-				!= WJB_DONE) {
-				if (r == WJB_KEY) {
+				!= WJB_DONE)
+			{
+				if (r == WJB_KEY)
+				{
 					char *key = pnstrdup(v.val.string.val,
 						v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
@@ -370,17 +410,22 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 			"SELECT train_ridge_regression(%s, %s, %s, %f)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
-			neurondb_quote_literal_cstr(target_column), alpha);
-	} else if (strcmp(algorithm, "lasso") == 0) {
+			neurondb_quote_literal_cstr(target_column),
+			alpha);
+	} else if (strcmp(algorithm, "lasso") == 0)
+	{
 		double alpha = 1.0;
-		if (hyperparams != NULL) {
-			JsonbIterator *it
-				= JsonbIteratorInit(&hyperparams->root);
+		if (hyperparams != NULL)
+		{
+			JsonbIterator *it =
+				JsonbIteratorInit(&hyperparams->root);
 			JsonbValue v;
 			int r;
 			while ((r = JsonbIteratorNext(&it, &v, false))
-				!= WJB_DONE) {
-				if (r == WJB_KEY) {
+				!= WJB_DONE)
+			{
+				if (r == WJB_KEY)
+				{
 					char *key = pnstrdup(v.val.string.val,
 						v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
@@ -398,8 +443,10 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 			"SELECT train_lasso_regression(%s, %s, %s, %f)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
-			neurondb_quote_literal_cstr(target_column), alpha);
-	} else {
+			neurondb_quote_literal_cstr(target_column),
+			alpha);
+	} else
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -416,8 +463,10 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 
 	ret = SPI_execute(sql.data, false, 0);
 
-	if (strcmp(algorithm, "random_forest") == 0) {
-		if (SPI_processed == 0) {
+	if (strcmp(algorithm, "random_forest") == 0)
+	{
+		if (SPI_processed == 0)
+		{
 			neurondb_cleanup(oldcontext, callcontext, true);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
@@ -425,10 +474,12 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 					       "return "
 					       "a model id")));
 		}
-		rf_internal_id
-			= DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-				SPI_tuptable->tupdesc, 1, &isnull));
-		if (isnull) {
+		model_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
+			SPI_tuptable->tupdesc,
+			1,
+			&isnull));
+		if (isnull)
+		{
 			neurondb_cleanup(oldcontext, callcontext, true);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
@@ -438,7 +489,8 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 		}
 	}
 
-	if (ret < 0) {
+	if (ret < 0)
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -446,39 +498,61 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
 					algorithm)));
 	}
 
-	/* Step 4: Register model in ml_models table */
-	resetStringInfo(&sql);
-	appendStringInfo(&sql,
-		"INSERT INTO neurondb.ml_models (project_id, model_name, "
-		"algorithm, training_table, training_column, status, metadata) "
-		"VALUES (%d, %s, %s, %s, %s, 'trained', '{}'::jsonb) RETURNING "
-		"model_id",
-		project_id,
-		neurondb_quote_literal_cstr(
-			psprintf("%s_%s", algorithm, project_name)),
-		neurondb_quote_literal_cstr(algorithm),
-		neurondb_quote_literal_cstr(table_name),
-		neurondb_quote_literal_cstr(target_column));
-	ret = SPI_execute(sql.data, false, 0);
-	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0) {
-		neurondb_cleanup(oldcontext, callcontext, true);
-		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("Failed to register model in catalog")));
-	}
-	model_id = DatumGetInt32(SPI_getbinval(
-		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+	/* Step 4: Register model in ml_models table (if not already persisted) */
+	{
+		bool model_registered = false;
 
-	if (strcmp(algorithm, "random_forest") == 0 && rf_internal_id > 0)
-		rf_promote_model_to_catalog(
-			rf_internal_id, model_id, rf_hyperparams_json);
+		if (model_id > 0)
+		{
+			resetStringInfo(&sql);
+			appendStringInfo(&sql,
+				"SELECT 1 FROM neurondb.ml_models WHERE "
+				"model_id = %d",
+				model_id);
+			ret = SPI_execute(sql.data, true, 1);
+			if (ret == SPI_OK_SELECT && SPI_processed > 0)
+				model_registered = true;
+		}
+
+		if (!model_registered)
+		{
+			resetStringInfo(&sql);
+			appendStringInfo(&sql,
+				"INSERT INTO neurondb.ml_models (project_id, "
+				"algorithm, training_table, training_column, "
+				"status, "
+				"parameters) "
+				"VALUES (%d, %s::neurondb.ml_algorithm_type, "
+				"%s, %s, "
+				"'completed', '{}'::jsonb) RETURNING model_id",
+				project_id,
+				neurondb_quote_literal_cstr(algorithm),
+				neurondb_quote_literal_cstr(table_name),
+				neurondb_quote_literal_cstr(target_column));
+
+			ret = SPI_execute(sql.data, false, 0);
+			if (ret != SPI_OK_INSERT_RETURNING
+				|| SPI_processed == 0)
+			{
+				neurondb_cleanup(oldcontext, callcontext, true);
+				ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("Failed to register "
+						       "model in catalog")));
+			}
+
+			model_id = DatumGetInt32(
+				SPI_getbinval(SPI_tuptable->vals[0],
+					SPI_tuptable->tupdesc,
+					1,
+					&isnull));
+		}
+	}
 
 	neurondb_cleanup(oldcontext, callcontext, true);
 
-	if (rf_hyperparams_json != NULL)
-		pfree(rf_hyperparams_json);
-
-	elog(NOTICE, "neurondb.train: model_id=%d created successfully",
+	elog(NOTICE,
+		"neurondb.train: model_id=%d created successfully",
 		model_id);
 
 	PG_RETURN_INT32(model_id);
@@ -489,7 +563,9 @@ Datum neurondb_train(PG_FUNCTION_ARGS) {
  * Unified prediction interface.
  * ----------
  */
-Datum neurondb_predict(PG_FUNCTION_ARGS) {
+Datum
+neurondb_predict(PG_FUNCTION_ARGS)
+{
 	int32 model_id = PG_GETARG_INT32(0);
 	ArrayType *features_array = PG_GETARG_ARRAYTYPE_P(1);
 
@@ -506,10 +582,12 @@ Datum neurondb_predict(PG_FUNCTION_ARGS) {
 	float8 *features;
 
 	callcontext = AllocSetContextCreate(CurrentMemoryContext,
-		"neurondb_predict memory context", ALLOCSET_DEFAULT_SIZES);
+		"neurondb_predict memory context",
+		ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(callcontext);
 
-	if (SPI_connect() != SPI_OK_CONNECT) {
+	if (SPI_connect() != SPI_OK_CONNECT)
+	{
 		neurondb_cleanup(oldcontext, callcontext, false);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -521,7 +599,8 @@ Datum neurondb_predict(PG_FUNCTION_ARGS) {
 		"SELECT algorithm FROM neurondb.ml_models WHERE model_id = %d",
 		model_id);
 	ret = SPI_execute(sql.data, true, 0);
-	if (ret != SPI_OK_SELECT || SPI_processed == 0) {
+	if (ret != SPI_OK_SELECT || SPI_processed == 0)
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -529,7 +608,8 @@ Datum neurondb_predict(PG_FUNCTION_ARGS) {
 	}
 	algorithm = TextDatumGetCString(SPI_getbinval(
 		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
-	if (isnull) {
+	if (isnull)
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -545,7 +625,8 @@ Datum neurondb_predict(PG_FUNCTION_ARGS) {
 
 	initStringInfo(&features_str);
 	appendStringInfoString(&features_str, "ARRAY[");
-	for (i = 0; i < nelems; ++i) {
+	for (i = 0; i < nelems; ++i)
+	{
 		if (i > 0)
 			appendStringInfoString(&features_str, ", ");
 		appendStringInfo(&features_str, "%.6f", features[i]);
@@ -557,34 +638,48 @@ Datum neurondb_predict(PG_FUNCTION_ARGS) {
 	/* Routing based on algorithm */
 	if (strcmp(algorithm, "linear_regression") == 0)
 		appendStringInfo(&sql,
-			"SELECT predict_linear_regression(%d, %s)", model_id,
+			"SELECT predict_linear_regression(%d, %s)",
+			model_id,
 			features_str.data);
 	else if (strcmp(algorithm, "logistic_regression") == 0)
 		appendStringInfo(&sql,
-			"SELECT predict_logistic_regression(%d, %s)", model_id,
+			"SELECT predict_logistic_regression(%d, %s)",
+			model_id,
 			features_str.data);
 	else if (strcmp(algorithm, "random_forest") == 0)
-		appendStringInfo(&sql, "SELECT predict_random_forest(%d, %s)",
-			model_id, features_str.data);
+		appendStringInfo(&sql,
+			"SELECT predict_random_forest(%d, %s)",
+			model_id,
+			features_str.data);
 	else if (strcmp(algorithm, "svm") == 0)
-		appendStringInfo(&sql, "SELECT predict_svm(%d, %s)", model_id,
+		appendStringInfo(&sql,
+			"SELECT predict_svm(%d, %s)",
+			model_id,
 			features_str.data);
 	else if (strcmp(algorithm, "decision_tree") == 0)
-		appendStringInfo(&sql, "SELECT predict_decision_tree(%d, %s)",
-			model_id, features_str.data);
+		appendStringInfo(&sql,
+			"SELECT predict_decision_tree(%d, %s)",
+			model_id,
+			features_str.data);
 	else if (strcmp(algorithm, "naive_bayes") == 0)
-		appendStringInfo(&sql, "SELECT predict_naive_bayes(%d, %s)",
-			model_id, features_str.data);
+		appendStringInfo(&sql,
+			"SELECT predict_naive_bayes(%d, %s)",
+			model_id,
+			features_str.data);
 	else if (strcmp(algorithm, "ridge") == 0
 		|| strcmp(algorithm, "lasso") == 0)
 		appendStringInfo(&sql,
 			"SELECT predict_regularized_regression(%d, %s)",
-			model_id, features_str.data);
+			model_id,
+			features_str.data);
 	else if (strcmp(algorithm, "knn") == 0
 		|| strcmp(algorithm, "knn_classifier") == 0)
-		appendStringInfo(&sql, "SELECT predict_knn(%d, %s)", model_id,
+		appendStringInfo(&sql,
+			"SELECT predict_knn(%d, %s)",
+			model_id,
 			features_str.data);
-	else {
+	else
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -594,7 +689,8 @@ Datum neurondb_predict(PG_FUNCTION_ARGS) {
 	}
 
 	ret = SPI_execute(sql.data, true, 0);
-	if (ret != SPI_OK_SELECT || SPI_processed == 0) {
+	if (ret != SPI_OK_SELECT || SPI_processed == 0)
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -608,7 +704,9 @@ Datum neurondb_predict(PG_FUNCTION_ARGS) {
 
 	elog(NOTICE,
 		"neurondb.predict: model_id=%d, algorithm=%s, prediction=%.6f",
-		model_id, algorithm, prediction);
+		model_id,
+		algorithm,
+		prediction);
 
 	PG_RETURN_FLOAT8(prediction);
 }
@@ -618,7 +716,9 @@ Datum neurondb_predict(PG_FUNCTION_ARGS) {
  * Deploy trained model for usage.
  * ----------
  */
-Datum neurondb_deploy(PG_FUNCTION_ARGS) {
+Datum
+neurondb_deploy(PG_FUNCTION_ARGS)
+{
 	int32 model_id = PG_GETARG_INT32(0);
 	text *strategy_text = PG_ARGISNULL(1) ? NULL : PG_GETARG_TEXT_PP(1);
 	char *strategy;
@@ -630,7 +730,8 @@ Datum neurondb_deploy(PG_FUNCTION_ARGS) {
 	bool isnull = false;
 
 	callcontext = AllocSetContextCreate(CurrentMemoryContext,
-		"neurondb_deploy memory context", ALLOCSET_DEFAULT_SIZES);
+		"neurondb_deploy memory context",
+		ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(callcontext);
 
 	if (strategy_text)
@@ -638,10 +739,13 @@ Datum neurondb_deploy(PG_FUNCTION_ARGS) {
 	else
 		strategy = pstrdup("replace");
 
-	elog(NOTICE, "neurondb.deploy: model_id=%d, strategy=%s", model_id,
+	elog(NOTICE,
+		"neurondb.deploy: model_id=%d, strategy=%s",
+		model_id,
 		strategy);
 
-	if (SPI_connect() != SPI_OK_CONNECT) {
+	if (SPI_connect() != SPI_OK_CONNECT)
+	{
 		neurondb_cleanup(oldcontext, callcontext, false);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -672,7 +776,8 @@ Datum neurondb_deploy(PG_FUNCTION_ARGS) {
 		neurondb_quote_literal_cstr(strategy));
 
 	ret = SPI_execute(sql.data, false, 0);
-	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0) {
+	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0)
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -684,7 +789,8 @@ Datum neurondb_deploy(PG_FUNCTION_ARGS) {
 
 	neurondb_cleanup(oldcontext, callcontext, true);
 
-	elog(NOTICE, "neurondb.deploy: deployment_id=%d created",
+	elog(NOTICE,
+		"neurondb.deploy: deployment_id=%d created",
 		deployment_id);
 
 	PG_RETURN_INT32(deployment_id);
@@ -695,7 +801,9 @@ Datum neurondb_deploy(PG_FUNCTION_ARGS) {
  * Load an external ML model and register its metadata.
  * ----------
  */
-Datum neurondb_load_model(PG_FUNCTION_ARGS) {
+Datum
+neurondb_load_model(PG_FUNCTION_ARGS)
+{
 	text *project_name_text = PG_GETARG_TEXT_PP(0);
 	text *model_path_text = PG_GETARG_TEXT_PP(1);
 	text *model_format_text = PG_GETARG_TEXT_PP(2);
@@ -717,12 +825,15 @@ Datum neurondb_load_model(PG_FUNCTION_ARGS) {
 
 	elog(NOTICE,
 		"neurondb.load_model: project='%s', path='%s', format='%s'",
-		project_name, model_path, model_format);
+		project_name,
+		model_path,
+		model_format);
 
 	if (strcmp(model_format, "onnx") != 0
 		&& strcmp(model_format, "tensorflow") != 0
 		&& strcmp(model_format, "pytorch") != 0
-		&& strcmp(model_format, "sklearn") != 0) {
+		&& strcmp(model_format, "sklearn") != 0)
+	{
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("Unsupported model format: %s. "
@@ -732,10 +843,12 @@ Datum neurondb_load_model(PG_FUNCTION_ARGS) {
 	}
 
 	callcontext = AllocSetContextCreate(CurrentMemoryContext,
-		"neurondb_load_model memory context", ALLOCSET_DEFAULT_SIZES);
+		"neurondb_load_model memory context",
+		ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(callcontext);
 
-	if (SPI_connect() != SPI_OK_CONNECT) {
+	if (SPI_connect() != SPI_OK_CONNECT)
+	{
 		neurondb_cleanup(oldcontext, callcontext, false);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -754,7 +867,8 @@ Datum neurondb_load_model(PG_FUNCTION_ARGS) {
 
 	ret = SPI_execute(sql.data, false, 0);
 	if ((ret != SPI_OK_INSERT_RETURNING && ret != SPI_OK_UPDATE_RETURNING)
-		|| SPI_processed == 0) {
+		|| SPI_processed == 0)
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -781,7 +895,8 @@ Datum neurondb_load_model(PG_FUNCTION_ARGS) {
 		neurondb_quote_literal_cstr(model_format));
 
 	ret = SPI_execute(sql.data, false, 0);
-	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0) {
+	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0)
+	{
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),

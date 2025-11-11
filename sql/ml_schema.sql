@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS neurondb.ml_models (
     target_column TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    status TEXT DEFAULT 'training' CHECK (status IN ('training', 'trained', 'deployed', 'archived')),
+    status TEXT DEFAULT 'training' CHECK (status IN ('training', 'completed', 'failed', 'deployed')),
     UNIQUE(project_id, model_name, version)
 );
 
