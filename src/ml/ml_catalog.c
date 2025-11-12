@@ -241,9 +241,12 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			1);
 
 		if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0)
+		{
 			elog(ERROR,
 				"ml_catalog_register_model: failed to insert "
-				"ml_models row");
+				"ml_models row (ret=%d, processed=%lu)",
+				ret, (unsigned long)SPI_processed);
+		}
 
 		{
 			bool isnull_result = false;
@@ -252,11 +255,17 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 					SPI_tuptable->tupdesc,
 					1,
 					&isnull_result));
+			elog(DEBUG1, "ml_catalog_register_model: extracted model_id=%d (isnull=%d)",
+				model_id, isnull_result);
 			if (isnull_result)
 				elog(ERROR,
 					"ml_catalog_register_model: model_id "
 					"NULL "
 					"after insert");
+			if (model_id <= 0)
+				elog(WARNING,
+					"ml_catalog_register_model: model_id=%d is invalid (should be > 0)",
+					model_id);
 		}
 
 		pfree(DatumGetPointer(insert_values[2]));

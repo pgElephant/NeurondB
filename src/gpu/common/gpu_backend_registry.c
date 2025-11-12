@@ -19,6 +19,10 @@
 #include "ml_random_forest_internal.h"
 #include "ml_gpu_logistic_regression.h"
 #include "ml_logistic_regression_internal.h"
+#include "ml_gpu_linear_regression.h"
+#include "ml_linear_regression_internal.h"
+#include "ml_gpu_svm.h"
+#include "ml_svm_internal.h"
 
 #include <string.h>
 
@@ -285,6 +289,137 @@ ndb_gpu_lr_pack_model(const LRModel *model,
 	if (!active_backend || active_backend->lr_pack == NULL)
 		return -1;
 	return active_backend->lr_pack(model, model_data, metrics, errstr);
+}
+
+int
+ndb_gpu_linreg_train(const float *features,
+	const double *targets,
+	int n_samples,
+	int feature_dim,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->linreg_train == NULL)
+		return -1;
+	return active_backend->linreg_train(features,
+		targets,
+		n_samples,
+		feature_dim,
+		hyperparams,
+		model_data,
+		metrics,
+		errstr);
+}
+
+int
+ndb_gpu_linreg_predict(const bytea *model_data,
+	const float *input,
+	int feature_dim,
+	double *prediction_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->linreg_predict == NULL)
+		return -1;
+	return active_backend->linreg_predict(
+		model_data, input, feature_dim, prediction_out, errstr);
+}
+
+int
+ndb_gpu_linreg_pack_model(const LinRegModel *model,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->linreg_pack == NULL)
+		return -1;
+	return active_backend->linreg_pack(model, model_data, metrics, errstr);
+}
+
+int
+ndb_gpu_svm_train(const float *features,
+	const double *labels,
+	int n_samples,
+	int feature_dim,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->svm_train == NULL)
+		return -1;
+	return active_backend->svm_train(features,
+		labels,
+		n_samples,
+		feature_dim,
+		hyperparams,
+		model_data,
+		metrics,
+		errstr);
+}
+
+int
+ndb_gpu_svm_predict(const bytea *model_data,
+	const float *input,
+	int feature_dim,
+	int *class_out,
+	double *confidence_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->svm_predict == NULL)
+		return -1;
+	return active_backend->svm_predict(
+		model_data, input, feature_dim, class_out, confidence_out, errstr);
+}
+
+int
+ndb_gpu_svm_pack_model(const SVMModel *model,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->svm_pack == NULL)
+		return -1;
+	return active_backend->svm_pack(model, model_data, metrics, errstr);
+}
+
+int
+ndb_gpu_svm_predict_double(const bytea *model_data,
+	const float *input,
+	int feature_dim,
+	double *prediction_out,
+	char **errstr)
+{
+	int class_out;
+	double confidence_out;
+	int rc;
+
+	if (errstr)
+		*errstr = NULL;
+	if (prediction_out == NULL)
+		return -1;
+
+	rc = ndb_gpu_svm_predict(model_data, input, feature_dim,
+		&class_out, &confidence_out, errstr);
+	if (rc != 0)
+		return rc;
+
+	/* Return class as double (0.0 or 1.0) */
+	*prediction_out = (double)class_out;
+	return 0;
 }
 
 const ndb_gpu_backend *

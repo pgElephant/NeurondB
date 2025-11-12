@@ -322,6 +322,57 @@ neurondb_train(PG_FUNCTION_ARGS)
 			max_iters,
 			learning_rate,
 			lambda);
+	} else if (strcmp(algorithm, "linear_regression") == 0)
+	{
+		initStringInfo(&sql);
+		appendStringInfo(&sql,
+			"SELECT train_linear_regression(%s, %s, %s)",
+			neurondb_quote_literal_cstr(table_name),
+			neurondb_quote_literal_cstr(feature_list.data),
+			neurondb_quote_literal_cstr(target_column));
+	} else if (strcmp(algorithm, "svm") == 0)
+	{
+		double C = 1.0;
+		int max_iters = 1000;
+		if (hyperparams != NULL)
+		{
+			JsonbIterator *it;
+			JsonbValue v;
+			int r;
+
+			it = JsonbIteratorInit(&hyperparams->root);
+			while ((r = JsonbIteratorNext(&it, &v, false))
+				!= WJB_DONE)
+			{
+				if (r == WJB_KEY)
+				{
+					char *key = pnstrdup(v.val.string.val,
+						v.val.string.len);
+					r = JsonbIteratorNext(&it, &v, false);
+					if (strcmp(key, "C") == 0
+						&& v.type == jbvNumeric)
+						C = DatumGetFloat8(DirectFunctionCall1(
+							numeric_float8,
+							NumericGetDatum(
+								v.val.numeric)));
+					else if (strcmp(key, "max_iters") == 0
+						&& v.type == jbvNumeric)
+						max_iters = DatumGetInt32(DirectFunctionCall1(
+							numeric_int4,
+							NumericGetDatum(
+								v.val.numeric)));
+					pfree(key);
+				}
+			}
+		}
+		initStringInfo(&sql);
+		appendStringInfo(&sql,
+			"SELECT train_svm_classifier(%s, %s, %s, %.6f, %d)",
+			neurondb_quote_literal_cstr(table_name),
+			neurondb_quote_literal_cstr(feature_list.data),
+			neurondb_quote_literal_cstr(target_column),
+			C,
+			max_iters);
 	} else if (strcmp(algorithm, "random_forest") == 0)
 	{
 		int n_trees = 10, max_depth = 10, min_samples = 100;
@@ -377,13 +428,6 @@ neurondb_train(PG_FUNCTION_ARGS)
 			n_trees,
 			max_depth,
 			min_samples);
-	} else if (strcmp(algorithm, "svm") == 0)
-	{
-		appendStringInfo(&sql,
-			"SELECT train_svm_classifier(%s, %s, %s)",
-			neurondb_quote_literal_cstr(table_name),
-			neurondb_quote_literal_cstr(feature_list.data),
-			neurondb_quote_literal_cstr(target_column));
 	} else if (strcmp(algorithm, "decision_tree") == 0)
 	{
 		int max_depth = 10, min_samples = 100;
@@ -576,7 +620,9 @@ neurondb_train(PG_FUNCTION_ARGS)
 	ret = SPI_execute(sql.data, false, 0);
 
 	if (strcmp(algorithm, "random_forest") == 0
-		|| strcmp(algorithm, "logistic_regression") == 0)
+		|| strcmp(algorithm, "logistic_regression") == 0
+		|| strcmp(algorithm, "linear_regression") == 0
+		|| strcmp(algorithm, "svm") == 0)
 	{
 		if (SPI_processed == 0)
 		{
@@ -765,9 +811,14 @@ neurondb_predict(PG_FUNCTION_ARGS)
 			"SELECT predict_random_forest(%d, %s)",
 			model_id,
 			features_str.data);
+	else if (strcmp(algorithm, "linear_regression") == 0)
+		appendStringInfo(&sql,
+			"SELECT predict_linear_regression_model_id(%d, %s)",
+			model_id,
+			features_str.data);
 	else if (strcmp(algorithm, "svm") == 0)
 		appendStringInfo(&sql,
-			"SELECT predict_svm(%d, %s)",
+			"SELECT predict_svm_model_id(%d, %s)",
 			model_id,
 			features_str.data);
 	else if (strcmp(algorithm, "decision_tree") == 0)

@@ -441,16 +441,22 @@ COMMENT ON FUNCTION rerank_ensemble IS 'Ensemble reranking: (query, docs, models
 -- macOS: Linear (C), Ridge/Lasso/Elastic (PL/pgSQL - dylib limit)
 
 CREATE FUNCTION train_linear_regression(text, text, text)
-    RETURNS float8[]
+    RETURNS integer
     AS 'MODULE_PATHNAME', 'train_linear_regression'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION train_linear_regression IS 'Train linear regression. Built for macos_pg16.';
+COMMENT ON FUNCTION train_linear_regression IS 'Train linear regression and return model_id.';
 
 CREATE FUNCTION predict_linear_regression(float8[], vector)
     RETURNS float8
     AS 'MODULE_PATHNAME', 'predict_linear_regression'
     LANGUAGE C IMMUTABLE STRICT;
-COMMENT ON FUNCTION predict_linear_regression IS 'Predict using linear regression. Built for macos_pg16.';
+COMMENT ON FUNCTION predict_linear_regression(float8[], vector) IS 'Predict using coefficients array. Built for macos_pg16.';
+
+CREATE FUNCTION predict_linear_regression_model_id(integer, vector)
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'predict_linear_regression_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_linear_regression_model_id(integer, vector) IS 'Predict using model_id from catalog. Supports both CPU and GPU models.';
 
 CREATE FUNCTION evaluate_linear_regression(text, text, text, float8[])
     RETURNS float8[]
@@ -684,27 +690,17 @@ $$;
 COMMENT ON FUNCTION neurondb_predict_naive_bayes IS 'Predict with Naive Bayes';
 
 -- SVM - Complete C Implementation
-CREATE FUNCTION train_svm_classifier(
-    table_name text,
-    feature_col text,
-    label_col text,
-    c_param float8 DEFAULT 1.0,
-    max_iters integer DEFAULT 1000
-) RETURNS float8[]
+CREATE FUNCTION train_svm_classifier(text, text, text, float8 DEFAULT 1.0, integer DEFAULT 1000)
+    RETURNS integer
     AS 'MODULE_PATHNAME', 'train_svm_classifier'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION train_svm_classifier IS 'Train SVM: (table, features, labels, C, max_iters) returns alpha coefficients';
+COMMENT ON FUNCTION train_svm_classifier IS 'Train SVM and return model_id: (table, features, labels, C, max_iters)';
 
-CREATE FUNCTION predict_svm(
-    alphas float8[],
-    table_name text,
-    feature_col text,
-    label_col text,
-    features vector
-) RETURNS integer
-    AS 'MODULE_PATHNAME', 'predict_svm'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION predict_svm IS 'Predict with SVM: (alphas, table, feature_col, label_col, features) returns class';
+CREATE FUNCTION predict_svm_model_id(integer, vector)
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'predict_svm_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_svm_model_id(integer, vector) IS 'Predict using model_id from catalog. Supports both CPU and GPU models.';
 
 CREATE FUNCTION neurondb_train_svm(
     table_name text,
@@ -722,12 +718,7 @@ END;
 $$;
 COMMENT ON FUNCTION neurondb_train_svm IS 'Train SVM with JSON params';
 
-CREATE FUNCTION neurondb_predict_svm(alphas float8[], table_name text, feature_col text, label_col text, features vector)
-RETURNS integer
-LANGUAGE sql STABLE AS $$
-    SELECT predict_svm(alphas, table_name, feature_col, label_col, features);
-$$;
-COMMENT ON FUNCTION neurondb_predict_svm IS 'Predict with SVM model';
+-- neurondb_predict_svm removed - use neurondb.predict() with model_id instead
 
 -- ============================================================================
 -- ANALYTICS / ML CLUSTERING ALGORITHMS
@@ -3174,7 +3165,7 @@ BEGIN
 		WHEN 'svm' THEN
 			c_param := COALESCE((params->>'C')::float8, 1.0);
 			max_iters := COALESCE((params->>'max_iters')::integer, 1000);
-			RETURN 0;
+			RETURN train_svm_classifier(table_name, feature_col, label_col, c_param, max_iters);
 		WHEN 'logistic_regression' THEN
 			max_iters := COALESCE((params->>'max_iters')::integer, 1000);
 			learning_rate := COALESCE((params->>'learning_rate')::float8, 0.01);
@@ -3198,7 +3189,7 @@ BEGIN
 				COALESCE((params->>'learning_rate')::float8, 0.01)
 			);
 		WHEN 'linear_regression' THEN
-			RETURN 0;
+			RETURN train_linear_regression(table_name, feature_col, label_col);
 		WHEN 'ridge' THEN
 			RETURN 0;
 		WHEN 'lasso' THEN
@@ -3229,13 +3220,15 @@ BEGIN
 			RETURN predict_random_forest(model_id, features);
 		WHEN 'logistic_regression' THEN
 			RETURN predict_logistic_regression(model_id, features);
+		WHEN 'linear_regression' THEN
+			RETURN predict_linear_regression_model_id(model_id, features);
+		WHEN 'svm' THEN
+			RETURN predict_svm_model_id(model_id, features);
 		WHEN 'xgboost' THEN
 			RETURN predict_xgboost(model_id, vector_to_array(features));
 		WHEN 'neural_network' THEN
 			RETURN predict_neural_network(model_id, vector_to_array(features));
 		WHEN 'naive_bayes' THEN
-			RETURN 0.0;
-		WHEN 'svm' THEN
 			RETURN 0.0;
 		ELSE
 			RAISE EXCEPTION 'Prediction not implemented for algorithm: %', algo;
@@ -3264,6 +3257,15 @@ DECLARE
 	recall_val float8;
 	f1_score_val float8;
 	accuracy_val float8;
+	mse_val float8;
+	mae_val float8;
+	rmse_val float8;
+	r2_val float8;
+	total_error_sq float8;
+	total_error_abs float8;
+	total_var float8;
+	y_mean float8;
+	n_samples int;
 BEGIN
 	model_id_param := model_id;
 	SELECT m.algorithm INTO algo FROM neurondb.ml_models m WHERE m.model_id = model_id_param;
@@ -3387,6 +3389,118 @@ BEGIN
 				'recall', recall_val,
 				'f1_score', f1_score_val
 			);
+		WHEN 'svm' THEN
+			/* Compute metrics by making predictions on test set */
+			BEGIN
+				EXECUTE format(
+				'WITH predictions AS (
+					SELECT 
+						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
+						%I::int AS actual
+					FROM %I
+				)
+				SELECT 
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+				FROM predictions',
+					model_id_param, feature_col, label_col, table_name
+				) INTO tp, fp, tn, fn;
+			EXCEPTION
+				WHEN OTHERS THEN
+					/* If evaluation fails, set metrics to NULL */
+					tp := 0;
+					fp := 0;
+					tn := 0;
+					fn := 0;
+			END;
+			
+			/* Calculate metrics */
+			IF (tp + fp + tn + fn) > 0 THEN
+				accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
+			ELSE
+				accuracy_val := 0.0;
+			END IF;
+			
+			IF (tp + fp) > 0 THEN
+				precision_val := tp::float8 / (tp + fp)::float8;
+			ELSE
+				precision_val := 0.0;
+			END IF;
+			
+			IF (tp + fn) > 0 THEN
+				recall_val := tp::float8 / (tp + fn)::float8;
+			ELSE
+				recall_val := 0.0;
+			END IF;
+			
+			IF (precision_val + recall_val) > 0 THEN
+				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
+			ELSE
+				f1_score_val := 0.0;
+			END IF;
+			
+			result := jsonb_build_object(
+				'accuracy', accuracy_val,
+				'precision', precision_val,
+				'recall', recall_val,
+				'f1_score', f1_score_val
+			);
+		WHEN 'linear_regression' THEN
+			/* Compute regression metrics: R², MSE, MAE, RMSE */
+			BEGIN
+				EXECUTE format(
+					'WITH predictions AS (
+						SELECT 
+							neurondb.predict(%L, %I) AS pred,
+							%I::float8 AS actual
+						FROM %I
+					),
+					avg_actual AS (
+						SELECT AVG(actual)::float8 AS y_avg FROM predictions
+					),
+					stats AS (
+						SELECT 
+							COUNT(*)::int AS n,
+							SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
+							SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
+							SUM((p.actual - a.y_avg) * (p.actual - a.y_avg))::float8 AS var_tot
+						FROM predictions p, avg_actual a
+					)
+					SELECT n, err_sq, err_abs, var_tot FROM stats',
+					model_id_param, feature_col, label_col, table_name
+				) INTO n_samples, total_error_sq, total_error_abs, total_var;
+				
+				IF n_samples > 0 THEN
+					mse_val := total_error_sq / n_samples;
+					mae_val := total_error_abs / n_samples;
+					rmse_val := SQRT(mse_val);
+					
+					IF total_var > 0 THEN
+						r2_val := 1.0 - (total_error_sq / total_var);
+					ELSE
+						r2_val := 0.0;
+					END IF;
+				ELSE
+					mse_val := 0.0;
+					mae_val := 0.0;
+					rmse_val := 0.0;
+					r2_val := 0.0;
+				END IF;
+				
+				result := jsonb_build_object(
+					'r_squared', r2_val,
+					'mse', mse_val,
+					'mae', mae_val,
+					'rmse', rmse_val
+				);
+			EXCEPTION
+				WHEN OTHERS THEN
+					result := jsonb_build_object(
+						'error', 'Evaluation failed: ' || SQLERRM
+					);
+			END;
 		ELSE
 			result := jsonb_build_object('error', 'Evaluation not implemented for: ' || algo);
 	END CASE;

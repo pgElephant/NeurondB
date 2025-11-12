@@ -6,6 +6,8 @@
 
 struct RFModel;
 struct LRModel;
+struct LinRegModel;
+struct SVMModel;
 
 #define NDB_GPU_MAX_BACKENDS 8
 
@@ -126,6 +128,45 @@ typedef struct ndb_gpu_backend
 		double *probability_out,
 		char **errstr);
 	int (*lr_pack)(const struct LRModel *model,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+
+	/* Linear regression */
+	int (*linreg_train)(const float *features,
+		const double *targets,
+		int n_samples,
+		int feature_dim,
+		const Jsonb *hyperparams,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+	int (*linreg_predict)(const bytea *model_data,
+		const float *input,
+		int feature_dim,
+		double *prediction_out,
+		char **errstr);
+	int (*linreg_pack)(const struct LinRegModel *model,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+
+	/* Support Vector Machine */
+	int (*svm_train)(const float *features,
+		const double *labels,
+		int n_samples,
+		int feature_dim,
+		const Jsonb *hyperparams,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+	int (*svm_predict)(const bytea *model_data,
+		const float *input,
+		int feature_dim,
+		int *class_out,
+		double *confidence_out,
+		char **errstr);
+	int (*svm_pack)(const struct SVMModel *model,
 		bytea **model_data,
 		Jsonb **metrics,
 		char **errstr);

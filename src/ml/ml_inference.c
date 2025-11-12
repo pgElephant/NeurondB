@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * ml_inference.c
- *    Machine learning model inference engine (Very Detailed Implementation)
+ *    Machine learning model inference engine.
  *
  * This file provides an extensive, production-level implementation of
  * ML model lifecycle management, including model registration, model loading,
