@@ -33,6 +33,7 @@
 #include "ml_catalog.h"
 #include "gtree.h"
 #include "ml_random_forest_internal.h"
+#include "ml_random_forest_shared.h"
 
 #define RF_STUB_MAX_FEATURES 4
 #define RF_BOOTSTRAP_FRACTION 0.8
@@ -121,25 +122,6 @@ rf_split_pair_cmp(const void *a, const void *b)
 	return 0;
 }
 
-static double
-rf_gini_from_counts(const int *counts, int n_classes, int total)
-{
-	double sum_sq = 0.0;
-	int i;
-
-	if (total <= 0)
-		return 0.0;
-
-	for (i = 0; i < n_classes; i++)
-	{
-		if (counts[i] > 0)
-		{
-			double p = (double)counts[i] / (double)total;
-			sum_sq += p * p;
-		}
-	}
-	return 1.0 - sum_sq;
-}
 
 static bool
 rf_select_split(const float *features,
@@ -338,9 +320,9 @@ rf_select_split(const float *features,
 			if (left_total <= 0 || right_total <= 0)
 				continue;
 
-			left_imp = rf_gini_from_counts(
+			left_imp = rf_gini_impurity(
 				left_counts_tmp, n_classes, left_total);
-			right_imp = rf_gini_from_counts(
+			right_imp = rf_gini_impurity(
 				right_counts_tmp, n_classes, right_total);
 			threshold_candidate =
 				0.5 * (pairs[i].value + pairs[i + 1].value);
@@ -421,7 +403,7 @@ rf_build_branch_tree(GTree *tree,
 		return gtree_add_leaf(tree, 0.0);
 	}
 
-	gini = rf_gini_from_counts(class_counts, n_classes, count);
+	gini = rf_gini_impurity(class_counts, n_classes, count);
 
 	if (gini <= 0.0 || depth >= max_depth || count <= min_samples)
 	{
@@ -1584,12 +1566,12 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 					{
 						double left_imp =
-							rf_gini_from_counts(
+							rf_gini_impurity(
 								left_counts_tmp,
 								n_classes,
 								left_total_eval);
 						double right_imp =
-							rf_gini_from_counts(
+							rf_gini_impurity(
 								right_counts_tmp,
 								n_classes,
 								right_total_eval);
@@ -2252,11 +2234,11 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 									<= 0)
 								continue;
 
-							left_imp = rf_gini_from_counts(
+							left_imp = rf_gini_impurity(
 								left_counts_tmp,
 								n_classes,
 								left_total_eval);
-							right_imp = rf_gini_from_counts(
+							right_imp = rf_gini_impurity(
 								right_counts_tmp,
 								n_classes,
 								right_total_eval);
@@ -4004,12 +3986,11 @@ static bool
 rf_load_model_from_catalog(int32 model_id, RFModel **out)
 {
 	bytea *payload = NULL;
-	Jsonb *parameters = NULL;
 	Jsonb *metrics = NULL;
 	RFModel *decoded;
 
 	if (!ml_catalog_fetch_model_payload(
-		    model_id, &payload, &parameters, &metrics))
+		    model_id, &payload, NULL, &metrics))
 		return false;
 
 	if (payload == NULL)
@@ -4019,8 +4000,6 @@ rf_load_model_from_catalog(int32 model_id, RFModel **out)
 	{
 		if (payload != NULL)
 			pfree(payload);
-		if (parameters != NULL)
-			pfree(parameters);
 		if (metrics != NULL)
 			pfree(metrics);
 		return false;
@@ -4029,8 +4008,6 @@ rf_load_model_from_catalog(int32 model_id, RFModel **out)
 	decoded = rf_model_deserialize(payload);
 
 	pfree(payload);
-	if (parameters)
-		pfree(parameters);
 	if (metrics)
 		pfree(metrics);
 
@@ -4089,15 +4066,24 @@ rf_metadata_is_gpu(Jsonb *metadata)
 	if (metadata == NULL)
 		return false;
 
-	meta_txt = DatumGetCString(
-		DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metadata)));
-	if (meta_txt != NULL)
+	PG_TRY();
 	{
-		if (strstr(meta_txt, "\"storage\":\"gpu\"") != NULL
-			|| strstr(meta_txt, "\"storage\": \"gpu\"") != NULL)
-			is_gpu = true;
-		pfree(meta_txt);
+		meta_txt = DatumGetCString(
+			DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metadata)));
+		if (meta_txt != NULL)
+		{
+			if (strstr(meta_txt, "\"storage\":\"gpu\"") != NULL
+				|| strstr(meta_txt, "\"storage\": \"gpu\"") != NULL)
+				is_gpu = true;
+			pfree(meta_txt);
+		}
 	}
+	PG_CATCH();
+	{
+		/* If jsonb parsing fails, assume not GPU */
+		is_gpu = false;
+	}
+	PG_END_TRY();
 
 	return is_gpu;
 }
@@ -4108,7 +4094,6 @@ rf_try_gpu_predict_catalog(int32 model_id,
 	double *result_out)
 {
 	bytea *payload = NULL;
-	Jsonb *parameters = NULL;
 	Jsonb *metrics = NULL;
 	char *gpu_err = NULL;
 	int class_out = -1;
@@ -4122,7 +4107,7 @@ rf_try_gpu_predict_catalog(int32 model_id,
 		return false;
 
 	if (!ml_catalog_fetch_model_payload(
-		    model_id, &payload, &parameters, &metrics))
+		    model_id, &payload, NULL, &metrics))
 		return false;
 
 	if (payload == NULL)
@@ -4160,8 +4145,6 @@ cleanup:
 		pfree(gpu_err);
 	if (payload != NULL)
 		pfree(payload);
-	if (parameters != NULL)
-		pfree(parameters);
 	if (metrics != NULL)
 		pfree(metrics);
 

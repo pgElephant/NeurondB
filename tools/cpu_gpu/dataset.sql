@@ -9,26 +9,17 @@
 
 \echo Using sample_count = :sample_count
 
-\echo '=========================================================================='
-\echo ' NeuronDB CPU vs GPU Benchmark (Dataset Preparation)'
-\echo '=========================================================================='
-\echo ''
-
-\echo 'Step 0: Ensuring NeuronDB extension is available...'
+DROP EXTENSION IF EXISTS neurondb CASCADE;
 CREATE EXTENSION IF NOT EXISTS neurondb;
 
-\echo '   Cleaning up previous run (if any)...'
-DROP TABLE IF EXISTS neurondb_cpu_gpu_data CASCADE;
-DROP TABLE IF EXISTS neurondb_cpu_gpu_train CASCADE;
-DROP TABLE IF EXISTS neurondb_cpu_gpu_test CASCADE;
-DELETE FROM neurondb.ml_models
-WHERE training_table IN ('neurondb_cpu_gpu_train', 'neurondb_cpu_gpu_test');
-\echo '   Cleanup complete.'
-\echo ''
+DROP TABLE IF EXISTS sample_data CASCADE;
+DROP TABLE IF EXISTS sample_train CASCADE;
+DROP TABLE IF EXISTS sample_test CASCADE;
 
-\echo 'Step 1: Generating synthetic dataset (~1 GB)...'
-\echo '   Creating :sample_count samples with 256-dim float32 vectors.'
-CREATE TABLE neurondb_cpu_gpu_data AS
+DELETE FROM neurondb.ml_models
+WHERE training_table IN ('sample_train', 'sample_test');
+
+CREATE TABLE sample_data AS
 SELECT
 	gs AS sample_id,
 	(
@@ -38,27 +29,17 @@ SELECT
 	(random() > 0.5)::int AS label
 FROM generate_series(1, :sample_count) AS gs;
 
-ANALYZE neurondb_cpu_gpu_data;
-\echo '   Dataset ready.'
-\echo ''
+ANALYZE sample_data;
 
-\echo 'Step 2: Creating train/test splits (80/20)...'
-CREATE TABLE neurondb_cpu_gpu_train AS
+CREATE TABLE sample_train AS
 SELECT *
-FROM neurondb_cpu_gpu_data
+FROM sample_data
 WHERE sample_id % 5 <> 0;
 
-CREATE TABLE neurondb_cpu_gpu_test AS
+CREATE TABLE sample_test AS
 SELECT *
-FROM neurondb_cpu_gpu_data
+FROM sample_data
 WHERE sample_id % 5 = 0;
 
-ANALYZE neurondb_cpu_gpu_train;
-ANALYZE neurondb_cpu_gpu_test;
-\echo '   Train/Test tables created.'
-\echo ''
-
-\echo 'Dataset preparation completed.'
-\echo '=========================================================================='
-
-
+ANALYZE sample_train;
+ANALYZE sample_test;

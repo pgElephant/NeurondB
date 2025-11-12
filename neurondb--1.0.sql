@@ -3210,8 +3210,10 @@ CREATE OR REPLACE FUNCTION neurondb.predict(
 LANGUAGE plpgsql AS $$
 DECLARE
 	algo text;
+	model_id_param integer;
 BEGIN
-	SELECT algorithm INTO algo FROM neurondb.ml_models WHERE neurondb.ml_models.model_id = neurondb.predict.model_id;
+	model_id_param := model_id;
+	SELECT m.algorithm INTO algo FROM neurondb.ml_models m WHERE m.model_id = model_id_param;
 	IF algo IS NULL THEN
 		RAISE EXCEPTION 'Model % not found', model_id;
 	END IF;
@@ -3244,8 +3246,10 @@ DECLARE
 	algo text;
 	metrics float8[];
 	result jsonb;
+	model_id_param integer;
 BEGIN
-	SELECT algorithm INTO algo FROM neurondb.ml_models WHERE neurondb.ml_models.model_id = neurondb.evaluate.model_id;
+	model_id_param := model_id;
+	SELECT m.algorithm INTO algo FROM neurondb.ml_models m WHERE m.model_id = model_id_param;
 	IF algo IS NULL THEN
 		RAISE EXCEPTION 'Model % not found', model_id;
 	END IF;
@@ -3782,8 +3786,10 @@ LANGUAGE plpgsql AS $$
 DECLARE
 	algo text;
 	export_location text;
+	model_id_param integer;
 BEGIN
-	SELECT algorithm INTO algo FROM neurondb.ml_models WHERE neurondb.ml_models.model_id = neurondb.export_model.model_id;
+	model_id_param := model_id;
+	SELECT m.algorithm INTO algo FROM neurondb.ml_models m WHERE m.model_id = model_id_param;
 	IF algo IS NULL THEN
 		RAISE EXCEPTION 'Model % not found', model_id;
 	END IF;

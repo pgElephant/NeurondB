@@ -91,6 +91,7 @@ OBJS += \
 	src/ml/ml_gpu_registry.o \
 	src/ml/ml_ridge_lasso.o \
 	src/ml/ml_random_forest.o \
+	src/ml/ml_random_forest_shared.o \
 	src/ml/ml_svm.o \
 	src/ml/ml_naive_bayes.o \
 	src/ml/ml_decision_tree.o \

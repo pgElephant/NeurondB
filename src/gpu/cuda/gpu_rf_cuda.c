@@ -25,6 +25,7 @@
 #include "utils/builtins.h"
 
 #include "ml_random_forest_internal.h"
+#include "ml_random_forest_shared.h"
 #include "neurondb_cuda_rf.h"
 
 static void
@@ -60,33 +61,6 @@ rf_copy_tree_nodes(const GTree *tree, NdbCudaRfNode *dest, int *node_offset)
 	*node_offset += count;
 }
 
-static Jsonb *
-rf_build_metrics_json(int tree_count,
-	int majority_class,
-	double majority_fraction,
-	double gini,
-	double oob_accuracy)
-{
-	StringInfoData mbuf;
-	Jsonb *result;
-
-	initStringInfo(&mbuf);
-	appendStringInfo(&mbuf,
-		"{\"storage\":\"gpu\",\"algorithm\":\"random_forest\","
-		"\"n_trees\":%d,\"majority_class\":%d,"
-		"\"majority_fraction\":%.6f,\"gini\":%.6f,"
-		"\"oob_accuracy\":%.6f}",
-		tree_count,
-		majority_class,
-		majority_fraction,
-		gini,
-		oob_accuracy);
-	result = DatumGetJsonbP(
-		DirectFunctionCall1(jsonb_in, CStringGetDatum(mbuf.data)));
-	pfree(mbuf.data);
-
-	return result;
-}
 
 static void
 rf_fill_single_node_tree(NdbCudaRfNode *node, int majority_class)
@@ -98,72 +72,6 @@ rf_fill_single_node_tree(NdbCudaRfNode *node, int majority_class)
 	node->value = (float)majority_class;
 }
 
-static double
-rf_gini_from_counts(const int *left_counts,
-	const int *right_counts,
-	int class_count,
-	int *left_total_out,
-	int *right_total_out)
-{
-	int left_total = 0;
-	int right_total = 0;
-	double gini = 0.0;
-	int i;
-
-	for (i = 0; i < class_count; i++)
-	{
-		left_total += left_counts[i];
-		right_total += right_counts[i];
-	}
-
-	if (left_total <= 0 && right_total <= 0)
-	{
-		if (left_total_out)
-			*left_total_out = 0;
-		if (right_total_out)
-			*right_total_out = 0;
-		return DBL_MAX;
-	}
-
-	if (left_total > 0)
-	{
-		double inv_total = 1.0 / (double)left_total;
-		double purity = 0.0;
-
-		for (i = 0; i < class_count; i++)
-		{
-			double p = (double)left_counts[i] * inv_total;
-
-			purity += p * p;
-		}
-		gini += ((double)left_total
-			    / (double)(left_total + right_total))
-			* (1.0 - purity);
-	}
-
-	if (right_total > 0)
-	{
-		double inv_total = 1.0 / (double)right_total;
-		double purity = 0.0;
-
-		for (i = 0; i < class_count; i++)
-		{
-			double p = (double)right_counts[i] * inv_total;
-
-			purity += p * p;
-		}
-		gini += ((double)right_total
-			    / (double)(left_total + right_total))
-			* (1.0 - purity);
-	}
-
-	if (left_total_out)
-		*left_total_out = left_total;
-	if (right_total_out)
-		*right_total_out = right_total;
-
-	return gini;
-}
 
 int
 ndb_cuda_rf_pack_model(const RFModel *model,
@@ -262,11 +170,19 @@ ndb_cuda_rf_pack_model(const RFModel *model,
 	*model_data = blob;
 
 	if (metrics != NULL)
-		*metrics = rf_build_metrics_json(tree_count,
-			model_hdr->majority_class,
-			model_hdr->majority_fraction,
-			model->gini_impurity,
-			model->oob_accuracy);
+	{
+		RFMetricsSpec spec;
+
+		memset(&spec, 0, sizeof(spec));
+		spec.storage = "gpu";
+		spec.algorithm = "random_forest";
+		spec.tree_count = tree_count;
+		spec.majority_class = model_hdr->majority_class;
+		spec.majority_fraction = model_hdr->majority_fraction;
+		spec.gini = model->gini_impurity;
+		spec.oob_accuracy = model->oob_accuracy;
+		*metrics = rf_build_metrics_json(&spec);
+	}
 
 	return 0;
 }
@@ -522,12 +438,14 @@ ndb_cuda_rf_train(const float *features,
 					goto gpu_fail;
 
 				{
-					double gini = rf_gini_from_counts(
+					double gini = rf_split_gini(
 						tmp_left_counts,
 						tmp_right_counts,
 						class_count,
 						&left_total,
-						&right_total);
+						&right_total,
+						NULL,
+						NULL);
 
 					if (gini < best_gini && gini >= 0.0)
 					{
@@ -589,13 +507,21 @@ ndb_cuda_rf_train(const float *features,
 				gini_accumulator += best_gini;
 		}
 
-		metrics_json = rf_build_metrics_json(n_trees,
-			majority_class,
-			majority_fraction,
-			(gini_accumulator > 0.0)
+		{
+			RFMetricsSpec spec;
+
+			memset(&spec, 0, sizeof(spec));
+			spec.storage = "gpu";
+			spec.algorithm = "random_forest";
+			spec.tree_count = n_trees;
+			spec.majority_class = majority_class;
+			spec.majority_fraction = majority_fraction;
+			spec.gini = (gini_accumulator > 0.0)
 				? (gini_accumulator / (double)n_trees)
-				: 0.0,
-			0.0);
+				: 0.0;
+			spec.oob_accuracy = 0.0;
+			metrics_json = rf_build_metrics_json(&spec);
+		}
 	}
 
 	*model_data = payload;

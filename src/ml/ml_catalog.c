@@ -314,13 +314,10 @@ ml_catalog_fetch_model_payload(int32 model_id,
 				&isnull);
 			if (!isnull)
 			{
-				char *json_text = TextDatumGetCString(
-					DirectFunctionCall1(jsonb_out, datum));
+				Datum jsonb_datum = PG_DETOAST_DATUM_COPY(datum);
+				Jsonb *jsonb_val = (Jsonb *)DatumGetPointer(jsonb_datum);
 
-				*parameters_out = DatumGetJsonbP(
-					DirectFunctionCall1(jsonb_in,
-						CStringGetDatum(json_text)));
-				pfree(json_text);
+				*parameters_out = jsonb_val;
 			}
 		}
 
@@ -332,13 +329,21 @@ ml_catalog_fetch_model_payload(int32 model_id,
 				&isnull);
 			if (!isnull)
 			{
-				char *json_text = TextDatumGetCString(
-					DirectFunctionCall1(jsonb_out, datum));
+				Jsonb *jsonb_val = NULL;
 
-				*metrics_out = DatumGetJsonbP(
-					DirectFunctionCall1(jsonb_in,
-						CStringGetDatum(json_text)));
-				pfree(json_text);
+				PG_TRY();
+				{
+					Datum jsonb_datum = PG_DETOAST_DATUM_COPY(datum);
+
+					jsonb_val = (Jsonb *)DatumGetPointer(jsonb_datum);
+					*metrics_out = jsonb_val;
+				}
+				PG_CATCH();
+				{
+					/* If jsonb is invalid, set to NULL */
+					*metrics_out = NULL;
+				}
+				PG_END_TRY();
 			}
 		}
 	}
