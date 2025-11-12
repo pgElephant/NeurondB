@@ -4,7 +4,7 @@
 
 \if :{?sample_count}
 \else
-\set sample_count 1000000
+\set sample_count 10000
 \endif
 
 \echo Using sample_count = :sample_count

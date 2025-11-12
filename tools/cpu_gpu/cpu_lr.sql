@@ -5,11 +5,11 @@ SET neurondb.gpu_enabled = off;
 
 -- Train
 SELECT neurondb.train(
-	'random_forest',
+	'logistic_regression',
 	'sample_train',
 	'features',
 	'label',
-	'{}'::jsonb
+	'{"max_iters": 1000, "learning_rate": 0.01, "lambda": 0.001}'::jsonb
 ) AS cpu_model_id \gset
 
 SELECT
@@ -38,3 +38,4 @@ UNION ALL
 SELECT
 	format('%-15s', 'F1 Score'),
 	ROUND((:cpu_metrics::jsonb ->> 'f1_score')::numeric, 4);
+

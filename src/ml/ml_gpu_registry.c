@@ -12,6 +12,7 @@
 
 /* Declarations for per-algorithm registration routines */
 extern void neurondb_gpu_register_rf_model(void);
+extern void neurondb_gpu_register_lr_model(void);
 
 void
 neurondb_gpu_register_models(void)
@@ -22,6 +23,7 @@ neurondb_gpu_register_models(void)
 		return;
 
 	neurondb_gpu_register_rf_model();
+	neurondb_gpu_register_lr_model();
 
 	registered = true;
 }

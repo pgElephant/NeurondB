@@ -20,6 +20,7 @@
 #include "neurondb_cuda_runtime.h"
 #include "neurondb_cuda_launchers.h"
 #include "neurondb_cuda_rf.h"
+#include "neurondb_cuda_lr.h"
 
 #include <stdint.h>
 
@@ -614,6 +615,10 @@ static const ndb_gpu_backend ndb_cuda_backend = {
 	.rf_train = ndb_cuda_rf_train,
 	.rf_predict = ndb_cuda_rf_predict,
 	.rf_pack = ndb_cuda_rf_pack_model,
+
+	.lr_train = ndb_cuda_lr_train,
+	.lr_predict = ndb_cuda_lr_predict,
+	.lr_pack = ndb_cuda_lr_pack_model,
 
 	.stream_create = ndb_cuda_stream_create,
 	.stream_destroy = ndb_cuda_stream_destroy,

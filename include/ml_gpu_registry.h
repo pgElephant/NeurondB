@@ -10,6 +10,7 @@
 #define NEURONDB_ML_GPU_REGISTRY_H
 
 extern void neurondb_gpu_register_models(void);
+extern void neurondb_gpu_register_lr_model(void);
 
 #endif /* NEURONDB_ML_GPU_REGISTRY_H */
 

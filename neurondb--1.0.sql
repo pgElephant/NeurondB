@@ -509,17 +509,23 @@ COMMENT ON FUNCTION train_elastic_net IS 'Elastic Net: PL/pgSQL on macOS, full C
 
 -- macOS: Logistic (C), others check based on PG version
 
-CREATE FUNCTION train_logistic_regression(text, text, text, integer DEFAULT 1000, float8 DEFAULT 0.01, float8 DEFAULT 0.01)
-    RETURNS float8[]
+CREATE FUNCTION train_logistic_regression(text, text, text, integer DEFAULT 1000, float8 DEFAULT 0.01, float8 DEFAULT 0.001)
+    RETURNS integer
     AS 'MODULE_PATHNAME', 'train_logistic_regression'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION train_logistic_regression IS 'Train logistic regression. Built for macos_pg16.';
+COMMENT ON FUNCTION train_logistic_regression IS 'Train logistic regression and return model_id.';
 
 CREATE FUNCTION predict_logistic_regression(float8[], vector)
     RETURNS float8
     AS 'MODULE_PATHNAME', 'predict_logistic_regression'
     LANGUAGE C IMMUTABLE STRICT;
-COMMENT ON FUNCTION predict_logistic_regression IS 'Predict probability. Built for macos_pg16.';
+COMMENT ON FUNCTION predict_logistic_regression(float8[], vector) IS 'Predict probability using coefficients array. Built for macos_pg16.';
+
+CREATE FUNCTION predict_logistic_regression(integer, vector)
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'predict_logistic_regression_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_logistic_regression(integer, vector) IS 'Predict probability using model_id from catalog. Supports both CPU and GPU models.';
 
 CREATE FUNCTION evaluate_logistic_regression(text, text, text, float8[], float8 DEFAULT 0.5)
     RETURNS float8[]
@@ -587,14 +593,11 @@ CREATE FUNCTION predict_random_forest(
 COMMENT ON FUNCTION predict_random_forest IS 'Predict with Random Forest: (model_id, features) returns class prediction';
 
 CREATE FUNCTION evaluate_random_forest(
-    table_name text,
-    feature_col text,
-    label_col text,
     model_id integer
 ) RETURNS double precision[]
     AS 'MODULE_PATHNAME', 'evaluate_random_forest'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION evaluate_random_forest IS 'Evaluate Random Forest: (table, features, labels, model_id) returns [accuracy, precision, recall, f1]';
+COMMENT ON FUNCTION evaluate_random_forest IS 'Evaluate Random Forest: (model_id) returns [accuracy, error_rate, gini, n_classes]';
 
 -- Convenience wrapper with neurondb_ prefix
 CREATE FUNCTION neurondb_train_random_forest(
@@ -3173,9 +3176,13 @@ BEGIN
 			max_iters := COALESCE((params->>'max_iters')::integer, 1000);
 			RETURN 0;
 		WHEN 'logistic_regression' THEN
-			max_iters := COALESCE((params->>'max_iters')::integer, 500);
+			max_iters := COALESCE((params->>'max_iters')::integer, 1000);
 			learning_rate := COALESCE((params->>'learning_rate')::float8, 0.01);
-			RETURN 0;
+			RETURN train_logistic_regression(
+				table_name, feature_col, label_col,
+				max_iters, learning_rate,
+				COALESCE((params->>'lambda')::float8, 0.001)
+			);
 		WHEN 'xgboost' THEN
 			n_estimators := COALESCE((params->>'n_estimators')::integer, 100);
 			max_depth := COALESCE((params->>'max_depth')::integer, 6);
@@ -3220,6 +3227,8 @@ BEGIN
 	CASE algo
 		WHEN 'random_forest' THEN
 			RETURN predict_random_forest(model_id, features);
+		WHEN 'logistic_regression' THEN
+			RETURN predict_logistic_regression(model_id, features);
 		WHEN 'xgboost' THEN
 			RETURN predict_xgboost(model_id, vector_to_array(features));
 		WHEN 'neural_network' THEN
@@ -3247,6 +3256,14 @@ DECLARE
 	metrics float8[];
 	result jsonb;
 	model_id_param integer;
+	tp int;
+	fp int;
+	tn int;
+	fn int;
+	precision_val float8;
+	recall_val float8;
+	f1_score_val float8;
+	accuracy_val float8;
 BEGIN
 	model_id_param := model_id;
 	SELECT m.algorithm INTO algo FROM neurondb.ml_models m WHERE m.model_id = model_id_param;
@@ -3255,12 +3272,120 @@ BEGIN
 	END IF;
 	CASE algo
 		WHEN 'random_forest' THEN
-			metrics := evaluate_random_forest(table_name, feature_col, label_col, model_id);
+			metrics := evaluate_random_forest(model_id_param);
+			accuracy_val := metrics[1];
+			
+			/* Compute precision, recall, F1 from test set */
+			BEGIN
+				EXECUTE format(
+				'WITH predictions AS (
+					SELECT 
+						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
+						%I::int AS actual
+					FROM %I
+				)
+				SELECT 
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+				FROM predictions',
+					model_id_param, feature_col, label_col, table_name
+				) INTO tp, fp, tn, fn;
+			EXCEPTION
+				WHEN OTHERS THEN
+					/* If evaluation fails, set metrics to NULL */
+					tp := 0;
+					fp := 0;
+					tn := 0;
+					fn := 0;
+			END;
+			
+			/* Calculate precision, recall, F1 */
+			IF (tp + fp) > 0 THEN
+				precision_val := tp::float8 / (tp + fp)::float8;
+			ELSE
+				precision_val := 0.0;
+			END IF;
+			
+			IF (tp + fn) > 0 THEN
+				recall_val := tp::float8 / (tp + fn)::float8;
+			ELSE
+				recall_val := 0.0;
+			END IF;
+			
+			IF (precision_val + recall_val) > 0 THEN
+				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
+			ELSE
+				f1_score_val := 0.0;
+			END IF;
+			
 			result := jsonb_build_object(
-				'accuracy', metrics[1],
-				'precision', metrics[2],
-				'recall', metrics[3],
-				'f1_score', metrics[4]
+				'accuracy', accuracy_val,
+				'error_rate', metrics[2],
+				'gini', metrics[3],
+				'n_classes', metrics[4],
+				'precision', precision_val,
+				'recall', recall_val,
+				'f1_score', f1_score_val
+			);
+		WHEN 'logistic_regression' THEN
+			/* Compute metrics by making predictions on test set */
+			BEGIN
+				EXECUTE format(
+				'WITH predictions AS (
+					SELECT 
+						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
+						%I::int AS actual
+					FROM %I
+				)
+				SELECT 
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+				FROM predictions',
+					model_id_param, feature_col, label_col, table_name
+				) INTO tp, fp, tn, fn;
+			EXCEPTION
+				WHEN OTHERS THEN
+					/* If evaluation fails, set metrics to NULL */
+					tp := 0;
+					fp := 0;
+					tn := 0;
+					fn := 0;
+			END;
+			
+			/* Calculate metrics */
+			IF (tp + fp + tn + fn) > 0 THEN
+				accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
+			ELSE
+				accuracy_val := 0.0;
+			END IF;
+			
+			IF (tp + fp) > 0 THEN
+				precision_val := tp::float8 / (tp + fp)::float8;
+			ELSE
+				precision_val := 0.0;
+			END IF;
+			
+			IF (tp + fn) > 0 THEN
+				recall_val := tp::float8 / (tp + fn)::float8;
+			ELSE
+				recall_val := 0.0;
+			END IF;
+			
+			IF (precision_val + recall_val) > 0 THEN
+				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
+			ELSE
+				f1_score_val := 0.0;
+			END IF;
+			
+			result := jsonb_build_object(
+				'accuracy', accuracy_val,
+				'precision', precision_val,
+				'recall', recall_val,
+				'f1_score', f1_score_val
 			);
 		ELSE
 			result := jsonb_build_object('error', 'Evaluation not implemented for: ' || algo);

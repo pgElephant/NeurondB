@@ -271,11 +271,57 @@ neurondb_train(PG_FUNCTION_ARGS)
 			neurondb_quote_literal_cstr(target_column));
 	} else if (strcmp(algorithm, "logistic_regression") == 0)
 	{
+		int max_iters = 1000;
+		double learning_rate = 0.01;
+		double lambda = 0.001;
+
+		if (hyperparams != NULL)
+		{
+			JsonbIterator *it;
+			JsonbValue v;
+			int r;
+
+			it = JsonbIteratorInit(&hyperparams->root);
+			while ((r = JsonbIteratorNext(&it, &v, false))
+				!= WJB_DONE)
+			{
+				if (r == WJB_KEY)
+				{
+					char *key = pnstrdup(v.val.string.val,
+						v.val.string.len);
+					r = JsonbIteratorNext(&it, &v, false);
+					if (strcmp(key, "max_iters") == 0
+						&& v.type == jbvNumeric)
+						max_iters = DatumGetInt32(DirectFunctionCall1(
+							numeric_int4,
+							NumericGetDatum(
+								v.val.numeric)));
+					else if (strcmp(key, "learning_rate") == 0
+						&& v.type == jbvNumeric)
+						learning_rate = DatumGetFloat8(
+							DirectFunctionCall1(
+								numeric_float8,
+								NumericGetDatum(
+									v.val.numeric)));
+					else if (strcmp(key, "lambda") == 0
+						&& v.type == jbvNumeric)
+						lambda = DatumGetFloat8(
+							DirectFunctionCall1(
+								numeric_float8,
+								NumericGetDatum(
+									v.val.numeric)));
+					pfree(key);
+				}
+			}
+		}
 		appendStringInfo(&sql,
-			"SELECT train_logistic_regression(%s, %s, %s)",
+			"SELECT train_logistic_regression(%s, %s, %s, %d, %.6f, %.6f)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
-			neurondb_quote_literal_cstr(target_column));
+			neurondb_quote_literal_cstr(target_column),
+			max_iters,
+			learning_rate,
+			lambda);
 	} else if (strcmp(algorithm, "random_forest") == 0)
 	{
 		int n_trees = 10, max_depth = 10, min_samples = 100;
@@ -529,16 +575,16 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 	ret = SPI_execute(sql.data, false, 0);
 
-	if (strcmp(algorithm, "random_forest") == 0)
+	if (strcmp(algorithm, "random_forest") == 0
+		|| strcmp(algorithm, "logistic_regression") == 0)
 	{
 		if (SPI_processed == 0)
 		{
 			neurondb_cleanup(oldcontext, callcontext, true);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("random_forest training did not "
-					       "return "
-					       "a model id")));
+					errmsg("%s training did not return a model id",
+						algorithm)));
 		}
 		model_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
 			SPI_tuptable->tupdesc,
@@ -549,9 +595,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 			neurondb_cleanup(oldcontext, callcontext, true);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("random_forest training "
-					       "returned NULL "
-					       "model id")));
+					errmsg("%s training returned NULL model id",
+						algorithm)));
 		}
 	}
 

@@ -3457,11 +3457,13 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 	Datum result_datums[4];
 	ArrayType *result_array;
 	int32 model_id;
-	RFModel *model;
-	double accuracy;
-	double error_rate;
-	int top_feature_idx = -1;
-	double top_feature_importance = 0.0;
+	RFModel *model = NULL;
+	double accuracy = 0.0;
+	double error_rate = 0.0;
+	double gini = 0.0;
+	int n_classes = 0;
+	bytea *payload = NULL;
+	Jsonb *metrics = NULL;
 
 	if (PG_NARGS() < 1 || PG_ARGISNULL(0))
 		ereport(ERROR,
@@ -3471,6 +3473,153 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 	model_id = PG_GETARG_INT32(0);
 
 	if (!rf_lookup_model(model_id, &model))
+	{
+		/* Try loading from catalog */
+		if (!ml_catalog_fetch_model_payload(
+			    model_id, &payload, NULL, &metrics))
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("random_forest: model %d not found",
+						model_id)));
+
+		/* If GPU model, extract metrics from JSONB */
+		if (rf_metadata_is_gpu(metrics))
+		{
+			if (metrics != NULL)
+			{
+				Datum acc_datum;
+				Datum gini_datum;
+				Datum acc_numeric;
+				Datum gini_numeric;
+				Numeric acc_num;
+				Numeric gini_num;
+
+				/* Try majority_fraction first (more reliable), then oob_accuracy */
+				acc_datum = DirectFunctionCall2(
+					jsonb_object_field,
+					JsonbPGetDatum(metrics),
+					CStringGetTextDatum("majority_fraction"));
+				if (DatumGetPointer(acc_datum) == NULL)
+				{
+					acc_datum = DirectFunctionCall2(
+						jsonb_object_field,
+						JsonbPGetDatum(metrics),
+						CStringGetTextDatum("oob_accuracy"));
+				}
+				if (DatumGetPointer(acc_datum) != NULL)
+				{
+					PG_TRY();
+					{
+						acc_numeric = DirectFunctionCall1(
+							jsonb_numeric,
+							acc_datum);
+						if (DatumGetPointer(acc_numeric) != NULL)
+						{
+							acc_num = DatumGetNumeric(acc_numeric);
+							accuracy = DatumGetFloat8(
+								DirectFunctionCall1(numeric_float8,
+									NumericGetDatum(acc_num)));
+						}
+					}
+					PG_CATCH();
+					{
+						/* If conversion fails, try text extraction */
+						elog(NOTICE,
+							"evaluate_random_forest: jsonb_numeric failed, trying text extraction");
+						Datum acc_text = DirectFunctionCall1(
+							jsonb_extract_path_text,
+							acc_datum);
+						if (DatumGetPointer(acc_text) != NULL)
+						{
+							char *acc_str = TextDatumGetCString(acc_text);
+
+							if (acc_str != NULL && strlen(acc_str) > 0)
+							{
+								accuracy = strtod(acc_str, NULL);
+								elog(DEBUG1,
+									"evaluate_random_forest: extracted accuracy=%.6f from text",
+									accuracy);
+							}
+							pfree(acc_str);
+						}
+					}
+					PG_END_TRY();
+				}
+
+				gini_datum = DirectFunctionCall2(
+					jsonb_object_field,
+					JsonbPGetDatum(metrics),
+					CStringGetTextDatum("gini"));
+				if (DatumGetPointer(gini_datum) != NULL)
+				{
+					PG_TRY();
+					{
+						gini_numeric = DirectFunctionCall1(
+							jsonb_numeric,
+							gini_datum);
+						if (DatumGetPointer(gini_numeric) != NULL)
+						{
+							gini_num = DatumGetNumeric(gini_numeric);
+							gini = DatumGetFloat8(
+								DirectFunctionCall1(numeric_float8,
+									NumericGetDatum(gini_num)));
+						}
+					}
+					PG_CATCH();
+					{
+						/* If conversion fails, try text extraction */
+						Datum gini_text = DirectFunctionCall1(
+							jsonb_extract_path_text,
+							gini_datum);
+						if (DatumGetPointer(gini_text) != NULL)
+						{
+							char *gini_str = TextDatumGetCString(gini_text);
+
+							if (gini_str != NULL && strlen(gini_str) > 0)
+								gini = strtod(gini_str, NULL);
+							pfree(gini_str);
+						}
+					}
+					PG_END_TRY();
+				}
+
+				/* n_classes is not in metrics, use default */
+				n_classes = 2;
+
+				if (metrics)
+					pfree(metrics);
+				if (payload)
+					pfree(payload);
+
+				error_rate = (accuracy > 1.0) ? 0.0 : (1.0 - accuracy);
+
+				result_datums[0] = Float8GetDatum(accuracy);
+				result_datums[1] = Float8GetDatum(error_rate);
+				result_datums[2] = Float8GetDatum(gini);
+				result_datums[3] = Float8GetDatum((double)n_classes);
+
+				result_array = construct_array(
+					result_datums, 4, FLOAT8OID, sizeof(float8), true, 'd');
+
+				PG_RETURN_ARRAYTYPE_P(result_array);
+			}
+		}
+
+		/* Try loading CPU model from catalog */
+		if (!rf_load_model_from_catalog(model_id, &model))
+		{
+			if (payload)
+				pfree(payload);
+			if (metrics)
+				pfree(metrics);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("random_forest: model %d not found",
+						model_id)));
+		}
+	}
+
+	if (model == NULL)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("random_forest: model %d not found",
@@ -3481,41 +3630,13 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 	else
 		accuracy = model->majority_fraction;
 	error_rate = (accuracy > 1.0) ? 0.0 : (1.0 - accuracy);
-
-	if (model->feature_importance != NULL && model->n_features > 0)
-	{
-		int i;
-
-		for (i = 0; i < model->n_features; i++)
-		{
-			double val = model->feature_importance[i];
-
-			if (val > top_feature_importance)
-			{
-				top_feature_importance = val;
-				top_feature_idx = i;
-			}
-		}
-	}
-
-	elog(NOTICE,
-		"evaluate_random_forest: samples=%d classes=%d accuracy=%.3f "
-		"gini=%.3f entropy=%.3f oob=%.3f majority=%.3f topfeat=%d "
-		"topimp=%.3f",
-		model->n_samples,
-		model->n_classes,
-		accuracy,
-		model->gini_impurity,
-		model->label_entropy,
-		model->oob_accuracy,
-		model->majority_fraction,
-		top_feature_idx,
-		top_feature_importance);
+	gini = model->gini_impurity;
+	n_classes = model->n_classes;
 
 	result_datums[0] = Float8GetDatum(accuracy);
 	result_datums[1] = Float8GetDatum(error_rate);
-	result_datums[2] = Float8GetDatum(model->gini_impurity);
-	result_datums[3] = Float8GetDatum((double)model->n_classes);
+	result_datums[2] = Float8GetDatum(gini);
+	result_datums[3] = Float8GetDatum((double)n_classes);
 
 	result_array = construct_array(
 		result_datums, 4, FLOAT8OID, sizeof(float8), true, 'd');

@@ -5,6 +5,7 @@
 #include "utils/jsonb.h"
 
 struct RFModel;
+struct LRModel;
 
 #define NDB_GPU_MAX_BACKENDS 8
 
@@ -106,6 +107,25 @@ typedef struct ndb_gpu_backend
 		int *class_out,
 		char **errstr);
 	int (*rf_pack)(const struct RFModel *model,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+
+	/* Logistic regression */
+	int (*lr_train)(const float *features,
+		const double *labels,
+		int n_samples,
+		int feature_dim,
+		const Jsonb *hyperparams,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+	int (*lr_predict)(const bytea *model_data,
+		const float *input,
+		int feature_dim,
+		double *probability_out,
+		char **errstr);
+	int (*lr_pack)(const struct LRModel *model,
 		bytea **model_data,
 		Jsonb **metrics,
 		char **errstr);

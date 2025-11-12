@@ -74,6 +74,19 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	parameters = spec->parameters;
 	metrics = spec->metrics;
 	model_data = spec->model_data;
+	
+	/* Debug: verify metrics are received */
+	if (metrics != NULL)
+	{
+		char *meta_txt = DatumGetCString(
+			DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metrics)));
+		elog(DEBUG1, "ml_catalog_register_model: received metrics: %s", meta_txt);
+		pfree(meta_txt);
+	}
+	else
+	{
+		elog(DEBUG1, "ml_catalog_register_model: metrics is NULL");
+	}
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "ml_catalog_register_model: SPI_connect failed");
@@ -178,9 +191,18 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			insert_nulls[6] = 'n';
 
 		if (metrics != NULL)
-			insert_values[7] = PointerGetDatum(metrics);
+		{
+			/* Ensure metrics Jsonb is in the correct memory context for SPI */
+			Jsonb *metrics_copy = (Jsonb *)PG_DETOAST_DATUM_COPY(PointerGetDatum(metrics));
+			insert_values[7] = PointerGetDatum(metrics_copy);
+			elog(DEBUG1, "ml_catalog_register_model: inserting metrics (size=%d)", 
+				VARSIZE(metrics_copy) - VARHDRSZ);
+		}
 		else
+		{
 			insert_nulls[7] = 'n';
+			elog(DEBUG1, "ml_catalog_register_model: metrics is NULL, setting null flag");
+		}
 
 		if (spec->training_time_ms >= 0)
 			insert_values[8] =
@@ -264,6 +286,8 @@ ml_catalog_fetch_model_payload(int32 model_id,
 	int ret;
 	StringInfoData sql;
 	bool found = false;
+	MemoryContext oldcontext;
+	MemoryContext caller_context;
 
 	if (model_data_out != NULL)
 		*model_data_out = NULL;
@@ -271,6 +295,9 @@ ml_catalog_fetch_model_payload(int32 model_id,
 		*parameters_out = NULL;
 	if (metrics_out != NULL)
 		*metrics_out = NULL;
+
+	/* Save caller's memory context */
+	caller_context = CurrentMemoryContext;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR,
@@ -289,6 +316,9 @@ ml_catalog_fetch_model_payload(int32 model_id,
 		bool isnull;
 
 		found = true;
+
+		/* Switch to caller's context for detoasted copies */
+		oldcontext = MemoryContextSwitchTo(caller_context);
 
 		if (model_data_out != NULL)
 		{
@@ -314,9 +344,10 @@ ml_catalog_fetch_model_payload(int32 model_id,
 				&isnull);
 			if (!isnull)
 			{
-				Datum jsonb_datum = PG_DETOAST_DATUM_COPY(datum);
-				Jsonb *jsonb_val = (Jsonb *)DatumGetPointer(jsonb_datum);
+				Jsonb *jsonb_val = DatumGetJsonbP(datum);
 
+				jsonb_val = (Jsonb *)PG_DETOAST_DATUM_COPY(
+					(Datum)jsonb_val);
 				*parameters_out = jsonb_val;
 			}
 		}
@@ -333,9 +364,9 @@ ml_catalog_fetch_model_payload(int32 model_id,
 
 				PG_TRY();
 				{
-					Datum jsonb_datum = PG_DETOAST_DATUM_COPY(datum);
-
-					jsonb_val = (Jsonb *)DatumGetPointer(jsonb_datum);
+					jsonb_val = DatumGetJsonbP(datum);
+					jsonb_val = (Jsonb *)PG_DETOAST_DATUM_COPY(
+						(Datum)jsonb_val);
 					*metrics_out = jsonb_val;
 				}
 				PG_CATCH();
@@ -346,6 +377,9 @@ ml_catalog_fetch_model_payload(int32 model_id,
 				PG_END_TRY();
 			}
 		}
+
+		/* Switch back to SPI context */
+		MemoryContextSwitchTo(oldcontext);
 	}
 
 	pfree(sql.data);

@@ -1,8 +1,7 @@
 \timing on
 \pset footer off
-
 SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,rf_split,rf_predict,rf_train';
+SET neurondb.gpu_kernels = 'l2,cosine,ip,lr_train,lr_predict';
 SELECT neurondb_gpu_enable();
 
 \set ON_ERROR_STOP on
@@ -11,11 +10,11 @@ SELECT neurondb_gpu_enable();
 DROP TABLE IF EXISTS gpu_model_temp;
 CREATE TEMP TABLE gpu_model_temp AS
 SELECT neurondb.train(
-	'random_forest',
+	'logistic_regression',
 	'sample_train',
 	'features',
 	'label',
-	'{}'::jsonb
+	'{"max_iters": 1000, "learning_rate": 0.01, "lambda": 0.001}'::jsonb
 )::integer AS model_id;
 
 -- Debug: Show model_id
@@ -72,3 +71,4 @@ FROM gpu_metrics_temp m;
 -- Cleanup
 DROP TABLE IF EXISTS gpu_model_temp;
 DROP TABLE IF EXISTS gpu_metrics_temp;
+

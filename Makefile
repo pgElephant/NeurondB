@@ -215,7 +215,8 @@ PGFILEDESC = "neurondb - Advanced AI Database with ML Integration"
 CUDA_PATH ?= /usr/local/cuda
 CUDA_ARCH_FLAGS ?= -gencode arch=compute_70,code=sm_70 \
                    -gencode arch=compute_75,code=sm_75 \
-                   -gencode arch=compute_86,code=sm_86
+                   -gencode arch=compute_86,code=sm_86 \
+                   -gencode arch=compute_90,code=compute_90
 
 # Auto-detect CUDA if not specified
 ifndef CUDA_PATH

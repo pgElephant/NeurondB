@@ -17,6 +17,8 @@
 #include "neurondb_gpu_backend.h"
 #include "ml_gpu_random_forest.h"
 #include "ml_random_forest_internal.h"
+#include "ml_gpu_logistic_regression.h"
+#include "ml_logistic_regression_internal.h"
 
 #include <string.h>
 
@@ -224,6 +226,65 @@ ndb_gpu_rf_pack_model(const RFModel *model,
 	if (!active_backend || active_backend->rf_pack == NULL)
 		return -1;
 	return active_backend->rf_pack(model, model_data, metrics, errstr);
+}
+
+int
+ndb_gpu_lr_train(const float *features,
+	const double *labels,
+	int n_samples,
+	int feature_dim,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	int rc;
+	
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->lr_train == NULL)
+		return -1;
+	
+	elog(DEBUG1, "ndb_gpu_lr_train: calling backend->lr_train, metrics=%p", (void *)metrics);
+	rc = active_backend->lr_train(features,
+		labels,
+		n_samples,
+		feature_dim,
+		hyperparams,
+		model_data,
+		metrics,
+		errstr);
+	elog(DEBUG1, "ndb_gpu_lr_train: backend->lr_train returned %d, *metrics=%p", 
+		rc, metrics ? (void *)*metrics : NULL);
+	return rc;
+}
+
+int
+ndb_gpu_lr_predict(const bytea *model_data,
+	const float *input,
+	int feature_dim,
+	double *probability_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->lr_predict == NULL)
+		return -1;
+	return active_backend->lr_predict(
+		model_data, input, feature_dim, probability_out, errstr);
+}
+
+int
+ndb_gpu_lr_pack_model(const LRModel *model,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->lr_pack == NULL)
+		return -1;
+	return active_backend->lr_pack(model, model_data, metrics, errstr);
 }
 
 const ndb_gpu_backend *
