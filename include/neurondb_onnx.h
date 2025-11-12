@@ -130,20 +130,33 @@ extern void neurondb_onnx_free_tensor(ONNXTensor *tensor);
  * HuggingFace Model Functions (via ONNX)
  */
 
-/* Generate text embeddings using HuggingFace model */
+/* C-callable ONNX inference functions (for LLM router integration) */
+extern int ndb_onnx_hf_embed(const char *model_name,
+			      const char *text,
+			      float **vec_out,
+			      int *dim_out,
+			      char **errstr);
+
+extern int ndb_onnx_hf_complete(const char *model_name,
+				 const char *prompt,
+				 const char *params_json,
+				 char **text_out,
+				 char **errstr);
+
+extern int ndb_onnx_hf_rerank(const char *model_name,
+			       const char *query,
+			       const char **docs,
+			       int ndocs,
+			       float **scores_out,
+			       char **errstr);
+
+/* SQL-callable functions */
 extern Datum neurondb_hf_embedding(PG_FUNCTION_ARGS);
-
-/* Text classification using HuggingFace model */
 extern Datum neurondb_hf_classify(PG_FUNCTION_ARGS);
-
-/* Named Entity Recognition using HuggingFace model */
 extern Datum neurondb_hf_ner(PG_FUNCTION_ARGS);
-
-/* Question Answering using HuggingFace model */
 extern Datum neurondb_hf_qa(PG_FUNCTION_ARGS);
-
-/* Tokenize text using HuggingFace tokenizer */
 extern Datum neurondb_hf_tokenize(PG_FUNCTION_ARGS);
+extern Datum neurondb_hf_detokenize(PG_FUNCTION_ARGS);
 
 /*
  * Utility Functions
@@ -186,6 +199,21 @@ extern int32 *neurondb_tokenize(
 	const char *text,
 	int32 max_length,
 	int32 *output_length
+);
+
+/* Tokenize text with model-specific tokenizer */
+extern int32 *neurondb_tokenize_with_model(
+	const char *text,
+	int32 max_length,
+	int32 *output_length,
+	const char *model_name
+);
+
+/* Detokenize token IDs back to text */
+extern char *neurondb_detokenize(
+	const int32 *token_ids,
+	int32 length,
+	const char *model_name
 );
 
 /* Create attention mask from token IDs */

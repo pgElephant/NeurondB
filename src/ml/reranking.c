@@ -20,6 +20,7 @@
 #include "postgres.h"
 #include "neurondb.h"
 #include "neurondb_llm.h"
+#include "neurondb_gpu.h"
 #include "fmgr.h"
 #include "funcapi.h"
 #include "utils/builtins.h"
@@ -142,17 +143,30 @@ rerank_cross_encoder(PG_FUNCTION_ARGS)
         {
             char *model_str;
             NdbLLMConfig cfg;
+            NdbLLMCallOptions call_opts;
             int i;
             const char **docs;
             int api_result;
             
             model_str = text_to_cstring(model_text);
 
-            cfg.provider   = neurondb_llm_provider;
-            cfg.endpoint   = neurondb_llm_endpoint;
-            cfg.model      = model_str;
-            cfg.api_key    = neurondb_llm_api_key;
+            cfg.provider = neurondb_llm_provider ? neurondb_llm_provider : "huggingface";
+            cfg.endpoint = neurondb_llm_endpoint ? neurondb_llm_endpoint : "https://api-inference.huggingface.co";
+            cfg.model = model_str ? model_str : (neurondb_llm_model ? neurondb_llm_model : "sentence-transformers/all-MiniLM-L6-v2");
+            cfg.api_key = neurondb_llm_api_key;
             cfg.timeout_ms = neurondb_llm_timeout_ms;
+            cfg.prefer_gpu = neurondb_gpu_enabled;
+            cfg.require_gpu = false;
+            if (cfg.provider != NULL &&
+                (pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
+                 pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
+                !neurondb_llm_fail_open)
+                cfg.require_gpu = true;
+
+            call_opts.task = "rerank";
+            call_opts.prefer_gpu = cfg.prefer_gpu;
+            call_opts.require_gpu = cfg.require_gpu;
+            call_opts.fail_open = neurondb_llm_fail_open;
 
             /* --- Prepare docs array for API call --- */
             docs = (const char **) palloc0(ncandidates * sizeof(char *));
@@ -164,7 +178,7 @@ rerank_cross_encoder(PG_FUNCTION_ARGS)
             }
 
             /* --- Try remote rerank using external API --- */
-            api_result = ndb_hf_rerank(&cfg, query_str, docs, ncandidates, &scores);
+            api_result = ndb_llm_route_rerank(&cfg, &call_opts, query_str, docs, ncandidates, &scores);
             if (api_result == 0 && scores)
             {
                 memcpy(state->scores, scores, sizeof(float)*ncandidates);

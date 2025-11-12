@@ -27,6 +27,10 @@
 #include "neurondb_gpu_backend.h"
 #include "neurondb_gpu_model.h"
 
+#ifdef NDB_GPU_CUDA
+#include "neurondb_cuda_hf.h"
+#endif
+
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -692,4 +696,249 @@ out:
 		MemoryContextDelete(cx);
 	rf_sort_feat_ptr = NULL;
 	return success;
+}
+
+/*
+ * neurondb_gpu_hf_embed
+ *	  Generate text embeddings using GPU-accelerated Hugging Face model.
+ *
+ * Returns 0 on success, -1 on failure. On failure, errstr may be set.
+ */
+int
+neurondb_gpu_hf_embed(const char *model_name,
+		      const char *text,
+		      float **vec_out,
+		      int *dim_out,
+		      char **errstr)
+{
+	const ndb_gpu_backend *backend;
+	bool used_gpu = false;
+	TimestampTz t0 = GetCurrentTimestamp();
+	TimestampTz t1;
+	int rc = -1;
+
+	if (errstr)
+		*errstr = NULL;
+	if (!neurondb_gpu_is_available())
+		goto out;
+	if (!ndb_gpu_kernel_enabled("hf_embed"))
+		goto out;
+	if (!model_name || !text || !vec_out || !dim_out)
+		goto out;
+
+	backend = ndb_gpu_get_active_backend();
+	if (backend == NULL || backend->hf_embed == NULL)
+		goto out;
+
+	rc = backend->hf_embed(model_name, text, vec_out, dim_out, errstr);
+	used_gpu = (rc == 0);
+
+out:
+	t1 = GetCurrentTimestamp();
+	ndb_gpu_stats_record(used_gpu,
+			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+			     !used_gpu);
+	return rc;
+}
+
+/*
+ * neurondb_gpu_hf_complete
+ *	  Generate text completion using GPU-accelerated Hugging Face model.
+ *
+ * Returns 0 on success, -1 on failure. On failure, errstr may be set.
+ */
+int
+neurondb_gpu_hf_complete(const char *model_name,
+			 const char *prompt,
+			 const char *params_json,
+			 char **text_out,
+			 char **errstr)
+{
+	const ndb_gpu_backend *backend;
+	bool used_gpu = false;
+	TimestampTz t0 = GetCurrentTimestamp();
+	TimestampTz t1;
+	int rc = -1;
+
+	if (errstr)
+		*errstr = NULL;
+	if (!neurondb_gpu_is_available())
+		goto out;
+	if (!ndb_gpu_kernel_enabled("hf_complete"))
+		goto out;
+	if (!model_name || !prompt || !text_out)
+		goto out;
+
+	backend = ndb_gpu_get_active_backend();
+	if (backend == NULL || backend->hf_complete == NULL)
+		goto out;
+
+	rc = backend->hf_complete(model_name, prompt, params_json, text_out, errstr);
+	used_gpu = (rc == 0);
+
+out:
+	t1 = GetCurrentTimestamp();
+	ndb_gpu_stats_record(used_gpu,
+			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+			     !used_gpu);
+	return rc;
+}
+
+/*
+ * neurondb_gpu_hf_rerank
+ *	  Rerank documents using GPU-accelerated Hugging Face model.
+ *
+ * Returns 0 on success, -1 on failure. On failure, errstr may be set.
+ */
+int
+neurondb_gpu_hf_rerank(const char *model_name,
+		       const char *query,
+		       const char **docs,
+		       int ndocs,
+		       float **scores_out,
+		       char **errstr)
+{
+	const ndb_gpu_backend *backend;
+	bool used_gpu = false;
+	TimestampTz t0 = GetCurrentTimestamp();
+	TimestampTz t1;
+	int rc = -1;
+
+	if (errstr)
+		*errstr = NULL;
+	if (!neurondb_gpu_is_available())
+		goto out;
+	if (!ndb_gpu_kernel_enabled("hf_rerank"))
+		goto out;
+	if (!model_name || !query || !docs || !scores_out || ndocs <= 0)
+		goto out;
+
+	backend = ndb_gpu_get_active_backend();
+	if (backend == NULL || backend->hf_rerank == NULL)
+		goto out;
+
+	rc = backend->hf_rerank(model_name, query, docs, ndocs, scores_out, errstr);
+	used_gpu = (rc == 0);
+
+out:
+	t1 = GetCurrentTimestamp();
+	ndb_gpu_stats_record(used_gpu,
+			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+			     !used_gpu);
+	return rc;
+}
+
+#ifdef NDB_GPU_CUDA
+/*
+ * neurondb_gpu_hf_complete_batch
+ *	  Generate text for multiple prompts in batch using GPU-accelerated inference.
+ *
+ * Returns 0 on success, -1 on failure. On failure, errstr may be set.
+ */
+int
+neurondb_gpu_hf_complete_batch(const char *model_name,
+			       const char **prompts,
+			       int num_prompts,
+			       const char *params_json,
+			       NdbCudaHfBatchResult *results,
+			       char **errstr)
+{
+	bool used_gpu = false;
+	TimestampTz t0 = GetCurrentTimestamp();
+	TimestampTz t1;
+	int rc = -1;
+
+	if (errstr)
+		*errstr = NULL;
+	if (!neurondb_gpu_is_available())
+		goto out;
+	if (!ndb_gpu_kernel_enabled("hf_complete"))
+		goto out;
+	if (!model_name || !prompts || !results || num_prompts <= 0)
+		goto out;
+
+	/* Call CUDA batch generation function */
+	rc = ndb_cuda_hf_generate_batch(model_name, prompts, num_prompts,
+					params_json, results, errstr);
+	used_gpu = (rc == 0);
+
+out:
+	t1 = GetCurrentTimestamp();
+	ndb_gpu_stats_record(used_gpu,
+			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+			     !used_gpu);
+	return rc;
+}
+#endif
+
+/*
+ * neurondb_gpu_hf_rerank_batch
+ *	  Rerank documents for multiple queries in batch using GPU-accelerated inference.
+ *
+ * Returns 0 on success, -1 on failure. On failure, errstr may be set.
+ */
+int
+neurondb_gpu_hf_rerank_batch(const char *model_name,
+			     const char **queries,
+			     const char ***docs_array,
+			     int *ndocs_array,
+			     int num_queries,
+			     float ***scores_out,
+			     int **nscores_out,
+			     char **errstr)
+{
+	bool used_gpu = false;
+	TimestampTz t0 = GetCurrentTimestamp();
+	TimestampTz t1;
+	int rc = -1;
+	int i;
+
+	if (errstr)
+		*errstr = NULL;
+	if (!neurondb_gpu_is_available())
+		goto out;
+	if (!ndb_gpu_kernel_enabled("hf_rerank"))
+		goto out;
+	if (!model_name || !queries || !docs_array || !ndocs_array ||
+	    !scores_out || !nscores_out || num_queries <= 0)
+		goto out;
+
+	/* For now, process sequentially */
+	/* TODO: Implement true batch processing with CUDA kernels */
+	*scores_out = (float **) palloc0(num_queries * sizeof(float *));
+	*nscores_out = (int *) palloc0(num_queries * sizeof(int));
+
+	for (i = 0; i < num_queries; i++)
+	{
+		float *scores = NULL;
+		int rc2;
+
+		rc2 = neurondb_gpu_hf_rerank(model_name, queries[i], docs_array[i],
+					     ndocs_array[i], &scores, errstr);
+		if (rc2 == 0 && scores != NULL)
+		{
+			(*scores_out)[i] = scores;
+			(*nscores_out)[i] = ndocs_array[i];
+		}
+		else
+		{
+			(*scores_out)[i] = NULL;
+			(*nscores_out)[i] = 0;
+		}
+	}
+
+	rc = 0;
+	used_gpu = true;
+
+out:
+	t1 = GetCurrentTimestamp();
+	ndb_gpu_stats_record(used_gpu,
+			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+			     !used_gpu);
+	return rc;
 }

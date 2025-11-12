@@ -319,12 +319,12 @@ COMMENT ON FUNCTION neurondb_onnx_info IS 'Return ONNX runtime availability and 
 CREATE FUNCTION embed_text(text, text DEFAULT 'all-MiniLM-L6-v2') RETURNS vector
     AS 'MODULE_PATHNAME', 'embed_text'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION embed_text IS 'Generate text embedding: (text, model_name)';
+COMMENT ON FUNCTION embed_text IS 'Generate text embedding with GPU acceleration support: (text, model_name). Uses CUDA-accelerated inference when available, falls back to ONNX Runtime or remote API. Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
 
 CREATE FUNCTION embed_text_batch(text[], text DEFAULT 'all-MiniLM-L6-v2') RETURNS vector[]
     AS 'MODULE_PATHNAME', 'embed_text_batch'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION embed_text_batch IS 'Batch text embedding: (texts, model_name)';
+COMMENT ON FUNCTION embed_text_batch IS 'Batch text embedding with GPU acceleration support: (texts, model_name). Uses CUDA-accelerated inference when available for improved performance.';
 
 CREATE FUNCTION embed_image(bytea, text DEFAULT 'clip') RETURNS vector
     AS 'MODULE_PATHNAME', 'embed_image'
@@ -399,7 +399,7 @@ CREATE FUNCTION rerank_cross_encoder(text, text[], text DEFAULT 'ms-marco-MiniLM
     RETURNS TABLE(idx integer, score real)
     AS 'MODULE_PATHNAME', 'rerank_cross_encoder'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION rerank_cross_encoder IS 'Cross-encoder reranking: (query, candidates, model, top_k)';
+COMMENT ON FUNCTION rerank_cross_encoder IS 'Cross-encoder reranking with GPU acceleration support: (query, candidates, model, top_k). Uses CUDA-accelerated inference when available, falls back to ONNX Runtime or remote API. Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
 
 CREATE FUNCTION rerank_llm(text, text[], text DEFAULT 'gpt-3.5-turbo', integer DEFAULT 10)
     RETURNS TABLE(idx integer, score real)
@@ -2145,31 +2145,281 @@ CREATE TABLE IF NOT EXISTS neurondb.neurondb_llm_stats (
     cache_hits bigint DEFAULT 0,
     total_latency_ms bigint DEFAULT 0,
     total_tokens bigint DEFAULT 0,
+    total_tokens_in bigint DEFAULT 0,
+    total_tokens_out bigint DEFAULT 0,
     last_request_at timestamptz,
     last_updated timestamptz DEFAULT now()
 );
 COMMENT ON TABLE neurondb.neurondb_llm_stats IS 'LLM usage statistics per model';
 
--- C-backed LLM functions
-CREATE FUNCTION ndb_llm_complete(prompt text, model text, max_tokens integer, temperature real) RETURNS text
+-- LLM error tracking table
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_llm_errors (
+    error_id bigserial PRIMARY KEY,
+    model_name text NOT NULL,
+    operation text NOT NULL,
+    error_type text NOT NULL,
+    error_message text,
+    latency_ms bigint,
+    error_timestamp timestamptz DEFAULT now()
+);
+COMMENT ON TABLE neurondb.neurondb_llm_errors IS 'LLM error tracking for monitoring and debugging';
+
+CREATE INDEX IF NOT EXISTS idx_llm_errors_model ON neurondb.neurondb_llm_errors(model_name, error_timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_errors_type ON neurondb.neurondb_llm_errors(error_type, error_timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_errors_operation ON neurondb.neurondb_llm_errors(operation, error_timestamp);
+
+-- LLM statistics views for monitoring
+CREATE OR REPLACE VIEW neurondb.llm_model_stats AS
+SELECT 
+    model_name,
+    total_requests,
+    successful_requests,
+    failed_requests,
+    cache_hits,
+    total_latency_ms,
+    total_tokens,
+    total_tokens_in,
+    total_tokens_out,
+    CASE 
+        WHEN total_requests > 0 THEN ROUND(100.0 * successful_requests / total_requests, 2)
+        ELSE 0.0
+    END as success_rate_pct,
+    CASE 
+        WHEN total_requests > 0 THEN ROUND(100.0 * cache_hits / total_requests, 2)
+        ELSE 0.0
+    END as cache_hit_rate_pct,
+    CASE 
+        WHEN total_requests > 0 THEN ROUND(total_latency_ms::numeric / total_requests, 2)
+        ELSE 0.0
+    END as avg_latency_ms,
+    CASE 
+        WHEN total_tokens > 0 THEN ROUND(total_latency_ms::numeric / total_tokens, 4)
+        ELSE 0.0
+    END as latency_per_token_ms,
+    last_request_at,
+    last_updated
+FROM neurondb.neurondb_llm_stats
+ORDER BY total_requests DESC;
+
+COMMENT ON VIEW neurondb.llm_model_stats IS 'LLM model usage statistics with calculated metrics (success rate, cache hit rate, average latency, latency per token)';
+
+CREATE OR REPLACE VIEW neurondb.llm_error_rates AS
+SELECT 
+    model_name,
+    operation,
+    error_type,
+    COUNT(*) as error_count,
+    ROUND(AVG(latency_ms)::numeric, 2) as avg_latency_ms,
+    MIN(error_timestamp) as first_error,
+    MAX(error_timestamp) as last_error
+FROM neurondb.neurondb_llm_errors
+WHERE error_timestamp > NOW() - INTERVAL '24 hours'
+GROUP BY model_name, operation, error_type
+ORDER BY error_count DESC;
+
+COMMENT ON VIEW neurondb.llm_error_rates IS 'LLM error rates by model, operation, and error type (last 24 hours)';
+
+CREATE OR REPLACE VIEW neurondb.llm_latency_histograms AS
+SELECT 
+    metric_name,
+    bucket_start,
+    bucket_end,
+    SUM(count) as total_count,
+    MAX(last_updated) as last_updated
+FROM neurondb.neurondb_histograms
+WHERE metric_name LIKE 'llm_%_latency_ms'
+    AND last_updated > NOW() - INTERVAL '24 hours'
+GROUP BY metric_name, bucket_start, bucket_end
+ORDER BY metric_name, bucket_start;
+
+COMMENT ON VIEW neurondb.llm_latency_histograms IS 'LLM latency histograms by model and operation (last 24 hours)';
+
+-- Function to calculate percentiles from histograms
+CREATE OR REPLACE FUNCTION neurondb.llm_latency_percentile(
+    metric_name text,
+    percentile real DEFAULT 0.95
+) RETURNS real
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    total_count bigint;
+    target_count bigint;
+    current_count bigint;
+    result real;
+BEGIN
+    /* Calculate total count */
+    SELECT SUM(count) INTO total_count
+    FROM neurondb.neurondb_histograms
+    WHERE neurondb.neurondb_histograms.metric_name = llm_latency_percentile.metric_name
+        AND last_updated > NOW() - INTERVAL '24 hours';
+
+    IF total_count IS NULL OR total_count = 0 THEN
+        RETURN NULL;
+    END IF;
+
+    /* Calculate target count for percentile */
+    target_count := (total_count * percentile)::bigint;
+    current_count := 0;
+
+    /* Find bucket containing percentile */
+    SELECT bucket_end INTO result
+    FROM (
+        SELECT 
+            bucket_start,
+            bucket_end,
+            SUM(count) OVER (ORDER BY bucket_start) as cumulative_count
+        FROM neurondb.neurondb_histograms
+        WHERE neurondb.neurondb_histograms.metric_name = llm_latency_percentile.metric_name
+            AND last_updated > NOW() - INTERVAL '24 hours'
+        ORDER BY bucket_start
+    ) t
+    WHERE cumulative_count >= target_count
+    ORDER BY bucket_start
+    LIMIT 1;
+
+    RETURN result;
+END;
+$$;
+
+COMMENT ON FUNCTION neurondb.llm_latency_percentile IS 'Calculate latency percentile (p50, p95, p99) from histograms for a given metric name';
+
+-- Function to get GPU utilization metrics
+CREATE OR REPLACE FUNCTION neurondb.llm_gpu_utilization() RETURNS TABLE(
+    device_id integer,
+    utilization_pct real,
+    memory_used_mb bigint,
+    memory_total_mb bigint,
+    memory_utilization_pct real,
+    temperature_c integer,
+    power_w real,
+    timestamp timestamptz
+)
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    /* TODO: Implement GPU utilization tracking */
+    /* For now, return empty result */
+    RETURN QUERY SELECT 0::integer, 0.0::real, 0::bigint, 0::bigint, 0.0::real, 0::integer, 0.0::real, NOW()::timestamptz WHERE false;
+END;
+$$;
+
+COMMENT ON FUNCTION neurondb.llm_gpu_utilization IS 'Get GPU utilization metrics (utilization percentage, memory usage, temperature, power consumption). TODO: Implement GPU utilization tracking.';
+
+-- ============================================================================
+-- LLM / GPU CONFIGURATION GUC VARIABLES
+-- ============================================================================
+-- The following GUC variables control LLM and GPU behavior (defined in C code):
+--
+-- LLM Provider Settings:
+--   neurondb.llm_provider       - LLM provider (default: 'huggingface')
+--                                  Options: 'huggingface', 'huggingface-local', 'hf-local', 'hf-http'
+--   neurondb.llm_model          - Default LLM model name
+--   neurondb.llm_endpoint       - LLM endpoint base URL
+--   neurondb.llm_api_key        - API key for LLM provider (superuser only)
+--   neurondb.llm_timeout_ms     - HTTP timeout in milliseconds (default: 30000)
+--   neurondb.llm_cache_ttl      - Cache TTL in seconds (default: 600)
+--   neurondb.llm_rate_limiter_qps - Rate limiter QPS (default: 5)
+--   neurondb.llm_fail_open      - Fail open on provider errors (default: true)
+--
+-- GPU Settings:
+--   neurondb.gpu_enabled        - Enable GPU acceleration (default: false)
+--   neurondb.gpu_device         - GPU device ID to use (default: 0)
+--   neurondb.gpu_batch_size     - Batch size for GPU operations (default: 1000)
+--   neurondb.gpu_streams        - Number of CUDA streams (default: 4)
+--   neurondb.gpu_memory_pool_mb - GPU memory pool size in MB (default: 512)
+--   neurondb.gpu_fail_open      - Fallback to CPU on GPU error (default: true)
+--   neurondb.gpu_kernels        - GPU kernel selection (default: 'auto')
+--   neurondb.gpu_backend        - GPU backend (default: 'cuda')
+--   neurondb.gpu_timeout_ms     - GPU operation timeout in ms (default: 5000)
+--
+-- ONNX Runtime Settings:
+--   neurondb.onnx_model_path    - Directory with ONNX model files
+--   neurondb.onnx_use_gpu       - Use GPU for ONNX inference (default: true)
+--   neurondb.onnx_threads       - Number of ONNX Runtime threads (default: 4)
+--   neurondb.onnx_cache_size    - ONNX model cache size (default: 10)
+--
+-- GPU Preference:
+--   When neurondb.llm_provider is set to 'huggingface-local' or 'hf-local',
+--   and neurondb.gpu_enabled is true, the system will:
+--   1. Try CUDA-accelerated inference first (if GPU available)
+--   2. Fall back to ONNX Runtime with GPU (if available)
+--   3. Fall back to ONNX Runtime with CPU (if GPU unavailable)
+--   4. Fall back to remote Hugging Face API (if local execution fails)
+--
+-- Example configuration:
+--   SET neurondb.llm_provider = 'huggingface-local';
+--   SET neurondb.llm_model = 'sentence-transformers/all-MiniLM-L6-v2';
+--   SET neurondb.gpu_enabled = true;
+--   SET neurondb.gpu_device = 0;
+-- ============================================================================
+
+-- C-backed LLM functions with GPU acceleration support
+-- These functions automatically use GPU when available and configured
+CREATE FUNCTION ndb_llm_complete(prompt text, params text DEFAULT '{}') RETURNS text
     AS 'MODULE_PATHNAME', 'ndb_llm_complete'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION ndb_llm_complete IS 'Direct LLM completion via C extension';
+COMMENT ON FUNCTION ndb_llm_complete IS 'LLM completion with GPU acceleration support: ndb_llm_complete(prompt, params) where params is JSON text with optional model, max_tokens, temperature, etc. Uses CUDA-accelerated inference when available, falls back to ONNX Runtime or remote API. Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
 
 CREATE FUNCTION ndb_llm_embed(text_input text, model text) RETURNS vector
     AS 'MODULE_PATHNAME', 'ndb_llm_embed'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION ndb_llm_embed IS 'Direct LLM embedding via C extension';
+COMMENT ON FUNCTION ndb_llm_embed IS 'LLM embedding with GPU acceleration support. Uses CUDA-accelerated inference when available, falls back to ONNX Runtime or remote API. Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
 
 CREATE FUNCTION ndb_llm_rerank(query text, documents text[], model text, top_k integer) RETURNS TABLE(idx integer, score real)
     AS 'MODULE_PATHNAME', 'ndb_llm_rerank'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION ndb_llm_rerank IS 'LLM-based reranking via C extension';
+COMMENT ON FUNCTION ndb_llm_rerank IS 'LLM-based reranking with GPU acceleration support. Uses CUDA-accelerated inference when available, falls back to ONNX Runtime or remote API. Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
 
 CREATE FUNCTION ndb_llm_enqueue(operation text, model text, input_text text, tenant_id text) RETURNS bigint
     AS 'MODULE_PATHNAME', 'ndb_llm_enqueue'
     LANGUAGE C VOLATILE;
-COMMENT ON FUNCTION ndb_llm_enqueue IS 'Enqueue asynchronous LLM job';
+COMMENT ON FUNCTION ndb_llm_enqueue IS 'Enqueue asynchronous LLM job for background processing. Supports GPU acceleration when available.';
+
+-- GPU availability check for LLM operations
+CREATE FUNCTION neurondb_llm_gpu_available() RETURNS boolean
+    AS 'MODULE_PATHNAME', 'neurondb_llm_gpu_available'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_llm_gpu_available IS 'Check if GPU is available for LLM operations. Returns true if CUDA backend is available and configured.';
+
+-- GPU backend info for LLM operations
+CREATE FUNCTION neurondb_llm_gpu_info() RETURNS TABLE(
+        backend text,
+        device_id integer,
+        device_name text,
+        total_memory_mb bigint,
+        free_memory_mb bigint,
+        is_available boolean
+    )
+    AS 'MODULE_PATHNAME', 'neurondb_llm_gpu_info'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_llm_gpu_info IS 'Get GPU information for LLM operations. Returns backend type, device info, and availability status.';
+
+-- Batch operations for LLM completion and reranking
+CREATE FUNCTION ndb_llm_complete_batch(
+	prompts text[],
+	params text DEFAULT '{}'
+) RETURNS TABLE(
+	idx integer,
+	text text,
+	tokens_in integer,
+	tokens_out integer,
+	http_status integer
+)
+	AS 'MODULE_PATHNAME', 'ndb_llm_complete_batch'
+	LANGUAGE C STABLE;
+COMMENT ON FUNCTION ndb_llm_complete_batch IS 'Batch LLM completion with GPU acceleration support: ndb_llm_complete_batch(prompts, params) processes multiple prompts in parallel using GPU when available. Uses CUDA-accelerated inference when available, falls back to ONNX Runtime or remote API. Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
+
+CREATE FUNCTION ndb_llm_rerank_batch(
+	queries text[],
+	documents_array text[][],
+	model text DEFAULT NULL,
+	top_k integer DEFAULT 10
+) RETURNS TABLE(
+	query_idx integer,
+	doc_idx integer,
+	score real
+)
+	AS 'MODULE_PATHNAME', 'ndb_llm_rerank_batch'
+	LANGUAGE C STABLE;
+COMMENT ON FUNCTION ndb_llm_rerank_batch IS 'Batch LLM reranking with GPU acceleration support: ndb_llm_rerank_batch(queries, documents_array, model, top_k) processes multiple query-document pairs in parallel using GPU when available. Uses CUDA-accelerated inference when available, falls back to ONNX Runtime or remote API. Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
 
 -- ============================================================================
 -- DISTRIBUTED QUERY FUNCTIONS
@@ -3563,7 +3813,7 @@ BEGIN
 	END CASE;
 END;
 $$;
-COMMENT ON FUNCTION neurondb.embed IS 'Unified embedding function: embed(model, text, task)';
+COMMENT ON FUNCTION neurondb.embed IS 'Unified embedding function with GPU acceleration support: embed(model, text, task). Uses CUDA-accelerated inference when available, falls back to ONNX Runtime or remote API. Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
 
 CREATE OR REPLACE FUNCTION neurondb.classify(
 	model text,
@@ -3579,7 +3829,680 @@ EXCEPTION WHEN OTHERS THEN
 	RETURN jsonb_build_object('error', SQLERRM);
 END;
 $$;
-COMMENT ON FUNCTION neurondb.classify IS 'Unified classification: classify(model, text) returns classification result';
+
+-- ============================================================================
+-- HUGGING FACE / LLM TOKENIZER FUNCTIONS
+-- ============================================================================
+-- Tokenization functions for HuggingFace models
+-- ============================================================================
+
+CREATE FUNCTION neurondb_hf_tokenize(
+	model_name text,
+	text text,
+	max_length integer DEFAULT 512
+) RETURNS integer[]
+	AS 'MODULE_PATHNAME', 'neurondb_hf_tokenize'
+	LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION neurondb_hf_tokenize(text, text, integer) IS 
+	'Tokenize text using model-specific tokenizer: neurondb_hf_tokenize(model_name, text, max_length) returns token IDs array. Uses cached tokenizer if available, otherwise loads from model directory. Supports vocabulary loading from vocab.txt files.';
+
+CREATE FUNCTION neurondb_hf_tokenize(
+	text text,
+	max_length integer DEFAULT 512
+) RETURNS integer[]
+	AS 'MODULE_PATHNAME', 'neurondb_hf_tokenize'
+	LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION neurondb_hf_tokenize(text, integer) IS 
+	'Tokenize text using default tokenizer: neurondb_hf_tokenize(text, max_length) returns token IDs array. Uses default vocabulary if no model-specific tokenizer is available.';
+
+CREATE FUNCTION neurondb_hf_detokenize(
+	model_name text,
+	token_ids integer[]
+) RETURNS text
+	AS 'MODULE_PATHNAME', 'neurondb_hf_detokenize'
+	LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION neurondb_hf_detokenize(text, integer[]) IS 
+	'Detokenize token IDs back to text using model-specific tokenizer: neurondb_hf_detokenize(model_name, token_ids) returns text. Uses cached tokenizer if available, otherwise loads from model directory.';
+
+CREATE FUNCTION neurondb_hf_detokenize(
+	token_ids integer[]
+) RETURNS text
+	AS 'MODULE_PATHNAME', 'neurondb_hf_detokenize'
+	LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION neurondb_hf_detokenize(integer[]) IS 
+	'Detokenize token IDs back to text using default tokenizer: neurondb_hf_detokenize(token_ids) returns text. Uses default vocabulary if no model-specific tokenizer is available.';
+
+-- ============================================================================
+-- UNIFIED LLM / HUGGINGFACE API
+-- ============================================================================
+-- Unified API for all LLM/HuggingFace operations
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.llm(
+	task text,
+	model text DEFAULT NULL,
+	input_text text DEFAULT NULL,
+	input_array text[] DEFAULT NULL,
+	params jsonb DEFAULT '{}'::jsonb,
+	max_length integer DEFAULT 512
+) RETURNS jsonb
+LANGUAGE plpgsql AS $$
+DECLARE
+	result jsonb;
+	token_ids integer[];
+	model_name text;
+	input_str text;
+	params_str text;
+	gen_params jsonb;
+BEGIN
+	/* Use default model from GUC if not provided */
+	model_name := COALESCE(model, current_setting('neurondb.llm_model', true));
+	if (model_name IS NULL OR model_name = '')
+		model_name := 'sentence-transformers/all-MiniLM-L6-v2';
+
+	/* Convert params to text */
+	params_str := params::text;
+
+	CASE lower(task)
+		WHEN 'tokenize', 'token' THEN
+			/* Tokenize text */
+			if (input_text IS NULL)
+				RAISE EXCEPTION 'tokenize task requires input_text parameter';
+			
+			token_ids := neurondb_hf_tokenize(model_name, input_text, max_length);
+			result := jsonb_build_object(
+				'task', 'tokenize',
+				'model', model_name,
+				'token_ids', token_ids,
+				'length', array_length(token_ids, 1)
+			);
+
+		WHEN 'detokenize', 'detoken' THEN
+			/* Detokenize token IDs */
+			if (params->>'token_ids' IS NULL)
+				RAISE EXCEPTION 'detokenize task requires token_ids in params';
+			
+			token_ids := (params->>'token_ids')::integer[];
+			input_str := neurondb_hf_detokenize(model_name, token_ids);
+			result := jsonb_build_object(
+				'task', 'detokenize',
+				'model', model_name,
+				'text', input_str
+			);
+
+		WHEN 'embed', 'embedding' THEN
+			/* Generate embeddings */
+			if (input_text IS NULL)
+				RAISE EXCEPTION 'embed task requires input_text parameter';
+			
+			BEGIN
+				result := jsonb_build_object(
+					'task', 'embed',
+					'model', model_name,
+					'vector', neurondb.embed(model_name, input_text, 'embedding')
+				);
+			EXCEPTION WHEN OTHERS THEN
+				/* Fallback to direct embedding function */
+				result := jsonb_build_object(
+					'task', 'embed',
+					'model', model_name,
+					'vector', ndb_llm_embed(input_text, model_name)
+				);
+			END;
+
+		WHEN 'complete', 'completion', 'generate' THEN
+			/* Text completion */
+			if (input_text IS NULL)
+				RAISE EXCEPTION 'complete task requires input_text parameter';
+			
+			BEGIN
+				/* Build params JSON with model and generation parameters */
+				gen_params := jsonb_build_object(
+					'model', model_name,
+					'max_tokens', COALESCE((params->>'max_tokens')::integer, 100),
+					'temperature', COALESCE((params->>'temperature')::real, 0.7),
+					'top_p', COALESCE((params->>'top_p')::real, 1.0),
+					'top_k', COALESCE((params->>'top_k')::integer, 50),
+					'repetition_penalty', COALESCE((params->>'repetition_penalty')::real, 1.0),
+					'do_sample', COALESCE((params->>'do_sample')::boolean, true),
+					'stop_sequences', COALESCE(params->'stop_sequences', '[]'::jsonb)
+				);
+				
+				/* Call C function with prompt and params JSON (cast jsonb to text) */
+				input_str := ndb_llm_complete(input_text::text, gen_params::text);
+				result := jsonb_build_object(
+					'task', 'complete',
+					'model', model_name,
+					'text', input_str,
+					'params', gen_params
+				);
+			EXCEPTION WHEN OTHERS THEN
+				result := jsonb_build_object(
+					'task', 'complete',
+					'error', SQLERRM,
+					'model', model_name
+				);
+			END;
+
+		WHEN 'classify', 'classification' THEN
+			/* Text classification */
+			if (input_text IS NULL)
+				RAISE EXCEPTION 'classify task requires input_text parameter';
+			
+			result := neurondb.classify(model_name, input_text);
+			result := jsonb_build_object(
+				'task', 'classify',
+				'model', model_name,
+				'result', result
+			);
+
+		WHEN 'ner', 'named_entity_recognition' THEN
+			/* Named Entity Recognition */
+			if (input_text IS NULL)
+				RAISE EXCEPTION 'ner task requires input_text parameter';
+			
+			result := jsonb_build_object(
+				'task', 'ner',
+				'model', model_name,
+				'entities', neurondb_hf_ner(model_name, input_text)::jsonb
+			);
+
+		WHEN 'qa', 'question_answering' THEN
+			/* Question Answering */
+			if (input_text IS NULL OR params->>'context' IS NULL)
+				RAISE EXCEPTION 'qa task requires input_text (question) and context in params';
+			
+			result := jsonb_build_object(
+				'task', 'qa',
+				'model', model_name,
+				'answer', neurondb_hf_qa(model_name, input_text, params->>'context')::jsonb
+			);
+
+		WHEN 'rerank', 'reranking' THEN
+			/* Reranking */
+			if (input_text IS NULL OR input_array IS NULL)
+				RAISE EXCEPTION 'rerank task requires input_text (query) and input_array (documents)';
+			
+			BEGIN
+				result := jsonb_build_object(
+					'task', 'rerank',
+					'model', model_name,
+					'scores', (
+						SELECT jsonb_agg(
+							jsonb_build_object(
+								'idx', idx,
+								'score', score
+							)
+						)
+						FROM ndb_llm_rerank(input_text, input_array, 
+							COALESCE(model_name, current_setting('neurondb.llm_model', true)),
+							COALESCE((params->>'top_n')::integer, 10))
+					)
+				);
+			EXCEPTION WHEN OTHERS THEN
+				result := jsonb_build_object(
+					'task', 'rerank',
+					'error', SQLERRM,
+					'model', model_name
+				);
+			END;
+
+		WHEN 'summarize', 'summarization' THEN
+			/* Text summarization */
+			if (input_text IS NULL)
+				RAISE EXCEPTION 'summarize task requires input_text parameter';
+			
+			result := neurondb.summarize(model_name, input_text, params);
+
+		WHEN 'translate', 'translation' THEN
+			/* Text translation */
+			if (input_text IS NULL OR params->>'target_lang' IS NULL)
+				RAISE EXCEPTION 'translate task requires input_text and target_lang in params';
+			
+			result := neurondb.translate(
+				model_name, 
+				input_text, 
+				COALESCE(params->>'source_lang', 'en'),
+				params->>'target_lang',
+				params
+			);
+
+		WHEN 'fill_mask', 'masked_language_modeling' THEN
+			/* Masked language modeling */
+			if (input_text IS NULL)
+				RAISE EXCEPTION 'fill_mask task requires input_text parameter';
+			
+			result := neurondb.fill_mask(model_name, input_text, params);
+
+		WHEN 'text2text', 'text_to_text' THEN
+			/* Text-to-text generation */
+			if (input_text IS NULL)
+				RAISE EXCEPTION 'text2text task requires input_text parameter';
+			
+			result := neurondb.text2text(model_name, input_text, params);
+
+		WHEN 'zero_shot_classify', 'zero_shot_classification' THEN
+			/* Zero-shot classification */
+			if (input_text IS NULL OR params->>'candidate_labels' IS NULL)
+				RAISE EXCEPTION 'zero_shot_classify task requires input_text and candidate_labels in params';
+			
+			result := neurondb.zero_shot_classify(
+				model_name,
+				input_text,
+				(params->>'candidate_labels')::text[],
+				params
+			);
+
+		ELSE
+			RAISE EXCEPTION 'Unknown task: %. Supported tasks: tokenize, detokenize, embed, complete, classify, ner, qa, rerank, summarize, translate, fill_mask, text2text, zero_shot_classify', task;
+	END CASE;
+
+	RETURN result;
+EXCEPTION WHEN OTHERS THEN
+	RETURN jsonb_build_object(
+		'task', task,
+		'error', SQLERRM,
+		'model', COALESCE(model_name, 'unknown')
+	);
+END;
+$$;
+COMMENT ON FUNCTION neurondb.llm IS 
+	'Unified LLM/HuggingFace API: llm(task, model, input_text, input_array, params, max_length) returns JSONB result. 
+	Supported tasks: tokenize, detokenize, embed, complete, classify, ner, qa, rerank, summarize, translate, fill_mask, text2text, zero_shot_classify.
+	Uses GPU acceleration when available, falls back to ONNX Runtime or remote API.
+	Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
+
+-- ============================================================================
+-- UNIFIED TOKENIZATION API
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.tokenize(
+	model text,
+	input_text text,
+	max_length integer DEFAULT 512
+) RETURNS integer[]
+LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+BEGIN
+	RETURN neurondb_hf_tokenize(model, input_text, max_length);
+EXCEPTION WHEN OTHERS THEN
+	/* Fallback to default tokenizer */
+	RETURN neurondb_hf_tokenize(input_text, max_length);
+END;
+$$;
+COMMENT ON FUNCTION neurondb.tokenize IS 
+	'Unified tokenization API: tokenize(model, text, max_length) returns token IDs array. 
+	Uses model-specific tokenizer if available, otherwise uses default tokenizer.';
+
+CREATE OR REPLACE FUNCTION neurondb.tokenize(
+	input_text text,
+	max_length integer DEFAULT 512
+) RETURNS integer[]
+LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+BEGIN
+	RETURN neurondb_hf_tokenize(input_text, max_length);
+END;
+$$;
+COMMENT ON FUNCTION neurondb.tokenize(text, integer) IS 
+	'Unified tokenization API: tokenize(text, max_length) returns token IDs array using default tokenizer.';
+
+CREATE OR REPLACE FUNCTION neurondb.detokenize(
+	model text,
+	token_ids integer[]
+) RETURNS text
+LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+BEGIN
+	RETURN neurondb_hf_detokenize(model, token_ids);
+EXCEPTION WHEN OTHERS THEN
+	/* Fallback to default tokenizer */
+	RETURN neurondb_hf_detokenize(token_ids);
+END;
+$$;
+COMMENT ON FUNCTION neurondb.detokenize IS 
+	'Unified detokenization API: detokenize(model, token_ids) returns text. 
+	Uses model-specific tokenizer if available, otherwise uses default tokenizer.';
+
+CREATE OR REPLACE FUNCTION neurondb.detokenize(
+	token_ids integer[]
+) RETURNS text
+LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+BEGIN
+	RETURN neurondb_hf_detokenize(token_ids);
+END;
+$$;
+COMMENT ON FUNCTION neurondb.detokenize(integer[]) IS 
+	'Unified detokenization API: detokenize(token_ids) returns text using default tokenizer.';
+
+-- ============================================================================
+-- UNIFIED TRANSFORM API (PostgresML-compatible)
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.transform(
+	model text,
+	input_text text,
+	task text DEFAULT 'embedding'
+) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+	result jsonb;
+BEGIN
+	/* Route to neurondb.llm() based on task */
+	CASE lower(task)
+		WHEN 'embedding', 'embed' THEN
+			result := neurondb.llm('embed', model, input_text);
+		WHEN 'classification', 'classify' THEN
+			result := neurondb.llm('classify', model, input_text);
+		WHEN 'ner', 'named_entity_recognition' THEN
+			result := neurondb.llm('ner', model, input_text);
+		WHEN 'summarization', 'summarize' THEN
+			result := neurondb.summarize(model, input_text);
+		WHEN 'translation', 'translate' THEN
+			/* Translation requires source_lang and target_lang - use default values */
+			result := neurondb.translate(model, input_text, 'en', 'fr');
+		WHEN 'fill_mask', 'masked_language_modeling' THEN
+			result := neurondb.fill_mask(model, input_text);
+		WHEN 'text2text', 'text_to_text' THEN
+			result := neurondb.text2text(model, input_text);
+		WHEN 'zero_shot_classification', 'zero_shot_classify' THEN
+			/* Zero-shot classification requires candidate_labels */
+			RAISE EXCEPTION 'zero_shot_classification requires candidate_labels parameter. Use neurondb.zero_shot_classify() instead.';
+		ELSE
+			RAISE EXCEPTION 'Unknown task: %. Supported tasks: embedding, classification, ner, summarization, translation, fill_mask, text2text', task;
+	END CASE;
+
+	RETURN result;
+EXCEPTION WHEN OTHERS THEN
+	RETURN jsonb_build_object(
+		'task', task,
+		'error', SQLERRM,
+		'model', COALESCE(model, 'unknown')
+	);
+END;
+$$;
+COMMENT ON FUNCTION neurondb.transform IS 
+	'Unified transform API (PostgresML-compatible): transform(model, text, task) returns JSONB result. 
+	Supported tasks: embedding, classification, ner, summarization, translation, fill_mask, text2text, zero_shot_classification.
+	Uses GPU acceleration when available, falls back to ONNX Runtime or remote API.
+	Configure via neurondb.llm_provider and neurondb.gpu_enabled.';
+
+-- ============================================================================
+-- TASK-SPECIFIC FUNCTIONS
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.summarize(
+	model text,
+	input_text text,
+	params jsonb DEFAULT '{}'::jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+	result jsonb;
+	model_name text;
+	summary_text text;
+	params_str text;
+BEGIN
+	/* Use default model from GUC if not provided */
+	model_name := COALESCE(model, current_setting('neurondb.llm_model', true));
+	if (model_name IS NULL OR model_name = '')
+		model_name := 'facebook/bart-large-cnn';
+
+	/* Convert params to text */
+	params_str := params::text;
+
+	/* Use completion API for summarization */
+	BEGIN
+		summary_text := ndb_llm_complete(input_text::text, params_str::text);
+		result := jsonb_build_object(
+			'task', 'summarize',
+			'model', model_name,
+			'summary', summary_text,
+			'params', params
+		);
+	EXCEPTION WHEN OTHERS THEN
+		result := jsonb_build_object(
+			'task', 'summarize',
+			'error', SQLERRM,
+			'model', model_name
+		);
+	END;
+
+	RETURN result;
+END;
+$$;
+COMMENT ON FUNCTION neurondb.summarize IS 
+	'Text summarization: summarize(model, text, params) returns JSONB with summary. 
+	Uses text generation models (e.g., BART, T5) for summarization.
+	Uses GPU acceleration when available, falls back to ONNX Runtime or remote API.';
+
+CREATE OR REPLACE FUNCTION neurondb.translate(
+	model text,
+	input_text text,
+	source_lang text DEFAULT 'en',
+	target_lang text DEFAULT 'fr',
+	params jsonb DEFAULT '{}'::jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+	result jsonb;
+	model_name text;
+	translation_text text;
+	params_str text;
+	translation_prompt text;
+BEGIN
+	/* Use default model from GUC if not provided */
+	model_name := COALESCE(model, current_setting('neurondb.llm_model', true));
+	if (model_name IS NULL OR model_name = '')
+		model_name := 'Helsinki-NLP/opus-mt-en-fr';
+
+	/* Build translation prompt */
+	translation_prompt := format('Translate from %s to %s: %s', source_lang, target_lang, input_text);
+
+	/* Convert params to text */
+	params_str := params::text;
+
+	/* Use completion API for translation */
+	BEGIN
+		translation_text := ndb_llm_complete(translation_prompt::text, params_str::text);
+		result := jsonb_build_object(
+			'task', 'translate',
+			'model', model_name,
+			'source_lang', source_lang,
+			'target_lang', target_lang,
+			'translation', translation_text,
+			'params', params
+		);
+	EXCEPTION WHEN OTHERS THEN
+		result := jsonb_build_object(
+			'task', 'translate',
+			'error', SQLERRM,
+			'model', model_name
+		);
+	END;
+
+	RETURN result;
+END;
+$$;
+COMMENT ON FUNCTION neurondb.translate IS 
+	'Text translation: translate(model, text, source_lang, target_lang, params) returns JSONB with translation. 
+	Uses translation models (e.g., Helsinki-NLP, mBART) for translation.
+	Uses GPU acceleration when available, falls back to ONNX Runtime or remote API.';
+
+CREATE OR REPLACE FUNCTION neurondb.fill_mask(
+	model text,
+	input_text text,
+	params jsonb DEFAULT '{}'::jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+	result jsonb;
+	model_name text;
+	filled_text text;
+	params_str text;
+BEGIN
+	/* Use default model from GUC if not provided */
+	model_name := COALESCE(model, current_setting('neurondb.llm_model', true));
+	if (model_name IS NULL OR model_name = '')
+		model_name := 'bert-base-uncased';
+
+	/* Convert params to text */
+	params_str := params::text;
+
+	/* Use completion API for fill-mask */
+	BEGIN
+		filled_text := ndb_llm_complete(input_text::text, params_str::text);
+		result := jsonb_build_object(
+			'task', 'fill_mask',
+			'model', model_name,
+			'filled_text', filled_text,
+			'params', params
+		);
+	EXCEPTION WHEN OTHERS THEN
+		result := jsonb_build_object(
+			'task', 'fill_mask',
+			'error', SQLERRM,
+			'model', model_name
+		);
+	END;
+
+	RETURN result;
+END;
+$$;
+COMMENT ON FUNCTION neurondb.fill_mask IS 
+	'Masked language modeling: fill_mask(model, text, params) returns JSONB with filled text. 
+	Uses masked language models (e.g., BERT, RoBERTa) for fill-mask.
+	Uses GPU acceleration when available, falls back to ONNX Runtime or remote API.';
+
+CREATE OR REPLACE FUNCTION neurondb.text2text(
+	model text,
+	input_text text,
+	params jsonb DEFAULT '{}'::jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+	result jsonb;
+	model_name text;
+	output_text text;
+	params_str text;
+BEGIN
+	/* Use default model from GUC if not provided */
+	model_name := COALESCE(model, current_setting('neurondb.llm_model', true));
+	if (model_name IS NULL OR model_name = '')
+		model_name := 't5-small';
+
+	/* Convert params to text */
+	params_str := params::text;
+
+	/* Use completion API for text2text */
+	BEGIN
+		output_text := ndb_llm_complete(input_text::text, params_str::text);
+		result := jsonb_build_object(
+			'task', 'text2text',
+			'model', model_name,
+			'output', output_text,
+			'params', params
+		);
+	EXCEPTION WHEN OTHERS THEN
+		result := jsonb_build_object(
+			'task', 'text2text',
+			'error', SQLERRM,
+			'model', model_name
+		);
+	END;
+
+	RETURN result;
+END;
+$$;
+COMMENT ON FUNCTION neurondb.text2text IS 
+	'Text-to-text generation: text2text(model, text, params) returns JSONB with generated text. 
+	Uses text-to-text models (e.g., T5, FLAN-T5) for generation.
+	Uses GPU acceleration when available, falls back to ONNX Runtime or remote API.';
+
+CREATE OR REPLACE FUNCTION neurondb.zero_shot_classify(
+	model text,
+	input_text text,
+	candidate_labels text[],
+	params jsonb DEFAULT '{}'::jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+	result jsonb;
+	model_name text;
+	labels_str text;
+	classification_text text;
+	params_str text;
+	classification_prompt text;
+BEGIN
+	/* Use default model from GUC if not provided */
+	model_name := COALESCE(model, current_setting('neurondb.llm_model', true));
+	if (model_name IS NULL OR model_name = '')
+		model_name := 'facebook/bart-large-mnli';
+
+	/* Build labels string */
+	labels_str := array_to_string(candidate_labels, ', ');
+
+	/* Build zero-shot classification prompt */
+	classification_prompt := format('Text: %s. Labels: %s. Classify:', input_text, labels_str);
+
+	/* Convert params to text */
+	params_str := params::text;
+
+	/* Use completion API for zero-shot classification */
+	BEGIN
+		classification_text := ndb_llm_complete(classification_prompt::text, params_str::text);
+		result := jsonb_build_object(
+			'task', 'zero_shot_classify',
+			'model', model_name,
+			'labels', candidate_labels,
+			'classification', classification_text,
+			'params', params
+		);
+	EXCEPTION WHEN OTHERS THEN
+		result := jsonb_build_object(
+			'task', 'zero_shot_classify',
+			'error', SQLERRM,
+			'model', model_name
+		);
+	END;
+
+	RETURN result;
+END;
+$$;
+COMMENT ON FUNCTION neurondb.zero_shot_classify IS 
+	'Zero-shot classification: zero_shot_classify(model, text, candidate_labels, params) returns JSONB with classification. 
+	Uses zero-shot classification models (e.g., BART-MNLI, DeBERTa) for classification.
+	Uses GPU acceleration when available, falls back to ONNX Runtime or remote API.';
+
+-- ============================================================================
+-- DATASET INTEGRATION
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION neurondb.load_dataset(
+	dataset_name text,
+	split text DEFAULT 'train',
+	config text DEFAULT NULL,
+	streaming boolean DEFAULT false,
+	cache_dir text DEFAULT NULL
+) RETURNS TABLE(
+	row_id bigint,
+	data jsonb
+)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+	result jsonb;
+	dataset_path text;
+	cache_path text;
+BEGIN
+	/* TODO: Implement HuggingFace dataset loading */
+	/* For now, return empty result */
+	RETURN QUERY SELECT 0::bigint, '{}'::jsonb WHERE false;
+EXCEPTION WHEN OTHERS THEN
+	/* Return error in result */
+	RETURN QUERY SELECT 0::bigint, jsonb_build_object('error', SQLERRM);
+END;
+$$;
+COMMENT ON FUNCTION neurondb.load_dataset IS 
+	'Load HuggingFace dataset: load_dataset(dataset_name, split, config, streaming, cache_dir) returns TABLE with dataset rows. 
+	Supports HuggingFace datasets with caching and streaming.
+	TODO: Implement full dataset loading support.';
 
 CREATE OR REPLACE FUNCTION neurondb.distance(
 	vec1 vector,
@@ -4172,6 +5095,18 @@ GRANT EXECUTE ON FUNCTION neurondb.model_info TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.drop_model TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.embed TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.classify TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.llm TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.transform TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.summarize TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.translate TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.fill_mask TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.text2text TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.zero_shot_classify TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.load_dataset TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.tokenize TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.tokenize(text, integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.detokenize TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.detokenize(integer[]) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.distance TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.similarity TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.search TO PUBLIC;

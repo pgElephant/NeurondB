@@ -416,9 +416,22 @@ neurondb_onnx_run_inference(ONNXModelSession *session,
 	onnx_check_status(status, "CreateTensorWithDataAsOrtValue");
 
 	/* The default assumption: input name "input_ids", output name "last_hidden_state".
-	   These can be generalized if the model schema is passed in future. */
+	   These can be generalized if the model schema is passed in future.
+	   For generation models, use "logits" as output name. */
 	const char *input_names[] = {"input_ids"};
-	const char *output_names[] = {"last_hidden_state"};
+	const char *output_names_embed[] = {"last_hidden_state"};
+	const char *output_names_gen[] = {"logits"};
+	const char **output_names;
+	
+	/* For generation models, use "logits" as output name */
+	if (session->model_type == ONNX_MODEL_GENERATION)
+	{
+		output_names = output_names_gen;
+	}
+	else
+	{
+		output_names = output_names_embed;
+	}
 
 	status = g_ort_api->Run(
 		session->session,
