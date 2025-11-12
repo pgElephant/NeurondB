@@ -53,6 +53,7 @@ OBJS += \
 # LLM/Hugging Face integration
 OBJS += \
 	src/llm/llm_runtime.o \
+	src/llm/llm_router.o \
 	src/llm/llm_cache.o \
 	src/llm/llm_jobs.o \
 	src/llm/hf_http.o

@@ -16,6 +16,7 @@
 #include "postgres.h"
 #include "neurondb.h"
 #include "neurondb_llm.h"
+#include "neurondb_gpu.h"
 #include "fmgr.h"
 #include "utils/builtins.h"
 #include "utils/array.h"
@@ -166,6 +167,7 @@ embed_text(PG_FUNCTION_ARGS)
 	char *input_str = NULL;
 	char *model_str = NULL;
 	NdbLLMConfig cfg;
+	NdbLLMCallOptions call_opts;
 	float *vec_data = NULL;
 	Vector *result = NULL;
 	int dim = 0;
@@ -186,14 +188,26 @@ embed_text(PG_FUNCTION_ARGS)
 
 	/* Setup LLM config */
 	memset(&cfg, 0, sizeof(cfg));
-	cfg.provider = neurondb_llm_provider;
-	cfg.endpoint = neurondb_llm_endpoint;
-	cfg.model = model_str ? model_str : neurondb_llm_model;
+	cfg.provider = neurondb_llm_provider ? neurondb_llm_provider : "huggingface";
+	cfg.endpoint = neurondb_llm_endpoint ? neurondb_llm_endpoint : "https://api-inference.huggingface.co";
+	cfg.model = model_str ? model_str : (neurondb_llm_model ? neurondb_llm_model : "sentence-transformers/all-MiniLM-L6-v2");
 	cfg.api_key = neurondb_llm_api_key;
 	cfg.timeout_ms = neurondb_llm_timeout_ms;
+	cfg.prefer_gpu = neurondb_gpu_enabled;
+	cfg.require_gpu = false;
+	if (cfg.provider != NULL &&
+	    (pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
+	     pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
+	    !neurondb_llm_fail_open)
+		cfg.require_gpu = true;
 
-	/* Call embedding API (ndb_hf_embed must be implemented) */
-	if (ndb_hf_embed(&cfg, input_str, &vec_data, &dim) != 0 || !vec_data || dim <= 0)
+	call_opts.task = "embed";
+	call_opts.prefer_gpu = cfg.prefer_gpu;
+	call_opts.require_gpu = cfg.require_gpu;
+	call_opts.fail_open = neurondb_llm_fail_open;
+
+	/* Call embedding API via router */
+	if (ndb_llm_route_embed(&cfg, &call_opts, input_str, &vec_data, &dim) != 0 || !vec_data || dim <= 0)
 	{
 		elog(WARNING, "neurondb: embed_text() failed for input: '%s', returning zero vector", input_str ? input_str : "(null)");
 		dim = 384;
@@ -333,6 +347,20 @@ embed_image(PG_FUNCTION_ARGS)
 	cfg.model = model_str ? model_str : neurondb_llm_model;
 	cfg.api_key = neurondb_llm_api_key;
 	cfg.timeout_ms = neurondb_llm_timeout_ms;
+	cfg.prefer_gpu = neurondb_gpu_enabled;
+	cfg.require_gpu = false;
+	if (cfg.provider != NULL &&
+	    (pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
+	     pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
+	    !neurondb_llm_fail_open)
+		cfg.require_gpu = true;
+	cfg.prefer_gpu = neurondb_gpu_enabled;
+	cfg.require_gpu = false;
+	if (cfg.provider != NULL &&
+	    (pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
+	     pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
+	    !neurondb_llm_fail_open)
+		cfg.require_gpu = true;
 
 	/* NOTE: ndb_hf_image_embed API is assumed, not implemented. Fallback for now. */
 #ifdef NDB_HAVE_IMAGE_EMBED

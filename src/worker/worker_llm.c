@@ -30,6 +30,7 @@
 #include "utils/snapmgr.h"
 #include "lib/stringinfo.h"
 #include "neurondb_llm.h"
+#include "neurondb_gpu.h"
 
 extern int  ndb_llm_job_enqueue(const char *job_type, const char *payload);
 extern bool ndb_llm_job_acquire(int *job_id, char **job_type, char **payload);
@@ -258,6 +259,7 @@ process_llm_job(int job_id, const char *job_type, const char *payload)
 	NdbLLMConfig cfg;
 	NdbLLMResp resp;
 	StringInfoData result_json;
+	NdbLLMCallOptions call_opts;
 	char *error_msg = NULL;
 	int rc = -1;
 
@@ -268,11 +270,22 @@ process_llm_job(int job_id, const char *job_type, const char *payload)
 
 	PG_TRY();
 	{
-		cfg.provider  = neurondb_llm_provider   ? neurondb_llm_provider   : "huggingface";
-		cfg.endpoint  = neurondb_llm_endpoint   ? neurondb_llm_endpoint   : "https://api-inference.huggingface.co";
-		cfg.model     = neurondb_llm_model      ? neurondb_llm_model      : "gpt2";
-		cfg.api_key   = neurondb_llm_api_key    ? neurondb_llm_api_key    : "";
+		cfg.provider = neurondb_llm_provider ? neurondb_llm_provider : "huggingface";
+		cfg.endpoint = neurondb_llm_endpoint ? neurondb_llm_endpoint : "https://api-inference.huggingface.co";
+		cfg.model = neurondb_llm_model ? neurondb_llm_model : "gpt2";
+		cfg.api_key = neurondb_llm_api_key ? neurondb_llm_api_key : "";
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
+		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.require_gpu = false;
+		if (cfg.provider != NULL &&
+			(pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
+			 pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
+			!neurondb_llm_fail_open)
+			cfg.require_gpu = true;
+		call_opts.task = NULL;
+		call_opts.prefer_gpu = cfg.prefer_gpu;
+		call_opts.require_gpu = cfg.require_gpu;
+		call_opts.fail_open = neurondb_llm_fail_open;
 		memset(&resp, 0, sizeof(resp));
 		memset(&result_json, 0, sizeof(result_json));
 
@@ -288,7 +301,8 @@ process_llm_job(int job_id, const char *job_type, const char *payload)
 			if (strcmp(job_type, "complete") == 0)
 			{
 				// If this next code OOMs/crashes/exceptions, will be caught
-				rc = ndb_hf_complete(&cfg, prompt, NULL, &resp);
+				call_opts.task = "complete";
+				rc = ndb_llm_route_complete(&cfg, &call_opts, prompt, NULL, &resp);
 				if (rc == 0 && resp.text)
 				{
 					snprintf(cache_key, sizeof(cache_key), "llm:complete:%s:%.128s", cfg.model, prompt ? prompt : "");
@@ -310,7 +324,8 @@ process_llm_job(int job_id, const char *job_type, const char *payload)
 				float *vec = NULL;
 				int dim = 0;
 				// This line may crash internally on OOM, segfault, etc, but we will catch it
-				rc = ndb_hf_embed(&cfg, prompt, &vec, &dim);
+				call_opts.task = "embed";
+				rc = ndb_llm_route_embed(&cfg, &call_opts, prompt, &vec, &dim);
 				if (rc == 0 && vec && dim > 0)
 				{
 					snprintf(cache_key, sizeof(cache_key), "llm:embed:%s:%.128s", cfg.model, prompt ? prompt : "");

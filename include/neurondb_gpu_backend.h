@@ -231,6 +231,24 @@ typedef struct ndb_gpu_backend
 		Jsonb **metrics,
 		char **errstr);
 
+	/* Hugging Face / LLM */
+	int (*hf_embed)(const char *model_name,
+			const char *text,
+			float **vec_out,
+			int *dim_out,
+			char **errstr);
+	int (*hf_complete)(const char *model_name,
+			   const char *prompt,
+			   const char *params_json,
+			   char **text_out,
+			   char **errstr);
+	int (*hf_rerank)(const char *model_name,
+			 const char *query,
+			 const char **docs,
+			 int ndocs,
+			 float **scores_out,
+			 char **errstr);
+
 	/* Stream utilities */
 	int (*stream_create)(ndb_stream_t *stream);
 	int (*stream_destroy)(ndb_stream_t stream);

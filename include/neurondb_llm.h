@@ -26,6 +26,8 @@ typedef struct NdbLLMConfig
     const char *model;
     const char *api_key;
     int timeout_ms;
+    bool prefer_gpu;
+    bool require_gpu;
 } NdbLLMConfig;
 
 typedef struct NdbLLMResp
@@ -36,6 +38,21 @@ typedef struct NdbLLMResp
     int tokens_out;
     int http_status;
 } NdbLLMResp;
+
+typedef struct NdbLLMCallOptions
+{
+    const char *task;        /* "complete", "embed", "rerank" */
+    bool prefer_gpu;         /* caller would like GPU */
+    bool require_gpu;        /* hard fail if GPU not available */
+    bool fail_open;          /* mirror neurondb_llm_fail_open */
+} NdbLLMCallOptions;
+
+typedef enum NdbLLMRouteStatus
+{
+    NDB_LLM_ROUTE_SUCCESS = 0,
+    NDB_LLM_ROUTE_ERROR = -1,
+    NDB_LLM_ROUTE_BACKEND_UNAVAILABLE = 1
+} NdbLLMRouteStatus;
 
 /* Provider calls */
 int ndb_hf_complete(const NdbLLMConfig *cfg,
@@ -54,11 +71,61 @@ int ndb_hf_rerank(const NdbLLMConfig *cfg,
                   int ndocs,
                   float **scores_out);
 
+/* Batch operations */
+typedef struct NdbLLMBatchResp
+{
+	char **texts;			/* Generated texts */
+	int *tokens_in;			/* Input tokens per item */
+	int *tokens_out;		/* Output tokens per item */
+	int *http_status;		/* HTTP status per item */
+	int num_items;			/* Number of items */
+	int num_success;		/* Number of successful items */
+} NdbLLMBatchResp;
+
+/* Provider router */
+int ndb_llm_route_complete(const NdbLLMConfig *cfg,
+                           const NdbLLMCallOptions *opts,
+                           const char *prompt,
+                           const char *params_json,
+                           NdbLLMResp *out);
+
+int ndb_llm_route_embed(const NdbLLMConfig *cfg,
+                        const NdbLLMCallOptions *opts,
+                        const char *text,
+                        float **vec_out,
+                        int *dim_out);
+
+int ndb_llm_route_rerank(const NdbLLMConfig *cfg,
+                         const NdbLLMCallOptions *opts,
+                         const char *query,
+                         const char **docs,
+                         int ndocs,
+                         float **scores_out);
+
+/* Batch router */
+int ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
+				 const NdbLLMCallOptions *opts,
+				 const char **prompts,
+				 int num_prompts,
+				 const char *params_json,
+				 NdbLLMBatchResp *out);
+
+int ndb_llm_route_rerank_batch(const NdbLLMConfig *cfg,
+			       const NdbLLMCallOptions *opts,
+			       const char **queries,
+			       const char ***docs_array,
+			       int *ndocs_array,
+			       int num_queries,
+			       float ***scores_out,
+			       int **nscores_out);
+
 /* SQL-callable */
 extern Datum ndb_llm_complete(PG_FUNCTION_ARGS);
 extern Datum ndb_llm_embed(PG_FUNCTION_ARGS);
 extern Datum ndb_llm_rerank(PG_FUNCTION_ARGS);
 extern Datum ndb_llm_enqueue(PG_FUNCTION_ARGS);
+extern Datum ndb_llm_complete_batch(PG_FUNCTION_ARGS);
+extern Datum ndb_llm_rerank_batch(PG_FUNCTION_ARGS);
 
 /* GUC init and shared memory */
 void neurondb_llm_init_guc(void);

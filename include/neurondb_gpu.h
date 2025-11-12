@@ -157,6 +157,44 @@ extern bool neurondb_gpu_rf_best_split_binary(const float *feature_values,
 	int *right_count);
 
 /*==================*/
+/* Hugging Face / LLM (GPU-accelerated inference) */
+extern int neurondb_gpu_hf_embed(const char *model_name,
+				 const char *text,
+				 float **vec_out,
+				 int *dim_out,
+				 char **errstr);
+extern int neurondb_gpu_hf_complete(const char *model_name,
+				    const char *prompt,
+				    const char *params_json,
+				    char **text_out,
+				    char **errstr);
+extern int neurondb_gpu_hf_rerank(const char *model_name,
+				  const char *query,
+				  const char **docs,
+				  int ndocs,
+				  float **scores_out,
+				  char **errstr);
+
+/* Batch operations */
+#ifdef NDB_GPU_CUDA
+#include "neurondb_cuda_hf.h"
+extern int neurondb_gpu_hf_complete_batch(const char *model_name,
+					  const char **prompts,
+					  int num_prompts,
+					  const char *params_json,
+					  NdbCudaHfBatchResult *results,
+					  char **errstr);
+#endif
+extern int neurondb_gpu_hf_rerank_batch(const char *model_name,
+					const char **queries,
+					const char ***docs_array,
+					int *ndocs_array,
+					int num_queries,
+					float ***scores_out,
+					int **nscores_out,
+					char **errstr);
+
+/*==================*/
 /* Implementation for device-level management (optional: not part of minimal prototype) */
 #ifdef NDB_GPU_INTERNAL
 /* Memory pool and stream management functions for internal use */
