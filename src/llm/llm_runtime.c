@@ -251,7 +251,7 @@ static void record_llm_stats(const char *model_name,
 	int ret;
 	Oid argtypes[8];
 	Datum values[8];
-	bool nulls[8];
+	char nulls[8];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		return;
@@ -276,8 +276,8 @@ static void record_llm_stats(const char *model_name,
 
 	values[0] = CStringGetTextDatum(model_name ? model_name : "unknown");
 	values[1] = CStringGetTextDatum(operation ? operation : "unknown");
-	nulls[0] = false;
-	nulls[1] = false;
+	nulls[0] = ' ';
+	nulls[1] = ' ';
 
 	if (success)
 	{
@@ -287,12 +287,12 @@ static void record_llm_stats(const char *model_name,
 		values[5] = Int32GetDatum(tokens_in);
 		values[6] = Int32GetDatum(tokens_out);
 		values[7] = (Datum) 0;
-		nulls[2] = false;
-		nulls[3] = false;
-		nulls[4] = false;
-		nulls[5] = false;
-		nulls[6] = false;
-		nulls[7] = true;
+		nulls[2] = ' ';
+		nulls[3] = ' ';
+		nulls[4] = ' ';
+		nulls[5] = ' ';
+		nulls[6] = ' ';
+		nulls[7] = 'n';
 	}
 	else
 	{
@@ -302,12 +302,12 @@ static void record_llm_stats(const char *model_name,
 		values[5] = Int32GetDatum(tokens_in);
 		values[6] = Int32GetDatum(tokens_out);
 		values[7] = CStringGetTextDatum(error_type ? error_type : "unknown");
-		nulls[2] = false;
-		nulls[3] = false;
-		nulls[4] = false;
-		nulls[5] = false;
-		nulls[6] = false;
-		nulls[7] = false;
+		nulls[2] = ' ';
+		nulls[3] = ' ';
+		nulls[4] = ' ';
+		nulls[5] = ' ';
+		nulls[6] = ' ';
+		nulls[7] = ' ';
 	}
 
 	/* Update LLM statistics */
@@ -337,7 +337,7 @@ static void record_llm_stats(const char *model_name,
 	{
 		Oid error_argtypes[4] = {TEXTOID, TEXTOID, TEXTOID, INT8OID};
 		Datum error_values[4];
-		bool error_nulls[4] = {false, false, false, false};
+		char error_nulls[4] = {' ', ' ', ' ', ' '};
 
 		error_values[0] = CStringGetTextDatum(model_name ? model_name : "unknown");
 		error_values[1] = CStringGetTextDatum(operation ? operation : "unknown");
@@ -362,9 +362,9 @@ static void record_llm_stats(const char *model_name,
 	{
 		int bucket_start = ((int) (latency_ms / 10.0)) * 10;
 		int bucket_end = bucket_start + 10;
-		Oid hist_argtypes[4] = {TEXTOID, REALOID, REALOID, INT8OID};
+		Oid hist_argtypes[4] = {TEXTOID, FLOAT4OID, FLOAT4OID, INT8OID};
 		Datum hist_values[4];
-		bool hist_nulls[4] = {false, false, false, false};
+		char hist_nulls[4] = {' ', ' ', ' ', ' '};
 		StringInfoData metric_name;
 		char *metric_name_str;
 

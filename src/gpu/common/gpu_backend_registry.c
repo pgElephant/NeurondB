@@ -23,6 +23,12 @@
 #include "ml_linear_regression_internal.h"
 #include "ml_gpu_svm.h"
 #include "ml_svm_internal.h"
+#include "ml_gpu_decision_tree.h"
+#include "ml_decision_tree_internal.h"
+#include "ml_gpu_ridge_regression.h"
+#include "ml_ridge_regression_internal.h"
+#include "ml_gpu_lasso_regression.h"
+#include "ml_lasso_regression_internal.h"
 
 #include <string.h>
 

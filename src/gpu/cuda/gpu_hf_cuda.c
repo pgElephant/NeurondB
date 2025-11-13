@@ -749,7 +749,7 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 					int32_t *stop_token_ids = NULL;
 					int32_t stop_token_len = 0;
 
-					PG_TRY
+					PG_TRY();
 					{
 						stop_token_ids = neurondb_tokenize_with_model(value, NDB_HF_MAX_STOP_SEQ_LEN, &stop_token_len, model_name);
 						if (stop_token_ids && stop_token_len > 0 && stop_token_len <= NDB_HF_MAX_STOP_SEQ_LEN)
@@ -782,13 +782,13 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 								pfree(stop_token_ids);
 						}
 					}
-					PG_CATCH
+					PG_CATCH();
 					{
 						FlushErrorState();
 						if (stop_token_ids)
 							pfree(stop_token_ids);
 					}
-					PG_END_TRY;
+					PG_END_TRY();
 #endif
 				}
 			}
@@ -1158,7 +1158,7 @@ ndb_cuda_hf_decode_tokens(const int32_t *token_ids,
 
 #ifdef HAVE_ONNX_RUNTIME
 	/* Use proper tokenizer for detokenization */
-	PG_TRY
+	PG_TRY();
 	{
 		decoded_text = neurondb_detokenize((const int32 *) token_ids, num_tokens, model_name);
 		if (!decoded_text)
@@ -1170,12 +1170,12 @@ ndb_cuda_hf_decode_tokens(const int32_t *token_ids,
 		*text_out = decoded_text;
 		return 0;
 	}
-	PG_CATCH
+	PG_CATCH();
 	{
 		/* Fall back to simplified decoding on error */
 		FlushErrorState();
 	}
-	PG_END_TRY;
+	PG_END_TRY();
 #endif
 
 	/* Fallback: Simplified decoding for non-ONNX builds or on error */
@@ -1912,49 +1912,49 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 				int32 token_length;
 				int32 *token_ids = NULL;
 
-				/* Count tokens from generated text */
-				PG_TRY();
+			/* Count tokens from generated text */
+			PG_TRY();
+			{
+				token_ids = neurondb_tokenize_with_model(text_out, 2048, &token_length, model_name);
+				if (token_ids && token_length > 0)
 				{
-					token_ids = neurondb_tokenize_with_model(text_out, 2048, &token_length, model_name);
-					if (token_ids && token_length > 0)
-					{
-						results[i].num_tokens = token_length;
-					}
-					else
-					{
-						/* Fallback: estimate from word count */
-						const char *ptr = text_out;
-						int word_count = 0;
-						int in_word = 0;
-
-						while (*ptr)
-						{
-							if (!isspace((unsigned char) *ptr))
-							{
-								if (!in_word)
-								{
-									word_count++;
-									in_word = 1;
-								}
-							}
-							else
-							{
-								in_word = 0;
-							}
-							ptr++;
-						}
-						results[i].num_tokens = word_count > 0 ? word_count : 1;
-					}
-					if (token_ids)
-						pfree(token_ids);
+					results[i].num_tokens = token_length;
 				}
-				PG_CATCH();
+				else
 				{
-					/* On error, use word count fallback */
-					EmitErrorReport();
-					FlushErrorState();
-					if (token_ids)
-						pfree(token_ids);
+					/* Fallback: estimate from word count */
+					const char *ptr = text_out;
+					int word_count = 0;
+					int in_word = 0;
+
+					while (*ptr)
+					{
+						if (!isspace((unsigned char) *ptr))
+						{
+							if (!in_word)
+							{
+								word_count++;
+								in_word = 1;
+							}
+						}
+						else
+						{
+							in_word = 0;
+						}
+						ptr++;
+					}
+					results[i].num_tokens = word_count > 0 ? word_count : 1;
+				}
+				if (token_ids)
+					pfree(token_ids);
+			}
+			PG_CATCH();
+			{
+				/* On error, use word count fallback */
+				EmitErrorReport();
+				FlushErrorState();
+				if (token_ids)
+					pfree(token_ids);
 
 					const char *ptr = text_out;
 					int word_count = 0;
@@ -2051,49 +2051,49 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 				int32 token_length;
 				int32 *token_ids = NULL;
 
-				/* Count tokens from generated text */
-				PG_TRY();
+			/* Count tokens from generated text */
+			PG_TRY();
+			{
+				token_ids = neurondb_tokenize_with_model(text_out, 2048, &token_length, model_name);
+				if (token_ids && token_length > 0)
 				{
-					token_ids = neurondb_tokenize_with_model(text_out, 2048, &token_length, model_name);
-					if (token_ids && token_length > 0)
-					{
-						results[i].num_tokens = token_length;
-					}
-					else
-					{
-						/* Fallback: estimate from word count */
-						const char *ptr = text_out;
-						int word_count = 0;
-						int in_word = 0;
-
-						while (*ptr)
-						{
-							if (!isspace((unsigned char) *ptr))
-							{
-								if (!in_word)
-								{
-									word_count++;
-									in_word = 1;
-								}
-							}
-							else
-							{
-								in_word = 0;
-							}
-							ptr++;
-						}
-						results[i].num_tokens = word_count > 0 ? word_count : 1;
-					}
-					if (token_ids)
-						pfree(token_ids);
+					results[i].num_tokens = token_length;
 				}
-				PG_CATCH();
+				else
 				{
-					/* On error, use word count fallback */
-					EmitErrorReport();
-					FlushErrorState();
-					if (token_ids)
-						pfree(token_ids);
+					/* Fallback: estimate from word count */
+					const char *ptr = text_out;
+					int word_count = 0;
+					int in_word = 0;
+
+					while (*ptr)
+					{
+						if (!isspace((unsigned char) *ptr))
+						{
+							if (!in_word)
+							{
+								word_count++;
+								in_word = 1;
+							}
+						}
+						else
+						{
+							in_word = 0;
+						}
+						ptr++;
+					}
+					results[i].num_tokens = word_count > 0 ? word_count : 1;
+				}
+				if (token_ids)
+					pfree(token_ids);
+			}
+			PG_CATCH();
+			{
+				/* On error, use word count fallback */
+				EmitErrorReport();
+				FlushErrorState();
+				if (token_ids)
+					pfree(token_ids);
 
 					const char *ptr = text_out;
 					int word_count = 0;
