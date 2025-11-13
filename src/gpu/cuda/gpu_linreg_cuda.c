@@ -121,10 +121,10 @@ ndb_cuda_linreg_train(const float *features,
 	Jsonb **metrics,
 	char **errstr)
 {
-	float *d_features __attribute__((unused)) = NULL;
-	double *d_targets __attribute__((unused)) = NULL;
-	double *d_XtX __attribute__((unused)) = NULL;
-	double *d_Xty __attribute__((unused)) = NULL;
+	float *d_features = NULL;
+	double *d_targets = NULL;
+	double *d_XtX = NULL;
+	double *d_Xty = NULL;
 	double *d_XtX_inv __attribute__((unused)) = NULL;
 	double *d_beta __attribute__((unused)) = NULL;
 	double *h_XtX = NULL;
@@ -170,12 +170,10 @@ ndb_cuda_linreg_train(const float *features,
 
 	/* Compute X'X and X'y on GPU */
 	{
-		float *d_features = NULL;
-		double *d_targets = NULL;
-		double *d_XtX = NULL;
-		double *d_Xty = NULL;
+#ifdef __CUDACC__
 		int threads_per_block = 256;
 		int blocks = (n_samples + threads_per_block - 1) / threads_per_block;
+#endif
 		cudaError_t err;
 
 		/* Allocate device memory */
@@ -239,6 +237,7 @@ ndb_cuda_linreg_train(const float *features,
 			goto gpu_cleanup;
 
 		/* Launch kernel */
+#ifdef __CUDACC__
 		ndb_cuda_linreg_compute_xtx_kernel<<<blocks, threads_per_block>>>(
 			d_features, d_targets, n_samples, feature_dim, dim_with_intercept,
 			d_XtX, d_Xty);
@@ -246,7 +245,20 @@ ndb_cuda_linreg_train(const float *features,
 		err = cudaGetLastError();
 		if (err != cudaSuccess)
 			goto gpu_cleanup;
+#else
+		/* Kernel launch not available when compiling with gcc, fall back to CPU */
+		if (d_features)
+			cudaFree(d_features);
+		if (d_targets)
+			cudaFree(d_targets);
+		if (d_XtX)
+			cudaFree(d_XtX);
+		if (d_Xty)
+			cudaFree(d_Xty);
+		goto cpu_fallback;
+#endif
 
+#ifdef __CUDACC__
 		/* Wait for kernel to complete */
 		err = cudaDeviceSynchronize();
 		if (err != cudaSuccess)
@@ -265,6 +277,7 @@ ndb_cuda_linreg_train(const float *features,
 		cudaFree(d_XtX);
 		cudaFree(d_Xty);
 		goto after_xtx;
+#endif
 
 gpu_cleanup:
 		if (d_features)

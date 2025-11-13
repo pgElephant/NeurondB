@@ -647,15 +647,15 @@ static const ndb_gpu_backend ndb_cuda_backend = {
 
 	.lasso_train = ndb_cuda_lasso_train,
 	.lasso_predict = ndb_cuda_lasso_predict,
-	.lasso_pack = ndb_cuda_lasso_pack,
+	.lasso_pack = ndb_cuda_lasso_pack_model,
 
 	.nb_train = ndb_cuda_nb_train,
 	.nb_predict = ndb_cuda_nb_predict,
-	.nb_pack = ndb_cuda_nb_pack,
+	.nb_pack = ndb_cuda_nb_pack_model,
 
 	.gmm_train = ndb_cuda_gmm_train,
 	.gmm_predict = ndb_cuda_gmm_predict,
-	.gmm_pack = ndb_cuda_gmm_pack,
+	.gmm_pack = ndb_cuda_gmm_pack_model,
 
 	.knn_train = ndb_cuda_knn_train,
 	.knn_predict = ndb_cuda_knn_predict,

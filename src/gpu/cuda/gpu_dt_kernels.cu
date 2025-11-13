@@ -169,7 +169,7 @@ ndb_cuda_dt_split_stats_regression_kernel(const float *features,
 	__shared__ double s_right_sumsq[256];
 	__shared__ int s_right_count[256];
 	int tid = threadIdx.x;
-	int bid = blockIdx.x;
+	int bid __attribute__((unused)) = blockIdx.x;
 	int bdim = blockDim.x;
 	int i;
 	double local_left_sum = 0.0;
@@ -274,6 +274,15 @@ ndb_cuda_dt_launch_feature_stats(const float *features,
 	cudaError_t status;
 	int threads = 256;
 	int blocks = (n_samples + threads - 1) / threads;
+	float final_min = FLT_MAX;
+	float final_max = -FLT_MAX;
+	double final_sum = 0.0;
+	double final_sumsq = 0.0;
+	float *h_min = NULL;
+	float *h_max = NULL;
+	double *h_sum = NULL;
+	double *h_sumsq = NULL;
+
 	if (blocks <= 0)
 		blocks = 1;
 	if (blocks > 1024)
@@ -333,14 +342,14 @@ ndb_cuda_dt_launch_feature_stats(const float *features,
 		goto error;
 
 	/* Reduce results on host */
-	float final_min = FLT_MAX;
-	float final_max = -FLT_MAX;
-	double final_sum = 0.0;
-	double final_sumsq = 0.0;
-	float *h_min = (float *)malloc(sizeof(float) * blocks);
-	float *h_max = (float *)malloc(sizeof(float) * blocks);
-	double *h_sum = (double *)malloc(sizeof(double) * blocks);
-	double *h_sumsq = (double *)malloc(sizeof(double) * blocks);
+	final_min = FLT_MAX;
+	final_max = -FLT_MAX;
+	final_sum = 0.0;
+	final_sumsq = 0.0;
+	h_min = (float *)malloc(sizeof(float) * blocks);
+	h_max = (float *)malloc(sizeof(float) * blocks);
+	h_sum = (double *)malloc(sizeof(double) * blocks);
+	h_sumsq = (double *)malloc(sizeof(double) * blocks);
 
 	if (h_min == NULL || h_max == NULL || h_sum == NULL || h_sumsq == NULL)
 	{
@@ -568,6 +577,9 @@ ndb_cuda_dt_launch_split_stats_regression(const float *features,
 	cudaError_t status;
 	int threads = 256;
 	int blocks = (n_samples + threads - 1) / threads;
+	double zero_d = 0.0;
+	int zero_i = 0;
+
 	if (blocks <= 0)
 		blocks = 1;
 
@@ -617,8 +629,6 @@ ndb_cuda_dt_launch_split_stats_regression(const float *features,
 		goto error;
 
 	/* Initialize reduction variables */
-	double zero_d = 0.0;
-	int zero_i = 0;
 	cudaMemcpy(d_left_sum, &zero_d, sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_left_sumsq, &zero_d, sizeof(double), cudaMemcpyHostToDevice);
 	cudaMemcpy(d_left_count, &zero_i, sizeof(int), cudaMemcpyHostToDevice);

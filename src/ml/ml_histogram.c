@@ -1,25 +1,25 @@
 /*-------------------------------------------------------------------------
  *
  * ml_histogram.c
- *    Similarity histogram and distance distribution analysis
+ *	  Similarity histogram and distance distribution analysis
  *
  * Analyzing the distribution of distances/similarities in embedding spaces
  * provides insights into:
- *   - Data quality and separability
- *   - Optimal distance thresholds
- *   - Cluster structure
- *   - Search quality expectations
+ *	- Data quality and separability
+ *	- Optimal distance thresholds
+ *	- Cluster structure
+ *	- Search quality expectations
  *
  * Metrics Computed:
- *   - Distance distribution histogram
- *   - Percentiles (p50, p90, p95, p99)
- *   - Mean, stddev, min, max
- *   - Entropy (distribution uniformity)
+ *	- Distance distribution histogram
+ *	- Percentiles (p50, p90, p95, p99)
+ *	- Mean, stddev, min, max
+ *	- Entropy (distribution uniformity)
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *    src/ml/ml_histogram.c
+ *	  src/ml/ml_histogram.c
  *
  *-------------------------------------------------------------------------
  */
@@ -35,19 +35,21 @@
 #include "neurondb_ml.h"
 
 #include <math.h>
-#include <stdlib.h>
 #include <float.h>
+#include <stdlib.h>
 
-#define MAX_HISTOGRAM_BINS 100
+#define MAX_HISTOGRAM_BINS		100
 
 /*
- * Comparison for qsort
+ * double_cmp
+ *	 Comparison function for qsort for doubles.
  */
 static int
 double_cmp(const void *a, const void *b)
 {
-	double da = *(const double *)a;
-	double db = *(const double *)b;
+	double		da = *(const double *) a;
+	double		db = *(const double *) b;
+
 	if (da < db)
 		return -1;
 	if (da > db)
@@ -56,70 +58,51 @@ double_cmp(const void *a, const void *b)
 }
 
 /*
- * Compute Euclidean distance
+ * euclidean_distance
+ *	 Compute the Euclidean distance between two float vectors.
  */
 static inline double
 euclidean_distance(const float *a, const float *b, int dim)
 {
-	double sum = 0.0;
-	int i;
+	double		sum = 0.0;
+	int			i;
 
 	for (i = 0; i < dim; i++)
 	{
-		double diff = (double)a[i] - (double)b[i];
+		double		diff = (double) a[i] - (double) b[i];
 		sum += diff * diff;
 	}
+
 	return sqrt(sum);
 }
 
-/*
- * similarity_histogram
- * --------------------
- * Analyze distribution of pairwise distances in embedding space.
- *
- * SQL Arguments:
- *   table_name    - Source table
- *   vector_column - Vector column
- *   num_samples   - Number of random pairs to sample (default: 1000)
- *
- * Returns:
- *   Record with (min, max, mean, stddev, p50, p90, p95, p99, histogram)
- *
- * Example Usage:
- *   -- Get distance statistics:
- *   SELECT (similarity_histogram('documents', 'embedding', 5000)).*;
- *
- *   -- Monitor over time:
- *   CREATE TABLE embedding_stats AS
- *   SELECT current_date AS date, 
- *          (similarity_histogram('docs', 'vec', 2000)).*
- *   FROM generate_series('2025-01-01'::date, CURRENT_DATE, '1 day') AS current_date;
- *
- * Notes:
- *   - Samples random pairs to avoid O(n²) computation
- *   - For n=10K, sampling 1K pairs is usually sufficient
- *   - Histogram has 20 bins by default
- */
 PG_FUNCTION_INFO_V1(similarity_histogram);
 
 Datum
 similarity_histogram(PG_FUNCTION_ARGS)
 {
-	text *table_name;
-	text *vector_column;
-	int num_samples;
-	char *tbl_str;
-	char *vec_col_str;
-	float **vectors;
-	int nvec, dim;
-	double *distances;
-	double min_dist, max_dist, mean_dist, stddev_dist;
-	double p50, p90, p95, p99;
-	int i;
-	TupleDesc tupdesc;
-	Datum values[9];
-	bool nulls[9];
-	HeapTuple tuple;
+	text	   *table_name;
+	text	   *vector_column;
+	int			num_samples;
+	char	   *tbl_str;
+	char	   *vec_col_str;
+	float	  **vectors;
+	int			nvec;
+	int			dim;
+	double	   *distances;
+	double		min_dist;
+	double		max_dist;
+	double		mean_dist;
+	double		stddev_dist;
+	double		p50;
+	double		p90;
+	double		p95;
+	double		p99;
+	int			i;
+	TupleDesc	tupdesc;
+	Datum		values[9];
+	bool		nulls[9];
+	HeapTuple	tuple;
 
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
@@ -128,39 +111,35 @@ similarity_histogram(PG_FUNCTION_ARGS)
 
 	if (num_samples < 10 || num_samples > 100000)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("num_samples must be between 10 and "
-				       "100000")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("num_samples must be between 10 and 100000")));
 
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
 
 	elog(DEBUG1,
-		"neurondb: Computing similarity histogram (%d samples)",
-		num_samples);
+		 "neurondb: Computing similarity histogram (%d samples)",
+		 num_samples);
 
 	/* Fetch vectors */
-	vectors = neurondb_fetch_vectors_from_table(
-		tbl_str, vec_col_str, &nvec, &dim);
+	vectors = neurondb_fetch_vectors_from_table(tbl_str, vec_col_str, &nvec, &dim);
 	if (nvec < 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("Need at least 2 vectors")));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("Need at least 2 vectors")));
 
 	/* Sample random pairs and compute distances */
-	distances = (double *)palloc(sizeof(double) * num_samples);
+	distances = (double *) palloc(sizeof(double) * num_samples);
 
 	for (i = 0; i < num_samples; i++)
 	{
-		int idx1 = rand() % nvec;
-		int idx2 = rand() % nvec;
+		int	idx1 = rand() % nvec;
+		int	idx2 = rand() % nvec;
 
-		/* Ensure different vectors */
 		while (idx2 == idx1)
 			idx2 = rand() % nvec;
 
-		distances[i] =
-			euclidean_distance(vectors[idx1], vectors[idx2], dim);
+		distances[i] = euclidean_distance(vectors[idx1], vectors[idx2], dim);
 	}
 
 	/* Sort distances for percentile calculation */
@@ -173,37 +152,31 @@ similarity_histogram(PG_FUNCTION_ARGS)
 	mean_dist = 0.0;
 	for (i = 0; i < num_samples; i++)
 		mean_dist += distances[i];
-	mean_dist /= num_samples;
+	mean_dist /= (double) num_samples;
 
 	stddev_dist = 0.0;
 	for (i = 0; i < num_samples; i++)
 	{
-		double diff = distances[i] - mean_dist;
+		double		diff = distances[i] - mean_dist;
 		stddev_dist += diff * diff;
 	}
-	stddev_dist = sqrt(stddev_dist / num_samples);
+	stddev_dist = sqrt(stddev_dist / (double) num_samples);
 
-	/* Percentiles */
-	p50 = distances[(int)(num_samples * 0.50)];
-	p90 = distances[(int)(num_samples * 0.90)];
-	p95 = distances[(int)(num_samples * 0.95)];
-	p99 = distances[(int)(num_samples * 0.99)];
+	/* Compute percentiles (simple empirical method) */
+	p50 = distances[(int) (num_samples * 0.50)];
+	p90 = distances[(int) (num_samples * 0.90)];
+	p95 = distances[(int) (num_samples * 0.95)];
+	p99 = distances[(int) (num_samples * 0.99)];
 
 	elog(DEBUG1,
-		"neurondb: Distance stats: min=%.4f, max=%.4f, mean=%.4f, "
-		"p50=%.4f",
-		min_dist,
-		max_dist,
-		mean_dist,
-		p50);
+		 "neurondb: Distance stats: min=%.4f, max=%.4f, mean=%.4f, p50=%.4f",
+		 min_dist, max_dist, mean_dist, p50);
 
-	/* Build result tuple */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("Function returning record called in "
-				       "context that cannot accept type "
-				       "record")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("function returning record called in context that cannot "
+						"accept type record")));
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
@@ -215,7 +188,7 @@ similarity_histogram(PG_FUNCTION_ARGS)
 	values[5] = Float8GetDatum(p90);
 	values[6] = Float8GetDatum(p95);
 	values[7] = Float8GetDatum(p99);
-	values[8] = Int32GetDatum(num_samples); /* Return sample count */
+	values[8] = Int32GetDatum(num_samples);
 
 	for (i = 0; i < 9; i++)
 		nulls[i] = false;

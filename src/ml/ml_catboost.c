@@ -1,16 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * ml_catboost.c
- *	  CatBoost Integration for NeuronDB
+ *    CatBoost Integration for NeuronDB
  *
- *	Provides full integration of the Yandex CatBoost gradient boosting library.
- *	Supports categorical features and can use GPU acceleration if enabled.
- *	Requires CatBoost C library (libcatboostmodel.so) and headers.
+ *    Provides full integration of the Yandex CatBoost gradient boosting library.
+ *    Supports categorical features and can use GPU acceleration if enabled.
+ *    Requires CatBoost C library (libcatboostmodel.so) and headers.
  *
- *	Copyright (c) 2024-2025, pgElephant, Inc.
+ *    Copyright (c) 2024-2025, pgElephant, Inc.
  *
- *	IDENTIFICATION
- *		src/ml/ml_catboost.c
+ *    IDENTIFICATION
+ *        src/ml/ml_catboost.c
  *
  *-------------------------------------------------------------------------
  */
@@ -45,522 +45,525 @@ PG_FUNCTION_INFO_V1(predict_catboost);
 
 /*
  * get_column_index
- *	Helper function to get column index in a query result by name.
+ *      Helper function to get column index in a query result by name.
  */
 __attribute__((unused)) static int
 get_column_index(SPITupleTable *tuptable,
-				 TupleDesc tupdesc,
-				 const char *colname)
+                 TupleDesc tupdesc,
+                 const char *colname)
 {
-	int			i;
+    int i;
 
-	for (i = 0; i < tupdesc->natts; i++)
-	{
-		if (strcmp(NameStr(TupleDescAttr(tupdesc, i)->attname), colname) == 0)
-			return i;
-	}
-	elog(ERROR, "column \"%s\" does not exist in tuple", colname);
+    for (i = 0; i < tupdesc->natts; i++)
+    {
+        if (strcmp(NameStr(TupleDescAttr(tupdesc, i)->attname), colname) == 0)
+            return i;
+    }
+    elog(ERROR, "column \"%s\" does not exist in tuple", colname);
 
-	/* not reached */
-	return -1;
+    /* not reached */
+    return -1;
 }
 
 /*
  * write_csv_from_spi
- *	Helper to write training data to CSV for CatBoost.
+ *      Helper to write training data to CSV for CatBoost.
  */
 __attribute__((unused)) static void
 write_csv_from_spi(char *csv_path,
-				   SPITupleTable *tuptable,
-				   TupleDesc tupdesc,
-				   int *feature_idxs,
-				   int n_features,
-				   int label_idx)
+                   SPITupleTable *tuptable,
+                   TupleDesc tupdesc,
+                   int *feature_idxs,
+                   int n_features,
+                   int label_idx)
 {
-	FILE	   *fp;
-	uint64		row;
-	int			i;
+    FILE   *fp;
+    uint64  row;
+    int     i;
 
-	fp = AllocateFile(csv_path, "w");
-	if (fp == NULL)
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not open file \"%s\" for writing: %m", csv_path)));
+    fp = AllocateFile(csv_path, "w");
+    if (fp == NULL)
+        ereport(ERROR,
+                (errcode_for_file_access(),
+                 errmsg("could not open file \"%s\" for writing: %m", csv_path)));
 
-	/* Write header */
-	for (i = 0; i < n_features; i++)
-		fprintf(fp, "f%d,", i);
-	fprintf(fp, "label\n");
+    /* Write header */
+    for (i = 0; i < n_features; i++)
+        fprintf(fp, "f%d,", i);
+    fprintf(fp, "label\n");
 
-	for (row = 0; row < tuptable->numvals; row++)
-	{
-		HeapTuple	tuple = tuptable->vals[row];
+    for (row = 0; row < tuptable->numvals; row++)
+    {
+        HeapTuple   tuple = tuptable->vals[row];
 
-		for (i = 0; i < n_features; i++)
-		{
-			Datum		val;
-			bool		isnull;
-			Oid			typid;
-			Oid			typoutput;
-			bool		typisvarlena;
-			char	   *valstr;
+        for (i = 0; i < n_features; i++)
+        {
+            Datum   val;
+            bool    isnull;
+            Oid     typid;
+            Oid     typoutput;
+            bool    typisvarlena;
+            char   *valstr;
 
-			val = heap_getattr(tuple, feature_idxs[i] + 1, tupdesc, &isnull);
-			if (isnull)
-				fprintf(fp, ",");
-			else
-			{
-				typid = TupleDescAttr(tupdesc, feature_idxs[i])->atttypid;
-				getTypeOutputInfo(typid, &typoutput, &typisvarlena);
-				valstr = OidOutputFunctionCall(typoutput, val);
-				fprintf(fp, "%s,", valstr);
-			}
-		}
+            val = heap_getattr(tuple, feature_idxs[i] + 1, tupdesc, &isnull);
 
-		/* Output label column */
-		{
-			Datum		label_val;
-			bool		label_isnull;
-			Oid			typid;
-			Oid			typoutput;
-			bool		typisvarlena;
-			char	   *labelstr;
+            if (isnull)
+                fprintf(fp, ",");
+            else
+            {
+                typid = TupleDescAttr(tupdesc, feature_idxs[i])->atttypid;
+                getTypeOutputInfo(typid, &typoutput, &typisvarlena);
+                valstr = OidOutputFunctionCall(typoutput, val);
+                fprintf(fp, "%s,", valstr);
+            }
+        }
 
-			label_val = heap_getattr(tuple, label_idx + 1, tupdesc, &label_isnull);
-			if (label_isnull)
-				fprintf(fp, "\n");
-			else
-			{
-				typid = TupleDescAttr(tupdesc, label_idx)->atttypid;
-				getTypeOutputInfo(typid, &typoutput, &typisvarlena);
-				labelstr = OidOutputFunctionCall(typoutput, label_val);
-				fprintf(fp, "%s\n", labelstr);
-			}
-		}
-	}
-	FreeFile(fp);
+        /* Output label column */
+        {
+            Datum   label_val;
+            bool    label_isnull;
+            Oid     typid;
+            Oid     typoutput;
+            bool    typisvarlena;
+            char   *labelstr;
+
+            label_val = heap_getattr(tuple, label_idx + 1, tupdesc, &label_isnull);
+            if (label_isnull)
+                fprintf(fp, "\n");
+            else
+            {
+                typid = TupleDescAttr(tupdesc, label_idx)->atttypid;
+                getTypeOutputInfo(typid, &typoutput, &typisvarlena);
+                labelstr = OidOutputFunctionCall(typoutput, label_val);
+                fprintf(fp, "%s\n", labelstr);
+            }
+        }
+    }
+    FreeFile(fp);
 }
 
 /*
  * check_catboost_error
- *	Helper function for error translation from CatBoost return codes.
+ *      Helper function for error translation from CatBoost return codes.
  */
 __attribute__((unused)) static void
 check_catboost_error(int err_code)
 {
 #ifdef CATBOOST_AVAILABLE
-	if (err_code != 0)
-	{
-		const char *err_msg = CatBoostGetErrorString();
+    if (err_code != 0)
+    {
+        const char *err_msg = CatBoostGetErrorString();
 
-		if (err_msg == NULL)
-			err_msg = "Unknown error from CatBoost";
-		elog(ERROR, "CatBoost error: %s (code=%d)", err_msg, err_code);
-	}
+        if (err_msg == NULL)
+            err_msg = "Unknown error from CatBoost";
+        elog(ERROR, "CatBoost error: %s (code=%d)", err_msg, err_code);
+    }
 #else
-	if (err_code != 0)
-		elog(ERROR, "CatBoost error: code=%d (library not available)", err_code);
+    if (err_code != 0)
+        elog(ERROR, "CatBoost error: code=%d (library not available)", err_code);
 #endif
 }
 
 /*
  * train_catboost_classifier
- *	Trains a CatBoost classifier model using the provided table, feature columns, and label column.
- *	Returns integer model_id on successful training and storage.
+ *      Trains a CatBoost classifier model using the provided table, feature columns, and label column.
+ *      Returns integer model_id on successful training and storage.
  */
 Datum
 train_catboost_classifier(PG_FUNCTION_ARGS)
 {
 #ifdef CATBOOST_AVAILABLE
-	text	   *table_name_text = PG_GETARG_TEXT_PP(0);
-	text	   *feature_col_text = PG_GETARG_TEXT_PP(1);
-	text	   *label_col_text = PG_GETARG_TEXT_PP(2);
-	int32		iterations;
-	float8		learning_rate;
-	int32		depth;
+    text       *table_name_text = PG_GETARG_TEXT_PP(0);
+    text       *feature_col_text = PG_GETARG_TEXT_PP(1);
+    text       *label_col_text = PG_GETARG_TEXT_PP(2);
+    int32       iterations;
+    float8      learning_rate;
+    int32       depth;
 
-	char	   *table_name;
-	char	   *feature_col_list;
-	char	   *label_col;
+    char       *table_name;
+    char       *feature_col_list;
+    char       *label_col;
 
-	StringInfoData sql;
-	int			ret;
-	int			n_features;
-	int			i;
-	int			model_id;
+    StringInfoData sql;
+    int         ret;
+    int         n_features;
+    int         i;
+    int         model_id;
 
-	char	  **features = NULL;
-	char	   *token;
-	MemoryContext oldctx;
-	MemoryContext per_query_ctx;
+    char      **features = NULL;
+    char       *token;
+    MemoryContext oldctx;
+    MemoryContext per_query_ctx;
 
-	/* Assign parameters with defaults if NULL */
-	iterations = PG_ARGISNULL(3) ? 1000 : PG_GETARG_INT32(3);
-	learning_rate = PG_ARGISNULL(4) ? 0.03 : PG_GETARG_FLOAT8(4);
-	depth = PG_ARGISNULL(5) ? 6 : PG_GETARG_INT32(5);
+    /* Assign parameters with defaults if NULL */
+    iterations = PG_ARGISNULL(3) ? 1000 : PG_GETARG_INT32(3);
+    learning_rate = PG_ARGISNULL(4) ? 0.03 : PG_GETARG_FLOAT8(4);
+    depth = PG_ARGISNULL(5) ? 6 : PG_GETARG_INT32(5);
 
-	table_name = text_to_cstring(table_name_text);
-	feature_col_list = text_to_cstring(feature_col_text);
-	label_col = text_to_cstring(label_col_text);
+    table_name = text_to_cstring(table_name_text);
+    feature_col_list = text_to_cstring(feature_col_text);
+    label_col = text_to_cstring(label_col_text);
 
-	/* Parse feature_col_list into features[] */
-	n_features = 1;
-	for (i = 0; feature_col_list[i]; i++)
-	{
-		if (feature_col_list[i] == ',')
-			n_features++;
-	}
-	features = (char **) palloc0(sizeof(char *) * n_features);
+    /* Parse feature_col_list into features[] */
+    n_features = 1;
+    for (i = 0; feature_col_list[i]; i++)
+    {
+        if (feature_col_list[i] == ',')
+            n_features++;
+    }
+    features = (char **) palloc0(sizeof(char *) * n_features);
 
-	i = 0;
-	token = strtok(feature_col_list, ",");
-	while (token != NULL)
-	{
-		while (*token == ' ' || *token == '\t')
-			token++;
-		features[i++] = pstrdup(token);
-		token = strtok(NULL, ",");
-	}
+    i = 0;
+    token = strtok(feature_col_list, ",");
+    while (token != NULL)
+    {
+        while (*token == ' ' || *token == '\t')
+            token++;
+        features[i++] = pstrdup(token);
+        token = strtok(NULL, ",");
+    }
 
-	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT ");
-	for (i = 0; i < n_features; i++)
-	{
-		if (i > 0)
-			appendStringInfoChar(&sql, ',');
-		appendStringInfoString(&sql, features[i]);
-	}
-	appendStringInfo(&sql, ",%s FROM %s", label_col, table_name);
+    initStringInfo(&sql);
+    appendStringInfo(&sql, "SELECT ");
+    for (i = 0; i < n_features; i++)
+    {
+        if (i > 0)
+            appendStringInfoChar(&sql, ',');
+        appendStringInfoString(&sql, features[i]);
+    }
+    appendStringInfo(&sql, ",%s FROM %s", label_col, table_name);
 
-	elog(DEBUG1, "Running SQL: %s", sql.data);
+    elog(DEBUG1, "Running SQL: %s", sql.data);
 
-	per_query_ctx = AllocSetContextCreate(CurrentMemoryContext,
-										  "catboost_spi_ctx",
-										  ALLOCSET_DEFAULT_SIZES);
-	oldctx = MemoryContextSwitchTo(per_query_ctx);
+    per_query_ctx = AllocSetContextCreate(CurrentMemoryContext,
+                                          "catboost_spi_ctx",
+                                          ALLOCSET_DEFAULT_SIZES);
+    oldctx = MemoryContextSwitchTo(per_query_ctx);
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		elog(ERROR, "could not connect to SPI");
+    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+        elog(ERROR, "could not connect to SPI");
 
-	ret = SPI_execute(sql.data, true, 0);
-	if (ret != SPI_OK_SELECT)
-	{
-		SPI_finish();
-		elog(ERROR, "could not execute SQL for training set");
-	}
+    ret = SPI_execute(sql.data, true, 0);
+    if (ret != SPI_OK_SELECT)
+    {
+        SPI_finish();
+        elog(ERROR, "could not execute SQL for training set");
+    }
 
-	/* Get feature and label indexes */
-	TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-	int		   *feature_idxs = (int *) palloc0(sizeof(int) * n_features);
-	int			label_idx;
+    /* Get feature and label indexes */
+    {
+        TupleDesc   tupdesc = SPI_tuptable->tupdesc;
+        int        *feature_idxs = (int *) palloc0(sizeof(int) * n_features);
+        int         label_idx;
 
-	for (i = 0; i < n_features; i++)
-		feature_idxs[i] = get_column_index(SPI_tuptable, tupdesc, features[i]);
-	label_idx = get_column_index(SPI_tuptable, tupdesc, label_col);
+        for (i = 0; i < n_features; i++)
+            feature_idxs[i] = get_column_index(SPI_tuptable, tupdesc, features[i]);
+        label_idx = get_column_index(SPI_tuptable, tupdesc, label_col);
 
-	/* Write training data to CSV */
-	{
-		char		tmp_csv_path[MAXPGPATH];
-		char		tmp_model_path[MAXPGPATH];
+        /* Write training data to CSV */
+        {
+            char    tmp_csv_path[MAXPGPATH];
+            char    tmp_model_path[MAXPGPATH];
 
-		snprintf(tmp_csv_path, sizeof(tmp_csv_path),
-				 "%s/catboost_train_%d.csv", PG_TEMP_FILES_DIR, MyProcPid);
-		snprintf(tmp_model_path, sizeof(tmp_model_path),
-				 "%s/catboost_model_%d.cbm", PG_TEMP_FILES_DIR, MyProcPid);
+            snprintf(tmp_csv_path, sizeof(tmp_csv_path),
+                     "%s/catboost_train_%d.csv", PG_TEMP_FILES_DIR, MyProcPid);
+            snprintf(tmp_model_path, sizeof(tmp_model_path),
+                     "%s/catboost_model_%d.cbm", PG_TEMP_FILES_DIR, MyProcPid);
 
-		write_csv_from_spi(tmp_csv_path,
-						   SPI_tuptable,
-						   tupdesc,
-						   feature_idxs,
-						   n_features,
-						   label_idx);
+            write_csv_from_spi(tmp_csv_path,
+                               SPI_tuptable,
+                               tupdesc,
+                               feature_idxs,
+                               n_features,
+                               label_idx);
 
-		/* Setup CatBoost C API options and train */
-		{
-			ModelCalcerHandle *model_handle = NULL;
-			CatBoostModelTrainingOptions *opts;
+            /* Setup CatBoost C API options and train */
+            {
+                ModelCalcerHandle           *model_handle = NULL;
+                CatBoostModelTrainingOptions *opts;
 
-			opts = CatBoostCreateModelTrainingOptions();
+                opts = CatBoostCreateModelTrainingOptions();
 
-			check_catboost_error(CatBoostSetTrainingOptionInt(opts, "iterations", iterations));
-			check_catboost_error(CatBoostSetTrainingOptionDouble(opts, "learning_rate", learning_rate));
-			check_catboost_error(CatBoostSetTrainingOptionInt(opts, "depth", depth));
+                check_catboost_error(CatBoostSetTrainingOptionInt(opts, "iterations", iterations));
+                check_catboost_error(CatBoostSetTrainingOptionDouble(opts, "learning_rate", learning_rate));
+                check_catboost_error(CatBoostSetTrainingOptionInt(opts, "depth", depth));
 
-			check_catboost_error(CatBoostTrainModelFromFile(opts,
-															tmp_csv_path,
-															n_features,
-															label_idx,
-															true,	/* has header */
-															&model_handle));
+                check_catboost_error(CatBoostTrainModelFromFile(opts,
+                                                                tmp_csv_path,
+                                                                n_features,
+                                                                label_idx,
+                                                                true,   /* has header */
+                                                                &model_handle));
 
-			check_catboost_error(CatBoostSaveModelToFile(model_handle, tmp_model_path));
+                check_catboost_error(CatBoostSaveModelToFile(model_handle, tmp_model_path));
 
-			model_id = MyProcPid;
+                model_id = MyProcPid;
 
-			CatBoostDestroyModelTrainingOptions(opts);
-			CatBoostFreeModelCalcer(model_handle);
-		}
-	}
+                CatBoostDestroyModelTrainingOptions(opts);
+                CatBoostFreeModelCalcer(model_handle);
+            }
+        }
+    }
 
-	SPI_finish();
-	MemoryContextSwitchTo(oldctx);
-	MemoryContextDelete(per_query_ctx);
+    SPI_finish();
+    MemoryContextSwitchTo(oldctx);
+    MemoryContextDelete(per_query_ctx);
 
-	PG_RETURN_INT32(model_id);
+    PG_RETURN_INT32(model_id);
 #else
-	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("CatBoost library not available. Please install CatBoost to use this function.")));
-	PG_RETURN_NULL();
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("CatBoost library not available. Please install CatBoost to use this function.")));
+    PG_RETURN_NULL();
 #endif
 }
 
 /*
  * train_catboost_regressor
- *	Trains a CatBoost regressor model. Arguments similar to classifier.
- *	Returns integer model_id on success.
+ *      Trains a CatBoost regressor model. Arguments similar to classifier.
+ *      Returns integer model_id on success.
  */
 Datum
 train_catboost_regressor(PG_FUNCTION_ARGS)
 {
 #ifdef CATBOOST_AVAILABLE
-	text	   *table_name_text = PG_GETARG_TEXT_PP(0);
-	text	   *feature_col_text = PG_GETARG_TEXT_PP(1);
-	text	   *target_col_text = PG_GETARG_TEXT_PP(2);
-	int32		iterations;
-	char	   *table_name;
-	char	   *feature_col_list;
-	char	   *target_col;
+    text       *table_name_text = PG_GETARG_TEXT_PP(0);
+    text       *feature_col_text = PG_GETARG_TEXT_PP(1);
+    text       *target_col_text = PG_GETARG_TEXT_PP(2);
+    int32       iterations;
+    char       *table_name;
+    char       *feature_col_list;
+    char       *target_col;
 
-	StringInfoData sql;
-	int			ret;
-	int			n_features;
-	int			i;
-	int			model_id;
+    StringInfoData sql;
+    int         ret;
+    int         n_features;
+    int         i;
+    int         model_id;
 
-	char	  **features = NULL;
-	char	   *token;
-	MemoryContext oldctx;
-	MemoryContext per_query_ctx;
+    char      **features = NULL;
+    char       *token;
+    MemoryContext oldctx;
+    MemoryContext per_query_ctx;
 
-	iterations = PG_ARGISNULL(3) ? 1000 : PG_GETARG_INT32(3);
+    iterations = PG_ARGISNULL(3) ? 1000 : PG_GETARG_INT32(3);
 
-	table_name = text_to_cstring(table_name_text);
-	feature_col_list = text_to_cstring(feature_col_text);
-	target_col = text_to_cstring(target_col_text);
+    table_name = text_to_cstring(table_name_text);
+    feature_col_list = text_to_cstring(feature_col_text);
+    target_col = text_to_cstring(target_col_text);
 
-	/* Parse feature list */
-	n_features = 1;
-	for (i = 0; feature_col_list[i]; i++)
-	{
-		if (feature_col_list[i] == ',')
-			n_features++;
-	}
-	features = (char **) palloc0(sizeof(char *) * n_features);
+    /* Parse feature list */
+    n_features = 1;
+    for (i = 0; feature_col_list[i]; i++)
+    {
+        if (feature_col_list[i] == ',')
+            n_features++;
+    }
+    features = (char **) palloc0(sizeof(char *) * n_features);
 
-	i = 0;
-	token = strtok(feature_col_list, ",");
-	while (token != NULL)
-	{
-		while (*token == ' ' || *token == '\t')
-			token++;
-		features[i++] = pstrdup(token);
-		token = strtok(NULL, ",");
-	}
+    i = 0;
+    token = strtok(feature_col_list, ",");
+    while (token != NULL)
+    {
+        while (*token == ' ' || *token == '\t')
+            token++;
+        features[i++] = pstrdup(token);
+        token = strtok(NULL, ",");
+    }
 
-	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT ");
-	for (i = 0; i < n_features; i++)
-	{
-		if (i > 0)
-			appendStringInfoChar(&sql, ',');
-		appendStringInfoString(&sql, features[i]);
-	}
-	appendStringInfo(&sql, ",%s FROM %s", target_col, table_name);
+    initStringInfo(&sql);
+    appendStringInfo(&sql, "SELECT ");
+    for (i = 0; i < n_features; i++)
+    {
+        if (i > 0)
+            appendStringInfoChar(&sql, ',');
+        appendStringInfoString(&sql, features[i]);
+    }
+    appendStringInfo(&sql, ",%s FROM %s", target_col, table_name);
 
-	per_query_ctx = AllocSetContextCreate(CurrentMemoryContext,
-										  "catboost_spi_ctx",
-										  ALLOCSET_DEFAULT_SIZES);
-	oldctx = MemoryContextSwitchTo(per_query_ctx);
+    per_query_ctx = AllocSetContextCreate(CurrentMemoryContext,
+                                          "catboost_spi_ctx",
+                                          ALLOCSET_DEFAULT_SIZES);
+    oldctx = MemoryContextSwitchTo(per_query_ctx);
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		elog(ERROR, "could not connect to SPI");
+    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+        elog(ERROR, "could not connect to SPI");
 
-	ret = SPI_execute(sql.data, true, 0);
-	if (ret != SPI_OK_SELECT)
-	{
-		SPI_finish();
-		elog(ERROR, "could not execute SQL for training set");
-	}
+    ret = SPI_execute(sql.data, true, 0);
+    if (ret != SPI_OK_SELECT)
+    {
+        SPI_finish();
+        elog(ERROR, "could not execute SQL for training set");
+    }
 
-	{
-		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-		int		   *feature_idxs = (int *) palloc0(sizeof(int) * n_features);
-		int			target_idx;
+    {
+        TupleDesc   tupdesc = SPI_tuptable->tupdesc;
+        int        *feature_idxs = (int *) palloc0(sizeof(int) * n_features);
+        int         target_idx;
 
-		for (i = 0; i < n_features; i++)
-			feature_idxs[i] = get_column_index(SPI_tuptable, tupdesc, features[i]);
-		target_idx = get_column_index(SPI_tuptable, tupdesc, target_col);
+        for (i = 0; i < n_features; i++)
+            feature_idxs[i] = get_column_index(SPI_tuptable, tupdesc, features[i]);
+        target_idx = get_column_index(SPI_tuptable, tupdesc, target_col);
 
-		{
-			char		tmp_csv_path[MAXPGPATH];
-			char		tmp_model_path[MAXPGPATH];
+        {
+            char    tmp_csv_path[MAXPGPATH];
+            char    tmp_model_path[MAXPGPATH];
 
-			snprintf(tmp_csv_path, sizeof(tmp_csv_path),
-					 "%s/catboost_train_%d.csv", PG_TEMP_FILES_DIR, MyProcPid);
-			snprintf(tmp_model_path, sizeof(tmp_model_path),
-					 "%s/catboost_model_%d.cbm", PG_TEMP_FILES_DIR, MyProcPid);
+            snprintf(tmp_csv_path, sizeof(tmp_csv_path),
+                     "%s/catboost_train_%d.csv", PG_TEMP_FILES_DIR, MyProcPid);
+            snprintf(tmp_model_path, sizeof(tmp_model_path),
+                     "%s/catboost_model_%d.cbm", PG_TEMP_FILES_DIR, MyProcPid);
 
-			write_csv_from_spi(tmp_csv_path,
-							   SPI_tuptable,
-							   tupdesc,
-							   feature_idxs,
-							   n_features,
-							   target_idx);
+            write_csv_from_spi(tmp_csv_path,
+                               SPI_tuptable,
+                               tupdesc,
+                               feature_idxs,
+                               n_features,
+                               target_idx);
 
-			{
-				ModelCalcerHandle *model_handle = NULL;
-				CatBoostModelTrainingOptions *opts;
+            {
+                ModelCalcerHandle           *model_handle = NULL;
+                CatBoostModelTrainingOptions *opts;
 
-				opts = CatBoostCreateModelTrainingOptions();
-				check_catboost_error(CatBoostSetTrainingOptionInt(opts, "iterations", iterations));
-				check_catboost_error(CatBoostSetTrainingOptionInt(opts, "task_type", 0)); /* 0 for regression */
+                opts = CatBoostCreateModelTrainingOptions();
+                check_catboost_error(CatBoostSetTrainingOptionInt(opts, "iterations", iterations));
+                check_catboost_error(CatBoostSetTrainingOptionInt(opts, "task_type", 0)); /* 0 for regression */
 
-				check_catboost_error(CatBoostTrainModelFromFile(opts,
-																tmp_csv_path,
-																n_features,
-																target_idx,
-																true,
-																&model_handle));
+                check_catboost_error(CatBoostTrainModelFromFile(opts,
+                                                                tmp_csv_path,
+                                                                n_features,
+                                                                target_idx,
+                                                                true,
+                                                                &model_handle));
 
-				check_catboost_error(CatBoostSaveModelToFile(model_handle, tmp_model_path));
+                check_catboost_error(CatBoostSaveModelToFile(model_handle, tmp_model_path));
 
-				model_id = MyProcPid;
+                model_id = MyProcPid;
 
-				CatBoostDestroyModelTrainingOptions(opts);
-				CatBoostFreeModelCalcer(model_handle);
-			}
-		}
-	}
+                CatBoostDestroyModelTrainingOptions(opts);
+                CatBoostFreeModelCalcer(model_handle);
+            }
+        }
+    }
 
-	SPI_finish();
-	MemoryContextSwitchTo(oldctx);
-	MemoryContextDelete(per_query_ctx);
+    SPI_finish();
+    MemoryContextSwitchTo(oldctx);
+    MemoryContextDelete(per_query_ctx);
 
-	PG_RETURN_INT32(model_id);
+    PG_RETURN_INT32(model_id);
 #else
-	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("CatBoost library not available. Please install CatBoost to use this function.")));
-	PG_RETURN_NULL();
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("CatBoost library not available. Please install CatBoost to use this function.")));
+    PG_RETURN_NULL();
 #endif
 }
 
 /*
  * predict_catboost
- *	Predicts using a persisted CatBoost model and a feature array.
- *	Arguments: int4 model_id, float8[] features (or text[] for categorical support).
- *	Returns float8 predicted value.
+ *      Predicts using a persisted CatBoost model and a feature array.
+ *      Arguments: int4 model_id, float8[] features (or text[] for categorical support).
+ *      Returns float8 predicted value.
  */
 Datum
 predict_catboost(PG_FUNCTION_ARGS)
 {
 #ifdef CATBOOST_AVAILABLE
-	int32		model_id;
-	ArrayType  *features_array;
-	Oid			elmtype;
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
-	int			n_features;
-	int			i;
-	int			ndim;
-	Datum	   *elems;
-	bool	   *nulls;
-	float64		result = 0.0;
+    int32       model_id;
+    ArrayType  *features_array;
+    Oid         elmtype;
+    int16       typlen;
+    bool        typbyval;
+    char        typalign;
+    int         n_features;
+    int         i;
+    int         ndim;
+    Datum      *elems;
+    bool       *nulls;
+    float64     result = 0.0;
 
-	ModelCalcerHandle *model_handle = NULL;
-	char		model_path[MAXPGPATH];
+    ModelCalcerHandle *model_handle = NULL;
+    char        model_path[MAXPGPATH];
 
-	model_id = PG_GETARG_INT32(0);
-	features_array = PG_GETARG_ARRAYTYPE_P(1);
+    model_id = PG_GETARG_INT32(0);
+    features_array = PG_GETARG_ARRAYTYPE_P(1);
 
-	ndim = ARR_NDIM(features_array);
-	if (ndim != 1)
-		ereport(ERROR,
-				(errmsg("features array must be one-dimensional")));
+    ndim = ARR_NDIM(features_array);
+    if (ndim != 1)
+        ereport(ERROR,
+                (errmsg("features array must be one-dimensional")));
 
-	n_features = ArrayGetNItems(ARR_NDIM(features_array), ARR_DIMS(features_array));
-	elmtype = ARR_ELEMTYPE(features_array);
-	get_typlenbyvalalign(elmtype, &typlen, &typbyval, &typalign);
+    n_features = ArrayGetNItems(ARR_NDIM(features_array), ARR_DIMS(features_array));
+    elmtype = ARR_ELEMTYPE(features_array);
+    get_typlenbyvalalign(elmtype, &typlen, &typbyval, &typalign);
 
-	deconstruct_array(features_array, elmtype, typlen, typbyval, typalign,
-					 &elems, &nulls, &n_features);
+    deconstruct_array(features_array, elmtype, typlen, typbyval, typalign,
+                      &elems, &nulls, &n_features);
 
-	snprintf(model_path, sizeof(model_path),
-			 "%s/catboost_model_%d.cbm",
-			 PG_TEMP_FILES_DIR, model_id);
+    snprintf(model_path, sizeof(model_path),
+             "%s/catboost_model_%d.cbm",
+             PG_TEMP_FILES_DIR, model_id);
 
-	check_catboost_error(CatBoostLoadModelFromFile(model_path, &model_handle));
+    check_catboost_error(CatBoostLoadModelFromFile(model_path, &model_handle));
 
-	if (elmtype == TEXTOID)
-	{
-		/* categorical/text features */
-		char	  **input_features;
+    if (elmtype == TEXTOID)
+    {
+        /* categorical/text features */
+        char    **input_features;
 
-		input_features = (char **) palloc(sizeof(char *) * n_features);
+        input_features = (char **) palloc(sizeof(char *) * n_features);
 
-		for (i = 0; i < n_features; i++)
-		{
-			if (nulls[i])
-				elog(ERROR, "catboost feature %d is NULL", i);
+        for (i = 0; i < n_features; i++)
+        {
+            if (nulls[i])
+                elog(ERROR, "catboost feature %d is NULL", i);
 
-			input_features[i] = text_to_cstring(DatumGetTextPP(elems[i]));
-		}
+            input_features[i] = text_to_cstring(DatumGetTextPP(elems[i]));
+        }
 
-		check_catboost_error(CatBoostModelCalcerPredictText(model_handle,
-															(const char * const *) input_features,
-															n_features,
-															&result,
-															1));
-		pfree(input_features);
-	}
-	else
-	{
-		/* numeric features */
-		double	   *features;
+        check_catboost_error(CatBoostModelCalcerPredictText(model_handle,
+                                                           (const char * const *) input_features,
+                                                           n_features,
+                                                           &result,
+                                                           1));
+        pfree(input_features);
+    }
+    else
+    {
+        /* numeric features */
+        double  *features;
 
-		features = (double *) palloc(sizeof(double) * n_features);
-		for (i = 0; i < n_features; i++)
-		{
-			if (nulls[i])
-				elog(ERROR, "catboost feature %d is NULL", i);
-			if (elmtype == FLOAT8OID)
-				features[i] = DatumGetFloat8(elems[i]);
-			else if (elmtype == FLOAT4OID)
-				features[i] = (double) DatumGetFloat4(elems[i]);
-			else if (elmtype == INT4OID)
-				features[i] = (double) DatumGetInt32(elems[i]);
-			else if (elmtype == INT8OID)
-				features[i] = (double) DatumGetInt64(elems[i]);
-			else if (elmtype == INT2OID)
-				features[i] = (double) DatumGetInt16(elems[i]);
-			else
-				elog(ERROR, "unsupported feature element type for CatBoost: %u", elmtype);
-		}
+        features = (double *) palloc(sizeof(double) * n_features);
+        for (i = 0; i < n_features; i++)
+        {
+            if (nulls[i])
+                elog(ERROR, "catboost feature %d is NULL", i);
+            if (elmtype == FLOAT8OID)
+                features[i] = DatumGetFloat8(elems[i]);
+            else if (elmtype == FLOAT4OID)
+                features[i] = (double) DatumGetFloat4(elems[i]);
+            else if (elmtype == INT4OID)
+                features[i] = (double) DatumGetInt32(elems[i]);
+            else if (elmtype == INT8OID)
+                features[i] = (double) DatumGetInt64(elems[i]);
+            else if (elmtype == INT2OID)
+                features[i] = (double) DatumGetInt16(elems[i]);
+            else
+                elog(ERROR, "unsupported feature element type for CatBoost: %u", elmtype);
+        }
 
-		check_catboost_error(CatBoostModelCalcerPredict(model_handle,
-														features, n_features, &result, 1));
-		pfree(features);
-	}
+        check_catboost_error(CatBoostModelCalcerPredict(model_handle,
+                                                       features, n_features, &result, 1));
+        pfree(features);
+    }
 
-	CatBoostFreeModelCalcer(model_handle);
+    CatBoostFreeModelCalcer(model_handle);
 
-	PG_RETURN_FLOAT8(result);
+    PG_RETURN_FLOAT8(result);
 #else
-	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("CatBoost library not available. Please install CatBoost to use this function.")));
-	PG_RETURN_NULL();
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("CatBoost library not available. Please install CatBoost to use this function.")));
+    PG_RETURN_NULL();
 #endif
 }

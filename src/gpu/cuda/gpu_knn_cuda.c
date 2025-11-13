@@ -24,6 +24,7 @@
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
 #include "utils/palloc.h"
+#include "utils/memutils.h"
 #include "utils/elog.h"
 
 #include "neurondb_cuda_knn.h"
@@ -235,6 +236,8 @@ ndb_cuda_knn_train(const float *features,
 	Jsonb *metrics_json = NULL;
 	float *features_copy = NULL;
 	double *labels_copy = NULL;
+	int i, j;
+	int extracted_task;
 	int rc = -1;
 
 	if (errstr)
@@ -364,7 +367,7 @@ ndb_cuda_knn_train(const float *features,
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
-				int extracted_task = DatumGetInt32(
+				extracted_task = DatumGetInt32(
 					DirectFunctionCall1(numeric_int4,
 						NumericGetDatum(num)));
 				if (extracted_task == 0 || extracted_task == 1)
@@ -441,7 +444,8 @@ ndb_cuda_knn_predict(const bytea *model_data,
 	const float *training_features;
 	const double *training_labels;
 	float *distances = NULL;
-	int rc = -1;
+	int i;
+	size_t expected_size;
 
 	if (errstr)
 		*errstr = NULL;
@@ -514,7 +518,7 @@ ndb_cuda_knn_predict(const bytea *model_data,
 	}
 
 	/* Validate bytea size matches expected payload */
-	size_t expected_size = sizeof(NdbCudaKnnModelHeader)
+	expected_size = sizeof(NdbCudaKnnModelHeader)
 		+ sizeof(float) * (size_t)hdr->n_samples * (size_t)hdr->n_features
 		+ sizeof(double) * (size_t)hdr->n_samples;
 	if (VARSIZE_ANY_EXHDR(model_data) < expected_size)
@@ -525,7 +529,7 @@ ndb_cuda_knn_predict(const bytea *model_data,
 	}
 
 	/* Validate input array */
-	for (int i = 0; i < feature_dim; i++)
+	for (i = 0; i < feature_dim; i++)
 	{
 		if (!isfinite(input[i]))
 		{
@@ -571,7 +575,7 @@ ndb_cuda_knn_predict(const bytea *model_data,
 	}
 
 	/* Validate computed distances */
-	for (int i = 0; i < hdr->n_samples; i++)
+	for (i = 0; i < hdr->n_samples; i++)
 	{
 		if (!isfinite(distances[i]) || distances[i] < 0.0)
 		{

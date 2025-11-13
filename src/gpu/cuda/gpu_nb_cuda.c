@@ -24,6 +24,7 @@
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
 #include "utils/palloc.h"
+#include "utils/memutils.h"
 #include "utils/elog.h"
 
 #include "neurondb_cuda_nb.h"
@@ -43,7 +44,7 @@ typedef struct GaussianNBModel
 } GaussianNBModel;
 
 int
-ndb_cuda_nb_pack_model(const struct GaussianNBModel *model,
+ndb_cuda_nb_pack_model(const GaussianNBModel *model,
 	bytea **model_data,
 	Jsonb **metrics,
 	char **errstr)
@@ -271,6 +272,7 @@ ndb_cuda_nb_train(const float *features,
 	bytea *blob = NULL;
 	Jsonb *metrics_json = NULL;
 	int i;
+	int j;
 	int rc = -1;
 
 	if (errstr)
@@ -516,6 +518,12 @@ ndb_cuda_nb_predict(const bytea *model_data,
 	double max_log_prob;
 	int best_class;
 	int i, j;
+	size_t expected_size;
+	double log_prob;
+	double diff;
+	double var;
+	double log_pdf;
+	double prob;
 
 	if (errstr)
 		*errstr = NULL;
@@ -562,7 +570,7 @@ ndb_cuda_nb_predict(const bytea *model_data,
 	}
 
 	/* Validate bytea size matches expected payload */
-	size_t expected_size = sizeof(NdbCudaNbModelHeader)
+	expected_size = sizeof(NdbCudaNbModelHeader)
 		+ sizeof(double) * (size_t)hdr->n_classes
 		+ sizeof(double) * (size_t)hdr->n_classes * (size_t)hdr->n_features
 		+ sizeof(double) * (size_t)hdr->n_classes * (size_t)hdr->n_features;
@@ -622,7 +630,7 @@ ndb_cuda_nb_predict(const bytea *model_data,
 			pfree(class_log_probs);
 			return -1;
 		}
-		double log_prob = log(prior + 1e-10);  /* Add small epsilon to avoid log(0) */
+		log_prob = log(prior + 1e-10);  /* Add small epsilon to avoid log(0) */
 
 		for (j = 0; j < feature_dim; j++)
 		{
@@ -638,8 +646,8 @@ ndb_cuda_nb_predict(const bytea *model_data,
 				return -1;
 			}
 
-			double diff = (double)input[j] - mean_val;
-			double var = var_val + 1e-9;  /* Regularization */
+			diff = (double)input[j] - mean_val;
+			var = var_val + 1e-9;  /* Regularization */
 			
 			/* Check for division by zero */
 			if (var <= 0.0)
@@ -650,7 +658,7 @@ ndb_cuda_nb_predict(const bytea *model_data,
 				return -1;
 			}
 
-			double log_pdf = -0.5 * log(2.0 * M_PI * var) - 0.5 * (diff * diff) / var;
+			log_pdf = -0.5 * log(2.0 * M_PI * var) - 0.5 * (diff * diff) / var;
 			
 			/* Validate computed log_pdf */
 			if (!isfinite(log_pdf))
@@ -725,7 +733,7 @@ ndb_cuda_nb_predict(const bytea *model_data,
 			return -1;
 		}
 
-		double prob = exp(class_log_probs[best_class] - max_log) / sum;
+		prob = exp(class_log_probs[best_class] - max_log) / sum;
 		if (!isfinite(prob) || prob < 0.0 || prob > 1.0)
 		{
 			if (errstr)

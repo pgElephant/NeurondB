@@ -17,7 +17,10 @@
 #ifndef __CUDACC__
 #include "postgres.h"
 #include "utils/jsonb.h"
+struct GMMModel;
 #else
+#include <stdint.h>
+typedef int32_t int32;
 struct varlena;
 typedef struct varlena bytea;
 struct Jsonb;

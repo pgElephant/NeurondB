@@ -24,6 +24,7 @@
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
 #include "utils/palloc.h"
+#include "utils/memutils.h"
 #include "utils/elog.h"
 
 #include "neurondb_cuda_gmm.h"
@@ -663,6 +664,15 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 	double max_prob;
 	int best_component;
 	int i, j;
+	size_t expected_size;
+	double log_likelihood;
+	double log_det;
+	double diff;
+	double var;
+	double log_var;
+	double log_lik_contrib;
+	double exp_val;
+	double final_prob;
 
 	if (errstr)
 		*errstr = NULL;
@@ -729,7 +739,7 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 	}
 
 	/* Validate bytea size matches expected payload */
-	size_t expected_size = sizeof(NdbCudaGmmModelHeader)
+	expected_size = sizeof(NdbCudaGmmModelHeader)
 		+ sizeof(double) * (size_t)hdr->n_components
 		+ sizeof(double) * (size_t)hdr->n_components * (size_t)hdr->n_features
 		+ sizeof(double) * (size_t)hdr->n_components * (size_t)hdr->n_features;
@@ -780,71 +790,71 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA GMM predict: invalid mixing coefficient in model");
-			pfree(component_probs);
-			return -1;
-		}
+		pfree(component_probs);
+		return -1;
+	}
 
-		double log_likelihood = 0.0;
-		double log_det = 0.0;
+	log_likelihood = 0.0;
+	log_det = 0.0;
 
-		for (j = 0; j < feature_dim; j++)
-		{
-			double mean_val = means[i * feature_dim + j];
-			double var_val = variances[i * feature_dim + j];
+	for (j = 0; j < feature_dim; j++)
+	{
+		double mean_val = means[i * feature_dim + j];
+		double var_val = variances[i * feature_dim + j];
 
-			/* Validate model parameters */
-			if (!isfinite(mean_val) || !isfinite(var_val) || var_val < 0.0)
-			{
-				if (errstr)
-					*errstr = pstrdup("CUDA GMM predict: invalid mean or variance in model");
-				pfree(component_probs);
-				return -1;
-			}
-
-			double diff = (double)input[j] - mean_val;
-			double var = var_val + GMM_EPSILON;
-
-			/* Check for division by zero */
-			if (var <= 0.0)
-			{
-				if (errstr)
-					*errstr = pstrdup("CUDA GMM predict: variance is zero or negative");
-				pfree(component_probs);
-				return -1;
-			}
-
-			double log_var = log(var);
-			if (!isfinite(log_var))
-			{
-				if (errstr)
-					*errstr = pstrdup("CUDA GMM predict: computed non-finite log variance");
-				pfree(component_probs);
-				return -1;
-			}
-
-			double log_lik_contrib = -0.5 * (diff * diff) / var;
-			if (!isfinite(log_lik_contrib))
-			{
-				if (errstr)
-					*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood contribution");
-				pfree(component_probs);
-				return -1;
-			}
-
-			log_likelihood += log_lik_contrib;
-			log_det += log_var;
-		}
-
-		log_likelihood -= 0.5 * (feature_dim * log(2.0 * M_PI) + log_det);
-		if (!isfinite(log_likelihood))
+		/* Validate model parameters */
+		if (!isfinite(mean_val) || !isfinite(var_val) || var_val < 0.0)
 		{
 			if (errstr)
-				*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood");
+				*errstr = pstrdup("CUDA GMM predict: invalid mean or variance in model");
 			pfree(component_probs);
 			return -1;
 		}
 
-		double exp_val = exp(log_likelihood);
+		diff = (double)input[j] - mean_val;
+		var = var_val + GMM_EPSILON;
+
+		/* Check for division by zero */
+		if (var <= 0.0)
+		{
+			if (errstr)
+				*errstr = pstrdup("CUDA GMM predict: variance is zero or negative");
+			pfree(component_probs);
+			return -1;
+		}
+
+		log_var = log(var);
+		if (!isfinite(log_var))
+		{
+			if (errstr)
+				*errstr = pstrdup("CUDA GMM predict: computed non-finite log variance");
+			pfree(component_probs);
+			return -1;
+		}
+
+		log_lik_contrib = -0.5 * (diff * diff) / var;
+		if (!isfinite(log_lik_contrib))
+		{
+			if (errstr)
+				*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood contribution");
+			pfree(component_probs);
+			return -1;
+		}
+
+		log_likelihood += log_lik_contrib;
+		log_det += log_var;
+	}
+
+	log_likelihood -= 0.5 * (feature_dim * log(2.0 * M_PI) + log_det);
+	if (!isfinite(log_likelihood))
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood");
+		pfree(component_probs);
+		return -1;
+	}
+
+	exp_val = exp(log_likelihood);
 		if (!isfinite(exp_val) || exp_val < 0.0)
 		{
 			if (errstr)
@@ -957,7 +967,7 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 		return -1;
 	}
 
-	double final_prob = component_probs[best_component];
+	final_prob = component_probs[best_component];
 	if (!isfinite(final_prob) || final_prob < 0.0 || final_prob > 1.0)
 	{
 		if (errstr)

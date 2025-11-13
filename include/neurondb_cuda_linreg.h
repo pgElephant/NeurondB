@@ -20,6 +20,8 @@
 #include "utils/jsonb.h"
 #include "utils/bytea.h"
 #else
+#include <stdint.h>
+typedef int32_t int32;
 /* Forward declarations for CUDA compilation */
 struct Jsonb;
 typedef struct bytea bytea;

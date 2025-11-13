@@ -231,11 +231,14 @@ dt_compute_gini(const int *class_counts, int class_count, int total)
 static double
 dt_compute_variance(double sum, double sumsq, int count)
 {
+	double mean;
+	double variance;
+
 	if (count <= 0)
 		return 0.0;
 
-	double mean = sum / (double)count;
-	double variance = (sumsq / (double)count) - (mean * mean);
+	mean = sum / (double)count;
+	variance = (sumsq / (double)count) - (mean * mean);
 
 	return (variance > 0.0) ? variance : 0.0;
 }
@@ -273,6 +276,12 @@ dt_build_tree_gpu(const float *features,
 	double right_sum = 0.0;
 	double right_sumsq = 0.0;
 	int right_count_reg = 0;
+	int majority;
+	int *parent_counts;
+	double parent_imp;
+	double left_var;
+	double right_var;
+	double parent_var;
 
 	if (errstr)
 		*errstr = NULL;
@@ -300,7 +309,7 @@ dt_build_tree_gpu(const float *features,
 				if (label >= 0 && label < class_count)
 					class_counts[label]++;
 			}
-			int majority = 0;
+			majority = 0;
 			for (i = 1; i < class_count; i++)
 			{
 				if (class_counts[i] > class_counts[majority])
@@ -416,14 +425,14 @@ dt_build_tree_gpu(const float *features,
 					continue;
 
 				/* Compute parent impurity from all samples in current node */
-				int *parent_counts = (int *)palloc0(sizeof(int) * class_count);
+				parent_counts = (int *)palloc0(sizeof(int) * class_count);
 				for (i = 0; i < n_samples; i++)
 				{
 					int label = label_ints[i];
 					if (label >= 0 && label < class_count)
 						parent_counts[label]++;
 				}
-				double parent_imp = dt_compute_gini(parent_counts, class_count, n_samples);
+				parent_imp = dt_compute_gini(parent_counts, class_count, n_samples);
 				pfree(parent_counts);
 
 				/* Compute Gini impurity */
@@ -454,11 +463,11 @@ dt_build_tree_gpu(const float *features,
 					continue;
 
 				/* Compute variance */
-				double left_var = dt_compute_variance(left_sum, left_sumsq, left_count_reg);
-				double right_var = dt_compute_variance(right_sum, right_sumsq, right_count_reg);
+				left_var = dt_compute_variance(left_sum, left_sumsq, left_count_reg);
+				right_var = dt_compute_variance(right_sum, right_sumsq, right_count_reg);
 
 				/* Variance reduction */
-				double parent_var = dt_compute_variance(left_sum + right_sum,
+				parent_var = dt_compute_variance(left_sum + right_sum,
 					left_sumsq + right_sumsq, left_count_reg + right_count_reg);
 				gain = parent_var - (((double)left_count_reg / (double)n_samples) * left_var +
 					((double)right_count_reg / (double)n_samples) * right_var);
@@ -497,7 +506,7 @@ dt_build_tree_gpu(const float *features,
 				if (label >= 0 && label < class_count)
 					class_counts[label]++;
 			}
-			int majority = 0;
+			majority = 0;
 			for (i = 1; i < class_count; i++)
 			{
 				if (class_counts[i] > class_counts[majority])
@@ -541,7 +550,7 @@ dt_build_tree_gpu(const float *features,
 				if (label >= 0 && label < class_count)
 					class_counts[label]++;
 			}
-			int majority = 0;
+			majority = 0;
 			for (i = 1; i < class_count; i++)
 			{
 				if (class_counts[i] > class_counts[majority])
