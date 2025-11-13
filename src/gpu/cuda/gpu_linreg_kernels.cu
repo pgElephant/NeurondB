@@ -21,18 +21,49 @@
 
 /*
  * CUDA kernel to compute X'X and X'y for normal equations
- * This is a placeholder - full GPU implementation can be added later
+ * Each thread computes contributions for one sample, uses atomic operations for accumulation
  */
 __global__ void
 ndb_cuda_linreg_compute_xtx_kernel(const float *features,
 	const double *targets,
 	int n_samples,
 	int feature_dim,
+	int dim_with_intercept,
 	double *XtX,
 	double *Xty)
 {
-	/* Placeholder - can be implemented for full GPU acceleration */
-	/* For now, computation is done on CPU */
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	
+	if (idx >= n_samples)
+		return;
+	
+	int i, j;
+	double xi[128];  /* Max 128 features + intercept */
+	double yi = targets[idx];
+	
+	/* Build xi vector with intercept */
+	xi[0] = 1.0;
+	for (i = 1; i < dim_with_intercept && i < 128; i++)
+	{
+		if (i - 1 < feature_dim)
+			xi[i] = (double)features[idx * feature_dim + (i - 1)];
+		else
+			xi[i] = 0.0;
+	}
+	
+	/* Accumulate X'X and X'y using atomic operations */
+	for (j = 0; j < dim_with_intercept && j < 128; j++)
+	{
+		/* X'y accumulation */
+		atomicAdd((unsigned long long *)&Xty[j], __double_as_longlong(xi[j] * yi));
+		
+		/* X'X accumulation */
+		for (i = 0; i < dim_with_intercept && i < 128; i++)
+		{
+			atomicAdd((unsigned long long *)&XtX[j * dim_with_intercept + i],
+				__double_as_longlong(xi[j] * xi[i]));
+		}
+	}
 }
 
 /*

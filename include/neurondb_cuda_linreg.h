@@ -69,6 +69,7 @@ extern void ndb_cuda_linreg_compute_xtx_kernel(const float *features,
 	const double *targets,
 	int n_samples,
 	int feature_dim,
+	int dim_with_intercept,
 	double *XtX,
 	double *Xty);
 

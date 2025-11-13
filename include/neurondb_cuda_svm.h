@@ -82,6 +82,28 @@ extern void ndb_cuda_svm_predict_kernel(const float *input,
 	int feature_dim,
 	float *prediction);
 
+/* CUDA kernel launcher functions for SMO training */
+extern int ndb_cuda_svm_launch_compute_kernel_row(const float *features,
+	int n_samples,
+	int feature_dim,
+	int row_idx,
+	float *kernel_row);
+
+extern int ndb_cuda_svm_launch_compute_errors(const float *features,
+	const float *alphas,
+	const double *labels,
+	const float *kernel_matrix,
+	float bias,
+	int n_samples,
+	int feature_dim,
+	float *errors);
+
+extern int ndb_cuda_svm_launch_update_errors(const float *kernel_row,
+	float delta_alpha,
+	float label_i,
+	int n_samples,
+	float *errors);
+
 #ifdef __cplusplus
 }
 #endif
