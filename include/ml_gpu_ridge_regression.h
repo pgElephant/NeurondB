@@ -35,4 +35,3 @@ extern int ndb_gpu_ridge_pack_model(const struct RidgeModel *model,
 	char **errstr);
 
 #endif /* NEURONDB_ML_GPU_RIDGE_REGRESSION_H */
-

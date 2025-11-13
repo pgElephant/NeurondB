@@ -38,8 +38,11 @@ static char *
 get_temporal_index_table(const char *table, const char *col)
 {
 	char *buf = palloc(strlen(table) + strlen(col) + 32);
-	snprintf(buf, strlen(table) + strlen(col) + 32,
-			 "__tvx_index_%s_%s", table, col);
+	snprintf(buf,
+		strlen(table) + strlen(col) + 32,
+		"__tvx_index_%s_%s",
+		table,
+		col);
 	return buf;
 }
 
@@ -52,24 +55,29 @@ PG_FUNCTION_INFO_V1(temporal_index_create);
 Datum
 temporal_index_create(PG_FUNCTION_ARGS)
 {
-	text	   *table_name = PG_GETARG_TEXT_PP(0);
-	text	   *vector_col = PG_GETARG_TEXT_PP(1);
-	text	   *timestamp_col = PG_GETARG_TEXT_PP(2);
-	float8		decay_rate = PG_GETARG_FLOAT8(3);
-	char	   *tbl_str;
-	char	   *vec_str;
-	char	   *ts_str;
-	char	   *idx_tbl;
+	text *table_name = PG_GETARG_TEXT_PP(0);
+	text *vector_col = PG_GETARG_TEXT_PP(1);
+	text *timestamp_col = PG_GETARG_TEXT_PP(2);
+	float8 decay_rate = PG_GETARG_FLOAT8(3);
+	char *tbl_str;
+	char *vec_str;
+	char *ts_str;
+	char *idx_tbl;
 	StringInfoData sql;
-	int 		ret;
+	int ret;
 
 	tbl_str = text_to_cstring(table_name);
 	vec_str = text_to_cstring(vector_col);
 	ts_str = text_to_cstring(timestamp_col);
 	idx_tbl = get_temporal_index_table(tbl_str, vec_str);
 
-	elog(NOTICE, "neurondb: Creating temporal index on %s.%s with timestamp %s (decay=%.4f/day)",
-		 tbl_str, vec_str, ts_str, decay_rate);
+	elog(NOTICE,
+		"neurondb: Creating temporal index on %s.%s with timestamp %s "
+		"(decay=%.4f/day)",
+		tbl_str,
+		vec_str,
+		ts_str,
+		decay_rate);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed: %d", ret);
@@ -81,7 +89,8 @@ temporal_index_create(PG_FUNCTION_ARGS)
 		"  id bigint PRIMARY KEY,"
 		"  v vector,"
 		"  insert_ts timestamptz"
-		")", idx_tbl);
+		")",
+		idx_tbl);
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
 		elog(ERROR, "Failed to create TVX index table: %s", sql.data);
@@ -98,11 +107,16 @@ temporal_index_create(PG_FUNCTION_ARGS)
 	appendStringInfo(&sql,
 		"INSERT INTO %s (id, v, insert_ts) "
 		"SELECT id, %s, %s FROM %s",
-		idx_tbl, vec_str, ts_str, tbl_str);
+		idx_tbl,
+		vec_str,
+		ts_str,
+		tbl_str);
 
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_INSERT)
-		elog(ERROR, "Failed to bulk insert vectors into TVX index: %s", sql.data);
+		elog(ERROR,
+			"Failed to bulk insert vectors into TVX index: %s",
+			sql.data);
 
 	SPI_finish();
 
@@ -129,39 +143,47 @@ Datum
 temporal_knn_search(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *funcctx;
-	TupleDesc		tupdesc;
-	MemoryContext	oldcontext;
+	TupleDesc tupdesc;
+	MemoryContext oldcontext;
 
 	if (SRF_IS_FIRSTCALL())
 	{
-		Vector		   *query = PG_GETARG_VECTOR_P(0);
-		int32			k = PG_GETARG_INT32(1);
-		TimestampTz		cutoff_time = PG_GETARG_TIMESTAMPTZ(2);
-		text		   *table_name = PG_GETARG_TEXT_PP(3);
-		text		   *vector_col = PG_GETARG_TEXT_PP(4);
-		text		   *ts_col = PG_GETARG_TEXT_PP(5);
-		float8			decay_rate = PG_GETARG_FLOAT8(6);
+		Vector *query = PG_GETARG_VECTOR_P(0);
+		int32 k = PG_GETARG_INT32(1);
+		TimestampTz cutoff_time = PG_GETARG_TIMESTAMPTZ(2);
+		text *table_name = PG_GETARG_TEXT_PP(3);
+		text *vector_col = PG_GETARG_TEXT_PP(4);
+		text *ts_col = PG_GETARG_TEXT_PP(5);
+		float8 decay_rate = PG_GETARG_FLOAT8(6);
 
 		/* Suppress unused parameter warning - may be used in future */
-		(void) ts_col;
+		(void)ts_col;
 
-		char		   *tbl_str = text_to_cstring(table_name);
-		char		   *vec_str = text_to_cstring(vector_col);
+		char *tbl_str = text_to_cstring(table_name);
+		char *vec_str = text_to_cstring(vector_col);
 
-		char		   *idx_tbl = get_temporal_index_table(tbl_str, vec_str);
-		StringInfoData	sql;
-		int				ret;
+		char *idx_tbl = get_temporal_index_table(tbl_str, vec_str);
+		StringInfoData sql;
+		int ret;
 
 		funcctx = SRF_FIRSTCALL_INIT();
 
 		/* Compose tuple desc: (id bigint, score real, insert_ts timestamptz) */
 		tupdesc = CreateTemplateTupleDesc(3);
-		TupleDescInitEntry(tupdesc, (AttrNumber)1, "id", INT8OID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber)2, "score", FLOAT4OID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber)3, "insert_ts", TIMESTAMPTZOID, -1, 0);
+		TupleDescInitEntry(
+			tupdesc, (AttrNumber)1, "id", INT8OID, -1, 0);
+		TupleDescInitEntry(
+			tupdesc, (AttrNumber)2, "score", FLOAT4OID, -1, 0);
+		TupleDescInitEntry(tupdesc,
+			(AttrNumber)3,
+			"insert_ts",
+			TIMESTAMPTZOID,
+			-1,
+			0);
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		oldcontext =
+			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 			elog(ERROR, "SPI_connect failed: %d", ret);
@@ -175,7 +197,8 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 		 */
 		appendStringInfo(&sql,
 			"SELECT id, "
-			"  temporal_score(-vector_l2(v, %s), insert_ts, now(), %f) AS score,"
+			"  temporal_score(-vector_l2(v, %s), insert_ts, now(), "
+			"%f) AS score,"
 			"  insert_ts "
 			"FROM %s "
 			"WHERE insert_ts <= to_timestamp(%lld) "
@@ -202,28 +225,31 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 	funcctx = SRF_PERCALL_SETUP();
 	uint64 call_cntr = funcctx->call_cntr;
 	uint64 max_calls = SPI_processed;
-	SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
+	SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
 
 	if (call_cntr < max_calls)
 	{
-		HeapTuple	spi_tuple = tuptable->vals[call_cntr];
-		Datum		values[3];
-		bool		nulls[3] = {false, false, false};
-		bool		isnull;
-		HeapTuple	result_tuple;
+		HeapTuple spi_tuple = tuptable->vals[call_cntr];
+		Datum values[3];
+		bool nulls[3] = { false, false, false };
+		bool isnull;
+		HeapTuple result_tuple;
 
-		values[0] = SPI_getbinval(spi_tuple, tuptable->tupdesc, 1, &isnull);
+		values[0] =
+			SPI_getbinval(spi_tuple, tuptable->tupdesc, 1, &isnull);
 		nulls[0] = isnull;
-		values[1] = SPI_getbinval(spi_tuple, tuptable->tupdesc, 2, &isnull);
+		values[1] =
+			SPI_getbinval(spi_tuple, tuptable->tupdesc, 2, &isnull);
 		nulls[1] = isnull;
-		values[2] = SPI_getbinval(spi_tuple, tuptable->tupdesc, 3, &isnull);
+		values[2] =
+			SPI_getbinval(spi_tuple, tuptable->tupdesc, 3, &isnull);
 		nulls[2] = isnull;
 
-		result_tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+		result_tuple =
+			heap_form_tuple(funcctx->tuple_desc, values, nulls);
 
 		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(result_tuple));
-	}
-	else
+	} else
 	{
 		if (tuptable)
 			SPI_freetuptable(tuptable);
@@ -242,16 +268,16 @@ PG_FUNCTION_INFO_V1(temporal_score);
 Datum
 temporal_score(PG_FUNCTION_ARGS)
 {
-	float4			base_score = PG_GETARG_FLOAT4(0);
-	TimestampTz		insert_time = PG_GETARG_TIMESTAMPTZ(1);
-	TimestampTz		current_time = PG_GETARG_TIMESTAMPTZ(2);
-	float8			decay_rate = PG_GETARG_FLOAT8(3);
-	float8			age_days;
-	float8			decay_factor;
-	float4			final_score;
+	float4 base_score = PG_GETARG_FLOAT4(0);
+	TimestampTz insert_time = PG_GETARG_TIMESTAMPTZ(1);
+	TimestampTz current_time = PG_GETARG_TIMESTAMPTZ(2);
+	float8 decay_rate = PG_GETARG_FLOAT8(3);
+	float8 age_days;
+	float8 decay_factor;
+	float4 final_score;
 
 	/* Compute age in days */
-	age_days = (float8) (current_time - insert_time) / USECS_PER_DAY;
+	age_days = (float8)(current_time - insert_time) / USECS_PER_DAY;
 
 	/* Apply exponential decay */
 	decay_factor = exp(-decay_rate * age_days);
@@ -296,4 +322,3 @@ vector_l2(PG_FUNCTION_ARGS)
 	}
 	PG_RETURN_FLOAT4(sqrt(sum));
 }
-

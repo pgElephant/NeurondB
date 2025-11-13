@@ -28,22 +28,22 @@
 VectorI8 *
 quantize_vector_i8(Vector *v)
 {
-	VectorI8   *result;
-	int			size;
-	float4		max_abs = 0.0f;
-	float4		scale;
-	int			i;
+	VectorI8 *result;
+	int size;
+	float4 max_abs = 0.0f;
+	float4 scale;
+	int i;
 
 	/* Find maximum absolute value for scaling */
 	for (i = 0; i < v->dim; i++)
 	{
-		float4		abs_val = fabsf(v->data[i]);
+		float4 abs_val = fabsf(v->data[i]);
 		if (abs_val > max_abs)
 			max_abs = abs_val;
 	}
 
 	size = offsetof(VectorI8, data) + sizeof(int8) * v->dim;
-	result = (VectorI8 *) palloc0(size);
+	result = (VectorI8 *)palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = v->dim;
 
@@ -54,13 +54,13 @@ quantize_vector_i8(Vector *v)
 
 	for (i = 0; i < v->dim; i++)
 	{
-		float4		val = v->data[i] * scale;
+		float4 val = v->data[i] * scale;
 
 		if (val > 127.0f)
 			val = 127.0f;
 		if (val < -128.0f)
 			val = -128.0f;
-		result->data[i] = (int8) rintf(val);	/* round to nearest int8 */
+		result->data[i] = (int8)rintf(val); /* round to nearest int8 */
 	}
 
 	return result;
@@ -73,8 +73,8 @@ PG_FUNCTION_INFO_V1(vector_to_int8);
 Datum
 vector_to_int8(PG_FUNCTION_ARGS)
 {
-	Vector	   *v = PG_GETARG_VECTOR_P(0);
-	VectorI8   *result;
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	VectorI8 *result;
 
 	result = quantize_vector_i8(v);
 	PG_RETURN_POINTER(result);
@@ -87,15 +87,15 @@ PG_FUNCTION_INFO_V1(int8_to_vector);
 Datum
 int8_to_vector(PG_FUNCTION_ARGS)
 {
-	VectorI8   *v8 = (VectorI8 *) PG_GETARG_POINTER(0);
-	Vector	   *result;
-	int			i;
+	VectorI8 *v8 = (VectorI8 *)PG_GETARG_POINTER(0);
+	Vector *result;
+	int i;
 
 	result = new_vector(v8->dim);
 
 	/* Dequantize using scaling convention: max quantization maps to 127.0f */
 	for (i = 0; i < v8->dim; i++)
-		result->data[i] = ((float4) v8->data[i]) / 127.0f;
+		result->data[i] = ((float4)v8->data[i]) / 127.0f;
 
 	PG_RETURN_VECTOR_P(result);
 }
@@ -108,10 +108,10 @@ static uint16
 float_to_fp16(float f)
 {
 	/* Simple IEEE-754 conversion (round to nearest) */
-	uint32		u;
-	uint16		sign;
-	uint32		mantissa;
-	int16		exp;
+	uint32 u;
+	uint16 sign;
+	uint32 mantissa;
+	int16 exp;
 
 	memcpy(&u, &f, sizeof(uint32));
 	sign = (u >> 16) & 0x8000;
@@ -122,13 +122,11 @@ float_to_fp16(float f)
 	{
 		/* flush to zero */
 		return sign;
-	}
-	else if (exp >= 31)
+	} else if (exp >= 31)
 	{
 		/* inf/NaN */
 		return sign | 0x7c00;
-	}
-	else
+	} else
 	{
 		return sign | (exp << 10) | (mantissa >> 13);
 	}
@@ -137,10 +135,10 @@ float_to_fp16(float f)
 static float
 fp16_to_float(uint16 h)
 {
-	uint32		sign = (h & 0x8000) << 16;
-	uint32		exp = (h & 0x7c00) >> 10;
-	uint32		mantissa = h & 0x03ff;
-	uint32		f;
+	uint32 sign = (h & 0x8000) << 16;
+	uint32 exp = (h & 0x7c00) >> 10;
+	uint32 mantissa = h & 0x03ff;
+	uint32 f;
 
 	if (exp == 0)
 	{
@@ -149,8 +147,8 @@ fp16_to_float(uint16 h)
 		else
 		{
 			/* subnormal */
-			uint32		m = mantissa;
-			uint32		exponent;
+			uint32 m = mantissa;
+			uint32 exponent;
 
 			exp = 1;
 
@@ -163,21 +161,19 @@ fp16_to_float(uint16 h)
 			exponent = 127 - 15 - (10 - exp);
 			f = sign | (exponent << 23) | (m << 13);
 		}
-	}
-	else if (exp == 0x1f)
+	} else if (exp == 0x1f)
 	{
 		/* inf/NaN */
 		f = sign | 0x7f800000 | (mantissa << 13);
-	}
-	else
+	} else
 	{
-		uint32		exponent = exp + 127 - 15;
+		uint32 exponent = exp + 127 - 15;
 
 		f = sign | (exponent << 23) | (mantissa << 13);
 	}
 
 	{
-		float		ret;
+		float ret;
 
 		memcpy(&ret, &f, 4);
 		return ret;
@@ -187,12 +183,12 @@ fp16_to_float(uint16 h)
 VectorF16 *
 quantize_vector_f16(Vector *v)
 {
-	VectorF16  *result;
-	int			size;
-	int			i;
+	VectorF16 *result;
+	int size;
+	int i;
 
 	size = offsetof(VectorF16, data) + sizeof(uint16) * v->dim;
-	result = (VectorF16 *) palloc0(size);
+	result = (VectorF16 *)palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = v->dim;
 
@@ -206,8 +202,8 @@ PG_FUNCTION_INFO_V1(vector_to_float16);
 Datum
 vector_to_float16(PG_FUNCTION_ARGS)
 {
-	Vector	   *v = PG_GETARG_VECTOR_P(0);
-	VectorF16  *result;
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	VectorF16 *result;
 
 	result = quantize_vector_f16(v);
 	PG_RETURN_POINTER(result);
@@ -217,9 +213,9 @@ PG_FUNCTION_INFO_V1(float16_to_vector);
 Datum
 float16_to_vector(PG_FUNCTION_ARGS)
 {
-	VectorF16  *vf16 = (VectorF16 *) PG_GETARG_POINTER(0);
-	Vector	   *result;
-	int			i;
+	VectorF16 *vf16 = (VectorF16 *)PG_GETARG_POINTER(0);
+	Vector *result;
+	int i;
 
 	result = new_vector(vf16->dim);
 	for (i = 0; i < vf16->dim; i++)
@@ -235,17 +231,17 @@ PG_FUNCTION_INFO_V1(vector_to_binary);
 Datum
 vector_to_binary(PG_FUNCTION_ARGS)
 {
-	Vector		   *v = PG_GETARG_VECTOR_P(0);
-	VectorBinary   *result;
-	int				nbytes;
-	int				size;
-	int				i;
-	int				byte_idx;
-	int				bit_idx;
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	VectorBinary *result;
+	int nbytes;
+	int size;
+	int i;
+	int byte_idx;
+	int bit_idx;
 
 	nbytes = (v->dim + 7) / 8;
 	size = offsetof(VectorBinary, data) + nbytes;
-	result = (VectorBinary *) palloc0(size);
+	result = (VectorBinary *)palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = v->dim;
 	memset(result->data, 0, nbytes);
@@ -270,11 +266,11 @@ PG_FUNCTION_INFO_V1(binary_to_vector);
 Datum
 binary_to_vector(PG_FUNCTION_ARGS)
 {
-	VectorBinary *vb = (VectorBinary *) PG_GETARG_POINTER(0);
-	Vector		 *result;
-	int			  i;
-	int			  byte_idx;
-	int			  bit_idx;
+	VectorBinary *vb = (VectorBinary *)PG_GETARG_POINTER(0);
+	Vector *result;
+	int i;
+	int byte_idx;
+	int bit_idx;
 
 	result = new_vector(vb->dim);
 
@@ -283,9 +279,8 @@ binary_to_vector(PG_FUNCTION_ARGS)
 		byte_idx = i / 8;
 		bit_idx = i % 8;
 
-		result->data[i] = (vb->data[byte_idx] & (1 << bit_idx))
-			? 1.0f
-			: -1.0f;
+		result->data[i] =
+			(vb->data[byte_idx] & (1 << bit_idx)) ? 1.0f : -1.0f;
 	}
 
 	PG_RETURN_VECTOR_P(result);
@@ -298,16 +293,16 @@ PG_FUNCTION_INFO_V1(binary_hamming_distance);
 Datum
 binary_hamming_distance(PG_FUNCTION_ARGS)
 {
-	VectorBinary   *a = (VectorBinary *) PG_GETARG_POINTER(0);
-	VectorBinary   *b = (VectorBinary *) PG_GETARG_POINTER(1);
-	int				count = 0;
-	int				nbytes;
-	int				i;
+	VectorBinary *a = (VectorBinary *)PG_GETARG_POINTER(0);
+	VectorBinary *b = (VectorBinary *)PG_GETARG_POINTER(1);
+	int count = 0;
+	int nbytes;
+	int i;
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("binary vector dimensions must match")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("binary vector dimensions must match")));
 
 	nbytes = (a->dim + 7) / 8;
 
@@ -336,9 +331,9 @@ PG_FUNCTION_INFO_V1(dynamic_quantize_vector);
 Datum
 dynamic_quantize_vector(PG_FUNCTION_ARGS)
 {
-	Vector  *v = PG_GETARG_VECTOR_P(0);
-	float8	memory_pressure = PG_GETARG_FLOAT8(1);
-	float8	recall_target = PG_GETARG_FLOAT8(2);
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	float8 memory_pressure = PG_GETARG_FLOAT8(1);
+	float8 recall_target = PG_GETARG_FLOAT8(2);
 
 	if ((memory_pressure > 0.8) || (recall_target < 0.85))
 		PG_RETURN_POINTER(quantize_vector_i8(v));

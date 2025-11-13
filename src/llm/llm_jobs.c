@@ -33,60 +33,74 @@
 int
 ndb_llm_job_enqueue(const char *job_type, const char *payload)
 {
-    int job_id = 0;
-    StringInfoData query;
-    Oid argtypes[2] = {TEXTOID, JSONBOID};
-    Datum values[2];
-    int spi_rc;
+	int job_id = 0;
+	StringInfoData query;
+	Oid argtypes[2] = { TEXTOID, JSONBOID };
+	Datum values[2];
+	int spi_rc;
 
-    /* Validate inputs */
-    if (!job_type || strlen(job_type) == 0)
-        ereport(ERROR, (errmsg("Job type must not be NULL or empty")));
-    if (!payload || strlen(payload) == 0)
-        ereport(ERROR, (errmsg("Payload JSON must not be NULL or empty")));
+	/* Validate inputs */
+	if (!job_type || strlen(job_type) == 0)
+		ereport(ERROR, (errmsg("Job type must not be NULL or empty")));
+	if (!payload || strlen(payload) == 0)
+		ereport(ERROR,
+			(errmsg("Payload JSON must not be NULL or empty")));
 
-    if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR, (errmsg("Failed to connect SPI for llm job enqueue, rc=%d", spi_rc)));
+	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errmsg("Failed to connect SPI for llm job enqueue, "
+				"rc=%d",
+				spi_rc)));
 
-    initStringInfo(&query);
-    /*
+	initStringInfo(&query);
+	/*
      * Use parameterization for values.
      * The payload is casted to jsonb since SQL function takes text input.
      */
-    appendStringInfo(&query,
-      "INSERT INTO neurondb.neurondb_llm_jobs (operation, input_text, status, model_name, created_at) "
-      "VALUES ($1, $2, 'queued', 'default', now()) "
-      "RETURNING job_id");
+	appendStringInfo(&query,
+		"INSERT INTO neurondb.neurondb_llm_jobs (operation, "
+		"input_text, status, model_name, created_at) "
+		"VALUES ($1, $2, 'queued', 'default', now()) "
+		"RETURNING job_id");
 
-    values[0] = CStringGetTextDatum(job_type);
+	values[0] = CStringGetTextDatum(job_type);
 
-    /* Validate that payload is valid JSON */
-    {
-        /* Try to parse with jsonb_in -- throws error if invalid */
-        Oid typinput;
-        Oid typioparam;
-        Datum jsonb_val;
-        getTypeInputInfo(JSONBOID, &typinput, &typioparam);
-        jsonb_val = OidFunctionCall3(typinput, CStringGetDatum(payload), ObjectIdGetDatum(InvalidOid), Int32GetDatum(-1));
-        values[1] = jsonb_val;
-    }
+	/* Validate that payload is valid JSON */
+	{
+		/* Try to parse with jsonb_in -- throws error if invalid */
+		Oid typinput;
+		Oid typioparam;
+		Datum jsonb_val;
+		getTypeInputInfo(JSONBOID, &typinput, &typioparam);
+		jsonb_val = OidFunctionCall3(typinput,
+			CStringGetDatum(payload),
+			ObjectIdGetDatum(InvalidOid),
+			Int32GetDatum(-1));
+		values[1] = jsonb_val;
+	}
 
-    if (SPI_execute_with_args(query.data, 2, argtypes, values, NULL, false, 1) == SPI_OK_INSERT_RETURNING &&
-        SPI_processed == 1)
-    {
-        bool isnull = true;
-        job_id = DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
-                                             SPI_tuptable->tupdesc, 1, &isnull));
-        if (isnull)
-            ereport(ERROR, (errmsg("Job ID returned as NULL after insert")));
-    }
-    else
-    {
-        ereport(ERROR, (errmsg("Failed to insert llm job: %s", query.data)));
-    }
+	if (SPI_execute_with_args(
+		    query.data, 2, argtypes, values, NULL, false, 1)
+			== SPI_OK_INSERT_RETURNING
+		&& SPI_processed == 1)
+	{
+		bool isnull = true;
+		job_id = DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
+			SPI_tuptable->tupdesc,
+			1,
+			&isnull));
+		if (isnull)
+			ereport(ERROR,
+				(errmsg("Job ID returned as NULL after "
+					"insert")));
+	} else
+	{
+		ereport(ERROR,
+			(errmsg("Failed to insert llm job: %s", query.data)));
+	}
 
-    SPI_finish();
-    return job_id;
+	SPI_finish();
+	return job_id;
 }
 
 /*
@@ -98,52 +112,65 @@ ndb_llm_job_enqueue(const char *job_type, const char *payload)
 bool
 ndb_llm_job_acquire(int *job_id, char **job_type, char **payload)
 {
-    bool found = false;
-    StringInfoData query;
-    int spi_rc;
-    
-    /* Must be called within an active transaction */
-    if (!IsTransactionState())
-        ereport(ERROR, (errmsg("ndb_llm_job_acquire must be called within a transaction")));
-    
-    if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR, (errmsg("Failed to connect SPI for llm job acquire, rc=%d", spi_rc)));
+	bool found = false;
+	StringInfoData query;
+	int spi_rc;
 
-    /*
+	/* Must be called within an active transaction */
+	if (!IsTransactionState())
+		ereport(ERROR,
+			(errmsg("ndb_llm_job_acquire must be called within a "
+				"transaction")));
+
+	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errmsg("Failed to connect SPI for llm job acquire, "
+				"rc=%d",
+				spi_rc)));
+
+	/*
      * Claim a pending job atomically using UPDATE ... FROM+subquery FOR UPDATE SKIP LOCKED.
      * With RETURNING, we obtain id, job_type, payload (serialized as text).
      * Only the oldest queued job is claimed (ORDER BY created_at ASC LIMIT 1).
      */
-    initStringInfo(&query);
-    appendStringInfoString(&query,
-        "UPDATE neurondb.neurondb_llm_jobs "
-        "SET status = 'processing', started_at = now() "
-        "WHERE job_id = ("
-            "SELECT job_id FROM neurondb.neurondb_llm_jobs "
-            "WHERE status = 'queued' "
-            "ORDER BY created_at ASC "
-            "FOR UPDATE SKIP LOCKED "
-            "LIMIT 1"
-        ") "
-        "RETURNING job_id, operation, input_text");
+	initStringInfo(&query);
+	appendStringInfoString(&query,
+		"UPDATE neurondb.neurondb_llm_jobs "
+		"SET status = 'processing', started_at = now() "
+		"WHERE job_id = ("
+		"SELECT job_id FROM neurondb.neurondb_llm_jobs "
+		"WHERE status = 'queued' "
+		"ORDER BY created_at ASC "
+		"FOR UPDATE SKIP LOCKED "
+		"LIMIT 1"
+		") "
+		"RETURNING job_id, operation, input_text");
 
-    if (SPI_execute(query.data, false, 1) == SPI_OK_UPDATE_RETURNING && SPI_processed > 0)
-    {
-        bool isnull0 = true, isnull1 = true, isnull2 = true;
-        HeapTuple tuple = SPI_tuptable->vals[0];
-        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+	if (SPI_execute(query.data, false, 1) == SPI_OK_UPDATE_RETURNING
+		&& SPI_processed > 0)
+	{
+		bool isnull0 = true, isnull1 = true, isnull2 = true;
+		HeapTuple tuple = SPI_tuptable->vals[0];
+		TupleDesc tupdesc = SPI_tuptable->tupdesc;
 
-        if (job_id)
-            *job_id = DatumGetInt64(SPI_getbinval(tuple, tupdesc, 1, &isnull0));
-        if (job_type)
-            *job_type = isnull1 ? NULL : pstrdup(TextDatumGetCString(SPI_getbinval(tuple, tupdesc, 2, &isnull1)));
-        if (payload)
-            *payload = isnull2 ? NULL : pstrdup(TextDatumGetCString(SPI_getbinval(tuple, tupdesc, 3, &isnull2)));
-        found = !isnull0;
-    }
+		if (job_id)
+			*job_id = DatumGetInt64(
+				SPI_getbinval(tuple, tupdesc, 1, &isnull0));
+		if (job_type)
+			*job_type = isnull1
+				? NULL
+				: pstrdup(TextDatumGetCString(SPI_getbinval(
+					  tuple, tupdesc, 2, &isnull1)));
+		if (payload)
+			*payload = isnull2
+				? NULL
+				: pstrdup(TextDatumGetCString(SPI_getbinval(
+					  tuple, tupdesc, 3, &isnull2)));
+		found = !isnull0;
+	}
 
-    SPI_finish();
-    return found;
+	SPI_finish();
+	return found;
 }
 
 /*
@@ -154,48 +181,63 @@ ndb_llm_job_acquire(int *job_id, char **job_type, char **payload)
  * Returns true on success, false on no such job.
  */
 bool
-ndb_llm_job_update(int job_id, const char *status, const char *result, const char *error)
+ndb_llm_job_update(int job_id,
+	const char *status,
+	const char *result,
+	const char *error)
 {
-    StringInfoData query;
-    Oid argtypes[4] = {INT8OID, TEXTOID, TEXTOID, TEXTOID};
-    Datum values[4];
-    int spi_rc;
-    bool ok = false;
+	StringInfoData query;
+	Oid argtypes[4] = { INT8OID, TEXTOID, TEXTOID, TEXTOID };
+	Datum values[4];
+	int spi_rc;
+	bool ok = false;
 
-    if (job_id <= 0)
-        ereport(ERROR, (errmsg("Invalid job_id for update: %d", job_id)));
-    if (!status || strlen(status) == 0)
-        ereport(ERROR, (errmsg("Status for job update cannot be NULL or empty")));
+	if (job_id <= 0)
+		ereport(ERROR,
+			(errmsg("Invalid job_id for update: %d", job_id)));
+	if (!status || strlen(status) == 0)
+		ereport(ERROR,
+			(errmsg("Status for job update cannot be NULL or "
+				"empty")));
 
-    if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR, (errmsg("Failed to connect SPI for llm job update, rc=%d", spi_rc)));
+	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errmsg("Failed to connect SPI for llm job update, "
+				"rc=%d",
+				spi_rc)));
 
-    initStringInfo(&query);
-    appendStringInfoString(&query,
-      "UPDATE neurondb.neurondb_llm_jobs "
-      "SET status = $2, result = $3, error = $4, finished_at = now() "
-      "WHERE id = $1");
+	initStringInfo(&query);
+	appendStringInfoString(&query,
+		"UPDATE neurondb.neurondb_llm_jobs "
+		"SET status = $2, result = $3, error = $4, finished_at = now() "
+		"WHERE id = $1");
 
-    values[0] = Int64GetDatum(job_id);
-    values[1] = CStringGetTextDatum(status);
-    /*
+	values[0] = Int64GetDatum(job_id);
+	values[1] = CStringGetTextDatum(status);
+	/*
      * Treat empty string or NULL as SQL NULL for result or error.
      */
-    values[2] = (result && strlen(result) > 0) ? CStringGetTextDatum(result) : (Datum)0;
-    values[3] = (error && strlen(error) > 0) ? CStringGetTextDatum(error) : (Datum)0;
+	values[2] = (result && strlen(result) > 0) ? CStringGetTextDatum(result)
+						   : (Datum)0;
+	values[3] = (error && strlen(error) > 0) ? CStringGetTextDatum(error)
+						 : (Datum)0;
 
-    /* NULLs for result and error */
-    char nulls[4] = {' ', ' ', ' ', ' '};
-    if (!result || strlen(result) == 0) nulls[2] = 'n';
-    if (!error || strlen(error) == 0) nulls[3] = 'n';
+	/* NULLs for result and error */
+	char nulls[4] = { ' ', ' ', ' ', ' ' };
+	if (!result || strlen(result) == 0)
+		nulls[2] = 'n';
+	if (!error || strlen(error) == 0)
+		nulls[3] = 'n';
 
-    if (SPI_execute_with_args(query.data, 4, argtypes, values, nulls, false, 0) == SPI_OK_UPDATE)
-    {
-        if (SPI_processed > 0)
-            ok = true;
-    }
-    SPI_finish();
-    return ok;
+	if (SPI_execute_with_args(
+		    query.data, 4, argtypes, values, nulls, false, 0)
+		== SPI_OK_UPDATE)
+	{
+		if (SPI_processed > 0)
+			ok = true;
+	}
+	SPI_finish();
+	return ok;
 }
 
 /*
@@ -205,25 +247,29 @@ ndb_llm_job_update(int job_id, const char *status, const char *result, const cha
 int
 ndb_llm_job_prune(int max_age_days)
 {
-    int deleted = 0;
-    StringInfoData query;
-    int ret;
-    int days = (max_age_days > 0) ? max_age_days : 7;
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR, (errmsg("Failed to connect SPI for llm job prune, rc=%d", ret)));
+	int deleted = 0;
+	StringInfoData query;
+	int ret;
+	int days = (max_age_days > 0) ? max_age_days : 7;
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errmsg("Failed to connect SPI for llm job prune, "
+				"rc=%d",
+				ret)));
 
-    initStringInfo(&query);
-    appendStringInfo(&query,
-        "DELETE FROM neurondb.neurondb_llm_jobs "
-        "WHERE (status = 'done' OR status = 'failed') "
-        "AND completed_at IS NOT NULL "
-        "AND completed_at < now() - interval '%d days'", days);
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"DELETE FROM neurondb.neurondb_llm_jobs "
+		"WHERE (status = 'done' OR status = 'failed') "
+		"AND completed_at IS NOT NULL "
+		"AND completed_at < now() - interval '%d days'",
+		days);
 
-    if (SPI_execute(query.data, false, 0) == SPI_OK_DELETE)
-        deleted = SPI_processed;
+	if (SPI_execute(query.data, false, 0) == SPI_OK_DELETE)
+		deleted = SPI_processed;
 
-    SPI_finish();
-    return deleted;
+	SPI_finish();
+	return deleted;
 }
 
 /*
@@ -233,34 +279,44 @@ ndb_llm_job_prune(int max_age_days)
 int
 ndb_llm_job_count_status(const char *status)
 {
-    int count = 0;
-    StringInfoData query;
-    Oid argtypes[1] = {TEXTOID};
-    Datum values[1];
-    int spi_rc;
+	int count = 0;
+	StringInfoData query;
+	Oid argtypes[1] = { TEXTOID };
+	Datum values[1];
+	int spi_rc;
 
-    if (!status || strlen(status) == 0)
-        ereport(ERROR, (errmsg("Job status cannot be NULL or empty for count")));
+	if (!status || strlen(status) == 0)
+		ereport(ERROR,
+			(errmsg("Job status cannot be NULL or empty for "
+				"count")));
 
-    if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR, (errmsg("Failed to connect SPI for llm job count, rc=%d", spi_rc)));
+	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errmsg("Failed to connect SPI for llm job count, "
+				"rc=%d",
+				spi_rc)));
 
-    initStringInfo(&query);
-    appendStringInfoString(&query,
-        "SELECT count(*) FROM neurondb.neurondb_llm_jobs WHERE status = $1");
-    values[0] = CStringGetTextDatum(status);
+	initStringInfo(&query);
+	appendStringInfoString(&query,
+		"SELECT count(*) FROM neurondb.neurondb_llm_jobs WHERE status "
+		"= $1");
+	values[0] = CStringGetTextDatum(status);
 
-    if (SPI_execute_with_args(query.data, 1, argtypes, values, NULL, false, 1) == SPI_OK_SELECT &&
-        SPI_processed == 1)
-    {
-        bool isnull = true;
-        count = DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
-                                            SPI_tuptable->tupdesc, 1, &isnull));
-        if (isnull)
-            count = 0;
-    }
-    SPI_finish();
-    return count;
+	if (SPI_execute_with_args(
+		    query.data, 1, argtypes, values, NULL, false, 1)
+			== SPI_OK_SELECT
+		&& SPI_processed == 1)
+	{
+		bool isnull = true;
+		count = DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
+			SPI_tuptable->tupdesc,
+			1,
+			&isnull));
+		if (isnull)
+			count = 0;
+	}
+	SPI_finish();
+	return count;
 }
 
 /*
@@ -271,33 +327,40 @@ ndb_llm_job_count_status(const char *status)
 int
 ndb_llm_job_retry_failed(int max_retries)
 {
-    int retried = 0;
-    StringInfoData query;
-    Oid argtypes[1] = {INT4OID};
-    Datum values[1];
-    int spi_rc;
+	int retried = 0;
+	StringInfoData query;
+	Oid argtypes[1] = { INT4OID };
+	Datum values[1];
+	int spi_rc;
 
-    if (max_retries < 1)
-        ereport(ERROR, (errmsg("max_retries must be >= 1")));
+	if (max_retries < 1)
+		ereport(ERROR, (errmsg("max_retries must be >= 1")));
 
-    if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR, (errmsg("Failed to connect SPI for llm job retry_failed, rc=%d", spi_rc)));
+	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errmsg("Failed to connect SPI for llm job "
+				"retry_failed, rc=%d",
+				spi_rc)));
 
-    initStringInfo(&query);
-    appendStringInfoString(&query,
-        "UPDATE neurondb.neurondb_llm_jobs "
-        "SET status = 'queued', retry_count = COALESCE(retry_count, 0) + 1, "
-        "error = NULL, result = NULL, started_at = NULL, finished_at = NULL "
-        "WHERE status = 'failed' "
-        "AND (retry_count IS NULL OR retry_count < $1)");
+	initStringInfo(&query);
+	appendStringInfoString(&query,
+		"UPDATE neurondb.neurondb_llm_jobs "
+		"SET status = 'queued', retry_count = COALESCE(retry_count, 0) "
+		"+ 1, "
+		"error = NULL, result = NULL, started_at = NULL, finished_at = "
+		"NULL "
+		"WHERE status = 'failed' "
+		"AND (retry_count IS NULL OR retry_count < $1)");
 
-    values[0] = Int32GetDatum(max_retries);
+	values[0] = Int32GetDatum(max_retries);
 
-    if (SPI_execute_with_args(query.data, 1, argtypes, values, NULL, false, 0) == SPI_OK_UPDATE)
-        retried = SPI_processed;
+	if (SPI_execute_with_args(
+		    query.data, 1, argtypes, values, NULL, false, 0)
+		== SPI_OK_UPDATE)
+		retried = SPI_processed;
 
-    SPI_finish();
-    return retried;
+	SPI_finish();
+	return retried;
 }
 
 /*
@@ -308,21 +371,26 @@ ndb_llm_job_retry_failed(int max_retries)
 void
 ndb_llm_job_clear(void)
 {
-    StringInfoData query;
-    int spi_rc;
-    if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR, (errmsg("Failed to connect SPI for llm job clear, rc=%d", spi_rc)));
+	StringInfoData query;
+	int spi_rc;
+	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errmsg("Failed to connect SPI for llm job clear, "
+				"rc=%d",
+				spi_rc)));
 
-    initStringInfo(&query);
-    appendStringInfoString(&query, "TRUNCATE TABLE neurondb.neurondb_llm_jobs RESTART IDENTITY CASCADE");
+	initStringInfo(&query);
+	appendStringInfoString(&query,
+		"TRUNCATE TABLE neurondb.neurondb_llm_jobs RESTART IDENTITY "
+		"CASCADE");
 
-    if (SPI_execute(query.data, false, 0) != SPI_OK_UTILITY)
-    {
-        SPI_finish();
-        ereport(ERROR, (errmsg("Failed to truncate llm jobs table")));
-    }
+	if (SPI_execute(query.data, false, 0) != SPI_OK_UTILITY)
+	{
+		SPI_finish();
+		ereport(ERROR, (errmsg("Failed to truncate llm jobs table")));
+	}
 
-    SPI_finish();
+	SPI_finish();
 }
 
 // End of all

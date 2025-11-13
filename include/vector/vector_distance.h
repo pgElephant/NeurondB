@@ -39,4 +39,3 @@ extern Datum vector_l2_greater_equal(PG_FUNCTION_ARGS);
 extern Datum vector_l2_equal(PG_FUNCTION_ARGS);
 
 #endif /* VECTOR_DISTANCE_H */
-

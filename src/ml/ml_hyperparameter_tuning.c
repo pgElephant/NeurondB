@@ -42,14 +42,17 @@ PG_FUNCTION_INFO_V1(neurondb_bayesian_optimize);
  * Generate all parameter combinations for grid search (cartesian product).
  */
 static void
-generate_grid_combinations(Jsonb *param_grid, List **param_names,
-						  List **value_lists, List **combinations)
+generate_grid_combinations(Jsonb *param_grid,
+	List **param_names,
+	List **value_lists,
+	List **combinations)
 {
 	JsonbIterator *it;
 	JsonbValue v;
 	int r;
 
-	Assert(param_names != NULL && value_lists != NULL && combinations != NULL);
+	Assert(param_names != NULL && value_lists != NULL
+		&& combinations != NULL);
 
 	it = JsonbIteratorInit(&param_grid->root);
 	while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
@@ -67,10 +70,14 @@ generate_grid_combinations(Jsonb *param_grid, List **param_names,
 				List *values = NIL;
 				int i;
 
-				for (i = 0; i < vals_array.val.array.nElems; ++i)
-					values = lappend(values, copyObject(&vals_array.val.array.elems[i]));
+				for (i = 0; i < vals_array.val.array.nElems;
+					++i)
+					values = lappend(values,
+						copyObject(&vals_array.val.array
+								    .elems[i]));
 
-				*param_names = lappend(*param_names, pstrdup(key));
+				*param_names =
+					lappend(*param_names, pstrdup(key));
 				*value_lists = lappend(*value_lists, values);
 			}
 			pfree(key);
@@ -88,7 +95,7 @@ generate_grid_combinations(Jsonb *param_grid, List **param_names,
 		int *indices;
 		bool done = false;
 
-		indices = (int *) palloc0(sizeof(int) * n_params);
+		indices = (int *)palloc0(sizeof(int) * n_params);
 
 		do
 		{
@@ -97,10 +104,14 @@ generate_grid_combinations(Jsonb *param_grid, List **param_names,
 			ListCell *values_cell;
 			int pi = 0;
 
-			forboth(name_cell, *param_names, values_cell, *value_lists)
+			forboth(name_cell,
+				*param_names,
+				values_cell,
+				*value_lists)
 			{
-				List *vlist = (List *) lfirst(values_cell);
-				JsonbValue *jbval = (JsonbValue *) list_nth(vlist, indices[pi]);
+				List *vlist = (List *)lfirst(values_cell);
+				JsonbValue *jbval = (JsonbValue *)list_nth(
+					vlist, indices[pi]);
 				one_comb = lappend(one_comb, copyObject(jbval));
 				pi++;
 			}
@@ -108,14 +119,14 @@ generate_grid_combinations(Jsonb *param_grid, List **param_names,
 
 			for (pi = n_params - 1; pi >= 0; --pi)
 			{
-				List *curr_values = (List *) list_nth(*value_lists, pi);
+				List *curr_values =
+					(List *)list_nth(*value_lists, pi);
 
 				if (indices[pi] < list_length(curr_values) - 1)
 				{
 					indices[pi]++;
 					break;
-				}
-				else
+				} else
 				{
 					indices[pi] = 0;
 					if (pi == 0)
@@ -139,25 +150,26 @@ build_param_jsonb(List *param_names, List *param_values)
 	ListCell *vcell;
 	Jsonb *result;
 
-	(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+	(void)pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
 
 	forboth(ncell, param_names, vcell, param_values)
 	{
-		char *key = (char *) lfirst(ncell);
+		char *key = (char *)lfirst(ncell);
 		JsonbValue k;
 		JsonbValue *v;
 
 		k.type = jbvString;
 		k.val.string.len = strlen(key);
 		k.val.string.val = key;
-		(void) pushJsonbValue(&state, WJB_KEY, &k);
+		(void)pushJsonbValue(&state, WJB_KEY, &k);
 
-		v = (JsonbValue *) lfirst(vcell);
-		(void) pushJsonbValue(&state, WJB_VALUE, v);
+		v = (JsonbValue *)lfirst(vcell);
+		(void)pushJsonbValue(&state, WJB_VALUE, v);
 	}
 
-	(void) pushJsonbValue(&state, WJB_END_OBJECT, NULL);
-	result = JsonbValueToJsonb(pushJsonbValue(&state, WJB_END_OBJECT, NULL));
+	(void)pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+	result =
+		JsonbValueToJsonb(pushJsonbValue(&state, WJB_END_OBJECT, NULL));
 	return result;
 }
 
@@ -173,32 +185,36 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 	StringInfoData cmd;
 
 	initStringInfo(&cmd);
-	appendStringInfoString(&cmd, "SELECT neurondb_train_and_score($1, $2, $3)");
+	appendStringInfoString(
+		&cmd, "SELECT neurondb_train_and_score($1, $2, $3)");
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errmsg("SPI_connect failed")));
+		ereport(ERROR, (errmsg("SPI_connect failed")));
 
 	{
 		Datum values[3];
-		char spi_nulls[3] = {false, false, false};
+		char spi_nulls[3] = { false, false, false };
 
 		values[0] = CStringGetTextDatum(algo);
 		values[1] = PointerGetDatum(param_json);
 		values[2] = Int32GetDatum(folds);
 
-		ret = SPI_execute_with_args(cmd.data, 3,
-									(Oid[]) {TEXTOID, JSONBOID, INT4OID},
-									values, spi_nulls, true, 1);
+		ret = SPI_execute_with_args(cmd.data,
+			3,
+			(Oid[]) { TEXTOID, JSONBOID, INT4OID },
+			values,
+			spi_nulls,
+			true,
+			1);
 
 		if (ret == SPI_OK_SELECT && SPI_processed == 1)
 		{
 			Datum dval;
 
 			dval = SPI_getbinval(SPI_tuptable->vals[0],
-								 SPI_tuptable->tupdesc,
-								 1,
-								 &isnull);
+				SPI_tuptable->tupdesc,
+				1,
+				&isnull);
 			if (!isnull)
 				mean_score = DatumGetFloat8(dval);
 			else
@@ -206,15 +222,17 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 				SPI_finish();
 				pfree(cmd.data);
 				ereport(ERROR,
-						(errmsg("Returned value from neurondb_train_and_score is null")));
+					(errmsg("Returned value from "
+						"neurondb_train_and_score is "
+						"null")));
 			}
-		}
-		else
+		} else
 		{
 			SPI_finish();
 			pfree(cmd.data);
 			ereport(ERROR,
-					(errmsg("Failed to obtain score from neurondb_train_and_score")));
+				(errmsg("Failed to obtain score from "
+					"neurondb_train_and_score")));
 		}
 	}
 
@@ -254,11 +272,12 @@ neurondb_grid_search(PG_FUNCTION_ARGS)
 		int model_id = 1;
 		ListCell *comb_cell;
 		TupleDesc tupdesc = NULL;
-		Oid argtypes[3] = {JSONBOID, FLOAT8OID, INT4OID};
-		(void) argtypes;
+		Oid argtypes[3] = { JSONBOID, FLOAT8OID, INT4OID };
+		(void)argtypes;
 
 		funcctx = SRF_FIRSTCALL_INIT();
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		oldcontext =
+			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		/* project_name = PG_GETARG_TEXT_PP(0); */ /* Not used yet */
 		algorithm_text = PG_GETARG_TEXT_PP(1);
@@ -266,22 +285,26 @@ neurondb_grid_search(PG_FUNCTION_ARGS)
 		cv_folds = PG_ARGISNULL(3) ? 5 : PG_GETARG_INT32(3);
 		algo = text_to_cstring(algorithm_text);
 
-		ctx = (grid_search_ctx *) palloc0(sizeof(grid_search_ctx));
+		ctx = (grid_search_ctx *)palloc0(sizeof(grid_search_ctx));
 
-		generate_grid_combinations(param_grid, &param_names, &value_lists, &combinations);
+		generate_grid_combinations(
+			param_grid, &param_names, &value_lists, &combinations);
 
-		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		if (get_call_result_type(fcinfo, NULL, &tupdesc)
+			!= TYPEFUNC_COMPOSITE)
 			ereport(ERROR,
-					(errmsg("Return type must be a composite type")));
+				(errmsg("Return type must be a composite "
+					"type")));
 
-		foreach(comb_cell, combinations)
+		foreach (comb_cell, combinations)
 		{
-			List *param_values = (List *) lfirst(comb_cell);
-			Jsonb *jbcomb = build_param_jsonb(param_names, param_values);
+			List *param_values = (List *)lfirst(comb_cell);
+			Jsonb *jbcomb =
+				build_param_jsonb(param_names, param_values);
 			float8 score = actual_crossval(algo, jbcomb, cv_folds);
 
 			Datum values[3];
-			bool nulls[3] = {false, false, false};
+			bool nulls[3] = { false, false, false };
 			HeapTuple tuple;
 			Datum result;
 
@@ -291,7 +314,8 @@ neurondb_grid_search(PG_FUNCTION_ARGS)
 			tuple = heap_form_tuple(tupdesc, values, nulls);
 			result = HeapTupleGetDatum(tuple);
 
-			all_results = lappend(all_results, (void *)(uintptr_t) result);
+			all_results =
+				lappend(all_results, (void *)(uintptr_t)result);
 
 			list_free_deep(param_values);
 			if (jbcomb)
@@ -310,16 +334,16 @@ neurondb_grid_search(PG_FUNCTION_ARGS)
 	funcctx = SRF_PERCALL_SETUP();
 
 	{
-		grid_search_ctx *ctx = (grid_search_ctx *) funcctx->user_fctx;
+		grid_search_ctx *ctx = (grid_search_ctx *)funcctx->user_fctx;
 
 		if (ctx->curr < list_length(ctx->all_results))
 		{
-			Datum res = (Datum) list_nth(ctx->all_results, ctx->curr);
+			Datum res =
+				(Datum)list_nth(ctx->all_results, ctx->curr);
 
 			ctx->curr++;
 			SRF_RETURN_NEXT(funcctx, res);
-		}
-		else
+		} else
 		{
 			list_free_deep(ctx->all_results);
 			pfree(ctx);
@@ -332,8 +356,9 @@ neurondb_grid_search(PG_FUNCTION_ARGS)
  * Randomly select parameter values from parameter distributions for random search.
  */
 static void
-random_sample_parameters(Jsonb *param_distributions, List **param_names,
-						List **values_list)
+random_sample_parameters(Jsonb *param_distributions,
+	List **param_names,
+	List **values_list)
 {
 	JsonbIterator *it;
 	JsonbValue v;
@@ -349,22 +374,27 @@ random_sample_parameters(Jsonb *param_distributions, List **param_names,
 
 			key = pnstrdup(v.val.string.val, v.val.string.len);
 			r = JsonbIteratorNext(&it, &arr_value, false);
-			if (r == WJB_VALUE && arr_value.type == jbvArray &&
-				arr_value.val.array.nElems > 0)
+			if (r == WJB_VALUE && arr_value.type == jbvArray
+				&& arr_value.val.array.nElems > 0)
 			{
 				int arr_size = arr_value.val.array.nElems;
 				int idx;
 
 #if PG_VERSION_NUM >= 120000
-				idx = (int) (arc4random_uniform(arr_size));
+				idx = (int)(arc4random_uniform(arr_size));
 #else
-				idx = (int) ((double) arr_size * ((double) rand() / ((double) RAND_MAX + 1)));
+				idx = (int)((double)arr_size
+					* ((double)rand()
+						/ ((double)RAND_MAX + 1)));
 #endif
 				{
-					JsonbValue *picked = &arr_value.val.array.elems[idx];
+					JsonbValue *picked =
+						&arr_value.val.array.elems[idx];
 
-					*param_names = lappend(*param_names, pstrdup(key));
-					*values_list = lappend(*values_list, copyObject(picked));
+					*param_names = lappend(
+						*param_names, pstrdup(key));
+					*values_list = lappend(*values_list,
+						copyObject(picked));
 				}
 			}
 			pfree(key);
@@ -399,12 +429,13 @@ neurondb_random_search(PG_FUNCTION_ARGS)
 		List *results = NIL;
 		int model_id = 1;
 		TupleDesc tupdesc = NULL;
-		Oid argtypes[3] = {JSONBOID, FLOAT8OID, INT4OID};
+		Oid argtypes[3] = { JSONBOID, FLOAT8OID, INT4OID };
 		int i;
-		(void) argtypes;
+		(void)argtypes;
 
 		funcctx = SRF_FIRSTCALL_INIT();
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		oldcontext =
+			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		/* project_name = PG_GETARG_TEXT_PP(0); */ /* Not used yet */
 		algorithm_text = PG_GETARG_TEXT_PP(1);
@@ -413,26 +444,29 @@ neurondb_random_search(PG_FUNCTION_ARGS)
 		cv_folds = PG_ARGISNULL(4) ? 5 : PG_GETARG_INT32(4);
 		algo = text_to_cstring(algorithm_text);
 
-		ctx = (random_search_ctx *) palloc0(sizeof(random_search_ctx));
+		ctx = (random_search_ctx *)palloc0(sizeof(random_search_ctx));
 
-		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		if (get_call_result_type(fcinfo, NULL, &tupdesc)
+			!= TYPEFUNC_COMPOSITE)
 			ereport(ERROR,
-					(errmsg("Return type must be a composite type")));
+				(errmsg("Return type must be a composite "
+					"type")));
 
 		for (i = 0; i < n_iter; ++i)
 		{
 			List *names = NIL;
 			List *vals = NIL;
 
-			random_sample_parameters(param_distributions, &names, &vals);
+			random_sample_parameters(
+				param_distributions, &names, &vals);
 
 			{
-				Jsonb	   *jbcomb;
-				float8		score;
-				Datum		values[3];
-				bool		nulls[3] = {false, false, false};
-				HeapTuple	tuple;
-				Datum		result;
+				Jsonb *jbcomb;
+				float8 score;
+				Datum values[3];
+				bool nulls[3] = { false, false, false };
+				HeapTuple tuple;
+				Datum result;
 
 				jbcomb = build_param_jsonb(names, vals);
 				score = actual_crossval(algo, jbcomb, cv_folds);
@@ -443,7 +477,8 @@ neurondb_random_search(PG_FUNCTION_ARGS)
 				tuple = heap_form_tuple(tupdesc, values, nulls);
 				result = HeapTupleGetDatum(tuple);
 
-				results = lappend(results, (void *)(uintptr_t) result);
+				results = lappend(
+					results, (void *)(uintptr_t)result);
 
 				list_free_deep(names);
 				list_free_deep(vals);
@@ -461,16 +496,16 @@ neurondb_random_search(PG_FUNCTION_ARGS)
 	funcctx = SRF_PERCALL_SETUP();
 
 	{
-		random_search_ctx *ctx = (random_search_ctx *) funcctx->user_fctx;
+		random_search_ctx *ctx =
+			(random_search_ctx *)funcctx->user_fctx;
 
 		if (ctx->curr < list_length(ctx->results))
 		{
-			Datum res = (Datum) list_nth(ctx->results, ctx->curr);
+			Datum res = (Datum)list_nth(ctx->results, ctx->curr);
 
 			ctx->curr++;
 			SRF_RETURN_NEXT(funcctx, res);
-		}
-		else
+		} else
 		{
 			list_free_deep(ctx->results);
 			pfree(ctx);
@@ -483,8 +518,10 @@ neurondb_random_search(PG_FUNCTION_ARGS)
  * Deterministic parameter sampling for Bayesian optimization demo.
  */
 static void
-bayes_sample_parameters(Jsonb *param_space, int iter, List **param_names,
-					   List **values_list)
+bayes_sample_parameters(Jsonb *param_space,
+	int iter,
+	List **param_names,
+	List **values_list)
 {
 	JsonbIterator *it;
 	JsonbValue v;
@@ -500,15 +537,18 @@ bayes_sample_parameters(Jsonb *param_space, int iter, List **param_names,
 
 			key = pnstrdup(v.val.string.val, v.val.string.len);
 			r = JsonbIteratorNext(&it, &arr_value, false);
-			if (r == WJB_VALUE && arr_value.type == jbvArray &&
-				arr_value.val.array.nElems > 0)
+			if (r == WJB_VALUE && arr_value.type == jbvArray
+				&& arr_value.val.array.nElems > 0)
 			{
 				int arr_size = arr_value.val.array.nElems;
 				int idx = iter % arr_size;
-				JsonbValue *picked = &arr_value.val.array.elems[idx];
+				JsonbValue *picked =
+					&arr_value.val.array.elems[idx];
 
-				*param_names = lappend(*param_names, pstrdup(key));
-				*values_list = lappend(*values_list, copyObject(picked));
+				*param_names =
+					lappend(*param_names, pstrdup(key));
+				*values_list = lappend(
+					*values_list, copyObject(picked));
 			}
 			pfree(key);
 		}
@@ -546,28 +586,34 @@ neurondb_bayesian_optimize(PG_FUNCTION_ARGS)
 		float8 best_score = -HUGE_VAL;
 		int best_model_idx = -1;
 		TupleDesc tupdesc = NULL;
-		Oid argtypes[3] = {JSONBOID, FLOAT8OID, INT4OID};
+		Oid argtypes[3] = { JSONBOID, FLOAT8OID, INT4OID };
 		int i;
-		(void) argtypes;
+		(void)argtypes;
 
 		funcctx = SRF_FIRSTCALL_INIT();
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		oldcontext =
+			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		/* project_name = PG_GETARG_TEXT_PP(0); */ /* Not used yet */
 		algorithm_text = PG_GETARG_TEXT_PP(1);
 		param_space = PG_GETARG_JSONB_P(2);
 		n_calls = PG_ARGISNULL(3) ? 20 : PG_GETARG_INT32(3);
-		acquisition_text = PG_ARGISNULL(4) ? NULL : PG_GETARG_TEXT_PP(4);
+		acquisition_text =
+			PG_ARGISNULL(4) ? NULL : PG_GETARG_TEXT_PP(4);
 
 		algo = text_to_cstring(algorithm_text);
-		acquisition = acquisition_text ? text_to_cstring(acquisition_text) : "ei";
-		(void) acquisition;
+		acquisition = acquisition_text
+			? text_to_cstring(acquisition_text)
+			: "ei";
+		(void)acquisition;
 
-		ctx = (bayes_opt_ctx *) palloc0(sizeof(bayes_opt_ctx));
+		ctx = (bayes_opt_ctx *)palloc0(sizeof(bayes_opt_ctx));
 
-		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		if (get_call_result_type(fcinfo, NULL, &tupdesc)
+			!= TYPEFUNC_COMPOSITE)
 			ereport(ERROR,
-					(errmsg("Return type must be a composite type")));
+				(errmsg("Return type must be a composite "
+					"type")));
 
 		for (i = 0; i < n_calls; ++i)
 		{
@@ -577,12 +623,12 @@ neurondb_bayesian_optimize(PG_FUNCTION_ARGS)
 			bayes_sample_parameters(param_space, i, &names, &vals);
 
 			{
-				Jsonb	   *jbcomb;
-				float8		score;
-				Datum		values[3];
-				bool		nulls[3] = {false, false, false};
-				HeapTuple	tuple;
-				Datum		result;
+				Jsonb *jbcomb;
+				float8 score;
+				Datum values[3];
+				bool nulls[3] = { false, false, false };
+				HeapTuple tuple;
+				Datum result;
 
 				jbcomb = build_param_jsonb(names, vals);
 				score = actual_crossval(algo, jbcomb, 5);
@@ -599,7 +645,8 @@ neurondb_bayesian_optimize(PG_FUNCTION_ARGS)
 				tuple = heap_form_tuple(tupdesc, values, nulls);
 				result = HeapTupleGetDatum(tuple);
 
-				results = lappend(results, (void *)(uintptr_t) result);
+				results = lappend(
+					results, (void *)(uintptr_t)result);
 
 				list_free_deep(names);
 				list_free_deep(vals);
@@ -617,16 +664,15 @@ neurondb_bayesian_optimize(PG_FUNCTION_ARGS)
 	funcctx = SRF_PERCALL_SETUP();
 
 	{
-		bayes_opt_ctx *ctx = (bayes_opt_ctx *) funcctx->user_fctx;
+		bayes_opt_ctx *ctx = (bayes_opt_ctx *)funcctx->user_fctx;
 
 		if (ctx->curr < list_length(ctx->results))
 		{
-			Datum res = (Datum) list_nth(ctx->results, ctx->curr);
+			Datum res = (Datum)list_nth(ctx->results, ctx->curr);
 
 			ctx->curr++;
 			SRF_RETURN_NEXT(funcctx, res);
-		}
-		else
+		} else
 		{
 			list_free_deep(ctx->results);
 			pfree(ctx);

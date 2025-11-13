@@ -33,6 +33,8 @@
 #include "neurondb_gpu_model.h"
 #include "neurondb_gpu_backend.h"
 #include "ml_gpu_registry.h"
+#include "ml_gpu_ridge_regression.h"
+#include "ml_gpu_lasso_regression.h"
 
 #include <math.h>
 #include <float.h>
@@ -89,19 +91,19 @@ matrix_invert(double **matrix, int n, double **result)
 	double **augmented;
 	int i, j, k;
 	double pivot, factor;
-	
+
 	/* Create augmented matrix [A | I] */
-	augmented = (double **) palloc(sizeof(double *) * n);
+	augmented = (double **)palloc(sizeof(double *) * n);
 	for (i = 0; i < n; i++)
 	{
-		augmented[i] = (double *) palloc(sizeof(double) * 2 * n);
+		augmented[i] = (double *)palloc(sizeof(double) * 2 * n);
 		for (j = 0; j < n; j++)
 		{
 			augmented[i][j] = matrix[i][j];
 			augmented[i][j + n] = (i == j) ? 1.0 : 0.0;
 		}
 	}
-	
+
 	/* Gauss-Jordan elimination */
 	for (i = 0; i < n; i++)
 	{
@@ -133,11 +135,11 @@ matrix_invert(double **matrix, int n, double **result)
 				return false;
 			}
 		}
-		
+
 		/* Normalize pivot row */
 		for (j = 0; j < 2 * n; j++)
 			augmented[i][j] /= pivot;
-		
+
 		/* Eliminate column */
 		for (k = 0; k < n; k++)
 		{
@@ -145,21 +147,22 @@ matrix_invert(double **matrix, int n, double **result)
 			{
 				factor = augmented[k][i];
 				for (j = 0; j < 2 * n; j++)
-					augmented[k][j] -= factor * augmented[i][j];
+					augmented[k][j] -=
+						factor * augmented[i][j];
 			}
 		}
 	}
-	
+
 	/* Extract result matrix from augmented matrix */
 	for (i = 0; i < n; i++)
 		for (j = 0; j < n; j++)
 			result[i][j] = augmented[i][j + n];
-	
+
 	/* Cleanup */
 	for (i = 0; i < n; i++)
 		pfree(augmented[i]);
 	pfree(augmented);
-	
+
 	return true;
 }
 
@@ -206,8 +209,7 @@ ridge_dataset_load(const char *quoted_tbl,
 	int i;
 
 	if (dataset == NULL)
-		ereport(ERROR,
-			(errmsg("ridge_dataset_load: dataset is NULL")));
+		ereport(ERROR, (errmsg("ridge_dataset_load: dataset is NULL")));
 
 	oldcontext = CurrentMemoryContext;
 
@@ -220,14 +222,17 @@ ridge_dataset_load(const char *quoted_tbl,
 			(errmsg("ridge_dataset_load: SPI_connect failed")));
 	appendStringInfo(&query,
 		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
-		quoted_feat, quoted_target, quoted_tbl, quoted_feat, quoted_target);
+		quoted_feat,
+		quoted_target,
+		quoted_tbl,
+		quoted_feat,
+		quoted_target);
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
 		SPI_finish();
-		ereport(ERROR,
-			(errmsg("ridge_dataset_load: query failed")));
+		ereport(ERROR, (errmsg("ridge_dataset_load: query failed")));
 	}
 
 	n_samples = SPI_processed;
@@ -235,7 +240,8 @@ ridge_dataset_load(const char *quoted_tbl,
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errmsg("ridge_dataset_load: need at least 10 samples, got %d",
+			(errmsg("ridge_dataset_load: need at least 10 samples, "
+				"got %d",
 				n_samples)));
 	}
 
@@ -260,7 +266,8 @@ ridge_dataset_load(const char *quoted_tbl,
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errmsg("ridge_dataset_load: could not determine feature dimension")));
+			(errmsg("ridge_dataset_load: could not determine "
+				"feature dimension")));
 	}
 
 	MemoryContextSwitchTo(oldcontext);
@@ -288,7 +295,8 @@ ridge_dataset_load(const char *quoted_tbl,
 		{
 			SPI_finish();
 			ereport(ERROR,
-				(errmsg("ridge_dataset_load: inconsistent vector dimensions")));
+				(errmsg("ridge_dataset_load: inconsistent "
+					"vector dimensions")));
 		}
 
 		row = dataset->features + (i * feature_dim);
@@ -303,9 +311,11 @@ ridge_dataset_load(const char *quoted_tbl,
 
 			if (targ_type == INT2OID || targ_type == INT4OID
 				|| targ_type == INT8OID)
-				dataset->targets[i] = (double)DatumGetInt32(targ_datum);
+				dataset->targets[i] =
+					(double)DatumGetInt32(targ_datum);
 			else
-				dataset->targets[i] = DatumGetFloat8(targ_datum);
+				dataset->targets[i] =
+					DatumGetFloat8(targ_datum);
 		}
 	}
 
@@ -323,21 +333,22 @@ ridge_model_serialize(const RidgeModel *model)
 {
 	StringInfoData buf;
 	int i;
-	
+
 	if (model == NULL)
 		return NULL;
-	
+
 	/* Validate model before serialization */
 	if (model->n_features <= 0 || model->n_features > 10000)
 	{
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("ridge_model_serialize: invalid n_features %d (corrupted model?)",
+				errmsg("ridge_model_serialize: invalid "
+				       "n_features %d (corrupted model?)",
 					model->n_features)));
 	}
-	
+
 	pq_begintypsend(&buf);
-	
+
 	pq_sendint32(&buf, model->n_features);
 	pq_sendint32(&buf, model->n_samples);
 	pq_sendfloat8(&buf, model->intercept);
@@ -345,13 +356,13 @@ ridge_model_serialize(const RidgeModel *model)
 	pq_sendfloat8(&buf, model->r_squared);
 	pq_sendfloat8(&buf, model->mse);
 	pq_sendfloat8(&buf, model->mae);
-	
+
 	if (model->coefficients != NULL && model->n_features > 0)
 	{
 		for (i = 0; i < model->n_features; i++)
 			pq_sendfloat8(&buf, model->coefficients[i]);
 	}
-	
+
 	return pq_endtypsend(&buf);
 }
 
@@ -364,15 +375,15 @@ ridge_model_deserialize(const bytea *data)
 	RidgeModel *model;
 	StringInfoData buf;
 	int i;
-	
+
 	if (data == NULL)
 		return NULL;
-	
+
 	buf.data = VARDATA(data);
 	buf.len = VARSIZE(data) - VARHDRSZ;
 	buf.maxlen = buf.len;
 	buf.cursor = 0;
-	
+
 	model = (RidgeModel *)palloc0(sizeof(RidgeModel));
 	model->n_features = pq_getmsgint(&buf, 4);
 	model->n_samples = pq_getmsgint(&buf, 4);
@@ -381,14 +392,15 @@ ridge_model_deserialize(const bytea *data)
 	model->r_squared = pq_getmsgfloat8(&buf);
 	model->mse = pq_getmsgfloat8(&buf);
 	model->mae = pq_getmsgfloat8(&buf);
-	
+
 	/* Validate deserialized values */
 	if (model->n_features <= 0 || model->n_features > 10000)
 	{
 		pfree(model);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("ridge: invalid n_features %d in deserialized model (corrupted data?)",
+				errmsg("ridge: invalid n_features %d in "
+				       "deserialized model (corrupted data?)",
 					model->n_features)));
 	}
 	if (model->n_samples < 0 || model->n_samples > 100000000)
@@ -396,17 +408,19 @@ ridge_model_deserialize(const bytea *data)
 		pfree(model);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("ridge: invalid n_samples %d in deserialized model (corrupted data?)",
+				errmsg("ridge: invalid n_samples %d in "
+				       "deserialized model (corrupted data?)",
 					model->n_samples)));
 	}
-	
+
 	if (model->n_features > 0)
 	{
-		model->coefficients = (double *)palloc(sizeof(double) * model->n_features);
+		model->coefficients =
+			(double *)palloc(sizeof(double) * model->n_features);
 		for (i = 0; i < model->n_features; i++)
 			model->coefficients[i] = pq_getmsgfloat8(&buf);
 	}
-	
+
 	return model;
 }
 
@@ -418,14 +432,14 @@ ridge_metadata_is_gpu(Jsonb *metadata)
 {
 	char *meta_text = NULL;
 	bool is_gpu = false;
-	
+
 	if (metadata == NULL)
 		return false;
-	
+
 	PG_TRY();
 	{
-		meta_text = DatumGetCString(
-			DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metadata)));
+		meta_text = DatumGetCString(DirectFunctionCall1(
+			jsonb_out, JsonbPGetDatum(metadata)));
 		if (strstr(meta_text, "\"storage\":\"gpu\"") != NULL)
 			is_gpu = true;
 		pfree(meta_text);
@@ -436,7 +450,7 @@ ridge_metadata_is_gpu(Jsonb *metadata)
 		is_gpu = false;
 	}
 	PG_END_TRY();
-	
+
 	return is_gpu;
 }
 
@@ -461,8 +475,7 @@ ridge_try_gpu_predict_catalog(int32 model_id,
 	if (feature_vec->dim <= 0)
 		return false;
 
-	if (!ml_catalog_fetch_model_payload(
-			model_id, &payload, NULL, &metrics))
+	if (!ml_catalog_fetch_model_payload(model_id, &payload, NULL, &metrics))
 		return false;
 
 	if (payload == NULL)
@@ -472,10 +485,10 @@ ridge_try_gpu_predict_catalog(int32 model_id,
 		goto cleanup;
 
 	if (ndb_gpu_ridge_predict(payload,
-			feature_vec->data,
-			feature_vec->dim,
-			&prediction,
-			&gpu_err)
+		    feature_vec->data,
+		    feature_vec->dim,
+		    &prediction,
+		    &gpu_err)
 		== 0)
 	{
 		if (result_out != NULL)
@@ -502,23 +515,22 @@ ridge_load_model_from_catalog(int32 model_id, RidgeModel **out)
 {
 	bytea *payload = NULL;
 	Jsonb *metrics = NULL;
-	
+
 	if (out == NULL)
 		return false;
-	
+
 	*out = NULL;
-	
-	if (!ml_catalog_fetch_model_payload(
-			model_id, &payload, NULL, &metrics))
+
+	if (!ml_catalog_fetch_model_payload(model_id, &payload, NULL, &metrics))
 		return false;
-	
+
 	if (payload == NULL)
 	{
 		if (metrics != NULL)
 			pfree(metrics);
 		return false;
 	}
-	
+
 	/* Skip GPU models - they should be handled by GPU prediction */
 	if (ridge_metadata_is_gpu(metrics))
 	{
@@ -527,13 +539,13 @@ ridge_load_model_from_catalog(int32 model_id, RidgeModel **out)
 			pfree(metrics);
 		return false;
 	}
-	
+
 	*out = ridge_model_deserialize(payload);
-	
+
 	pfree(payload);
 	if (metrics != NULL)
 		pfree(metrics);
-	
+
 	return (*out != NULL);
 }
 
@@ -573,7 +585,10 @@ lasso_dataset_load(const char *quoted_tbl,
 	const char *quoted_target,
 	LassoDataset *dataset)
 {
-	ridge_dataset_load(quoted_tbl, quoted_feat, quoted_target, (RidgeDataset *)dataset);
+	ridge_dataset_load(quoted_tbl,
+		quoted_feat,
+		quoted_target,
+		(RidgeDataset *)dataset);
 }
 
 /*
@@ -584,21 +599,22 @@ lasso_model_serialize(const LassoModel *model)
 {
 	StringInfoData buf;
 	int i;
-	
+
 	if (model == NULL)
 		return NULL;
-	
+
 	/* Validate model before serialization */
 	if (model->n_features <= 0 || model->n_features > 10000)
 	{
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("lasso_model_serialize: invalid n_features %d (corrupted model?)",
+				errmsg("lasso_model_serialize: invalid "
+				       "n_features %d (corrupted model?)",
 					model->n_features)));
 	}
-	
+
 	pq_begintypsend(&buf);
-	
+
 	pq_sendint32(&buf, model->n_features);
 	pq_sendint32(&buf, model->n_samples);
 	pq_sendfloat8(&buf, model->intercept);
@@ -607,13 +623,13 @@ lasso_model_serialize(const LassoModel *model)
 	pq_sendfloat8(&buf, model->r_squared);
 	pq_sendfloat8(&buf, model->mse);
 	pq_sendfloat8(&buf, model->mae);
-	
+
 	if (model->coefficients != NULL && model->n_features > 0)
 	{
 		for (i = 0; i < model->n_features; i++)
 			pq_sendfloat8(&buf, model->coefficients[i]);
 	}
-	
+
 	return pq_endtypsend(&buf);
 }
 
@@ -626,15 +642,15 @@ lasso_model_deserialize(const bytea *data)
 	LassoModel *model;
 	StringInfoData buf;
 	int i;
-	
+
 	if (data == NULL)
 		return NULL;
-	
+
 	buf.data = VARDATA(data);
 	buf.len = VARSIZE(data) - VARHDRSZ;
 	buf.maxlen = buf.len;
 	buf.cursor = 0;
-	
+
 	model = (LassoModel *)palloc0(sizeof(LassoModel));
 	model->n_features = pq_getmsgint(&buf, 4);
 	model->n_samples = pq_getmsgint(&buf, 4);
@@ -644,14 +660,15 @@ lasso_model_deserialize(const bytea *data)
 	model->r_squared = pq_getmsgfloat8(&buf);
 	model->mse = pq_getmsgfloat8(&buf);
 	model->mae = pq_getmsgfloat8(&buf);
-	
+
 	/* Validate deserialized values */
 	if (model->n_features <= 0 || model->n_features > 10000)
 	{
 		pfree(model);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("lasso: invalid n_features %d in deserialized model (corrupted data?)",
+				errmsg("lasso: invalid n_features %d in "
+				       "deserialized model (corrupted data?)",
 					model->n_features)));
 	}
 	if (model->n_samples < 0 || model->n_samples > 100000000)
@@ -659,17 +676,19 @@ lasso_model_deserialize(const bytea *data)
 		pfree(model);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("lasso: invalid n_samples %d in deserialized model (corrupted data?)",
+				errmsg("lasso: invalid n_samples %d in "
+				       "deserialized model (corrupted data?)",
 					model->n_samples)));
 	}
-	
+
 	if (model->n_features > 0)
 	{
-		model->coefficients = (double *)palloc(sizeof(double) * model->n_features);
+		model->coefficients =
+			(double *)palloc(sizeof(double) * model->n_features);
 		for (i = 0; i < model->n_features; i++)
 			model->coefficients[i] = pq_getmsgfloat8(&buf);
 	}
-	
+
 	return model;
 }
 
@@ -681,14 +700,14 @@ lasso_metadata_is_gpu(Jsonb *metadata)
 {
 	char *meta_text = NULL;
 	bool is_gpu = false;
-	
+
 	if (metadata == NULL)
 		return false;
-	
+
 	PG_TRY();
 	{
-		meta_text = DatumGetCString(
-			DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metadata)));
+		meta_text = DatumGetCString(DirectFunctionCall1(
+			jsonb_out, JsonbPGetDatum(metadata)));
 		if (strstr(meta_text, "\"storage\":\"gpu\"") != NULL)
 			is_gpu = true;
 		pfree(meta_text);
@@ -699,7 +718,7 @@ lasso_metadata_is_gpu(Jsonb *metadata)
 		is_gpu = false;
 	}
 	PG_END_TRY();
-	
+
 	return is_gpu;
 }
 
@@ -724,8 +743,7 @@ lasso_try_gpu_predict_catalog(int32 model_id,
 	if (feature_vec->dim <= 0)
 		return false;
 
-	if (!ml_catalog_fetch_model_payload(
-			model_id, &payload, NULL, &metrics))
+	if (!ml_catalog_fetch_model_payload(model_id, &payload, NULL, &metrics))
 		return false;
 
 	if (payload == NULL)
@@ -735,10 +753,10 @@ lasso_try_gpu_predict_catalog(int32 model_id,
 		goto cleanup;
 
 	if (ndb_gpu_lasso_predict(payload,
-			feature_vec->data,
-			feature_vec->dim,
-			&prediction,
-			&gpu_err)
+		    feature_vec->data,
+		    feature_vec->dim,
+		    &prediction,
+		    &gpu_err)
 		== 0)
 	{
 		if (result_out != NULL)
@@ -765,23 +783,22 @@ lasso_load_model_from_catalog(int32 model_id, LassoModel **out)
 {
 	bytea *payload = NULL;
 	Jsonb *metrics = NULL;
-	
+
 	if (out == NULL)
 		return false;
-	
+
 	*out = NULL;
-	
-	if (!ml_catalog_fetch_model_payload(
-			model_id, &payload, NULL, &metrics))
+
+	if (!ml_catalog_fetch_model_payload(model_id, &payload, NULL, &metrics))
 		return false;
-	
+
 	if (payload == NULL)
 	{
 		if (metrics != NULL)
 			pfree(metrics);
 		return false;
 	}
-	
+
 	/* Skip GPU models - they should be handled by GPU prediction */
 	if (lasso_metadata_is_gpu(metrics))
 	{
@@ -790,13 +807,13 @@ lasso_load_model_from_catalog(int32 model_id, LassoModel **out)
 			pfree(metrics);
 		return false;
 	}
-	
+
 	*out = lasso_model_deserialize(payload);
-	
+
 	pfree(payload);
 	if (metrics != NULL)
 		pfree(metrics);
-	
+
 	return (*out != NULL);
 }
 
@@ -826,15 +843,15 @@ PG_FUNCTION_INFO_V1(train_ridge_regression);
 Datum
 train_ridge_regression(PG_FUNCTION_ARGS)
 {
-	text	   *table_name;
-	text	   *feature_col;
-	text	   *target_col;
-	double		lambda = PG_GETARG_FLOAT8(3);  /* Regularization parameter */
-	char	   *tbl_str;
-	char	   *feat_str;
-	char	   *targ_str;
-	int			nvec = 0;
-	int			dim = 0;
+	text *table_name;
+	text *feature_col;
+	text *target_col;
+	double lambda = PG_GETARG_FLOAT8(3); /* Regularization parameter */
+	char *tbl_str;
+	char *feat_str;
+	char *targ_str;
+	int nvec = 0;
+	int dim = 0;
 	RidgeDataset dataset;
 	const char *quoted_tbl;
 	const char *quoted_feat;
@@ -844,31 +861,33 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 	Jsonb *gpu_hyperparams = NULL;
 	StringInfoData hyperbuf;
 	int32 model_id = 0;
-	
+
 	table_name = PG_GETARG_TEXT_PP(0);
 	feature_col = PG_GETARG_TEXT_PP(1);
 	target_col = PG_GETARG_TEXT_PP(2);
-	
+
 	if (lambda < 0.0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("ridge: lambda must be non-negative, got %.6f", lambda)));
-	
+				errmsg("ridge: lambda must be non-negative, "
+				       "got %.6f",
+					lambda)));
+
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
 	targ_str = text_to_cstring(target_col);
-	
+
 	ridge_dataset_init(&dataset);
-	
+
 	quoted_tbl = quote_identifier(tbl_str);
 	quoted_feat = quote_identifier(feat_str);
 	quoted_target = quote_identifier(targ_str);
-	
+
 	ridge_dataset_load(quoted_tbl, quoted_feat, quoted_target, &dataset);
-	
+
 	nvec = dataset.n_samples;
 	dim = dataset.feature_dim;
-	
+
 	if (nvec < 10)
 	{
 		ridge_dataset_free(&dataset);
@@ -876,9 +895,11 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 		pfree(feat_str);
 		pfree(targ_str);
 		ereport(ERROR,
-			(errmsg("Need at least 10 samples for Ridge regression, have %d", nvec)));
+			(errmsg("Need at least 10 samples for Ridge "
+				"regression, have %d",
+				nvec)));
 	}
-	
+
 	/* Try GPU training first */
 	if (neurondb_gpu_is_available() && nvec > 0 && dim > 0)
 	{
@@ -886,29 +907,29 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 		appendStringInfo(&hyperbuf, "{\"lambda\":%.6f}", lambda);
 		gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(
 			jsonb_in, CStringGetDatum(hyperbuf.data)));
-		
+
 		if (ndb_gpu_try_train_model("ridge",
-			NULL,
-			NULL,
-			tbl_str,
-			targ_str,
-			NULL,
-			0,
-			gpu_hyperparams,
-			dataset.features,
-			dataset.targets,
-			nvec,
-			dim,
-			0,
-			&gpu_result,
-			&gpu_err)
+			    NULL,
+			    NULL,
+			    tbl_str,
+			    targ_str,
+			    NULL,
+			    0,
+			    gpu_hyperparams,
+			    dataset.features,
+			    dataset.targets,
+			    nvec,
+			    dim,
+			    0,
+			    &gpu_result,
+			    &gpu_err)
 			&& gpu_result.spec.model_data != NULL)
 		{
 			MLCatalogModelSpec spec;
-			
+
 			elog(NOTICE, "ridge: GPU training succeeded");
 			spec = gpu_result.spec;
-			
+
 			if (spec.training_table == NULL)
 				spec.training_table = tbl_str;
 			if (spec.training_column == NULL)
@@ -918,12 +939,12 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 				spec.parameters = gpu_hyperparams;
 				gpu_hyperparams = NULL;
 			}
-			
+
 			spec.algorithm = "ridge";
 			spec.model_type = "regression";
-			
+
 			model_id = ml_catalog_register_model(&spec);
-			
+
 			if (gpu_err != NULL)
 				pfree(gpu_err);
 			if (gpu_hyperparams != NULL)
@@ -933,12 +954,12 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
-			
+
 			PG_RETURN_INT32(model_id);
-		}
-		else
+		} else
 		{
-			elog(DEBUG1, "ridge: GPU training unavailable, using CPU");
+			elog(DEBUG1,
+				"ridge: GPU training unavailable, using CPU");
 			if (gpu_err != NULL)
 				pfree(gpu_err);
 			if (gpu_hyperparams != NULL)
@@ -946,62 +967,66 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 			ndb_gpu_free_train_result(&gpu_result);
 		}
 	}
-	
+
 	/* CPU training path */
 	{
-		double	  **XtX = NULL;
-		double	  **XtX_inv = NULL;
-		double	   *Xty = NULL;
-		double	   *beta = NULL;
-		int			i, j, k;
-		int			dim_with_intercept;
+		double **XtX = NULL;
+		double **XtX_inv = NULL;
+		double *Xty = NULL;
+		double *beta = NULL;
+		int i, j, k;
+		int dim_with_intercept;
 		RidgeModel *model;
 		bytea *model_blob;
 		Jsonb *metrics_json;
 		StringInfoData metricsbuf;
-		
+
 		/* Allocate matrices for normal equations: β = (X'X + λI)^(-1)X'y */
 		dim_with_intercept = dim + 1; /* Add 1 for intercept */
-		XtX = (double **) palloc(sizeof(double *) * dim_with_intercept);
-		XtX_inv = (double **) palloc(sizeof(double *) * dim_with_intercept);
+		XtX = (double **)palloc(sizeof(double *) * dim_with_intercept);
+		XtX_inv = (double **)palloc(
+			sizeof(double *) * dim_with_intercept);
 		for (i = 0; i < dim_with_intercept; i++)
 		{
-			XtX[i] = (double *) palloc0(sizeof(double) * dim_with_intercept);
-			XtX_inv[i] = (double *) palloc(sizeof(double) * dim_with_intercept);
+			XtX[i] = (double *)palloc0(
+				sizeof(double) * dim_with_intercept);
+			XtX_inv[i] = (double *)palloc(
+				sizeof(double) * dim_with_intercept);
 		}
-		Xty = (double *) palloc0(sizeof(double) * dim_with_intercept);
-		beta = (double *) palloc(sizeof(double) * dim_with_intercept);
-		
+		Xty = (double *)palloc0(sizeof(double) * dim_with_intercept);
+		beta = (double *)palloc(sizeof(double) * dim_with_intercept);
+
 		/* Compute X'X and X'y using dataset */
 		for (i = 0; i < nvec; i++)
 		{
 			/* Add intercept term (1.0) */
-			double *xi = (double *) palloc(sizeof(double) * dim_with_intercept);
+			double *xi = (double *)palloc(
+				sizeof(double) * dim_with_intercept);
 			float *row = dataset.features + (i * dim);
-			
+
 			xi[0] = 1.0;
 			for (k = 1; k < dim_with_intercept; k++)
-				xi[k] = row[k-1];
-			
+				xi[k] = row[k - 1];
+
 			/* X'X accumulation */
 			for (j = 0; j < dim_with_intercept; j++)
 			{
 				for (k = 0; k < dim_with_intercept; k++)
 					XtX[j][k] += xi[j] * xi[k];
-				
+
 				/* X'y accumulation */
 				Xty[j] += xi[j] * dataset.targets[i];
 			}
-			
+
 			pfree(xi);
 		}
-	
+
 		/* Add Ridge penalty (λI) to diagonal (excluding intercept) */
 		for (i = 1; i < dim_with_intercept; i++)
 		{
 			XtX[i][i] += lambda;
 		}
-		
+
 		/* Invert X'X + λI */
 		if (!matrix_invert(XtX, dim_with_intercept, XtX_inv))
 		{
@@ -1020,10 +1045,14 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 			pfree(targ_str);
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("ridge: matrix is singular, cannot compute Ridge regression"),
-					errhint("Try increasing lambda or removing correlated features")));
+					errmsg("ridge: matrix is singular, "
+					       "cannot compute Ridge "
+					       "regression"),
+					errhint("Try increasing lambda or "
+						"removing correlated "
+						"features")));
 		}
-		
+
 		/* Compute β = (X'X + λI)^(-1)X'y */
 		for (i = 0; i < dim_with_intercept; i++)
 		{
@@ -1031,7 +1060,7 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 			for (j = 0; j < dim_with_intercept; j++)
 				beta[i] += XtX_inv[i][j] * Xty[j];
 		}
-		
+
 		/* Build RidgeModel */
 		model = (RidgeModel *)palloc0(sizeof(RidgeModel));
 		model->n_features = dim;
@@ -1041,7 +1070,7 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 		model->coefficients = (double *)palloc(sizeof(double) * dim);
 		for (i = 0; i < dim; i++)
 			model->coefficients[i] = beta[i + 1];
-		
+
 		/* Compute metrics (R², MSE, MAE) */
 		{
 			double y_mean = 0.0;
@@ -1049,35 +1078,39 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 			double ss_res = 0.0;
 			double mse = 0.0;
 			double mae = 0.0;
-			
+
 			for (i = 0; i < nvec; i++)
 				y_mean += dataset.targets[i];
 			y_mean /= nvec;
-			
+
 			for (i = 0; i < nvec; i++)
 			{
 				float *row = dataset.features + (i * dim);
 				double y_pred = model->intercept;
 				double error;
 				int feat_idx;
-				
+
 				for (feat_idx = 0; feat_idx < dim; feat_idx++)
-					y_pred += model->coefficients[feat_idx] * row[feat_idx];
-				
+					y_pred += model->coefficients[feat_idx]
+						* row[feat_idx];
+
 				error = dataset.targets[i] - y_pred;
 				mse += error * error;
 				mae += fabs(error);
 				ss_res += error * error;
-				ss_tot += (dataset.targets[i] - y_mean) * (dataset.targets[i] - y_mean);
+				ss_tot += (dataset.targets[i] - y_mean)
+					* (dataset.targets[i] - y_mean);
 			}
-			
+
 			mse /= nvec;
 			mae /= nvec;
-			model->r_squared = (ss_tot > 0.0) ? (1.0 - (ss_res / ss_tot)) : 0.0;
+			model->r_squared = (ss_tot > 0.0)
+				? (1.0 - (ss_res / ss_tot))
+				: 0.0;
 			model->mse = mse;
 			model->mae = mae;
 		}
-		
+
 		/* Validate model before serialization */
 		if (model->n_features <= 0 || model->n_features > 10000)
 		{
@@ -1099,15 +1132,22 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 			pfree(targ_str);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("ridge: model.n_features is invalid (%d) before serialization", model->n_features)));
+					errmsg("ridge: model.n_features is "
+					       "invalid (%d) before "
+					       "serialization",
+						model->n_features)));
 		}
-		
-		elog(DEBUG1, "ridge: serializing model with n_features=%d, n_samples=%d, lambda=%.6f",
-			model->n_features, model->n_samples, model->lambda);
-		
+
+		elog(DEBUG1,
+			"ridge: serializing model with n_features=%d, "
+			"n_samples=%d, lambda=%.6f",
+			model->n_features,
+			model->n_samples,
+			model->lambda);
+
 		/* Serialize model */
 		model_blob = ridge_model_serialize(model);
-		
+
 		/* Build metrics JSON */
 		initStringInfo(&metricsbuf);
 		appendStringInfo(&metricsbuf,
@@ -1125,14 +1165,14 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 			model->r_squared,
 			model->mse,
 			model->mae);
-		
-		metrics_json = DatumGetJsonbP(
-			DirectFunctionCall1(jsonb_in, CStringGetDatum(metricsbuf.data)));
-		
+
+		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+			jsonb_in, CStringGetDatum(metricsbuf.data)));
+
 		/* Register in catalog */
 		{
 			MLCatalogModelSpec spec;
-			
+
 			memset(&spec, 0, sizeof(MLCatalogModelSpec));
 			spec.algorithm = "ridge";
 			spec.model_type = "regression";
@@ -1140,19 +1180,23 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 			spec.training_column = targ_str;
 			spec.model_data = model_blob;
 			spec.metrics = metrics_json;
-			
+
 			/* Build hyperparameters JSON */
 			{
 				StringInfoData hyperbuf_cpu;
 				initStringInfo(&hyperbuf_cpu);
-				appendStringInfo(&hyperbuf_cpu, "{\"lambda\":%.6f}", lambda);
+				appendStringInfo(&hyperbuf_cpu,
+					"{\"lambda\":%.6f}",
+					lambda);
 				spec.parameters = DatumGetJsonbP(
-					DirectFunctionCall1(jsonb_in, CStringGetDatum(hyperbuf_cpu.data)));
+					DirectFunctionCall1(jsonb_in,
+						CStringGetDatum(
+							hyperbuf_cpu.data)));
 			}
-			
+
 			model_id = ml_catalog_register_model(&spec);
 		}
-		
+
 		/* Cleanup */
 		for (i = 0; i < dim_with_intercept; i++)
 		{
@@ -1170,7 +1214,7 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
-		
+
 		PG_RETURN_INT32(model_id);
 	}
 }
@@ -1190,53 +1234,55 @@ predict_ridge_regression_model_id(PG_FUNCTION_ARGS)
 	RidgeModel *model = NULL;
 	double prediction;
 	int i;
-	
+
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("ridge: model_id is required")));
-	
+
 	model_id = PG_GETARG_INT32(0);
-	
+
 	if (PG_ARGISNULL(1))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("ridge: features vector is required")));
-	
+
 	features = PG_GETARG_VECTOR_P(1);
-	
+
 	/* Try GPU prediction first */
 	if (ridge_try_gpu_predict_catalog(model_id, features, &prediction))
 	{
-		elog(DEBUG1, "ridge: GPU prediction succeeded, prediction=%.6f", prediction);
+		elog(DEBUG1,
+			"ridge: GPU prediction succeeded, prediction=%.6f",
+			prediction);
 		PG_RETURN_FLOAT8(prediction);
-	}
-	else
+	} else
 	{
-		elog(DEBUG1, "ridge: GPU prediction failed or not available, trying CPU");
+		elog(DEBUG1,
+			"ridge: GPU prediction failed or not available, trying "
+			"CPU");
 	}
-	
+
 	/* Load model from catalog */
 	if (!ridge_load_model_from_catalog(model_id, &model))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("ridge: model %d not found",
-					model_id)));
-	
+				errmsg("ridge: model %d not found", model_id)));
+
 	/* Validate feature dimension */
 	if (model->n_features > 0 && features->dim != model->n_features)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("ridge: feature dimension mismatch "
-					"(expected %d, got %d)",
+				       "(expected %d, got %d)",
 					model->n_features,
 					features->dim)));
-	
+
 	/* Compute prediction: y = intercept + coef1*x1 + coef2*x2 + ... */
 	prediction = model->intercept;
 	for (i = 0; i < model->n_features && i < features->dim; i++)
 		prediction += model->coefficients[i] * features->data[i];
-	
+
 	/* Cleanup */
 	if (model != NULL)
 	{
@@ -1244,7 +1290,7 @@ predict_ridge_regression_model_id(PG_FUNCTION_ARGS)
 			pfree(model->coefficients);
 		pfree(model);
 	}
-	
+
 	PG_RETURN_FLOAT8(prediction);
 }
 
@@ -1260,16 +1306,16 @@ PG_FUNCTION_INFO_V1(train_lasso_regression);
 Datum
 train_lasso_regression(PG_FUNCTION_ARGS)
 {
-	text	   *table_name;
-	text	   *feature_col;
-	text	   *target_col;
-	double		lambda = PG_GETARG_FLOAT8(3);  /* Regularization parameter */
-	int			max_iters = PG_NARGS() > 4 ? PG_GETARG_INT32(4) : 1000;
-	char	   *tbl_str;
-	char	   *feat_str;
-	char	   *targ_str;
-	int			nvec = 0;
-	int			dim = 0;
+	text *table_name;
+	text *feature_col;
+	text *target_col;
+	double lambda = PG_GETARG_FLOAT8(3); /* Regularization parameter */
+	int max_iters = PG_NARGS() > 4 ? PG_GETARG_INT32(4) : 1000;
+	char *tbl_str;
+	char *feat_str;
+	char *targ_str;
+	int nvec = 0;
+	int dim = 0;
 	LassoDataset dataset;
 	const char *quoted_tbl;
 	const char *quoted_feat;
@@ -1279,35 +1325,39 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 	Jsonb *gpu_hyperparams = NULL;
 	StringInfoData hyperbuf;
 	int32 model_id = 0;
-	
+
 	table_name = PG_GETARG_TEXT_PP(0);
 	feature_col = PG_GETARG_TEXT_PP(1);
 	target_col = PG_GETARG_TEXT_PP(2);
-	
+
 	if (lambda < 0.0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("lasso: lambda must be non-negative, got %.6f", lambda)));
+				errmsg("lasso: lambda must be non-negative, "
+				       "got %.6f",
+					lambda)));
 	if (max_iters <= 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("lasso: max_iters must be positive, got %d", max_iters)));
-	
+				errmsg("lasso: max_iters must be positive, got "
+				       "%d",
+					max_iters)));
+
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
 	targ_str = text_to_cstring(target_col);
-	
+
 	lasso_dataset_init(&dataset);
-	
+
 	quoted_tbl = quote_identifier(tbl_str);
 	quoted_feat = quote_identifier(feat_str);
 	quoted_target = quote_identifier(targ_str);
-	
+
 	lasso_dataset_load(quoted_tbl, quoted_feat, quoted_target, &dataset);
-	
+
 	nvec = dataset.n_samples;
 	dim = dataset.feature_dim;
-	
+
 	if (nvec < 10)
 	{
 		lasso_dataset_free(&dataset);
@@ -1315,39 +1365,44 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 		pfree(feat_str);
 		pfree(targ_str);
 		ereport(ERROR,
-			(errmsg("Need at least 10 samples for Lasso regression, have %d", nvec)));
+			(errmsg("Need at least 10 samples for Lasso "
+				"regression, have %d",
+				nvec)));
 	}
-	
+
 	/* Try GPU training first */
 	if (neurondb_gpu_is_available() && nvec > 0 && dim > 0)
 	{
 		initStringInfo(&hyperbuf);
-		appendStringInfo(&hyperbuf, "{\"lambda\":%.6f,\"max_iters\":%d}", lambda, max_iters);
+		appendStringInfo(&hyperbuf,
+			"{\"lambda\":%.6f,\"max_iters\":%d}",
+			lambda,
+			max_iters);
 		gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(
 			jsonb_in, CStringGetDatum(hyperbuf.data)));
-		
+
 		if (ndb_gpu_try_train_model("lasso",
-			NULL,
-			NULL,
-			tbl_str,
-			targ_str,
-			NULL,
-			0,
-			gpu_hyperparams,
-			dataset.features,
-			dataset.targets,
-			nvec,
-			dim,
-			0,
-			&gpu_result,
-			&gpu_err)
+			    NULL,
+			    NULL,
+			    tbl_str,
+			    targ_str,
+			    NULL,
+			    0,
+			    gpu_hyperparams,
+			    dataset.features,
+			    dataset.targets,
+			    nvec,
+			    dim,
+			    0,
+			    &gpu_result,
+			    &gpu_err)
 			&& gpu_result.spec.model_data != NULL)
 		{
 			MLCatalogModelSpec spec;
-			
+
 			elog(NOTICE, "lasso: GPU training succeeded");
 			spec = gpu_result.spec;
-			
+
 			if (spec.training_table == NULL)
 				spec.training_table = tbl_str;
 			if (spec.training_column == NULL)
@@ -1357,12 +1412,12 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 				spec.parameters = gpu_hyperparams;
 				gpu_hyperparams = NULL;
 			}
-			
+
 			spec.algorithm = "lasso";
 			spec.model_type = "regression";
-			
+
 			model_id = ml_catalog_register_model(&spec);
-			
+
 			if (gpu_err != NULL)
 				pfree(gpu_err);
 			if (gpu_hyperparams != NULL)
@@ -1372,12 +1427,12 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
-			
+
 			PG_RETURN_INT32(model_id);
-		}
-		else
+		} else
 		{
-			elog(DEBUG1, "lasso: GPU training unavailable, using CPU");
+			elog(DEBUG1,
+				"lasso: GPU training unavailable, using CPU");
 			if (gpu_err != NULL)
 				pfree(gpu_err);
 			if (gpu_hyperparams != NULL)
@@ -1385,85 +1440,91 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 			ndb_gpu_free_train_result(&gpu_result);
 		}
 	}
-	
+
 	/* CPU training path - Coordinate Descent */
 	{
-		double	   *weights = NULL;
-		double	   *weights_old = NULL;
-		double	   *residuals = NULL;
-		double		y_mean = 0.0;
-		int			iter, i, j;
-		bool		converged = false;
+		double *weights = NULL;
+		double *weights_old = NULL;
+		double *residuals = NULL;
+		double y_mean = 0.0;
+		int iter, i, j;
+		bool converged = false;
 		LassoModel *model;
 		bytea *model_blob;
 		Jsonb *metrics_json;
 		StringInfoData metricsbuf;
-		
+
 		/* Compute mean of targets */
 		for (i = 0; i < nvec; i++)
 			y_mean += dataset.targets[i];
 		y_mean /= nvec;
-		
+
 		/* Initialize weights and residuals */
-		weights = (double *) palloc0(sizeof(double) * dim);
-		weights_old = (double *) palloc(sizeof(double) * dim);
-		residuals = (double *) palloc(sizeof(double) * nvec);
-		
+		weights = (double *)palloc0(sizeof(double) * dim);
+		weights_old = (double *)palloc(sizeof(double) * dim);
+		residuals = (double *)palloc(sizeof(double) * nvec);
+
 		/* Initialize residuals */
 		for (i = 0; i < nvec; i++)
 			residuals[i] = dataset.targets[i] - y_mean;
-		
+
 		/* Coordinate descent */
 		for (iter = 0; iter < max_iters && !converged; iter++)
 		{
-			double		diff;
+			double diff;
 
 			memcpy(weights_old, weights, sizeof(double) * dim);
-			
+
 			/* Update each coordinate */
 			for (j = 0; j < dim; j++)
 			{
-				double		rho = 0.0;
-				double		z = 0.0;
-				double		old_weight;
-				float		*feature_col_j;
-				
+				double rho = 0.0;
+				double z = 0.0;
+				double old_weight;
+				float *feature_col_j;
+
 				/* Compute rho = X_j^T * residuals */
 				/* Access feature column j using 1D indexing: features[i * dim + j] */
 				for (i = 0; i < nvec; i++)
 				{
-					feature_col_j = dataset.features + (i * dim + j);
+					feature_col_j = dataset.features
+						+ (i * dim + j);
 					rho += (*feature_col_j) * residuals[i];
 				}
-				
+
 				/* Compute z = X_j^T * X_j */
 				for (i = 0; i < nvec; i++)
 				{
-					feature_col_j = dataset.features + (i * dim + j);
-					z += (*feature_col_j) * (*feature_col_j);
+					feature_col_j = dataset.features
+						+ (i * dim + j);
+					z += (*feature_col_j)
+						* (*feature_col_j);
 				}
-				
+
 				if (z < 1e-10)
 					continue;
-				
+
 				/* Soft thresholding */
 				old_weight = weights[j];
-				weights[j] = soft_threshold(rho / z, lambda / z);
-				
+				weights[j] =
+					soft_threshold(rho / z, lambda / z);
+
 				/* Update residuals */
 				if (weights[j] != old_weight)
 				{
 					double weight_diff;
-					
+
 					weight_diff = weights[j] - old_weight;
 					for (i = 0; i < nvec; i++)
 					{
-						feature_col_j = dataset.features + (i * dim + j);
-						residuals[i] -= (*feature_col_j) * weight_diff;
+						feature_col_j = dataset.features
+							+ (i * dim + j);
+						residuals[i] -= (*feature_col_j)
+							* weight_diff;
 					}
 				}
 			}
-			
+
 			/* Check convergence */
 			diff = 0.0;
 			for (j = 0; j < dim; j++)
@@ -1471,19 +1532,23 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 				double d = weights[j] - weights_old[j];
 				diff += d * d;
 			}
-			
+
 			if (sqrt(diff) < 1e-6)
 			{
 				converged = true;
-				elog(DEBUG1, "lasso: converged after %d iterations", iter + 1);
+				elog(DEBUG1,
+					"lasso: converged after %d iterations",
+					iter + 1);
 			}
 		}
-		
+
 		if (!converged)
 		{
-			elog(DEBUG1, "lasso: did not converge after %d iterations", max_iters);
+			elog(DEBUG1,
+				"lasso: did not converge after %d iterations",
+				max_iters);
 		}
-		
+
 		/* Build LassoModel */
 		model = (LassoModel *)palloc0(sizeof(LassoModel));
 		model->n_features = dim;
@@ -1494,38 +1559,42 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 		model->coefficients = (double *)palloc(sizeof(double) * dim);
 		for (i = 0; i < dim; i++)
 			model->coefficients[i] = weights[i];
-		
+
 		/* Compute metrics (R², MSE, MAE) */
 		{
 			double ss_tot = 0.0;
 			double ss_res = 0.0;
 			double mse = 0.0;
 			double mae = 0.0;
-			
+
 			for (i = 0; i < nvec; i++)
 			{
 				float *row = dataset.features + (i * dim);
 				double y_pred = model->intercept;
 				double error;
 				int feat_idx;
-				
+
 				for (feat_idx = 0; feat_idx < dim; feat_idx++)
-					y_pred += model->coefficients[feat_idx] * row[feat_idx];
-				
+					y_pred += model->coefficients[feat_idx]
+						* row[feat_idx];
+
 				error = dataset.targets[i] - y_pred;
 				mse += error * error;
 				mae += fabs(error);
 				ss_res += error * error;
-				ss_tot += (dataset.targets[i] - y_mean) * (dataset.targets[i] - y_mean);
+				ss_tot += (dataset.targets[i] - y_mean)
+					* (dataset.targets[i] - y_mean);
 			}
-			
+
 			mse /= nvec;
 			mae /= nvec;
-			model->r_squared = (ss_tot > 0.0) ? (1.0 - (ss_res / ss_tot)) : 0.0;
+			model->r_squared = (ss_tot > 0.0)
+				? (1.0 - (ss_res / ss_tot))
+				: 0.0;
 			model->mse = mse;
 			model->mae = mae;
 		}
-		
+
 		/* Validate model before serialization */
 		if (model->n_features <= 0 || model->n_features > 10000)
 		{
@@ -1541,15 +1610,22 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 			pfree(targ_str);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("lasso: model.n_features is invalid (%d) before serialization", model->n_features)));
+					errmsg("lasso: model.n_features is "
+					       "invalid (%d) before "
+					       "serialization",
+						model->n_features)));
 		}
-		
-		elog(DEBUG1, "lasso: serializing model with n_features=%d, n_samples=%d, lambda=%.6f",
-			model->n_features, model->n_samples, model->lambda);
-		
+
+		elog(DEBUG1,
+			"lasso: serializing model with n_features=%d, "
+			"n_samples=%d, lambda=%.6f",
+			model->n_features,
+			model->n_samples,
+			model->lambda);
+
 		/* Serialize model */
 		model_blob = lasso_model_serialize(model);
-		
+
 		/* Build metrics JSON */
 		initStringInfo(&metricsbuf);
 		appendStringInfo(&metricsbuf,
@@ -1569,14 +1645,14 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 			model->r_squared,
 			model->mse,
 			model->mae);
-		
-		metrics_json = DatumGetJsonbP(
-			DirectFunctionCall1(jsonb_in, CStringGetDatum(metricsbuf.data)));
-		
+
+		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+			jsonb_in, CStringGetDatum(metricsbuf.data)));
+
 		/* Register in catalog */
 		{
 			MLCatalogModelSpec spec;
-			
+
 			memset(&spec, 0, sizeof(MLCatalogModelSpec));
 			spec.algorithm = "lasso";
 			spec.model_type = "regression";
@@ -1584,19 +1660,24 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 			spec.training_column = targ_str;
 			spec.model_data = model_blob;
 			spec.metrics = metrics_json;
-			
+
 			/* Build hyperparameters JSON */
 			{
 				StringInfoData hyperbuf_cpu;
 				initStringInfo(&hyperbuf_cpu);
-				appendStringInfo(&hyperbuf_cpu, "{\"lambda\":%.6f,\"max_iters\":%d}", lambda, max_iters);
+				appendStringInfo(&hyperbuf_cpu,
+					"{\"lambda\":%.6f,\"max_iters\":%d}",
+					lambda,
+					max_iters);
 				spec.parameters = DatumGetJsonbP(
-					DirectFunctionCall1(jsonb_in, CStringGetDatum(hyperbuf_cpu.data)));
+					DirectFunctionCall1(jsonb_in,
+						CStringGetDatum(
+							hyperbuf_cpu.data)));
 			}
-			
+
 			model_id = ml_catalog_register_model(&spec);
 		}
-		
+
 		/* Cleanup */
 		pfree(weights);
 		pfree(weights_old);
@@ -1608,7 +1689,7 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
-		
+
 		PG_RETURN_INT32(model_id);
 	}
 }
@@ -1628,53 +1709,55 @@ predict_lasso_regression_model_id(PG_FUNCTION_ARGS)
 	LassoModel *model = NULL;
 	double prediction;
 	int i;
-	
+
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("lasso: model_id is required")));
-	
+
 	model_id = PG_GETARG_INT32(0);
-	
+
 	if (PG_ARGISNULL(1))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("lasso: features vector is required")));
-	
+
 	features = PG_GETARG_VECTOR_P(1);
-	
+
 	/* Try GPU prediction first */
 	if (lasso_try_gpu_predict_catalog(model_id, features, &prediction))
 	{
-		elog(DEBUG1, "lasso: GPU prediction succeeded, prediction=%.6f", prediction);
+		elog(DEBUG1,
+			"lasso: GPU prediction succeeded, prediction=%.6f",
+			prediction);
 		PG_RETURN_FLOAT8(prediction);
-	}
-	else
+	} else
 	{
-		elog(DEBUG1, "lasso: GPU prediction failed or not available, trying CPU");
+		elog(DEBUG1,
+			"lasso: GPU prediction failed or not available, trying "
+			"CPU");
 	}
-	
+
 	/* Load model from catalog */
 	if (!lasso_load_model_from_catalog(model_id, &model))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("lasso: model %d not found",
-					model_id)));
-	
+				errmsg("lasso: model %d not found", model_id)));
+
 	/* Validate feature dimension */
 	if (model->n_features > 0 && features->dim != model->n_features)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("lasso: feature dimension mismatch "
-					"(expected %d, got %d)",
+				       "(expected %d, got %d)",
 					model->n_features,
 					features->dim)));
-	
+
 	/* Compute prediction: y = intercept + coef1*x1 + coef2*x2 + ... */
 	prediction = model->intercept;
 	for (i = 0; i < model->n_features && i < features->dim; i++)
 		prediction += model->coefficients[i] * features->data[i];
-	
+
 	/* Cleanup */
 	if (model != NULL)
 	{
@@ -1682,7 +1765,7 @@ predict_lasso_regression_model_id(PG_FUNCTION_ARGS)
 			pfree(model->coefficients);
 		pfree(model);
 	}
-	
+
 	PG_RETURN_FLOAT8(prediction);
 }
 
@@ -1697,30 +1780,33 @@ PG_FUNCTION_INFO_V1(train_elastic_net);
 Datum
 train_elastic_net(PG_FUNCTION_ARGS)
 {
-	text	   *table_name = PG_GETARG_TEXT_PP(0);
-	text	   *feature_col = PG_GETARG_TEXT_PP(1);
-	text	   *target_col = PG_GETARG_TEXT_PP(2);
-	double		alpha = PG_GETARG_FLOAT8(3);  /* Overall regularization strength */
-	double		l1_ratio = PG_GETARG_FLOAT8(4);  /* L1 vs L2 ratio (0=Ridge, 1=Lasso) */
-	
-	Datum	   *result_datums;
-	ArrayType  *result_array;
-	
+	text *table_name = PG_GETARG_TEXT_PP(0);
+	text *feature_col = PG_GETARG_TEXT_PP(1);
+	text *target_col = PG_GETARG_TEXT_PP(2);
+	double alpha =
+		PG_GETARG_FLOAT8(3); /* Overall regularization strength */
+	double l1_ratio =
+		PG_GETARG_FLOAT8(4); /* L1 vs L2 ratio (0=Ridge, 1=Lasso) */
+
+	Datum *result_datums;
+	ArrayType *result_array;
+
 	/* Placeholder implementation - would combine Ridge and Lasso */
 	elog(NOTICE, "Elastic Net: alpha=%.4f, l1_ratio=%.4f", alpha, l1_ratio);
-	elog(NOTICE, "Training on table: %s, features: %s, target: %s",
-		 text_to_cstring(table_name),
-		 text_to_cstring(feature_col),
-		 text_to_cstring(target_col));
-	
+	elog(NOTICE,
+		"Training on table: %s, features: %s, target: %s",
+		text_to_cstring(table_name),
+		text_to_cstring(feature_col),
+		text_to_cstring(target_col));
+
 	/* Return dummy coefficients */
-	result_datums = (Datum *) palloc(sizeof(Datum) * 6);
-	result_datums[0] = Float8GetDatum(0.0);  /* bias */
+	result_datums = (Datum *)palloc(sizeof(Datum) * 6);
+	result_datums[0] = Float8GetDatum(0.0); /* bias */
 	for (int i = 1; i < 6; i++)
 		result_datums[i] = Float8GetDatum(0.1);
-	
-	result_array = construct_array(result_datums, 6, FLOAT8OID, 8, FLOAT8PASSBYVAL, 'd');
-	
+
+	result_array = construct_array(
+		result_datums, 6, FLOAT8OID, 8, FLOAT8PASSBYVAL, 'd');
+
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
-

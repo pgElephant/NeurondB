@@ -9,13 +9,14 @@
 static void
 gtree_grow(GTree *t, int need_extra)
 {
-	int32		need;
-	int32		newcap;
+	int32 need;
+	int32 newcap;
 
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_grow: NULL tree")));
 	if (need_extra <= 0)
-		ereport(ERROR, (errmsg("gtree_grow: need_extra must be positive")));
+		ereport(ERROR,
+			(errmsg("gtree_grow: need_extra must be positive")));
 
 	if (t->count < 0 || t->count > GTREE_MAX_NODES)
 		ereport(ERROR, (errmsg("gtree_grow: tree node count corrupt")));
@@ -36,8 +37,8 @@ gtree_grow(GTree *t, int need_extra)
 	if (newcap < t->count || newcap > GTREE_MAX_NODES)
 		ereport(ERROR, (errmsg("gtree_grow: node cap overflow")));
 
-	t->nodes = (GTreeNode *) repalloc(t->nodes,
-					  (Size) newcap * sizeof(GTreeNode));
+	t->nodes = (GTreeNode *)repalloc(
+		t->nodes, (Size)newcap * sizeof(GTreeNode));
 	if (!t->nodes)
 		ereport(ERROR, (errmsg("gtree_grow: out of memory")));
 
@@ -50,22 +51,19 @@ gtree_grow(GTree *t, int need_extra)
 GTree *
 gtree_create(const char *name, Size initial_cap)
 {
-	MemoryContext	parent = CurrentMemoryContext;
-	MemoryContext	ctx;
-	GTree		   *t;
+	MemoryContext parent = CurrentMemoryContext;
+	MemoryContext ctx;
+	GTree *t;
 
-	ctx = AllocSetContextCreate(parent,
-				   "gtree",
-				   ALLOCSET_DEFAULT_SIZES);
+	ctx = AllocSetContextCreate(parent, "gtree", ALLOCSET_DEFAULT_SIZES);
 	if (name != NULL)
 	{
-		MemoryContextSetIdentifier(ctx,
-				MemoryContextStrdup(ctx, name));
+		MemoryContextSetIdentifier(ctx, MemoryContextStrdup(ctx, name));
 	}
 
 	MemoryContextSwitchTo(ctx);
 
-	t = (GTree *) palloc0(sizeof(GTree));
+	t = (GTree *)palloc0(sizeof(GTree));
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_create: out of memory")));
 
@@ -78,12 +76,15 @@ gtree_create(const char *name, Size initial_cap)
 
 	if (initial_cap > 0)
 	{
-		if (initial_cap > (Size) GTREE_MAX_NODES)
-			ereport(ERROR, (errmsg("gtree: initial cap too large")));
-		t->nodes = (GTreeNode *) palloc0(initial_cap * sizeof(GTreeNode));
+		if (initial_cap > (Size)GTREE_MAX_NODES)
+			ereport(ERROR,
+				(errmsg("gtree: initial cap too large")));
+		t->nodes =
+			(GTreeNode *)palloc0(initial_cap * sizeof(GTreeNode));
 		if (!t->nodes)
-			ereport(ERROR, (errmsg("gtree_create: node array OOM")));
-		t->capacity = (int32) initial_cap;
+			ereport(ERROR,
+				(errmsg("gtree_create: node array OOM")));
+		t->capacity = (int32)initial_cap;
 	}
 
 	MemoryContextSwitchTo(parent);
@@ -108,7 +109,7 @@ gtree_free(GTree *t)
 int
 gtree_add_leaf(GTree *t, double value)
 {
-	int	idx;
+	int idx;
 
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_add_leaf: NULL tree")));
@@ -135,7 +136,7 @@ gtree_add_leaf(GTree *t, double value)
 int
 gtree_add_split(GTree *t, int feature_idx, double threshold)
 {
-	int	idx;
+	int idx;
 
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_add_split: NULL tree")));
@@ -161,10 +162,10 @@ gtree_add_split(GTree *t, int feature_idx, double threshold)
 static int
 gtree_depth_dfs(const GTree *t, int node, int depth, bool *seen)
 {
-	int	l;
-	int	r;
-	int	dl;
-	int	dr;
+	int l;
+	int r;
+	int dl;
+	int dr;
 
 	if (!t || !seen)
 		ereport(ERROR, (errmsg("gtree_depth_dfs: NULL input")));
@@ -186,7 +187,9 @@ gtree_depth_dfs(const GTree *t, int node, int depth, bool *seen)
 	r = t->nodes[node].right;
 
 	if (l < 0 || r < 0)
-		ereport(ERROR, (errmsg("gtree: internal node %d missing child", node)));
+		ereport(ERROR,
+			(errmsg("gtree: internal node %d missing child",
+				node)));
 	if (l >= t->count || r >= t->count)
 		ereport(ERROR, (errmsg("gtree: child index OOB")));
 
@@ -246,8 +249,8 @@ gtree_set_root(GTree *t, int node_idx)
 void
 gtree_validate(const GTree *t)
 {
-	bool   *seen;
-	int	depth;
+	bool *seen;
+	int depth;
 
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_validate: NULL tree")));
@@ -256,14 +259,17 @@ gtree_validate(const GTree *t)
 	if (t->root < 0 || t->root >= t->count)
 		ereport(ERROR, (errmsg("gtree: invalid root")));
 
-	seen = (bool *) palloc0((Size) t->count);
+	seen = (bool *)palloc0((Size)t->count);
 	if (!seen)
-		ereport(ERROR, (errmsg("gtree_validate: out of memory for seen array")));
+		ereport(ERROR,
+			(errmsg("gtree_validate: out of memory for seen "
+				"array")));
 	depth = gtree_depth_dfs(t, t->root, 0, seen);
 	pfree(seen);
 
 	if (depth > GTREE_MAX_DEPTH)
-		ereport(ERROR, (errmsg("gtree: depth %d exceeds limit", depth)));
+		ereport(ERROR,
+			(errmsg("gtree: depth %d exceeds limit", depth)));
 }
 
 /*
@@ -300,4 +306,3 @@ gtree_count(const GTree *t)
 		return 0;
 	return t->count;
 }
-

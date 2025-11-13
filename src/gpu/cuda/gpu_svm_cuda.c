@@ -53,7 +53,8 @@ ndb_cuda_svm_pack_model(const SVMModel *model,
 
 	payload_bytes = sizeof(NdbCudaSvmModelHeader)
 		+ sizeof(float) * (size_t)model->n_support_vectors
-		+ sizeof(float) * (size_t)model->n_support_vectors * (size_t)model->n_features
+		+ sizeof(float) * (size_t)model->n_support_vectors
+			* (size_t)model->n_features
 		+ sizeof(int32) * (size_t)model->n_support_vectors;
 
 	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
@@ -70,16 +71,21 @@ ndb_cuda_svm_pack_model(const SVMModel *model,
 
 	alphas_dest = (float *)(base + sizeof(NdbCudaSvmModelHeader));
 	sv_dest = alphas_dest + model->n_support_vectors;
-	indices_dest = (int32 *)(sv_dest + model->n_support_vectors * model->n_features);
+	indices_dest = (int32 *)(sv_dest
+		+ model->n_support_vectors * model->n_features);
 
-	if (model->alphas != NULL && model->support_vectors != NULL && model->support_vector_indices != NULL)
+	if (model->alphas != NULL && model->support_vectors != NULL
+		&& model->support_vector_indices != NULL)
 	{
 		for (i = 0; i < model->n_support_vectors; i++)
 		{
 			alphas_dest[i] = (float)model->alphas[i];
 			indices_dest[i] = model->support_vector_indices[i];
 			for (j = 0; j < model->n_features; j++)
-				sv_dest[i * model->n_features + j] = model->support_vectors[i * model->n_features + j];
+				sv_dest[i * model->n_features + j] =
+					model->support_vectors[i
+							* model->n_features
+						+ j];
 		}
 	}
 
@@ -103,8 +109,8 @@ ndb_cuda_svm_pack_model(const SVMModel *model,
 			model->C,
 			model->max_iters);
 
-		metrics_json = DatumGetJsonbP(
-			DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+			jsonb_in, CStringGetDatum(buf.data)));
 		pfree(buf.data);
 		*metrics = metrics_json;
 	}
@@ -151,25 +157,31 @@ ndb_cuda_svm_predict(const bytea *model_data,
 	if (model_data == NULL || input == NULL || class_out == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for CUDA SVM predict");
+			*errstr = pstrdup(
+				"invalid parameters for CUDA SVM predict");
 		return -1;
 	}
 
 	/* Detoast the bytea to ensure we have the full data */
-	detoasted = (const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
-	
+	detoasted =
+		(const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+
 	hdr = (const NdbCudaSvmModelHeader *)VARDATA(detoasted);
 	if (hdr->feature_dim != feature_dim)
 	{
 		if (errstr)
-			*errstr = psprintf("feature dimension mismatch: model has %d, input has %d", 
-				hdr->feature_dim, feature_dim);
+			*errstr = psprintf("feature dimension mismatch: model "
+					   "has %d, input has %d",
+				hdr->feature_dim,
+				feature_dim);
 		return -1;
 	}
 
-	alphas = (const float *)((const char *)hdr + sizeof(NdbCudaSvmModelHeader));
+	alphas = (const float *)((const char *)hdr
+		+ sizeof(NdbCudaSvmModelHeader));
 	support_vectors = alphas + hdr->n_support_vectors;
-	indices = (const int32 *)(support_vectors + hdr->n_support_vectors * hdr->feature_dim);
+	indices = (const int32 *)(support_vectors
+		+ hdr->n_support_vectors * hdr->feature_dim);
 
 	/* Compute prediction: f(x) = Σ(alpha_i * y_i * K(x_i, x)) + bias */
 	prediction = hdr->bias;
@@ -177,11 +189,11 @@ ndb_cuda_svm_predict(const bytea *model_data,
 	{
 		double kernel_val = 0.0;
 		const float *sv = support_vectors + (i * feature_dim);
-		
+
 		/* Linear kernel: K(x_i, x) = x_i · x */
 		for (j = 0; j < feature_dim; j++)
 			kernel_val += sv[j] * input[j];
-		
+
 		/* Note: y_i is stored implicitly via label sign in training */
 		/* For now, assume positive label for all support vectors */
 		prediction += alphas[i] * kernel_val;
@@ -195,4 +207,3 @@ ndb_cuda_svm_predict(const bytea *model_data,
 }
 
 #endif /* NDB_GPU_CUDA */
-

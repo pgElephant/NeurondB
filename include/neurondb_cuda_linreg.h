@@ -37,7 +37,7 @@ typedef struct NdbCudaLinRegModelHeader
 	int32 feature_dim;
 	int32 n_samples;
 	float intercept;
-	float *coefficients;  /* Array of feature_dim floats */
+	float *coefficients; /* Array of feature_dim floats */
 	double r_squared;
 	double mse;
 	double mae;
@@ -83,4 +83,3 @@ extern void ndb_cuda_linreg_predict_kernel(const float *input,
 #endif
 
 #endif /* NEURONDB_CUDA_LINREG_H */
-

@@ -85,7 +85,7 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 
 	/* This is a placeholder implementation */
 	/* Full implementation would require temporal SQL queries */
-	
+
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
 	timestamp_column = PG_GETARG_TEXT_PP(2);
@@ -95,20 +95,25 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 	col_str = text_to_cstring(vector_column);
 	ts_col_str = text_to_cstring(timestamp_column);
 
-	elog(NOTICE, "neurondb: Drift monitoring over time for table %s (column %s, timestamp %s)",
-		 tbl_str, col_str, ts_col_str);
+	elog(NOTICE,
+		"neurondb: Drift monitoring over time for table %s (column %s, "
+		"timestamp %s)",
+		tbl_str,
+		col_str,
+		ts_col_str);
 
 	/* For now, return a simple message */
 	/* Full implementation would use SPI to query windowed data */
-	
+
 	pfree(tbl_str);
 	pfree(col_str);
 	pfree(ts_col_str);
 
 	ereport(NOTICE,
-			(errmsg("Temporal drift monitoring requires complex SPI queries"),
-			 errhint("Use detect_centroid_drift() for snapshot comparisons")));
+		(errmsg("Temporal drift monitoring requires complex SPI "
+			"queries"),
+			errhint("Use detect_centroid_drift() for snapshot "
+				"comparisons")));
 
 	PG_RETURN_NULL();
 }
-

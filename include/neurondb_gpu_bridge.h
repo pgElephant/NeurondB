@@ -15,10 +15,10 @@
 typedef struct MLGpuTrainResult
 {
 	MLCatalogModelSpec spec;
-	bytea	   *payload;
-	Jsonb	   *metadata;
-	Jsonb	   *metrics;
-	int32		model_id;
+	bytea *payload;
+	Jsonb *metadata;
+	Jsonb *metrics;
+	int32 model_id;
 } MLGpuTrainResult;
 
 extern bool ndb_gpu_try_train_model(const char *algorithm,
@@ -40,4 +40,3 @@ extern bool ndb_gpu_try_train_model(const char *algorithm,
 extern void ndb_gpu_free_train_result(MLGpuTrainResult *result);
 
 #endif /* NEURONDB_GPU_BRIDGE_H */
-

@@ -7,263 +7,316 @@
 #include "neurondb_llm.h"
 
 /* Helper for dynamic memory buffer for curl writes */
-typedef struct { char *data; size_t len; } MemBuf;
+typedef struct
+{
+	char *data;
+	size_t len;
+} MemBuf;
 
 static size_t
 write_cb(void *ptr, size_t size, size_t nmemb, void *userdata)
 {
-    MemBuf *m = (MemBuf *) userdata;
-    size_t n = size * nmemb;
-    m->data = repalloc(m->data, m->len + n + 1);
-    memcpy(m->data + m->len, ptr, n);
-    m->len += n; m->data[m->len] = '\0';
-    return n;
+	MemBuf *m = (MemBuf *)userdata;
+	size_t n = size * nmemb;
+	m->data = repalloc(m->data, m->len + n + 1);
+	memcpy(m->data + m->len, ptr, n);
+	m->len += n;
+	m->data[m->len] = '\0';
+	return n;
 }
 
 /* HTTP POST with JSON body, outputs body and HTTP status code */
 static int
-http_post_json(const char *url, const char *api_key, const char *json_body,
-               int timeout_ms, char **out)
+http_post_json(const char *url,
+	const char *api_key,
+	const char *json_body,
+	int timeout_ms,
+	char **out)
 {
-    CURL *curl = curl_easy_init();
-    struct curl_slist *headers = NULL;
-    MemBuf buf = {palloc0(1), 0};
-    long code = 0;
-    CURLcode res;
-    if (!curl) return -1;
+	CURL *curl = curl_easy_init();
+	struct curl_slist *headers = NULL;
+	MemBuf buf = { palloc0(1), 0 };
+	long code = 0;
+	CURLcode res;
+	if (!curl)
+		return -1;
 
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    if (api_key && api_key[0])
-    {
-        StringInfoData h;
-        initStringInfo(&h);
-        appendStringInfo(&h, "Authorization: Bearer %s", api_key);
-        headers = curl_slist_append(headers, h.data);
-    }
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "neurondb-llm/1.0");
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	if (api_key && api_key[0])
+	{
+		StringInfoData h;
+		initStringInfo(&h);
+		appendStringInfo(&h, "Authorization: Bearer %s", api_key);
+		headers = curl_slist_append(headers, h.data);
+	}
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "neurondb-llm/1.0");
 
-    res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-        if (buf.data)
-            pfree(buf.data);
-        return -1;
-    }
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
+	res = curl_easy_perform(curl);
+	if (res != CURLE_OK)
+	{
+		curl_slist_free_all(headers);
+		curl_easy_cleanup(curl);
+		if (buf.data)
+			pfree(buf.data);
+		return -1;
+	}
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
 
-    *out = buf.data;
-    return (int) code;
+	*out = buf.data;
+	return (int)code;
 }
 
 /* Extracts text field from HuggingFace inference API responses */
 static char *
 extract_hf_text(const char *json)
 {
-    /* The text generation output is a top-level list of { "generated_text": ... } objects.
+	/* The text generation output is a top-level list of { "generated_text": ... } objects.
      * Example: [{"generated_text":"result"}], so we parse it.
      * The response might also be { "error": ... }.
      */
-    if (!json || json[0] == '\0')
-        return NULL;
-    if (strncmp(json, "{\"error\"", 8) == 0)
-        return NULL;
+	if (!json || json[0] == '\0')
+		return NULL;
+	if (strncmp(json, "{\"error\"", 8) == 0)
+		return NULL;
 
-    /* Find first "generated_text":"..." pattern */
-    const char *key = "\"generated_text\":";
-    char *p = strstr(json, key);
-    if (!p)
-        return NULL;
-    /* Find the first quote after the key */
-    p = strchr(p + strlen(key), '"');
-    if (!p) return NULL;
-    p++;
-    char *q = strchr(p, '"');
-    if (!q) return NULL;
-    size_t len = q - p;
-    char *out = (char *) palloc(len + 1);
-    memcpy(out, p, len);
-    out[len] = '\0';
-    return out;
+	/* Find first "generated_text":"..." pattern */
+	const char *key = "\"generated_text\":";
+	char *p = strstr(json, key);
+	if (!p)
+		return NULL;
+	/* Find the first quote after the key */
+	p = strchr(p + strlen(key), '"');
+	if (!p)
+		return NULL;
+	p++;
+	char *q = strchr(p, '"');
+	if (!q)
+		return NULL;
+	size_t len = q - p;
+	char *out = (char *)palloc(len + 1);
+	memcpy(out, p, len);
+	out[len] = '\0';
+	return out;
 }
 
 int
-ndb_hf_complete(const NdbLLMConfig *cfg, const char *prompt,
-                const char *params_json, NdbLLMResp *out)
+ndb_hf_complete(const NdbLLMConfig *cfg,
+	const char *prompt,
+	const char *params_json,
+	NdbLLMResp *out)
 {
-    StringInfoData url, body;
-    initStringInfo(&url); 
-    initStringInfo(&body);
+	StringInfoData url, body;
+	initStringInfo(&url);
+	initStringInfo(&body);
 
-    appendStringInfo(&url, "%s/models/%s", cfg->endpoint, cfg->model);
-    appendStringInfo(&body, "{\"inputs\":%s,\"parameters\":%s}",
-                     quote_literal_cstr(prompt), params_json ? params_json : "{}");
+	appendStringInfo(&url, "%s/models/%s", cfg->endpoint, cfg->model);
+	appendStringInfo(&body,
+		"{\"inputs\":%s,\"parameters\":%s}",
+		quote_literal_cstr(prompt),
+		params_json ? params_json : "{}");
 
-    out->http_status = http_post_json(url.data, cfg->api_key, body.data, cfg->timeout_ms, &out->json);
+	out->http_status = http_post_json(
+		url.data, cfg->api_key, body.data, cfg->timeout_ms, &out->json);
 
-    out->text = NULL;
+	out->text = NULL;
 
-    if (out->json && out->http_status >= 200 && out->http_status < 300)
-    {
-        /* Try to parse a "generated_text" value out */
-        char *t = extract_hf_text(out->json);
-        if (t)
-            out->text = t;
-        else
-            out->text = pstrdup(out->json);
-    }
-    else if (out->json)
-    {
-        out->text = NULL;
-    }
+	if (out->json && out->http_status >= 200 && out->http_status < 300)
+	{
+		/* Try to parse a "generated_text" value out */
+		char *t = extract_hf_text(out->json);
+		if (t)
+			out->text = t;
+		else
+			out->text = pstrdup(out->json);
+	} else if (out->json)
+	{
+		out->text = NULL;
+	}
 
-    return (out->http_status >= 200 && out->http_status < 300) ? 0 : -1;
+	return (out->http_status >= 200 && out->http_status < 300) ? 0 : -1;
 }
 
 /* Extracts a flat float vector from HF embedding API JSON response */
 static bool
 parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 {
-    /* Response is: [[float, float, ...]] */
-    if (!json)
-        return false;
+	/* Response is: [[float, float, ...]] */
+	if (!json)
+		return false;
 
-    const char *p = json;
-    while (*p && *p != '[') p++;
-    if (!*p) return false;
-    p++;
-    while (*p && isspace(*p)) p++;
-    /* Expect next char to be '[' */
-    if (*p != '[')
-        return false;
-    p++;
+	const char *p = json;
+	while (*p && *p != '[')
+		p++;
+	if (!*p)
+		return false;
+	p++;
+	while (*p && isspace(*p))
+		p++;
+	/* Expect next char to be '[' */
+	if (*p != '[')
+		return false;
+	p++;
 
-    float *vec = NULL;
-    int n = 0, cap = 32;
-    vec = (float*) palloc(sizeof(float) * cap);
+	float *vec = NULL;
+	int n = 0, cap = 32;
+	vec = (float *)palloc(sizeof(float) * cap);
 
-    while (*p && *p != ']') {
-        while (*p && (isspace(*p) || *p == ',')) p++;
-        char *endptr = NULL;
-        double v = strtod(p, &endptr);
-        if (endptr == p)
-            break;
-        if (n == cap) {
-            cap *= 2;
-            vec = repalloc(vec, sizeof(float) * cap);
-        }
-        vec[n++] = (float) v;
-        p = endptr;
-    }
-    if (n > 0) {
-        *vec_out = vec;
-        *dim_out = n;
-        return true;
-    } else {
-        pfree(vec);
-        return false;
-    }
+	while (*p && *p != ']')
+	{
+		while (*p && (isspace(*p) || *p == ','))
+			p++;
+		char *endptr = NULL;
+		double v = strtod(p, &endptr);
+		if (endptr == p)
+			break;
+		if (n == cap)
+		{
+			cap *= 2;
+			vec = repalloc(vec, sizeof(float) * cap);
+		}
+		vec[n++] = (float)v;
+		p = endptr;
+	}
+	if (n > 0)
+	{
+		*vec_out = vec;
+		*dim_out = n;
+		return true;
+	} else
+	{
+		pfree(vec);
+		return false;
+	}
 }
 
 int
-ndb_hf_embed(const NdbLLMConfig *cfg, const char *text, float **vec_out, int *dim_out)
+ndb_hf_embed(const NdbLLMConfig *cfg,
+	const char *text,
+	float **vec_out,
+	int *dim_out)
 {
-    StringInfoData url, body; char *resp = NULL; int code;
-    initStringInfo(&url); initStringInfo(&body);
-    appendStringInfo(&url, "%s/pipeline/feature-extraction/%s", cfg->endpoint, cfg->model);
-    appendStringInfo(&body, "{\"inputs\":%s,\"truncate\":true}", quote_literal_cstr(text));
-    code = http_post_json(url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
-    if (code < 200 || code >= 300 || !resp) {
-        if (resp) pfree(resp);
-        return -1;
-    }
-    bool ok = parse_hf_emb_vector(resp, vec_out, dim_out);
-    pfree(resp);
-    if (!ok)
-        return -1;
-    return 0;
+	StringInfoData url, body;
+	char *resp = NULL;
+	int code;
+	initStringInfo(&url);
+	initStringInfo(&body);
+	appendStringInfo(&url,
+		"%s/pipeline/feature-extraction/%s",
+		cfg->endpoint,
+		cfg->model);
+	appendStringInfo(&body,
+		"{\"inputs\":%s,\"truncate\":true}",
+		quote_literal_cstr(text));
+	code = http_post_json(
+		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+	if (code < 200 || code >= 300 || !resp)
+	{
+		if (resp)
+			pfree(resp);
+		return -1;
+	}
+	bool ok = parse_hf_emb_vector(resp, vec_out, dim_out);
+	pfree(resp);
+	if (!ok)
+		return -1;
+	return 0;
 }
 
 static bool
 parse_hf_scores(const char *json, float **scores_out, int ndocs)
 {
-    /* The response is [{"scores":[float, float,...]}] or similar;
+	/* The response is [{"scores":[float, float,...]}] or similar;
      * We will parse for the first float array in the string.
      */
-    if (!json)
-        return false;
-    const char *scores_key = "\"scores\"";
-    char *ps = strstr(json, scores_key);
-    if (!ps)
-        return false;
-    ps = strchr(ps, '[');
-    if (!ps)
-        return false;
-    ps++;
-    float *scores = palloc(sizeof(float) * ndocs);
-    int n = 0;
-    while (*ps && *ps != ']' && n < ndocs) {
-        while (*ps && (isspace(*ps) || *ps == ',')) ps++;
-        char *endptr = NULL;
-        double v = strtod(ps, &endptr);
-        if (endptr == ps)
-            break;
-        scores[n++] = (float) v;
-        ps = endptr;
-    }
-    if (n == ndocs) {
-        *scores_out = scores;
-        return true;
-    }
-    pfree(scores);
-    return false;
+	if (!json)
+		return false;
+	const char *scores_key = "\"scores\"";
+	char *ps = strstr(json, scores_key);
+	if (!ps)
+		return false;
+	ps = strchr(ps, '[');
+	if (!ps)
+		return false;
+	ps++;
+	float *scores = palloc(sizeof(float) * ndocs);
+	int n = 0;
+	while (*ps && *ps != ']' && n < ndocs)
+	{
+		while (*ps && (isspace(*ps) || *ps == ','))
+			ps++;
+		char *endptr = NULL;
+		double v = strtod(ps, &endptr);
+		if (endptr == ps)
+			break;
+		scores[n++] = (float)v;
+		ps = endptr;
+	}
+	if (n == ndocs)
+	{
+		*scores_out = scores;
+		return true;
+	}
+	pfree(scores);
+	return false;
 }
 
 int
-ndb_hf_rerank(const NdbLLMConfig *cfg, const char *query, const char **docs, int ndocs, float **scores_out)
+ndb_hf_rerank(const NdbLLMConfig *cfg,
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out)
 {
-    StringInfoData url, body;
-    char *resp = NULL;
-    int code, i;
-    initStringInfo(&url);
-    initStringInfo(&body);
+	StringInfoData url, body;
+	char *resp = NULL;
+	int code, i;
+	initStringInfo(&url);
+	initStringInfo(&body);
 
-    /* Compose the docs JSON array */
-    StringInfoData docs_json;
-    initStringInfo(&docs_json);
-    appendStringInfoChar(&docs_json, '[');
-    for (i = 0; i < ndocs; ++i) {
-        if (i > 0)
-            appendStringInfoChar(&docs_json, ',');
-        appendStringInfoString(&docs_json, quote_literal_cstr(docs[i]));
-    }
-    appendStringInfoChar(&docs_json, ']');
+	/* Compose the docs JSON array */
+	StringInfoData docs_json;
+	initStringInfo(&docs_json);
+	appendStringInfoChar(&docs_json, '[');
+	for (i = 0; i < ndocs; ++i)
+	{
+		if (i > 0)
+			appendStringInfoChar(&docs_json, ',');
+		appendStringInfoString(&docs_json, quote_literal_cstr(docs[i]));
+	}
+	appendStringInfoChar(&docs_json, ']');
 
-    /* URL: .../pipeline/text-classification/model */
-    appendStringInfo(&url, "%s/pipeline/token-classification/%s", cfg->endpoint, cfg->model);
-    /* Use models endpoint if above fails for reranking */
-    appendStringInfo(&body, "{\"inputs\":{\"query\":%s,\"documents\":%s}}",
-                     quote_literal_cstr(query), docs_json.data);
+	/* URL: .../pipeline/text-classification/model */
+	appendStringInfo(&url,
+		"%s/pipeline/token-classification/%s",
+		cfg->endpoint,
+		cfg->model);
+	/* Use models endpoint if above fails for reranking */
+	appendStringInfo(&body,
+		"{\"inputs\":{\"query\":%s,\"documents\":%s}}",
+		quote_literal_cstr(query),
+		docs_json.data);
 
-    code = http_post_json(url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+	code = http_post_json(
+		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
 
-    if (code < 200 || code >= 300 || !resp) {
-        if (resp)
-            pfree(resp);
-        return -1;
-    }
+	if (code < 200 || code >= 300 || !resp)
+	{
+		if (resp)
+			pfree(resp);
+		return -1;
+	}
 
-    bool ok = parse_hf_scores(resp, scores_out, ndocs);
-    pfree(resp);
-    if (!ok)
-        return -1;
-    return 0;
+	bool ok = parse_hf_scores(resp, scores_out, ndocs);
+	pfree(resp);
+	if (!ok)
+		return -1;
+	return 0;
 }

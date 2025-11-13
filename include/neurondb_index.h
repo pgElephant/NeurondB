@@ -29,10 +29,10 @@
  */
 typedef struct HNSWTenantOptions
 {
-	int32		tenant_id;
-	int32		quota_max_vectors;	/* Hard limit per tenant */
-	int16		ef_search;			/* Search parameter */
-	int16		max_level;			/* Level cap */
+	int32 tenant_id;
+	int32 quota_max_vectors; /* Hard limit per tenant */
+	int16 ef_search; /* Search parameter */
+	int16 max_level; /* Level cap */
 } HNSWTenantOptions;
 
 /*
@@ -44,9 +44,9 @@ typedef struct HNSWTenantOptions
  */
 typedef struct HybridFusedIndex
 {
-	BlockNumber vector_root;		/* HNSW graph root */
-	BlockNumber fts_root;			/* GIN posting tree root */
-	float4		fusion_weight;		/* Default vector weight */
+	BlockNumber vector_root; /* HNSW graph root */
+	BlockNumber fts_root; /* GIN posting tree root */
+	float4 fusion_weight; /* Default vector weight */
 } HybridFusedIndex;
 
 /*
@@ -57,9 +57,9 @@ typedef struct HybridFusedIndex
  */
 typedef struct TemporalVectorIndex
 {
-	BlockNumber	index_root;
-	float8		decay_rate;			/* Per-day decay factor */
-	TimestampTz	base_timestamp;		/* Reference time */
+	BlockNumber index_root;
+	float8 decay_rate; /* Per-day decay factor */
+	TimestampTz base_timestamp; /* Reference time */
 } TemporalVectorIndex;
 
 /*
@@ -70,9 +70,9 @@ typedef struct TemporalVectorIndex
  */
 typedef struct ConsistentQueryHNSW
 {
-	BlockNumber	root;
-	uint64		snapshot_xmin;		/* Snapshot ID */
-	uint32		random_seed;		/* For deterministic tie-breaking */
+	BlockNumber root;
+	uint64 snapshot_xmin; /* Snapshot ID */
+	uint32 random_seed; /* For deterministic tie-breaking */
 } ConsistentQueryHNSW;
 
 /*
@@ -83,10 +83,9 @@ typedef struct ConsistentQueryHNSW
  */
 typedef struct RerankReadyIndex
 {
-	BlockNumber	candidates_root;
-	int32		cache_size;			/* Number of cached queries */
-	int32		k_candidates;		/* Candidates per query */
+	BlockNumber candidates_root;
+	int32 cache_size; /* Number of cached queries */
+	int32 k_candidates; /* Candidates per query */
 } RerankReadyIndex;
 
 #endif /* NEURONDB_INDEX_H */
-

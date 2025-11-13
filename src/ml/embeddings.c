@@ -56,7 +56,7 @@ parse_vector_from_text(const char *str)
 
 	/* clone input string as strtok modifies it */
 	dup = pstrdup(str);
-	
+
 	/* skip leading '{' and trailing '}' if present */
 	start = strchr(dup, '{');
 	end = strrchr(dup, '}');
@@ -72,7 +72,7 @@ parse_vector_from_text(const char *str)
 	{
 		int commas = 0;
 		char *c;
-		
+
 		for (c = start; *c; c++)
 			if (*c == ',')
 				commas++;
@@ -83,17 +83,20 @@ parse_vector_from_text(const char *str)
 		pfree(dup);
 		return NULL;
 	}
-	data = (float*) palloc0(dim * sizeof(float));
+	data = (float *)palloc0(dim * sizeof(float));
 
 	/* tokenize for dimension and entries */
-	i = 0; first = true;
-	for (token = strtok_r(start, ",", &saveptr); token; token = strtok_r(NULL, ",", &saveptr))
+	i = 0;
+	first = true;
+	for (token = strtok_r(start, ",", &saveptr); token;
+		token = strtok_r(NULL, ",", &saveptr))
 	{
-		while (*token == ' ') token++; /* trim leading */
+		while (*token == ' ')
+			token++; /* trim leading */
 		if (first)
 		{
 			int dval;
-			
+
 			first = false;
 			/* The first token is dimension */
 			dval = strtol(token, &endptr, 10);
@@ -109,13 +112,13 @@ parse_vector_from_text(const char *str)
 				dim = dval;
 				data = repalloc(data, dim * sizeof(float));
 			}
-		}
-		else
+		} else
 		{
 			if (i < dim)
 			{
 				data[i++] = strtof(token, &endptr);
-				if (*endptr != '\0' && *endptr != '\n' && *endptr != '\r')
+				if (*endptr != '\0' && *endptr != '\n'
+					&& *endptr != '\r')
 				{
 					pfree(data);
 					pfree(dup);
@@ -131,8 +134,9 @@ parse_vector_from_text(const char *str)
 		return NULL;
 	}
 
-	result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) + dim * sizeof(float4));
-	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) + dim * sizeof(float4));
+	result = (Vector *)palloc0(
+		VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 	result->dim = dim;
 	for (i = 0; i < dim; i++)
 		result->data[i] = data[i];
@@ -146,7 +150,14 @@ parse_vector_from_text(const char *str)
  * Utility function for safe free and set pointer to NULL
  */
 #define SAFE_PFREE(ptr) \
-	do { if (ptr) { pfree(ptr); (ptr) = NULL; } } while(0)
+	do \
+	{ \
+		if (ptr) \
+		{ \
+			pfree(ptr); \
+			(ptr) = NULL; \
+		} \
+	} while (0)
 
 PG_FUNCTION_INFO_V1(embed_text);
 /*
@@ -188,17 +199,24 @@ embed_text(PG_FUNCTION_ARGS)
 
 	/* Setup LLM config */
 	memset(&cfg, 0, sizeof(cfg));
-	cfg.provider = neurondb_llm_provider ? neurondb_llm_provider : "huggingface";
-	cfg.endpoint = neurondb_llm_endpoint ? neurondb_llm_endpoint : "https://api-inference.huggingface.co";
-	cfg.model = model_str ? model_str : (neurondb_llm_model ? neurondb_llm_model : "sentence-transformers/all-MiniLM-L6-v2");
+	cfg.provider =
+		neurondb_llm_provider ? neurondb_llm_provider : "huggingface";
+	cfg.endpoint = neurondb_llm_endpoint
+		? neurondb_llm_endpoint
+		: "https://api-inference.huggingface.co";
+	cfg.model = model_str
+		? model_str
+		: (neurondb_llm_model
+				  ? neurondb_llm_model
+				  : "sentence-transformers/all-MiniLM-L6-v2");
 	cfg.api_key = neurondb_llm_api_key;
 	cfg.timeout_ms = neurondb_llm_timeout_ms;
 	cfg.prefer_gpu = neurondb_gpu_enabled;
 	cfg.require_gpu = false;
-	if (cfg.provider != NULL &&
-	    (pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
-	     pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
-	    !neurondb_llm_fail_open)
+	if (cfg.provider != NULL
+		&& (pg_strcasecmp(cfg.provider, "huggingface-local") == 0
+			|| pg_strcasecmp(cfg.provider, "hf-local") == 0)
+		&& !neurondb_llm_fail_open)
 		cfg.require_gpu = true;
 
 	call_opts.task = "embed";
@@ -207,15 +225,21 @@ embed_text(PG_FUNCTION_ARGS)
 	call_opts.fail_open = neurondb_llm_fail_open;
 
 	/* Call embedding API via router */
-	if (ndb_llm_route_embed(&cfg, &call_opts, input_str, &vec_data, &dim) != 0 || !vec_data || dim <= 0)
+	if (ndb_llm_route_embed(&cfg, &call_opts, input_str, &vec_data, &dim)
+			!= 0
+		|| !vec_data || dim <= 0)
 	{
-		elog(WARNING, "neurondb: embed_text() failed for input: '%s', returning zero vector", input_str ? input_str : "(null)");
+		elog(WARNING,
+			"neurondb: embed_text() failed for input: '%s', "
+			"returning zero vector",
+			input_str ? input_str : "(null)");
 		dim = 384;
-		vec_data = (float *) palloc0(dim * sizeof(float));
+		vec_data = (float *)palloc0(dim * sizeof(float));
 	}
 
-	result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) + dim * sizeof(float4));
-	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) + dim * sizeof(float4));
+	result = (Vector *)palloc0(
+		VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 	result->dim = dim;
 
 	for (i = 0; i < dim; i++)
@@ -261,24 +285,32 @@ embed_text_batch(PG_FUNCTION_ARGS)
 	else
 		model_text = PG_GETARG_TEXT_PP(1);
 
-	deconstruct_array(input_array, TEXTOID, -1, false, 'i',
-					 &text_datums, &text_nulls, &nitems);
+	deconstruct_array(input_array,
+		TEXTOID,
+		-1,
+		false,
+		'i',
+		&text_datums,
+		&text_nulls,
+		&nitems);
 
-	result_datums = (Datum *) palloc0(nitems * sizeof(Datum));
+	result_datums = (Datum *)palloc0(nitems * sizeof(Datum));
 
 	for (i = 0; i < nitems; i++)
 	{
 		if (text_nulls[i])
 		{
-			result_datums[i] = (Datum) 0;
-		}
-		else
+			result_datums[i] = (Datum)0;
+		} else
 		{
 			Datum embed_result;
 			if (model_text)
-				embed_result = DirectFunctionCall2(embed_text, text_datums[i], PointerGetDatum(model_text));
+				embed_result = DirectFunctionCall2(embed_text,
+					text_datums[i],
+					PointerGetDatum(model_text));
 			else
-				embed_result = DirectFunctionCall1(embed_text, text_datums[i]);
+				embed_result = DirectFunctionCall1(
+					embed_text, text_datums[i]);
 			result_datums[i] = embed_result;
 		}
 	}
@@ -291,18 +323,26 @@ embed_text_batch(PG_FUNCTION_ARGS)
 		/* fallback: lookup by type name "vector" */
 		if (!OidIsValid(cached_vector_oid))
 		{
-			cached_vector_oid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(list_make1(makeString("vector"))), false);
+			cached_vector_oid = LookupTypeNameOid(NULL,
+				makeTypeNameFromNameList(
+					list_make1(makeString("vector"))),
+				false);
 			if (!OidIsValid(cached_vector_oid))
-				ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
-								errmsg("vector type not found")));
+				ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+						errmsg("vector type not "
+						       "found")));
 		}
 		vector_oid = cached_vector_oid;
 	}
 
-	result = construct_array(result_datums, nitems, vector_oid, -1, false, 'i');
+	result = construct_array(
+		result_datums, nitems, vector_oid, -1, false, 'i');
 	SAFE_PFREE(result_datums);
-	if (text_datums) pfree(text_datums);
-	if (text_nulls) pfree(text_nulls);
+	if (text_datums)
+		pfree(text_datums);
+	if (text_nulls)
+		pfree(text_nulls);
 	PG_RETURN_POINTER(result);
 }
 
@@ -331,7 +371,7 @@ embed_image(PG_FUNCTION_ARGS)
 	NdbLLMConfig cfg;
 
 	image_data = PG_GETARG_BYTEA_PP(0);
-	(void)image_data;  /* Reserved for future image processing */
+	(void)image_data; /* Reserved for future image processing */
 	if (PG_ARGISNULL(1))
 		model_text = NULL;
 	else
@@ -339,7 +379,8 @@ embed_image(PG_FUNCTION_ARGS)
 	if (model_text)
 		model_str = text_to_cstring(model_text);
 	else
-		model_str = pstrdup("sentence-transformers/clip-ViT-B-32"); /* default placeholder */
+		model_str = pstrdup(
+			"sentence-transformers/clip-ViT-B-32"); /* default placeholder */
 
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.provider = neurondb_llm_provider;
@@ -349,31 +390,40 @@ embed_image(PG_FUNCTION_ARGS)
 	cfg.timeout_ms = neurondb_llm_timeout_ms;
 	cfg.prefer_gpu = neurondb_gpu_enabled;
 	cfg.require_gpu = false;
-	if (cfg.provider != NULL &&
-	    (pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
-	     pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
-	    !neurondb_llm_fail_open)
+	if (cfg.provider != NULL
+		&& (pg_strcasecmp(cfg.provider, "huggingface-local") == 0
+			|| pg_strcasecmp(cfg.provider, "hf-local") == 0)
+		&& !neurondb_llm_fail_open)
 		cfg.require_gpu = true;
 	cfg.prefer_gpu = neurondb_gpu_enabled;
 	cfg.require_gpu = false;
-	if (cfg.provider != NULL &&
-	    (pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
-	     pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
-	    !neurondb_llm_fail_open)
+	if (cfg.provider != NULL
+		&& (pg_strcasecmp(cfg.provider, "huggingface-local") == 0
+			|| pg_strcasecmp(cfg.provider, "hf-local") == 0)
+		&& !neurondb_llm_fail_open)
 		cfg.require_gpu = true;
 
-	/* NOTE: ndb_hf_image_embed API is assumed, not implemented. Fallback for now. */
+		/* NOTE: ndb_hf_image_embed API is assumed, not implemented. Fallback for now. */
 #ifdef NDB_HAVE_IMAGE_EMBED
-	if (ndb_hf_image_embed(&cfg, VARDATA_ANY(image_data), VARSIZE_ANY_EXHDR(image_data), &vec_data, &dim) != 0 || !vec_data)
+	if (ndb_hf_image_embed(&cfg,
+		    VARDATA_ANY(image_data),
+		    VARSIZE_ANY_EXHDR(image_data),
+		    &vec_data,
+		    &dim)
+			!= 0
+		|| !vec_data)
 #endif
 	{
-		elog(NOTICE, "neurondb: embed_image() image embedding not yet implemented, returning zero vector");
+		elog(NOTICE,
+			"neurondb: embed_image() image embedding not yet "
+			"implemented, returning zero vector");
 		dim = 512;
-		vec_data = (float *) palloc0(dim * sizeof(float));
+		vec_data = (float *)palloc0(dim * sizeof(float));
 	}
 
-	result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) + dim * sizeof(float4));
-	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) + dim * sizeof(float4));
+	result = (Vector *)palloc0(
+		VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 	result->dim = dim;
 	for (i = 0; i < dim; i++)
 		result->data[i] = vec_data[i];
@@ -431,44 +481,60 @@ embed_multimodal(PG_FUNCTION_ARGS)
 	cfg.api_key = neurondb_llm_api_key;
 	cfg.timeout_ms = neurondb_llm_timeout_ms;
 
-	if (ndb_hf_multimodal_embed(&cfg, input_str, VARDATA_ANY(image_data), VARSIZE_ANY_EXHDR(image_data), &vec_data, &dim) != 0 || !vec_data)
+	if (ndb_hf_multimodal_embed(&cfg,
+		    input_str,
+		    VARDATA_ANY(image_data),
+		    VARSIZE_ANY_EXHDR(image_data),
+		    &vec_data,
+		    &dim)
+			!= 0
+		|| !vec_data)
 #endif
 	{
 		Datum tx_vec_dat, img_vec_dat;
 		Vector *tx_vec, *img_vec;
 		int out_dim = 0;
-		
-		elog(NOTICE, "neurondb: embed_multimodal() provider unavailable, constructing synthetic multimodal vector");
+
+		elog(NOTICE,
+			"neurondb: embed_multimodal() provider unavailable, "
+			"constructing synthetic multimodal vector");
 
 		/* Fallback: sum text and image embedding vectors and pad */
 
 		/* Embed text */
-		tx_vec_dat = DirectFunctionCall2(embed_text, PointerGetDatum(input_text), model_text ? PointerGetDatum(model_text) : (Datum) 0);
-		tx_vec = (Vector *) DatumGetPointer(tx_vec_dat);
+		tx_vec_dat = DirectFunctionCall2(embed_text,
+			PointerGetDatum(input_text),
+			model_text ? PointerGetDatum(model_text) : (Datum)0);
+		tx_vec = (Vector *)DatumGetPointer(tx_vec_dat);
 
 		/* Embed image */
-		img_vec_dat = DirectFunctionCall2(embed_image, PointerGetDatum(image_data), model_text ? PointerGetDatum(model_text) : (Datum) 0);
-		img_vec = (Vector *) DatumGetPointer(img_vec_dat);
+		img_vec_dat = DirectFunctionCall2(embed_image,
+			PointerGetDatum(image_data),
+			model_text ? PointerGetDatum(model_text) : (Datum)0);
+		img_vec = (Vector *)DatumGetPointer(img_vec_dat);
 
 		/* Choose output dimension as sum of both */
 		out_dim = tx_vec->dim + img_vec->dim;
 
 		/* Concatenate text and image */
-		result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) + out_dim * sizeof(float4));
-		SET_VARSIZE(result, VARHDRSZ + sizeof(int16) + out_dim * sizeof(float4));
+		result = (Vector *)palloc0(
+			VARHDRSZ + sizeof(int16) * 2 + out_dim * sizeof(float4));
+		SET_VARSIZE(result,
+			VARHDRSZ + sizeof(int16) * 2 + out_dim * sizeof(float4));
 		result->dim = out_dim;
 		for (i = 0; i < tx_vec->dim; i++)
 			result->data[i] = tx_vec->data[i];
 		for (i = 0; i < img_vec->dim; i++)
 			result->data[tx_vec->dim + i] = img_vec->data[i];
-		
+
 		SAFE_PFREE(input_str);
 		SAFE_PFREE(model_str);
 		PG_RETURN_POINTER(result);
 	}
 	/* If real provider call above does not return early, process result here. */
-	result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) + dim * sizeof(float4));
-	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) + dim * sizeof(float4));
+	result = (Vector *)palloc0(
+		VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 	result->dim = dim;
 	for (i = 0; i < dim; i++)
 		result->data[i] = vec_data[i];
@@ -493,7 +559,8 @@ embed_cached(PG_FUNCTION_ARGS)
 {
 	text *input_text = NULL;
 	text *model_text = NULL;
-	char *input_str = NULL, *model_str = NULL, *cache_key = NULL, *cached_text = NULL;
+	char *input_str = NULL, *model_str = NULL, *cache_key = NULL,
+	     *cached_text = NULL;
 	int max_age;
 	Vector *result = NULL;
 	StringInfoData key_buf;
@@ -523,8 +590,7 @@ embed_cached(PG_FUNCTION_ARGS)
 	{
 		model_str = text_to_cstring(model_text);
 		appendStringInfoString(&key_buf, model_str);
-	}
-	else
+	} else
 	{
 		appendStringInfoString(&key_buf, "default");
 	}
@@ -532,30 +598,39 @@ embed_cached(PG_FUNCTION_ARGS)
 	max_age = neurondb_llm_cache_ttl;
 
 	/* Try cache lookup */
-        (void)hit;  /* Reserved for future cache hit tracking */
-	if (ndb_llm_cache_lookup(cache_key, max_age, &cached_text) && cached_text)
+	(void)hit; /* Reserved for future cache hit tracking */
+	if (ndb_llm_cache_lookup(cache_key, max_age, &cached_text)
+		&& cached_text)
 	{
 		result = parse_vector_from_text(cached_text);
 		if (result)
 		{
-			elog(DEBUG1, "neurondb: embed_cached() cache hit (key='%s')", cache_key);
+			elog(DEBUG1,
+				"neurondb: embed_cached() cache hit (key='%s')",
+				cache_key);
 			SAFE_PFREE(input_str);
 			SAFE_PFREE(model_str);
 			SAFE_PFREE(cache_key);
 			SAFE_PFREE(cached_text);
 			PG_RETURN_POINTER(result);
-		}
-		else
+		} else
 		{
-			elog(WARNING, "neurondb: embed_cached() cache corrupted for key '%s'", cache_key);
+			elog(WARNING,
+				"neurondb: embed_cached() cache corrupted for "
+				"key '%s'",
+				cache_key);
 		}
 		SAFE_PFREE(cached_text);
 	}
 	/* Cache miss - call embed_text */
 	if (model_text)
-		result = (Vector *) DatumGetPointer(DirectFunctionCall2(embed_text, PointerGetDatum(input_text), PointerGetDatum(model_text)));
+		result = (Vector *)DatumGetPointer(
+			DirectFunctionCall2(embed_text,
+				PointerGetDatum(input_text),
+				PointerGetDatum(model_text)));
 	else
-		result = (Vector *) DatumGetPointer(DirectFunctionCall1(embed_text, PointerGetDatum(input_text)));
+		result = (Vector *)DatumGetPointer(DirectFunctionCall1(
+			embed_text, PointerGetDatum(input_text)));
 
 	/* Store to cache (serialise to text format) */
 	if (result)
@@ -603,10 +678,13 @@ configure_embedding_model(PG_FUNCTION_ARGS)
 	cfg_str = text_to_cstring(config_json);
 
 	/* For now, just log it; in future, update pg_catalog table */
-	elog(INFO, "neurondb: configure_embedding_model() called: model='%s', config='%s'", model_str, cfg_str);
+	elog(INFO,
+		"neurondb: configure_embedding_model() called: model='%s', "
+		"config='%s'",
+		model_str,
+		cfg_str);
 
 	SAFE_PFREE(model_str);
 	SAFE_PFREE(cfg_str);
 	PG_RETURN_BOOL(true);
 }
-

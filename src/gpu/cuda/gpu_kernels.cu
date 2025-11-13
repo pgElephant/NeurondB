@@ -36,18 +36,17 @@
 /*
  * Device kernel to compute L2 (Euclidean) distance between query and each vector row.
  */
-extern "C" __global__
-void
-l2_distance_kernel(const float * __restrict__ query,
-				   const float * __restrict__ matrix,
-				   float * __restrict__ out,
-				   int rows,
-				   int dim)
+extern "C" __global__ void
+l2_distance_kernel(const float *__restrict__ query,
+	const float *__restrict__ matrix,
+	float *__restrict__ out,
+	int rows,
+	int dim)
 {
-	int			row;
+	int row;
 	const float *vec;
-	double		acc;
-	int			d;
+	double acc;
+	int d;
 
 	row = (blockIdx.x * blockDim.x) + threadIdx.x;
 	if (row < rows)
@@ -56,12 +55,12 @@ l2_distance_kernel(const float * __restrict__ query,
 		acc = 0.0;
 		for (d = 0; d < dim; d++)
 		{
-			float	diff;
+			float diff;
 
 			diff = query[d] - vec[d];
-			acc += (double) diff * (double) diff;
+			acc += (double)diff * (double)diff;
 		}
-		out[row] = sqrtf((float) acc);
+		out[row] = sqrtf((float)acc);
 	}
 }
 
@@ -69,19 +68,18 @@ l2_distance_kernel(const float * __restrict__ query,
  * Device kernel to compute cosine distance:
  * d(query, vec) = 1 - dot(query, vec) / (||query|| * ||vec||)
  */
-extern "C" __global__
-void
-cosine_distance_kernel(const float * __restrict__ query,
-					  const float * __restrict__ matrix,
-					  float * __restrict__ out,
-					  int rows,
-					  int dim)
+extern "C" __global__ void
+cosine_distance_kernel(const float *__restrict__ query,
+	const float *__restrict__ matrix,
+	float *__restrict__ out,
+	int rows,
+	int dim)
 {
-	int			row;
+	int row;
 	const float *vec;
-	double		dot, n_q, n_v;
-	int			d;
-	float		cosine_sim;
+	double dot, n_q, n_v;
+	int d;
+	float cosine_sim;
 
 	row = (blockIdx.x * blockDim.x) + threadIdx.x;
 	if (row < rows)
@@ -95,25 +93,22 @@ cosine_distance_kernel(const float * __restrict__ query,
 		d = 0;
 		for (; d <= dim - 4; d += 4)
 		{
-			float q0 = query[d],     v0 = vec[d];
-			float q1 = query[d+1],   v1 = vec[d+1];
-			float q2 = query[d+2],   v2 = vec[d+2];
-			float q3 = query[d+3],   v3 = vec[d+3];
+			float q0 = query[d], v0 = vec[d];
+			float q1 = query[d + 1], v1 = vec[d + 1];
+			float q2 = query[d + 2], v2 = vec[d + 2];
+			float q3 = query[d + 3], v3 = vec[d + 3];
 
-			dot +=  (double)q0 * (double)v0 +
-					(double)q1 * (double)v1 +
-					(double)q2 * (double)v2 +
-					(double)q3 * (double)v3;
+			dot += (double)q0 * (double)v0 + (double)q1 * (double)v1
+				+ (double)q2 * (double)v2
+				+ (double)q3 * (double)v3;
 
-			n_q +=  (double)q0 * (double)q0 +
-					(double)q1 * (double)q1 +
-					(double)q2 * (double)q2 +
-					(double)q3 * (double)q3;
+			n_q += (double)q0 * (double)q0 + (double)q1 * (double)q1
+				+ (double)q2 * (double)q2
+				+ (double)q3 * (double)q3;
 
-			n_v +=  (double)v0 * (double)v0 +
-					(double)v1 * (double)v1 +
-					(double)v2 * (double)v2 +
-					(double)v3 * (double)v3;
+			n_v += (double)v0 * (double)v0 + (double)v1 * (double)v1
+				+ (double)v2 * (double)v2
+				+ (double)v3 * (double)v3;
 		}
 		for (; d < dim; d++)
 		{
@@ -131,7 +126,7 @@ cosine_distance_kernel(const float * __restrict__ query,
 
 		cosine_sim = 0.0f;
 		if (n_q > 1e-10 && n_v > 1e-10)
-			cosine_sim = (float) (dot / (n_q * n_v));
+			cosine_sim = (float)(dot / (n_q * n_v));
 
 		/* Clamp to [-1,1] to avoid floating point error propagation */
 		if (cosine_sim < -1.0f)
@@ -146,18 +141,17 @@ cosine_distance_kernel(const float * __restrict__ query,
 /*
  * Device kernel to compute negative inner product for ANN distance.
  */
-extern "C" __global__
-void
-inner_product_kernel(const float * __restrict__ query,
-					 const float * __restrict__ matrix,
-					 float * __restrict__ out,
-					 int rows,
-					 int dim)
+extern "C" __global__ void
+inner_product_kernel(const float *__restrict__ query,
+	const float *__restrict__ matrix,
+	float *__restrict__ out,
+	int rows,
+	int dim)
 {
-	int			row;
+	int row;
 	const float *vec;
-	double		acc;
-	int			d;
+	double acc;
+	int d;
 
 	row = (blockIdx.x * blockDim.x) + threadIdx.x;
 	if (row < rows)
@@ -167,28 +161,27 @@ inner_product_kernel(const float * __restrict__ query,
 		d = 0;
 		for (; d <= dim - 4; d += 4)
 		{
-			acc += (double)query[d]   * (double)vec[d]   +
-				   (double)query[d+1] * (double)vec[d+1] +
-				   (double)query[d+2] * (double)vec[d+2] +
-				   (double)query[d+3] * (double)vec[d+3];
+			acc += (double)query[d] * (double)vec[d]
+				+ (double)query[d + 1] * (double)vec[d + 1]
+				+ (double)query[d + 2] * (double)vec[d + 2]
+				+ (double)query[d + 3] * (double)vec[d + 3];
 		}
 		for (; d < dim; d++)
 			acc += (double)query[d] * (double)vec[d];
 
-		out[row] = (float) (-acc);
+		out[row] = (float)(-acc);
 	}
 }
 
 /*
  * Device kernel for quantizing float32 to float16.
  */
-extern "C" __global__
-void
-quantize_fp16_kernel(const float * __restrict__ input,
-					 __half * __restrict__ output,
-					 int count)
+extern "C" __global__ void
+quantize_fp16_kernel(const float *__restrict__ input,
+	__half *__restrict__ output,
+	int count)
 {
-	int		idx;
+	int idx;
 
 	idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -198,13 +191,12 @@ quantize_fp16_kernel(const float * __restrict__ input,
 		output[idx] = __float2half(input[idx]);
 #else
 		/* Should not occur; fallback for compilation safety. */
-		union
-		{
-			float		f;
-			unsigned	u32;
+		union {
+			float f;
+			unsigned u32;
 		} u;
 		u.f = input[idx];
-		output[idx] = (__half) (u.u32 >> 16);
+		output[idx] = (__half)(u.u32 >> 16);
 #endif
 	}
 }
@@ -213,15 +205,14 @@ quantize_fp16_kernel(const float * __restrict__ input,
  * Device kernel for quantizing float32 to int8, with scaling.
  * Explicitly clamps to int8_t range.
  */
-extern "C" __global__
-void
-quantize_int8_kernel(const float * __restrict__ input,
-					 signed char * __restrict__ output,
-					 int count,
-					 float scale)
+extern "C" __global__ void
+quantize_int8_kernel(const float *__restrict__ input,
+	signed char *__restrict__ output,
+	int count,
+	float scale)
 {
-	int		idx;
-	float	val;
+	int idx;
+	float val;
 
 	idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -234,7 +225,7 @@ quantize_int8_kernel(const float * __restrict__ input,
 		else if (val < -128.0f)
 			val = -128.0f;
 
-		output[idx] = (signed char) __float2int_rn(val);
+		output[idx] = (signed char)__float2int_rn(val);
 	}
 }
 
@@ -242,16 +233,15 @@ quantize_int8_kernel(const float * __restrict__ input,
  * Device kernel for binary quantization:
  * Packs groups of 8 input floats to one output byte.
  */
-extern "C" __global__
-void
-quantize_binary_kernel(const float * __restrict__ input,
-					   unsigned char * __restrict__ output,
-					   int count)
+extern "C" __global__ void
+quantize_binary_kernel(const float *__restrict__ input,
+	unsigned char *__restrict__ output,
+	int count)
 {
-	int				idx;
-	int				byte_count;
-	unsigned char	byte;
-	int				start, in_idx, i;
+	int idx;
+	int byte_count;
+	unsigned char byte;
+	int start, in_idx, i;
 
 	idx = blockIdx.x * blockDim.x + threadIdx.x;
 	byte_count = (count + 7) / 8;
@@ -273,8 +263,8 @@ quantize_binary_kernel(const float * __restrict__ input,
 
 #if defined(NDB_GPU_CUDA)
 
-#define NDB_KERNEL_LAUNCH_PARAMS	\
-	int block = 256;				\
+#define NDB_KERNEL_LAUNCH_PARAMS \
+	int block = 256; \
 	int grid = (count + block - 1) / block
 
 /*
@@ -282,9 +272,9 @@ quantize_binary_kernel(const float * __restrict__ input,
  */
 extern "C" cudaError_t
 launch_quantize_fp32_to_fp16(const float *input,
-							 void *output,
-							 int count,
-							 cudaStream_t stream)
+	void *output,
+	int count,
+	cudaStream_t stream)
 {
 	if (count <= 0 || input == NULL || output == NULL)
 		return cudaSuccess;
@@ -301,10 +291,10 @@ launch_quantize_fp32_to_fp16(const float *input,
  */
 extern "C" cudaError_t
 launch_quantize_fp32_to_int8(const float *input,
-							 signed char *output,
-							 int count,
-							 float scale,
-							 cudaStream_t stream)
+	signed char *output,
+	int count,
+	float scale,
+	cudaStream_t stream)
 {
 	if (count <= 0 || input == NULL || output == NULL)
 		return cudaSuccess;
@@ -321,9 +311,9 @@ launch_quantize_fp32_to_int8(const float *input,
  */
 extern "C" cudaError_t
 launch_quantize_fp32_to_binary(const float *input,
-							   unsigned char *output,
-							   int count,
-							   cudaStream_t stream)
+	unsigned char *output,
+	int count,
+	cudaStream_t stream)
 {
 	int block;
 	int grid;

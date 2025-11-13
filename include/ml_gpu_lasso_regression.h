@@ -35,4 +35,3 @@ extern int ndb_gpu_lasso_pack_model(const struct LassoModel *model,
 	char **errstr);
 
 #endif /* NEURONDB_ML_GPU_LASSO_REGRESSION_H */
-

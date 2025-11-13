@@ -61,7 +61,6 @@ rf_copy_tree_nodes(const GTree *tree, NdbCudaRfNode *dest, int *node_offset)
 	*node_offset += count;
 }
 
-
 static void
 rf_fill_single_node_tree(NdbCudaRfNode *node, int majority_class)
 {
@@ -71,7 +70,6 @@ rf_fill_single_node_tree(NdbCudaRfNode *node, int majority_class)
 	node->right_child = -1;
 	node->value = (float)majority_class;
 }
-
 
 int
 ndb_cuda_rf_pack_model(const RFModel *model,
@@ -257,10 +255,8 @@ ndb_cuda_rf_train(const float *features,
 			label_ints[i] = 0;
 	}
 
-	if (ndb_cuda_rf_histogram(label_ints,
-			n_samples,
-			class_count,
-			class_counts)
+	if (ndb_cuda_rf_histogram(
+		    label_ints, n_samples, class_count, class_counts)
 		!= 0)
 	{
 		memset(class_counts, 0, sizeof(int) * class_count);
@@ -280,8 +276,8 @@ ndb_cuda_rf_train(const float *features,
 		int best_count = class_counts[0];
 		double majority_fraction;
 
-		feature_bytes = sizeof(float) * (size_t)n_samples
-			* (size_t)feature_dim;
+		feature_bytes =
+			sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
 		label_bytes = sizeof(int) * (size_t)n_samples;
 		class_bytes = sizeof(int) * (size_t)class_count;
 
@@ -305,15 +301,15 @@ ndb_cuda_rf_train(const float *features,
 			goto gpu_fail;
 
 		status = cudaMemcpy(d_features,
-				features,
-				feature_bytes,
-				cudaMemcpyHostToDevice);
+			features,
+			feature_bytes,
+			cudaMemcpyHostToDevice);
 		if (status != cudaSuccess)
 			goto gpu_fail;
 		status = cudaMemcpy(d_labels,
-				label_ints,
-				label_bytes,
-				cudaMemcpyHostToDevice);
+			label_ints,
+			label_bytes,
+			cudaMemcpyHostToDevice);
 		if (status != cudaSuccess)
 			goto gpu_fail;
 
@@ -321,7 +317,8 @@ ndb_cuda_rf_train(const float *features,
 		{
 			if (!pg_prng_strong_seed(&rng))
 				pg_prng_seed(&rng,
-					(uint64)n_samples ^ (uint64)feature_dim);
+					(uint64)n_samples
+						^ (uint64)feature_dim);
 			seeded = true;
 		}
 
@@ -339,7 +336,8 @@ ndb_cuda_rf_train(const float *features,
 
 		header_bytes = sizeof(NdbCudaRfModelHeader)
 			+ sizeof(NdbCudaRfTreeHeader) * n_trees;
-		payload_bytes = header_bytes + sizeof(NdbCudaRfNode) * total_nodes;
+		payload_bytes =
+			header_bytes + sizeof(NdbCudaRfNode) * total_nodes;
 		payload = (bytea *)palloc(VARHDRSZ + payload_bytes);
 		SET_VARSIZE(payload, VARHDRSZ + payload_bytes);
 		base = VARDATA(payload);
@@ -387,30 +385,31 @@ ndb_cuda_rf_train(const float *features,
 					continue;
 
 				status = cudaMemcpy(&sum_host,
-						d_feature_sum,
-						sizeof(double),
-						cudaMemcpyDeviceToHost);
+					d_feature_sum,
+					sizeof(double),
+					cudaMemcpyDeviceToHost);
 				if (status != cudaSuccess)
 					goto gpu_fail;
 				status = cudaMemcpy(&sumsq_host,
-						d_feature_sumsq,
-						sizeof(double),
-						cudaMemcpyDeviceToHost);
+					d_feature_sumsq,
+					sizeof(double),
+					cudaMemcpyDeviceToHost);
 				if (status != cudaSuccess)
 					goto gpu_fail;
 
 				if (sum_host == 0.0 && sumsq_host == 0.0)
 					continue;
 
-				threshold = (float)(sum_host / (double)n_samples);
+				threshold =
+					(float)(sum_host / (double)n_samples);
 				variance = (sumsq_host / (double)n_samples)
-					- ((double)threshold * (double)threshold);
+					- ((double)threshold
+						* (double)threshold);
 				if (variance < 0.0)
 					variance = 0.0;
 				if (variance > 0.0)
 					threshold += (float)(noise
-							   * sqrt(variance)
-							   * 0.25);
+						* sqrt(variance) * 0.25);
 
 				if (ndb_cuda_rf_launch_split_counts(d_features,
 					    d_labels,
@@ -425,27 +424,27 @@ ndb_cuda_rf_train(const float *features,
 					continue;
 
 				status = cudaMemcpy(tmp_left_counts,
-						d_left_counts,
-						class_bytes,
-						cudaMemcpyDeviceToHost);
+					d_left_counts,
+					class_bytes,
+					cudaMemcpyDeviceToHost);
 				if (status != cudaSuccess)
 					goto gpu_fail;
 				status = cudaMemcpy(tmp_right_counts,
-						d_right_counts,
-						class_bytes,
-						cudaMemcpyDeviceToHost);
+					d_right_counts,
+					class_bytes,
+					cudaMemcpyDeviceToHost);
 				if (status != cudaSuccess)
 					goto gpu_fail;
 
 				{
-					double gini = rf_split_gini(
-						tmp_left_counts,
-						tmp_right_counts,
-						class_count,
-						&left_total,
-						&right_total,
-						NULL,
-						NULL);
+					double gini =
+						rf_split_gini(tmp_left_counts,
+							tmp_right_counts,
+							class_count,
+							&left_total,
+							&right_total,
+							NULL,
+							NULL);
 
 					if (gini < best_gini && gini >= 0.0)
 					{
@@ -611,26 +610,25 @@ ndb_cuda_rf_predict(const bytea *model_data,
 		return -1;
 	}
 
-	effective_dim = model_hdr->feature_dim > 0
-		? model_hdr->feature_dim
-		: feature_dim;
+	effective_dim = model_hdr->feature_dim > 0 ? model_hdr->feature_dim
+						   : feature_dim;
 	if (effective_dim <= 0)
 		effective_dim = feature_dim;
 
 	header_bytes = sizeof(NdbCudaRfModelHeader)
 		+ sizeof(NdbCudaRfTreeHeader) * model_hdr->tree_count;
-	tree_hdrs = (const NdbCudaRfTreeHeader *)
-		(base + sizeof(NdbCudaRfModelHeader));
+	tree_hdrs = (const NdbCudaRfTreeHeader *)(base
+		+ sizeof(NdbCudaRfModelHeader));
 	nodes_base = (const NdbCudaRfNode *)(base + header_bytes);
 
 	votes = (int *)palloc0(sizeof(int) * model_hdr->class_count);
 	rc = ndb_cuda_rf_infer(nodes_base,
-			tree_hdrs,
-			model_hdr->tree_count,
-			input,
-			effective_dim,
-			model_hdr->class_count,
-			votes);
+		tree_hdrs,
+		model_hdr->tree_count,
+		input,
+		effective_dim,
+		model_hdr->class_count,
+		votes);
 	if (rc == 0)
 	{
 		best_class = model_hdr->majority_class;

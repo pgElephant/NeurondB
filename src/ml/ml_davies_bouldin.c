@@ -117,7 +117,7 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	int num_clusters;
 	int *cluster_sizes;
 	float **cluster_centroids;
-	double *cluster_scatter;  /* Average distance to centroid */
+	double *cluster_scatter; /* Average distance to centroid */
 	double db_index;
 	int i, c, d;
 	StringInfoData sql;
@@ -132,41 +132,55 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	vec_col_str = text_to_cstring(vector_column);
 	cluster_col_str = text_to_cstring(cluster_column);
 
-	elog(DEBUG1, "neurondb: Computing Davies-Bouldin Index for %s.%s (clusters=%s)",
-		 tbl_str, vec_col_str, cluster_col_str);
+	elog(DEBUG1,
+		"neurondb: Computing Davies-Bouldin Index for %s.%s "
+		"(clusters=%s)",
+		tbl_str,
+		vec_col_str,
+		cluster_col_str);
 
 	/* Fetch vectors */
-	vectors = neurondb_fetch_vectors_from_table(tbl_str, vec_col_str, &nvec, &dim);
+	vectors = neurondb_fetch_vectors_from_table(
+		tbl_str, vec_col_str, &nvec, &dim);
 	if (nvec < 2)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Need at least 2 vectors for DBI calculation")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("Need at least 2 vectors for DBI "
+				       "calculation")));
 
 	/* Fetch cluster assignments */
-	cluster_labels = (int *) palloc(sizeof(int) * nvec);
+	cluster_labels = (int *)palloc(sizeof(int) * nvec);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
 	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT %s FROM %s ORDER BY ctid", cluster_col_str, tbl_str);
+	appendStringInfo(&sql,
+		"SELECT %s FROM %s ORDER BY ctid",
+		cluster_col_str,
+		tbl_str);
 	ret = SPI_execute(sql.data, true, 0);
 
 	if (ret != SPI_OK_SELECT || (int)SPI_processed != nvec)
 	{
 		SPI_finish();
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Failed to fetch cluster labels (expected %d, got %d)",
-						nvec, (int)SPI_processed)));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("Failed to fetch cluster labels "
+				       "(expected %d, got %d)",
+					nvec,
+					(int)SPI_processed)));
 	}
 
 	num_clusters = 0;
 	for (i = 0; i < nvec; i++)
 	{
 		bool isnull;
-		Datum val = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1, &isnull);
-		
+		Datum val = SPI_getbinval(SPI_tuptable->vals[i],
+			SPI_tuptable->tupdesc,
+			1,
+			&isnull);
+
 		cluster_labels[i] = isnull ? -1 : DatumGetInt32(val);
 		if (cluster_labels[i] > num_clusters)
 			num_clusters = cluster_labels[i];
@@ -176,8 +190,10 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 
 	if (num_clusters < 2)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Need at least 2 clusters for DBI (found %d)", num_clusters)));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("Need at least 2 clusters for DBI "
+				       "(found %d)",
+					num_clusters)));
 
 	elog(DEBUG1, "neurondb: Found %d clusters in data", num_clusters);
 
@@ -185,24 +201,24 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	 * Compute cluster centroids and sizes
 	 * Cluster IDs are 1-based in output, internally we use 0-based
 	 */
-	cluster_sizes = (int *) palloc0(sizeof(int) * num_clusters);
-	cluster_centroids = (float **) palloc(sizeof(float *) * num_clusters);
+	cluster_sizes = (int *)palloc0(sizeof(int) * num_clusters);
+	cluster_centroids = (float **)palloc(sizeof(float *) * num_clusters);
 	for (c = 0; c < num_clusters; c++)
 	{
-		cluster_centroids[c] = (float *) palloc0(sizeof(float) * dim);
+		cluster_centroids[c] = (float *)palloc0(sizeof(float) * dim);
 	}
 
 	/* Sum vectors for each cluster */
 	for (i = 0; i < nvec; i++)
 	{
 		int cluster = cluster_labels[i];
-		
+
 		if (cluster < 1 || cluster > num_clusters)
 			continue; /* Skip noise points or invalid labels */
 
 		cluster = cluster - 1; /* Convert to 0-based */
 		cluster_sizes[cluster]++;
-		
+
 		for (d = 0; d < dim; d++)
 			cluster_centroids[cluster][d] += vectors[i][d];
 	}
@@ -220,17 +236,18 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	/*
 	 * Compute cluster scatter: s_i = average distance of points to centroid
 	 */
-	cluster_scatter = (double *) palloc0(sizeof(double) * num_clusters);
+	cluster_scatter = (double *)palloc0(sizeof(double) * num_clusters);
 
 	for (i = 0; i < nvec; i++)
 	{
 		int cluster = cluster_labels[i];
-		
+
 		if (cluster < 1 || cluster > num_clusters)
 			continue;
 
 		cluster = cluster - 1;
-		cluster_scatter[cluster] += euclidean_distance(vectors[i], cluster_centroids[cluster], dim);
+		cluster_scatter[cluster] += euclidean_distance(
+			vectors[i], cluster_centroids[cluster], dim);
 	}
 
 	for (c = 0; c < num_clusters; c++)
@@ -265,13 +282,17 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 				if (i == j || cluster_sizes[j] < 2)
 					continue;
 
-				centroid_dist = euclidean_distance(cluster_centroids[i], 
-												  cluster_centroids[j], dim);
+				centroid_dist =
+					euclidean_distance(cluster_centroids[i],
+						cluster_centroids[j],
+						dim);
 
 				if (centroid_dist < 1e-10)
 					continue; /* Avoid division by zero */
 
-				ratio = (cluster_scatter[i] + cluster_scatter[j]) / centroid_dist;
+				ratio = (cluster_scatter[i]
+						+ cluster_scatter[j])
+					/ centroid_dist;
 
 				if (ratio > max_ratio)
 					max_ratio = ratio;
@@ -305,4 +326,3 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 
 	PG_RETURN_FLOAT8(db_index);
 }
-

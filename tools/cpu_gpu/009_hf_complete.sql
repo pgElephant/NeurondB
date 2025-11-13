@@ -24,8 +24,10 @@ SELECT
 \echo ''
 \echo 'Test 2: Batch text completion'
 SELECT 
-	prompt,
-	completion
+	idx,
+	text AS completion,
+	tokens_in,
+	tokens_out
 FROM ndb_llm_complete_batch(
 	ARRAY[
 		'Explain machine learning in one sentence.',
@@ -33,7 +35,7 @@ FROM ndb_llm_complete_batch(
 		'How does GPU acceleration work?'
 	],
 	'{"max_tokens": 30, "temperature": 0.7}'::text
-) AS t(prompt text, completion text);
+) AS t;
 
 -- Test with different parameters
 \echo ''
@@ -50,7 +52,7 @@ SELECT
 \echo 'GPU availability check:'
 SELECT 
 	neurondb_llm_gpu_available() AS gpu_available,
-	backend_type,
+	backend,
 	device_name
 FROM neurondb_llm_gpu_info();
 

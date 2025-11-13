@@ -50,31 +50,34 @@
 #include "neurondb_onnx.h"
 
 /* ---- Global Configuration Variables (GUC) - Always available ---- */
-char	   *neurondb_onnx_model_path = NULL;   /* Base dir for ONNX model files   */
-bool		neurondb_onnx_use_gpu = true;      /* Prefer GPU EPs if possible      */
-int			neurondb_onnx_threads = 4;         /* Intra-op thread count           */
-int			neurondb_onnx_cache_size = 10;     /* Max number of cached sessions   */
+char *neurondb_onnx_model_path = NULL; /* Base dir for ONNX model files   */
+bool neurondb_onnx_use_gpu = true; /* Prefer GPU EPs if possible      */
+int neurondb_onnx_threads = 4; /* Intra-op thread count           */
+int neurondb_onnx_cache_size = 10; /* Max number of cached sessions   */
 
 #ifdef HAVE_ONNX_RUNTIME
 
 #include <onnxruntime_c_api.h>
 
 /* ---- Global ONNX API objects ---- */
-static const OrtApi *g_ort_api = NULL;         /* ONNX Runtime C API Instance */
-static OrtEnv      *g_ort_env = NULL;          /* ONNX Runtime Environment   */
-static bool         g_onnx_initialized = false; /* ONNX env state            */
+static const OrtApi *g_ort_api = NULL; /* ONNX Runtime C API Instance */
+static OrtEnv *g_ort_env = NULL; /* ONNX Runtime Environment   */
+static bool g_onnx_initialized = false; /* ONNX env state            */
 
 /* ---- LRU Model Session Cache ---- */
 typedef struct ONNXCacheEntry
 {
-	char				   *model_name;  /* Key: Model identifier (string)           */
-	ONNXModelSession       *session;     /* Loaded ONNX session (opaque struct)      */
-	time_t                  last_used;   /* Unix time for LRU eviction scoring       */
-	struct ONNXCacheEntry  *next;        /* Linked-list pointer                      */
+	char *model_name; /* Key: Model identifier (string)           */
+	ONNXModelSession
+		*session; /* Loaded ONNX session (opaque struct)      */
+	time_t last_used; /* Unix time for LRU eviction scoring       */
+	struct ONNXCacheEntry
+		*next; /* Linked-list pointer                      */
 } ONNXCacheEntry;
 
-static ONNXCacheEntry *g_model_cache_head = NULL; /* Start of cache linked list */
-static int g_model_cache_count = 0;               /* Number of currently cached sessions */
+static ONNXCacheEntry *g_model_cache_head =
+	NULL; /* Start of cache linked list */
+static int g_model_cache_count = 0; /* Number of currently cached sessions */
 
 /* ---- Function Forward Declarations ---- */
 static void onnx_check_status(OrtStatus *status, const char *operation);
@@ -101,9 +104,11 @@ onnx_check_status(OrtStatus *status, const char *operation)
 	g_ort_api->ReleaseStatus(status);
 
 	ereport(ERROR,
-			(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-			 errmsg("ONNX Runtime error during %s: %s",
-					operation, error_message ? error_message : "(no message)")));
+		(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+			errmsg("ONNX Runtime error during %s: %s",
+				operation,
+				error_message ? error_message
+					      : "(no message)")));
 }
 
 /*
@@ -123,21 +128,21 @@ neurondb_onnx_init(void)
 	g_ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
 	if (!g_ort_api)
 		ereport(ERROR,
-				(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-				 errmsg("Failed to initialize ONNX Runtime API"),
-				 errhint("Ensure the ONNX Runtime library is installed and accessible")));
+			(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+				errmsg("Failed to initialize ONNX Runtime API"),
+				errhint("Ensure the ONNX Runtime library is "
+					"installed and accessible")));
 
 	status = g_ort_api->CreateEnv(
-		ORT_LOGGING_LEVEL_WARNING,
-		"NeuronDB",
-		&g_ort_env);
+		ORT_LOGGING_LEVEL_WARNING, "NeuronDB", &g_ort_env);
 	onnx_check_status(status, "CreateEnv");
 
 	g_onnx_initialized = true;
 
 	ereport(LOG,
-			(errmsg("ONNX Runtime initialized for NeuronDB"),
-			 errdetail("ONNX Runtime version: %s", neurondb_onnx_version())));
+		(errmsg("ONNX Runtime initialized for NeuronDB"),
+			errdetail("ONNX Runtime version: %s",
+				neurondb_onnx_version())));
 }
 
 /*
@@ -187,8 +192,8 @@ neurondb_onnx_cleanup(void)
  */
 ONNXModelSession *
 neurondb_onnx_load_model(const char *model_path,
-						 ONNXModelType model_type,
-						 ONNXProvider provider)
+	ONNXModelType model_type,
+	ONNXProvider provider)
 {
 	ONNXModelSession *session;
 	OrtSessionOptions *session_options = NULL;
@@ -200,24 +205,26 @@ neurondb_onnx_load_model(const char *model_path,
 		neurondb_onnx_init();
 
 	/* Allocate ONNXModelSession (tracked by TopMemoryContext for session lifetime) */
-	session = (ONNXModelSession *) MemoryContextAllocZero(
-			TopMemoryContext, sizeof(ONNXModelSession));
-	session->model_path  = MemoryContextStrdup(TopMemoryContext, model_path);
-	session->model_type  = model_type;
-	session->provider    = provider;
-	session->env         = g_ort_env;
-	session->is_loaded   = false;
+	session = (ONNXModelSession *)MemoryContextAllocZero(
+		TopMemoryContext, sizeof(ONNXModelSession));
+	session->model_path = MemoryContextStrdup(TopMemoryContext, model_path);
+	session->model_type = model_type;
+	session->provider = provider;
+	session->env = g_ort_env;
+	session->is_loaded = false;
 
 	/* Create ONNX session options */
 	status = g_ort_api->CreateSessionOptions(&session_options);
 	onnx_check_status(status, "CreateSessionOptions");
 
 	/* Set number of intra-op threads (parallelism inside individual ops) */
-	status = g_ort_api->SetIntraOpNumThreads(session_options, neurondb_onnx_threads);
+	status = g_ort_api->SetIntraOpNumThreads(
+		session_options, neurondb_onnx_threads);
 	onnx_check_status(status, "SetIntraOpNumThreads");
 
 	/* Use maximum graph optimization */
-	status = g_ort_api->SetSessionGraphOptimizationLevel(session_options, ORT_ENABLE_ALL);
+	status = g_ort_api->SetSessionGraphOptimizationLevel(
+		session_options, ORT_ENABLE_ALL);
 	onnx_check_status(status, "SetSessionGraphOptimizationLevel");
 
 	/* Select/initialize execution provider, attempting to satisfy 'provider' */
@@ -225,53 +232,71 @@ neurondb_onnx_load_model(const char *model_path,
 	{
 		switch (provider)
 		{
-			case ONNX_PROVIDER_CUDA:
+		case ONNX_PROVIDER_CUDA:
 #ifdef ORT_ENABLE_CUDA
-				/* Attempt CUDA provider (requires ORT built with CUDA) */
+			/* Attempt CUDA provider (requires ORT built with CUDA) */
+			{
+				OrtCUDAProviderOptions cuda_options;
+				memset(&cuda_options, 0, sizeof(cuda_options));
+				cuda_options.device_id = 0;
+				cuda_options.cudnn_conv_algo_search =
+					OrtCudnnConvAlgoSearchHeuristic;
+				cuda_options.gpu_mem_limit = SIZE_MAX;
+				cuda_options.arena_extend_strategy = 0;
+
+				status =
+					g_ort_api
+						->SessionOptionsAppendExecutionProvider_CUDA(
+							session_options,
+							&cuda_options);
+
+				if (status != NULL)
 				{
-					OrtCUDAProviderOptions cuda_options;
-					memset(&cuda_options, 0, sizeof(cuda_options));
-					cuda_options.device_id = 0;
-					cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchHeuristic;
-					cuda_options.gpu_mem_limit = SIZE_MAX;
-					cuda_options.arena_extend_strategy = 0;
-
-					status = g_ort_api->SessionOptionsAppendExecutionProvider_CUDA(
-						session_options, &cuda_options);
-
-					if (status != NULL)
-					{
-						elog(WARNING, "CUDA provider initialization failed; falling back to CPU. Model: %s", model_path);
-						g_ort_api->ReleaseStatus(status);
-						provider = ONNX_PROVIDER_CPU;
-					}
-					else
-					{
-						elog(LOG, "ONNX model will use CUDA execution provider");
-					}
+					elog(WARNING,
+						"CUDA provider initialization "
+						"failed; falling back to CPU. "
+						"Model: %s",
+						model_path);
+					g_ort_api->ReleaseStatus(status);
+					provider = ONNX_PROVIDER_CPU;
+				} else
+				{
+					elog(LOG,
+						"ONNX model will use CUDA "
+						"execution provider");
 				}
+			}
 #else
-				elog(WARNING, "ONNX Runtime CUDA provider not compiled in; falling back to CPU for model: %s", model_path);
-				provider = ONNX_PROVIDER_CPU;
+			elog(WARNING,
+				"ONNX Runtime CUDA provider not compiled in; "
+				"falling back to CPU for model: %s",
+				model_path);
+			provider = ONNX_PROVIDER_CPU;
 #endif
-				break;
+			break;
 
-			case ONNX_PROVIDER_COREML:
+		case ONNX_PROVIDER_COREML:
 #ifdef __APPLE__
-				/* CoreML provider is available on macOS but API varies by ONNX Runtime version */
-				/* For ONNX Runtime 1.17+, CoreML is added via session options differently */
-				elog(LOG, "CoreML provider requested - using CPU provider (CoreML support TBD for ORT 1.17+)");
-				provider = ONNX_PROVIDER_CPU;
+			/* CoreML provider is available on macOS but API varies by ONNX Runtime version */
+			/* For ONNX Runtime 1.17+, CoreML is added via session options differently */
+			elog(LOG,
+				"CoreML provider requested - using CPU "
+				"provider (CoreML support TBD for ORT 1.17+)");
+			provider = ONNX_PROVIDER_CPU;
 #else
-				elog(WARNING, "CoreML execution provider not supported (non-macOS); falling back to CPU for model: %s", model_path);
-				provider = ONNX_PROVIDER_CPU;
+			elog(WARNING,
+				"CoreML execution provider not supported "
+				"(non-macOS); falling back to CPU for model: "
+				"%s",
+				model_path);
+			provider = ONNX_PROVIDER_CPU;
 #endif
-				break;
+			break;
 
-			case ONNX_PROVIDER_CPU:
-			default:
-				/* CPU is always supported. */
-				break;
+		case ONNX_PROVIDER_CPU:
+		default:
+			/* CPU is always supported. */
+			break;
 		}
 	}
 
@@ -282,21 +307,26 @@ neurondb_onnx_load_model(const char *model_path,
 #ifdef _WIN32
 	{
 		wchar_t wmodel_path[1024];
-		MultiByteToWideChar(CP_UTF8, 0, model_path, -1, wmodel_path, 1024);
-		status = g_ort_api->CreateSession(g_ort_env, wmodel_path, session_options, &session->session);
+		MultiByteToWideChar(
+			CP_UTF8, 0, model_path, -1, wmodel_path, 1024);
+		status = g_ort_api->CreateSession(g_ort_env,
+			wmodel_path,
+			session_options,
+			&session->session);
 	}
 #else
-	status = g_ort_api->CreateSession(g_ort_env, model_path, session_options, &session->session);
+	status = g_ort_api->CreateSession(
+		g_ort_env, model_path, session_options, &session->session);
 #endif
 	onnx_check_status(status, "CreateSession");
 
 	session->is_loaded = true;
 
 	ereport(DEBUG1,
-			(errmsg("Loaded ONNX model: %s", model_path),
-			 errdetail("Type: %s; Execution Provider: %s",
-					   neurondb_onnx_model_type_name(model_type),
-					   neurondb_onnx_provider_name(provider))));
+		(errmsg("Loaded ONNX model: %s", model_path),
+			errdetail("Type: %s; Execution Provider: %s",
+				neurondb_onnx_model_type_name(model_type),
+				neurondb_onnx_provider_name(provider))));
 
 	return session;
 }
@@ -343,17 +373,17 @@ neurondb_onnx_create_tensor(float *data, int64 *shape, int32 ndim)
 	Assert(ndim > 0);
 
 	for (i = 0; i < ndim; i++)
-		total_size *= (size_t) shape[i];
+		total_size *= (size_t)shape[i];
 
-	tensor = (ONNXTensor *) palloc0(sizeof(ONNXTensor));
-	tensor->data = (float *) palloc(total_size * sizeof(float));
+	tensor = (ONNXTensor *)palloc0(sizeof(ONNXTensor));
+	tensor->data = (float *)palloc(total_size * sizeof(float));
 	memcpy(tensor->data, data, total_size * sizeof(float));
-	
+
 	/* Allocate shape as int64_t for ONNX API compatibility */
-	tensor->shape = (int64 *) palloc(ndim * sizeof(int64));
+	tensor->shape = (int64 *)palloc(ndim * sizeof(int64));
 	for (i = 0; i < ndim; i++)
 		tensor->shape[i] = shape[i];
-	
+
 	tensor->ndim = ndim;
 	tensor->size = total_size;
 
@@ -367,50 +397,50 @@ neurondb_onnx_create_tensor(float *data, int64 *shape, int32 ndim)
  * Allocates and returns a new ONNXTensor (caller takes ownership).
  */
 ONNXTensor *
-neurondb_onnx_run_inference(ONNXModelSession *session,
-							ONNXTensor *input)
+neurondb_onnx_run_inference(ONNXModelSession *session, ONNXTensor *input)
 {
-	OrtStatus		 *status;
-	OrtValue		 *input_tensor = NULL;
-	OrtValue		 *output_tensor = NULL;
-	OrtMemoryInfo	 *memory_info = NULL;
+	OrtStatus *status;
+	OrtValue *input_tensor = NULL;
+	OrtValue *output_tensor = NULL;
+	OrtMemoryInfo *memory_info = NULL;
 	OrtTensorTypeAndShapeInfo *output_info = NULL;
-	ONNXTensor		 *output;
-	float			 *output_data;
-	int64			 *output_dims;
-	size_t			  output_size, num_dims, i;
+	ONNXTensor *output;
+	float *output_data;
+	int64 *output_dims;
+	size_t output_size, num_dims, i;
 
 	if (!session || !session->is_loaded)
 		ereport(ERROR,
-				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				 errmsg("ONNX model session not loaded")));
+			(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				errmsg("ONNX model session not loaded")));
 
 	if (!input || !input->data)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Invalid input tensor")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Invalid input tensor")));
 
 	/* Setup memory info indicating CPU-allocated memory */
-	status = g_ort_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info);
+	status = g_ort_api->CreateCpuMemoryInfo(
+		OrtArenaAllocator, OrtMemTypeDefault, &memory_info);
 	onnx_check_status(status, "CreateCpuMemoryInfo");
 
 	/* Create ONNX input tensor - need to cast int64* to int64_t* */
 	{
-		int64_t *shape_cast = (int64_t *) palloc(input->ndim * sizeof(int64_t));
+		int64_t *shape_cast =
+			(int64_t *)palloc(input->ndim * sizeof(int64_t));
 		int i;
-		
+
 		for (i = 0; i < input->ndim; i++)
-			shape_cast[i] = (int64_t) input->shape[i];
-		
-		status = g_ort_api->CreateTensorWithDataAsOrtValue(
-			memory_info,
+			shape_cast[i] = (int64_t)input->shape[i];
+
+		status = g_ort_api->CreateTensorWithDataAsOrtValue(memory_info,
 			input->data,
 			input->size * sizeof(float),
 			shape_cast,
 			input->ndim,
 			ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
 			&input_tensor);
-		
+
 		pfree(shape_cast);
 	}
 	onnx_check_status(status, "CreateTensorWithDataAsOrtValue");
@@ -418,24 +448,22 @@ neurondb_onnx_run_inference(ONNXModelSession *session,
 	/* The default assumption: input name "input_ids", output name "last_hidden_state".
 	   These can be generalized if the model schema is passed in future.
 	   For generation models, use "logits" as output name. */
-	const char *input_names[] = {"input_ids"};
-	const char *output_names_embed[] = {"last_hidden_state"};
-	const char *output_names_gen[] = {"logits"};
+	const char *input_names[] = { "input_ids" };
+	const char *output_names_embed[] = { "last_hidden_state" };
+	const char *output_names_gen[] = { "logits" };
 	const char **output_names;
-	
+
 	/* For generation models, use "logits" as output name */
 	if (session->model_type == ONNX_MODEL_GENERATION)
 	{
 		output_names = output_names_gen;
-	}
-	else
+	} else
 	{
 		output_names = output_names_embed;
 	}
 
-	status = g_ort_api->Run(
-		session->session,
-		NULL,            /* No run options */
+	status = g_ort_api->Run(session->session,
+		NULL, /* No run options */
 		input_names,
 		(const OrtValue *const *)&input_tensor,
 		1,
@@ -444,7 +472,8 @@ neurondb_onnx_run_inference(ONNXModelSession *session,
 		&output_tensor);
 	onnx_check_status(status, "Run");
 
-	status = g_ort_api->GetTensorMutableData(output_tensor, (void**)&output_data);
+	status = g_ort_api->GetTensorMutableData(
+		output_tensor, (void **)&output_data);
 	onnx_check_status(status, "GetTensorMutableData");
 
 	status = g_ort_api->GetTensorTypeAndShape(output_tensor, &output_info);
@@ -455,16 +484,18 @@ neurondb_onnx_run_inference(ONNXModelSession *session,
 
 	/* GetDimensions requires int64_t*, allocate temp array and copy to int64* */
 	{
-		int64_t *dims_temp = (int64_t *) palloc(num_dims * sizeof(int64_t));
-		
-		status = g_ort_api->GetDimensions(output_info, dims_temp, num_dims);
+		int64_t *dims_temp =
+			(int64_t *)palloc(num_dims * sizeof(int64_t));
+
+		status = g_ort_api->GetDimensions(
+			output_info, dims_temp, num_dims);
 		onnx_check_status(status, "GetDimensions");
-		
+
 		/* Copy to PostgreSQL int64 */
-		output_dims = (int64 *) palloc(num_dims * sizeof(int64));
+		output_dims = (int64 *)palloc(num_dims * sizeof(int64));
 		for (i = 0; i < num_dims; i++)
-			output_dims[i] = (int64) dims_temp[i];
-		
+			output_dims[i] = (int64)dims_temp[i];
+
 		pfree(dims_temp);
 	}
 
@@ -472,12 +503,12 @@ neurondb_onnx_run_inference(ONNXModelSession *session,
 	for (i = 0; i < num_dims; i++)
 		output_size *= output_dims[i];
 
-	output = (ONNXTensor *) palloc0(sizeof(ONNXTensor));
-	output->data = (float *) palloc(output_size * sizeof(float));
+	output = (ONNXTensor *)palloc0(sizeof(ONNXTensor));
+	output->data = (float *)palloc(output_size * sizeof(float));
 	memcpy(output->data, output_data, output_size * sizeof(float));
 	output->shape = output_dims;
-	output->ndim  = num_dims;
-	output->size  = output_size;
+	output->ndim = num_dims;
+	output->size = output_size;
 
 	g_ort_api->ReleaseTensorTypeAndShapeInfo(output_info);
 	g_ort_api->ReleaseValue(output_tensor);
@@ -520,18 +551,21 @@ onnx_cache_add(const char *model_name, ONNXModelSession *session)
 	if (g_model_cache_count >= neurondb_onnx_cache_size)
 		onnx_cache_evict_lru();
 
-	entry = (ONNXCacheEntry *) MemoryContextAllocZero(TopMemoryContext, sizeof(ONNXCacheEntry));
+	entry = (ONNXCacheEntry *)MemoryContextAllocZero(
+		TopMemoryContext, sizeof(ONNXCacheEntry));
 	entry->model_name = MemoryContextStrdup(TopMemoryContext, model_name);
-	entry->session    = session;
-	entry->last_used  = time(NULL);
-	entry->next       = g_model_cache_head;
+	entry->session = session;
+	entry->last_used = time(NULL);
+	entry->next = g_model_cache_head;
 
 	g_model_cache_head = entry;
 	g_model_cache_count++;
 
 	ereport(DEBUG2,
-			(errmsg("ONNX model cache insert: %s", model_name),
-			 errdetail("Cache entries: %d/%d", g_model_cache_count, neurondb_onnx_cache_size)));
+		(errmsg("ONNX model cache insert: %s", model_name),
+			errdetail("Cache entries: %d/%d",
+				g_model_cache_count,
+				neurondb_onnx_cache_size)));
 }
 
 /*
@@ -550,7 +584,8 @@ onnx_cache_get(const char *model_name)
 		if (strcmp(entry->model_name, model_name) == 0)
 		{
 			entry->last_used = time(NULL);
-			ereport(DEBUG2, (errmsg("ONNX cache hit: %s", model_name)));
+			ereport(DEBUG2,
+				(errmsg("ONNX cache hit: %s", model_name)));
 			return entry->session;
 		}
 	}
@@ -576,7 +611,8 @@ onnx_cache_evict_lru(void)
 	lru_prev = NULL;
 	oldest = lru_entry->last_used;
 	prev = NULL;
-	for (entry = g_model_cache_head; entry; prev = entry, entry = entry->next)
+	for (entry = g_model_cache_head; entry;
+		prev = entry, entry = entry->next)
 	{
 		if (entry->last_used < oldest)
 		{
@@ -591,7 +627,8 @@ onnx_cache_evict_lru(void)
 		g_model_cache_head = lru_entry->next;
 
 	ereport(DEBUG1,
-			(errmsg("Evicting ONNX model from cache: %s", lru_entry->model_name)));
+		(errmsg("Evicting ONNX model from cache: %s",
+			lru_entry->model_name)));
 
 	neurondb_onnx_unload_model(lru_entry->session);
 	pfree(lru_entry->model_name);
@@ -608,7 +645,7 @@ onnx_cache_evict_lru(void)
  */
 ONNXModelSession *
 neurondb_onnx_get_or_load_model(const char *model_name,
-								ONNXModelType model_type)
+	ONNXModelType model_type)
 {
 	ONNXModelSession *session;
 	char model_path[MAXPGPATH];
@@ -621,15 +658,22 @@ neurondb_onnx_get_or_load_model(const char *model_name,
 
 	if (!neurondb_onnx_model_path)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb.onnx_model_path is not set"),
-				 errhint("Set neurondb.onnx_model_path in postgresql.conf to use ONNX models.")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb.onnx_model_path is not set"),
+				errhint("Set neurondb.onnx_model_path in "
+					"postgresql.conf to use ONNX "
+					"models.")));
 
-	snprintf(model_path, MAXPGPATH, "%s/%s/model.onnx", neurondb_onnx_model_path, model_name);
+	snprintf(model_path,
+		MAXPGPATH,
+		"%s/%s/model.onnx",
+		neurondb_onnx_model_path,
+		model_name);
 
 	/* Establish preferred provider: try CUDA/CoreML if enabled and supported, else CPU */
 	provider = ONNX_PROVIDER_CPU;
-	if (neurondb_onnx_use_gpu) {
+	if (neurondb_onnx_use_gpu)
+	{
 #ifdef ORT_ENABLE_CUDA
 		provider = ONNX_PROVIDER_CUDA;
 #elif defined(__APPLE__)
@@ -654,7 +698,7 @@ neurondb_onnx_version(void)
 {
 	if (g_ort_api == NULL)
 		return "not initialized";
-	
+
 	/* ORT_API_VERSION provides version info */
 	return "ONNX Runtime 1.17.0+";
 }
@@ -670,12 +714,12 @@ char **
 neurondb_onnx_get_providers(int *num_providers)
 {
 	char **providers;
-	int    count = 0;
+	int count = 0;
 
 	Assert(num_providers != NULL);
 
 	/* Allocate extra entries for possible providers */
-	providers = (char **) palloc(5 * sizeof(char *));
+	providers = (char **)palloc(5 * sizeof(char *));
 
 	providers[count++] = pstrdup("CPUExecutionProvider");
 #ifdef ORT_ENABLE_CUDA
@@ -712,9 +756,9 @@ void
 neurondb_onnx_init(void)
 {
 	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("ONNX Runtime support not compiled in"),
-			 errhint("Rebuild NeuronDB with --enable-onnx flag")));
+		(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			errmsg("ONNX Runtime support not compiled in"),
+			errhint("Rebuild NeuronDB with --enable-onnx flag")));
 }
 
 void
@@ -725,12 +769,12 @@ neurondb_onnx_cleanup(void)
 
 ONNXModelSession *
 neurondb_onnx_load_model(const char *model_path,
-						 ONNXModelType model_type,
-						 ONNXProvider provider)
+	ONNXModelType model_type,
+	ONNXProvider provider)
 {
 	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("ONNX Runtime support not compiled in")));
+		(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			errmsg("ONNX Runtime support not compiled in")));
 	return NULL;
 }
 
@@ -744,18 +788,17 @@ ONNXTensor *
 neurondb_onnx_create_tensor(float *data, int64 *shape, int32 ndim)
 {
 	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("ONNX Runtime support not compiled in")));
+		(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			errmsg("ONNX Runtime support not compiled in")));
 	return NULL;
 }
 
 ONNXTensor *
-neurondb_onnx_run_inference(ONNXModelSession *session,
-							ONNXTensor *input)
+neurondb_onnx_run_inference(ONNXModelSession *session, ONNXTensor *input)
 {
 	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("ONNX Runtime support not compiled in")));
+		(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			errmsg("ONNX Runtime support not compiled in")));
 	return NULL;
 }
 
@@ -767,11 +810,11 @@ neurondb_onnx_free_tensor(ONNXTensor *tensor)
 
 ONNXModelSession *
 neurondb_onnx_get_or_load_model(const char *model_name,
-								ONNXModelType model_type)
+	ONNXModelType model_type)
 {
 	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("ONNX Runtime support not compiled in")));
+		(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			errmsg("ONNX Runtime support not compiled in")));
 	return NULL;
 }
 
@@ -810,12 +853,18 @@ neurondb_onnx_provider_name(ONNXProvider provider)
 {
 	switch (provider)
 	{
-		case ONNX_PROVIDER_CPU:      return "CPU";
-		case ONNX_PROVIDER_CUDA:     return "CUDA";
-		case ONNX_PROVIDER_TENSORRT: return "TensorRT";
-		case ONNX_PROVIDER_COREML:   return "CoreML";
-		case ONNX_PROVIDER_DIRECTML: return "DirectML";
-		default:                     return "Unknown";
+	case ONNX_PROVIDER_CPU:
+		return "CPU";
+	case ONNX_PROVIDER_CUDA:
+		return "CUDA";
+	case ONNX_PROVIDER_TENSORRT:
+		return "TensorRT";
+	case ONNX_PROVIDER_COREML:
+		return "CoreML";
+	case ONNX_PROVIDER_DIRECTML:
+		return "DirectML";
+	default:
+		return "Unknown";
 	}
 }
 
@@ -829,13 +878,20 @@ neurondb_onnx_model_type_name(ONNXModelType type)
 {
 	switch (type)
 	{
-		case ONNX_MODEL_EMBEDDING:     return "Embedding";
-		case ONNX_MODEL_CLASSIFICATION:return "Classification";
-		case ONNX_MODEL_NER:           return "NER";
-		case ONNX_MODEL_QA:            return "QuestionAnswering";
-		case ONNX_MODEL_GENERATION:    return "Generation";
-		case ONNX_MODEL_CUSTOM:        return "Custom";
-		default:                       return "Unknown";
+	case ONNX_MODEL_EMBEDDING:
+		return "Embedding";
+	case ONNX_MODEL_CLASSIFICATION:
+		return "Classification";
+	case ONNX_MODEL_NER:
+		return "NER";
+	case ONNX_MODEL_QA:
+		return "QuestionAnswering";
+	case ONNX_MODEL_GENERATION:
+		return "Generation";
+	case ONNX_MODEL_CUSTOM:
+		return "Custom";
+	default:
+		return "Unknown";
 	}
 }
 
@@ -849,38 +905,53 @@ void
 neurondb_onnx_define_gucs(void)
 {
 	DefineCustomStringVariable("neurondb.onnx_model_path",
-							   "Directory with ONNX model files",
-							   "Files exported from HuggingFace transformers in ONNX format must be placed under this directory.",
-							   &neurondb_onnx_model_path,
-							   "/var/lib/neurondb/models",
-							   PGC_SUSET,
-							   0, NULL, NULL, NULL);
+		"Directory with ONNX model files",
+		"Files exported from HuggingFace transformers in ONNX format "
+		"must be placed under this directory.",
+		&neurondb_onnx_model_path,
+		"/var/lib/neurondb/models",
+		PGC_SUSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomBoolVariable("neurondb.onnx_use_gpu",
-							 "Attempt to use GPU acceleration for ONNX inference.",
-							 "If enabled, CUDA (NVIDIA) or CoreML (macOS) execution will be tried before falling back to CPU.",
-							 &neurondb_onnx_use_gpu,
-							 true,
-							 PGC_SUSET,
-							 0, NULL, NULL, NULL);
+		"Attempt to use GPU acceleration for ONNX inference.",
+		"If enabled, CUDA (NVIDIA) or CoreML (macOS) execution will be "
+		"tried before falling back to CPU.",
+		&neurondb_onnx_use_gpu,
+		true,
+		PGC_SUSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomIntVariable("neurondb.onnx_threads",
-							"Number of ONNX Runtime intra-operator threads.",
-							"Controls the intra-op-thread pool for ONNX inference.",
-							&neurondb_onnx_threads,
-							4,
-							1,
-							64,
-							PGC_SUSET,
-							0, NULL, NULL, NULL);
+		"Number of ONNX Runtime intra-operator threads.",
+		"Controls the intra-op-thread pool for ONNX inference.",
+		&neurondb_onnx_threads,
+		4,
+		1,
+		64,
+		PGC_SUSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomIntVariable("neurondb.onnx_cache_size",
-							"ONNX model LRU cache size (number of sessions)",
-							"When this limit is reached, the least recently used session will be evicted.",
-							&neurondb_onnx_cache_size,
-							10,
-							1,
-							100,
-							PGC_SUSET,
-							0, NULL, NULL, NULL);
+		"ONNX model LRU cache size (number of sessions)",
+		"When this limit is reached, the least recently used session "
+		"will be evicted.",
+		&neurondb_onnx_cache_size,
+		10,
+		1,
+		100,
+		PGC_SUSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 }

@@ -24,6 +24,7 @@
 #include "neurondb_cuda_runtime.h"
 #include "utils/elog.h"
 #include "utils/memutils.h"
+#include "utils/typcache.h"
 #include "lib/stringinfo.h"
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
@@ -31,24 +32,24 @@
 #include <ctype.h>
 #include <errno.h>
 #ifdef HAVE_ONNX_RUNTIME
-#include "neurondb_onnx.h"	/* For neurondb_tokenize_with_model */
+#include "neurondb_onnx.h" /* For neurondb_tokenize_with_model */
 #endif
 
 /* Model cache entry */
 typedef struct NdbCudaHfModelEntry
 {
-	char				 model_name[NDB_HF_MAX_MODEL_NAME];
+	char model_name[NDB_HF_MAX_MODEL_NAME];
 	NdbCudaHfModelConfig config;
 	NdbCudaHfModelWeights weights;
-	bool				 loaded;
-	bool				 weights_on_device;
-	void				*device_weights_ptr;		/* Embedding table */
-	void				*device_position_embeddings;	/* Position embeddings */
-	void				*device_lm_head_weights;		/* LM head weights */
-	size_t				 device_weights_bytes;
-	size_t				 device_position_embed_bytes;
-	size_t				 device_lm_head_bytes;
-	time_t				 last_used;
+	bool loaded;
+	bool weights_on_device;
+	void *device_weights_ptr; /* Embedding table */
+	void *device_position_embeddings; /* Position embeddings */
+	void *device_lm_head_weights; /* LM head weights */
+	size_t device_weights_bytes;
+	size_t device_position_embed_bytes;
+	size_t device_lm_head_bytes;
+	time_t last_used;
 	struct NdbCudaHfModelEntry *next;
 } NdbCudaHfModelEntry;
 
@@ -60,28 +61,28 @@ static int g_model_cache_max = 10;
 /* Forward declarations */
 static NdbCudaHfModelEntry *ndb_cuda_hf_find_model(const char *model_name);
 static int ndb_cuda_hf_load_model_weights(const char *model_name,
-					   const char *model_path,
-					   NdbCudaHfModelConfig *config,
-					   NdbCudaHfModelWeights *weights,
-					   char **errstr);
+	const char *model_path,
+	NdbCudaHfModelConfig *config,
+	NdbCudaHfModelWeights *weights,
+	char **errstr);
 static int ndb_cuda_hf_tokenize_text(const char *text,
-				      const char *model_name,
-				      int32_t *token_ids,
-				      int32_t *attention_mask,
-				      int *seq_len,
-				      char **errstr);
+	const char *model_name,
+	int32_t *token_ids,
+	int32_t *attention_mask,
+	int *seq_len,
+	char **errstr);
 static int ndb_cuda_hf_parse_gen_params(const char *params_json,
-					 const char *model_name,
-					 NdbCudaHfGenParams *gen_params,
-					 char **errstr);
+	const char *model_name,
+	NdbCudaHfGenParams *gen_params,
+	char **errstr);
 static int ndb_cuda_hf_decode_tokens(const int32_t *token_ids,
-				      int num_tokens,
-				      const char *model_name,
-				      char **text_out,
-				      char **errstr);
+	int num_tokens,
+	const char *model_name,
+	char **text_out,
+	char **errstr);
 static int ndb_cuda_hf_init_kv_cache(NdbCudaHfKVCache *kv_cache,
-				      const NdbCudaHfModelConfig *config,
-				      char **errstr);
+	const NdbCudaHfModelConfig *config,
+	char **errstr);
 static void ndb_cuda_hf_free_kv_cache(NdbCudaHfKVCache *kv_cache);
 
 /* Helper: Find model in cache */
@@ -89,14 +90,33 @@ static NdbCudaHfModelEntry *
 ndb_cuda_hf_find_model(const char *model_name)
 {
 	NdbCudaHfModelEntry *entry;
+	size_t model_name_len;
 
 	if (!model_name)
 		return NULL;
 
+	/* Defensive check: validate input string */
+	if (model_name[0] == '\0')
+		return NULL;
+
+	/* Get input length once */
+	model_name_len = strlen(model_name);
+	if (model_name_len >= NDB_HF_MAX_MODEL_NAME)
+		return NULL;
+
 	for (entry = g_model_cache; entry != NULL; entry = entry->next)
 	{
-		if (strcmp(entry->model_name, model_name) == 0)
-			return entry;
+		/* Use strncmp with bounded length to avoid reading past array bounds */
+		/* Compare up to the smaller of the two string lengths */
+		if (strncmp(entry->model_name,
+				model_name,
+				NDB_HF_MAX_MODEL_NAME - 1) == 0)
+		{
+			/* Verify the entry's string is null-terminated and matches length */
+			/* Check that entry->model_name[model_name_len] is '\0' */
+			if (entry->model_name[model_name_len] == '\0')
+				return entry;
+		}
 	}
 
 	return NULL;
@@ -105,10 +125,10 @@ ndb_cuda_hf_find_model(const char *model_name)
 /* Helper: Load model weights from file (placeholder - actual loading would parse model files) */
 static int
 ndb_cuda_hf_load_model_weights(const char *model_name,
-				const char *model_path,
-				NdbCudaHfModelConfig *config,
-				NdbCudaHfModelWeights *weights,
-				char **errstr)
+	const char *model_path,
+	NdbCudaHfModelConfig *config,
+	NdbCudaHfModelWeights *weights,
+	char **errstr)
 {
 	/* Placeholder: In a full implementation, this would:
 	 * 1. Load model weights from file (e.g., safetensors, pickle)
@@ -121,7 +141,8 @@ ndb_cuda_hf_load_model_weights(const char *model_name,
 	if (!model_name || !config || !weights)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for model loading");
+			*errstr =
+				pstrdup("invalid parameters for model loading");
 		return -1;
 	}
 
@@ -130,8 +151,8 @@ ndb_cuda_hf_load_model_weights(const char *model_name,
 
 	strncpy(config->model_name, model_name, NDB_HF_MAX_MODEL_NAME - 1);
 	config->model_type = NDB_HF_MODEL_EMBEDDING;
-	config->vocab_size = 30522;	/* BERT base vocabulary size */
-	config->embed_dim = 768;		/* BERT base embedding dimension */
+	config->vocab_size = 30522; /* BERT base vocabulary size */
+	config->embed_dim = 768; /* BERT base embedding dimension */
 	config->max_seq_len = 512;
 	config->num_layers = 12;
 	config->num_heads = 12;
@@ -139,33 +160,40 @@ ndb_cuda_hf_load_model_weights(const char *model_name,
 	config->use_gpu = true;
 
 	/* Allocate dummy embedding table on host */
-	size_t embed_table_size = config->vocab_size * config->embed_dim * sizeof(float);
-	weights->embedding_table = (float *) palloc(embed_table_size);
+	size_t embed_table_size =
+		config->vocab_size * config->embed_dim * sizeof(float);
+	weights->embedding_table = (float *)palloc(embed_table_size);
 
 	/* Initialize with random values (in real implementation, load from file) */
 	for (int i = 0; i < config->vocab_size * config->embed_dim; i++)
 	{
-		weights->embedding_table[i] = (float)(rand() % 1000) / 1000.0f - 0.5f;
+		weights->embedding_table[i] =
+			(float)(rand() % 1000) / 1000.0f - 0.5f;
 	}
 
 	/* Allocate position embeddings and LM head weights for generation models */
 	/* These will be used if model type is changed to GENERATION later */
-	size_t position_embed_size = config->max_seq_len * config->embed_dim * sizeof(float);
-	size_t lm_head_size = config->vocab_size * config->embed_dim * sizeof(float);
-	weights->position_embeddings = (float *) palloc(position_embed_size);
-	weights->lm_head_weights = (float *) palloc(lm_head_size);
+	size_t position_embed_size =
+		config->max_seq_len * config->embed_dim * sizeof(float);
+	size_t lm_head_size =
+		config->vocab_size * config->embed_dim * sizeof(float);
+	weights->position_embeddings = (float *)palloc(position_embed_size);
+	weights->lm_head_weights = (float *)palloc(lm_head_size);
 
 	/* Initialize with random values */
 	for (int i = 0; i < config->max_seq_len * config->embed_dim; i++)
 	{
-		weights->position_embeddings[i] = (float)(rand() % 1000) / 1000.0f - 0.5f;
+		weights->position_embeddings[i] =
+			(float)(rand() % 1000) / 1000.0f - 0.5f;
 	}
 	for (int i = 0; i < config->vocab_size * config->embed_dim; i++)
 	{
-		weights->lm_head_weights[i] = (float)(rand() % 1000) / 1000.0f - 0.5f;
+		weights->lm_head_weights[i] =
+			(float)(rand() % 1000) / 1000.0f - 0.5f;
 	}
 
-	weights->total_bytes = embed_table_size + position_embed_size + lm_head_size;
+	weights->total_bytes =
+		embed_table_size + position_embed_size + lm_head_size;
 
 	return 0;
 }
@@ -173,11 +201,11 @@ ndb_cuda_hf_load_model_weights(const char *model_name,
 /* Helper: Tokenize text (simplified implementation) */
 static int
 ndb_cuda_hf_tokenize_text(const char *text,
-			  const char *model_name,
-			  int32_t *token_ids,
-			  int32_t *attention_mask,
-			  int *seq_len,
-			  char **errstr)
+	const char *model_name,
+	int32_t *token_ids,
+	int32_t *attention_mask,
+	int *seq_len,
+	char **errstr)
 {
 	int text_len;
 	int word_count = 0;
@@ -188,7 +216,8 @@ ndb_cuda_hf_tokenize_text(const char *text,
 	if (!text || !token_ids || !attention_mask || !seq_len)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for tokenization");
+			*errstr =
+				pstrdup("invalid parameters for tokenization");
 		return -1;
 	}
 
@@ -206,9 +235,11 @@ ndb_cuda_hf_tokenize_text(const char *text,
 				int j;
 
 				for (j = word_start; j < i && j < text_len; j++)
-					hash = hash * 31 + (unsigned char) text[j];
+					hash = hash * 31
+						+ (unsigned char)text[j];
 
-				token_ids[word_count + 1] = (int32_t)(hash % 30522); /* BERT vocab size */
+				token_ids[word_count + 1] = (int32_t)(hash
+					% 30522); /* BERT vocab size */
 				attention_mask[word_count + 1] = 1;
 				word_count++;
 			}
@@ -223,7 +254,7 @@ ndb_cuda_hf_tokenize_text(const char *text,
 		int j;
 
 		for (j = word_start; j < text_len; j++)
-			hash = hash * 31 + (unsigned char) text[j];
+			hash = hash * 31 + (unsigned char)text[j];
 
 		token_ids[word_count + 1] = (int32_t)(hash % 30522);
 		attention_mask[word_count + 1] = 1;
@@ -231,9 +262,9 @@ ndb_cuda_hf_tokenize_text(const char *text,
 	}
 
 	/* Add CLS token at start, SEP token at end */
-	token_ids[0] = 101;		/* [CLS] token ID for BERT */
+	token_ids[0] = 101; /* [CLS] token ID for BERT */
 	attention_mask[0] = 1;
-	token_ids[word_count + 1] = 102;	/* [SEP] token ID for BERT */
+	token_ids[word_count + 1] = 102; /* [SEP] token ID for BERT */
 	attention_mask[word_count + 1] = 1;
 
 	/* Pad remaining positions */
@@ -256,13 +287,15 @@ ndb_cuda_hf_tokenize_text(const char *text,
  * 2. Tokenizes input text
  * 3. Runs embedding lookup and pooling on GPU
  * 4. Returns pooled embedding vector
+ *
+ * Bulletproof error handling with defensive checks at every step.
  */
 int
 ndb_cuda_hf_embed(const char *model_name,
-		  const char *text,
-		  float **vec_out,
-		  int *dim_out,
-		  char **errstr)
+	const char *text,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
 {
 	NdbCudaHfModelEntry *entry = NULL;
 	NdbCudaHfModelConfig config;
@@ -275,31 +308,67 @@ ndb_cuda_hf_embed(const char *model_name,
 	cudaError_t cuda_status;
 	float *d_embedding_table = NULL;
 	size_t embed_table_bytes;
+	size_t embed_table_size;
 	int rc = -1;
 	MemoryContext oldcontext;
-	MemoryContext embed_context;
+	MemoryContext embed_context = NULL;
+	bool weights_allocated = false;
 
+	/* Initialize error string */
 	if (errstr)
 		*errstr = NULL;
-	if (model_name == NULL || text == NULL || vec_out == NULL || dim_out == NULL)
+
+	/* Validate input parameters */
+	if (model_name == NULL || text == NULL || vec_out == NULL
+		|| dim_out == NULL)
 	{
 		if (errstr)
 			*errstr = pstrdup("invalid parameters for CUDA HF embed");
 		return -1;
 	}
 
-	/* Create memory context for this operation */
-	embed_context = AllocSetContextCreate(CurrentMemoryContext,
-					      "cuda_hf_embed_ctx",
-					      ALLOCSET_DEFAULT_SIZES);
-	oldcontext = MemoryContextSwitchTo(embed_context);
+	/* Validate non-empty strings */
+	if (model_name[0] == '\0')
+	{
+		if (errstr)
+			*errstr = pstrdup("model name cannot be empty");
+		return -1;
+	}
+	if (text[0] == '\0')
+	{
+		if (errstr)
+			*errstr = pstrdup("input text cannot be empty");
+		return -1;
+	}
 
-	/* Find or load model */
+	/* Validate model name length */
+	if (strlen(model_name) >= NDB_HF_MAX_MODEL_NAME)
+	{
+		if (errstr)
+			*errstr = psprintf("model name too long (max %d)",
+				NDB_HF_MAX_MODEL_NAME - 1);
+		return -1;
+	}
+
+	/* Find or load model (check cache first, before creating temp context) */
 	entry = ndb_cuda_hf_find_model(model_name);
 	if (entry == NULL || !entry->loaded)
 	{
+		/* Create temporary context for loading weights */
+		embed_context = AllocSetContextCreate(CurrentMemoryContext,
+			"cuda_hf_load_ctx",
+			ALLOCSET_DEFAULT_SIZES);
+		if (embed_context == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("failed to create memory context");
+			return -1;
+		}
+		oldcontext = MemoryContextSwitchTo(embed_context);
+
 		/* Load model (for now, use dummy weights) */
-		rc = ndb_cuda_hf_load_model_weights(model_name, NULL, &config, &weights, errstr);
+		rc = ndb_cuda_hf_load_model_weights(
+			model_name, NULL, &config, &weights, errstr);
 		if (rc != 0)
 		{
 			MemoryContextSwitchTo(oldcontext);
@@ -307,89 +376,341 @@ ndb_cuda_hf_embed(const char *model_name,
 			return -1;
 		}
 
-		/* Allocate new cache entry */
-		entry = (NdbCudaHfModelEntry *) palloc(sizeof(NdbCudaHfModelEntry));
+		/* Validate config values */
+		if (config.vocab_size <= 0 || config.vocab_size > 1000000)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = psprintf("invalid vocab_size: %d",
+					config.vocab_size);
+			return -1;
+		}
+		if (config.embed_dim <= 0 || config.embed_dim > 10000)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = psprintf("invalid embed_dim: %d",
+					config.embed_dim);
+			return -1;
+		}
+		if (config.max_seq_len <= 0
+			|| config.max_seq_len > NDB_HF_MAX_SEQ_LEN)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = psprintf("invalid max_seq_len: %d",
+					config.max_seq_len);
+			return -1;
+		}
+
+		/* Check for size overflow */
+		embed_table_size =
+			config.vocab_size * config.embed_dim * sizeof(float);
+		if (embed_table_size / sizeof(float)
+			!= (size_t) config.vocab_size * config.embed_dim)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = pstrdup("embedding table size overflow");
+			return -1;
+		}
+
+		/* Validate weights were allocated */
+		if (weights.embedding_table == NULL
+			|| weights.position_embeddings == NULL
+			|| weights.lm_head_weights == NULL)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = pstrdup("model weights not properly loaded");
+			return -1;
+		}
+
+		/* Switch to CacheMemoryContext for persistent cache entry */
+		MemoryContextSwitchTo(oldcontext);
+		oldcontext = MemoryContextSwitchTo(CacheMemoryContext);
+
+		/* Allocate new cache entry in CacheMemoryContext (persistent) */
+		entry = (NdbCudaHfModelEntry *)palloc(
+			sizeof(NdbCudaHfModelEntry));
+		if (entry == NULL)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = pstrdup("failed to allocate cache entry");
+			return -1;
+		}
 		memset(entry, 0, sizeof(NdbCudaHfModelEntry));
-		strncpy(entry->model_name, model_name, NDB_HF_MAX_MODEL_NAME - 1);
+		strncpy(entry->model_name,
+			model_name,
+			NDB_HF_MAX_MODEL_NAME - 1);
+		entry->model_name[NDB_HF_MAX_MODEL_NAME - 1] = '\0';
 		entry->config = config;
-		entry->weights = weights;
+
+		/* Copy weights to parent context with validation */
+		{
+			size_t position_embed_size;
+			size_t lm_head_size;
+
+			position_embed_size =
+				config.max_seq_len * config.embed_dim * sizeof(float);
+			lm_head_size =
+				config.vocab_size * config.embed_dim * sizeof(float);
+
+			/* Check for overflow */
+			if (position_embed_size / sizeof(float)
+				!= (size_t) config.max_seq_len * config.embed_dim
+				|| lm_head_size / sizeof(float)
+				!= (size_t) config.vocab_size * config.embed_dim)
+			{
+				MemoryContextDelete(embed_context);
+				if (errstr)
+					*errstr = pstrdup("weight size overflow");
+				return -1;
+			}
+
+			entry->weights.embedding_table =
+				(float *)palloc(embed_table_size);
+			if (entry->weights.embedding_table == NULL)
+			{
+				MemoryContextDelete(embed_context);
+				if (errstr)
+					*errstr = pstrdup("failed to allocate embedding table");
+				return -1;
+			}
+			memcpy(entry->weights.embedding_table,
+				weights.embedding_table,
+				embed_table_size);
+
+			entry->weights.position_embeddings =
+				(float *)palloc(position_embed_size);
+			if (entry->weights.position_embeddings == NULL)
+			{
+				pfree(entry->weights.embedding_table);
+				MemoryContextDelete(embed_context);
+				if (errstr)
+					*errstr =
+						pstrdup("failed to allocate position embeddings");
+				return -1;
+			}
+			memcpy(entry->weights.position_embeddings,
+				weights.position_embeddings,
+				position_embed_size);
+
+			entry->weights.lm_head_weights =
+				(float *)palloc(lm_head_size);
+			if (entry->weights.lm_head_weights == NULL)
+			{
+				pfree(entry->weights.embedding_table);
+				pfree(entry->weights.position_embeddings);
+				MemoryContextDelete(embed_context);
+				if (errstr)
+					*errstr = pstrdup("failed to allocate LM head weights");
+				return -1;
+			}
+			memcpy(entry->weights.lm_head_weights,
+				weights.lm_head_weights,
+				lm_head_size);
+
+			entry->weights.total_bytes = weights.total_bytes;
+			weights_allocated = true;
+		}
+
 		entry->loaded = true;
 		entry->weights_on_device = false;
 		entry->last_used = time(NULL);
 		entry->next = g_model_cache;
 		g_model_cache = entry;
 		g_model_cache_count++;
-	}
-	else
+
+		/* Switch back to original context before deleting temp context */
+		MemoryContextSwitchTo(oldcontext);
+
+		/* Delete temporary context used for loading */
+		MemoryContextDelete(embed_context);
+		embed_context = NULL;
+	} else
 	{
+		/* Validate cached entry */
+		if (entry->weights.embedding_table == NULL)
+		{
+			if (errstr)
+				*errstr = psprintf("cached model '%s' has NULL weights",
+					model_name);
+			return -1;
+		}
 		config = entry->config;
-		weights = entry->weights;
 		entry->last_used = time(NULL);
 	}
 
+	/* Validate config from cache */
+	if (config.vocab_size <= 0 || config.embed_dim <= 0
+		|| config.max_seq_len <= 0)
+	{
+		if (errstr)
+			*errstr = psprintf("invalid config for model '%s'",
+				model_name);
+		return -1;
+	}
+
+	/* Create memory context for this operation's temporary allocations */
+	embed_context = AllocSetContextCreate(CurrentMemoryContext,
+		"cuda_hf_embed_ctx",
+		ALLOCSET_DEFAULT_SIZES);
+	if (embed_context == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("failed to create embed memory context");
+		return -1;
+	}
+	oldcontext = MemoryContextSwitchTo(embed_context);
+
 	embed_dim = config.embed_dim;
 
+	/* Validate embedding dimension */
+	if (embed_dim <= 0 || embed_dim > 10000)
+	{
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(embed_context);
+		if (errstr)
+			*errstr = psprintf("invalid embed_dim: %d", embed_dim);
+		return -1;
+	}
+
 	/* Tokenize text */
-	rc = ndb_cuda_hf_tokenize_text(text, model_name, token_ids, attention_mask,
-				       &seq_len, errstr);
+	rc = ndb_cuda_hf_tokenize_text(
+		text, model_name, token_ids, attention_mask, &seq_len, errstr);
 	if (rc != 0)
 	{
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(embed_context);
+		return -1;
+	}
+
+	/* Validate sequence length */
+	if (seq_len <= 0 || seq_len > NDB_HF_MAX_SEQ_LEN)
+	{
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(embed_context);
+		if (errstr)
+			*errstr = psprintf("invalid sequence length: %d", seq_len);
 		return -1;
 	}
 
 	/* Allocate embedding table on device if not already loaded */
 	if (!entry->weights_on_device || entry->device_weights_ptr == NULL)
 	{
-		embed_table_bytes = config.vocab_size * config.embed_dim * sizeof(float);
-		cuda_status = cudaMalloc((void **)&d_embedding_table, embed_table_bytes);
-		if (cuda_status != cudaSuccess)
+		embed_table_bytes =
+			config.vocab_size * config.embed_dim * sizeof(float);
+
+		/* Check for overflow */
+		if (embed_table_bytes / sizeof(float)
+			!= (size_t) config.vocab_size * config.embed_dim)
 		{
-			if (errstr)
-				*errstr = psprintf("CUDA malloc failed: %s",
-						   cudaGetErrorString(cuda_status));
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = pstrdup("embedding table size overflow");
+			return -1;
+		}
+
+		/* Allocate device memory */
+		cuda_status = cudaMalloc(
+			(void **)&d_embedding_table, embed_table_bytes);
+		if (cuda_status != cudaSuccess)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = psprintf("CUDA malloc failed: %s",
+					cudaGetErrorString(cuda_status));
+			return -1;
+		}
+
+		/* Validate embedding table pointer */
+		if (entry->weights.embedding_table == NULL)
+		{
+			cudaFree(d_embedding_table);
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = pstrdup("embedding table is NULL");
 			return -1;
 		}
 
 		/* Copy embedding table to device */
-		cuda_status = cudaMemcpy(d_embedding_table, weights.embedding_table,
-					 embed_table_bytes, cudaMemcpyHostToDevice);
+		cuda_status = cudaMemcpy(d_embedding_table,
+			entry->weights.embedding_table,
+			embed_table_bytes,
+			cudaMemcpyHostToDevice);
 		if (cuda_status != cudaSuccess)
 		{
 			cudaFree(d_embedding_table);
-			if (errstr)
-				*errstr = psprintf("CUDA memcpy failed: %s",
-						   cudaGetErrorString(cuda_status));
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = psprintf("CUDA memcpy failed: %s",
+					cudaGetErrorString(cuda_status));
+			return -1;
+		}
+
+		/* Verify copy succeeded */
+		cuda_status = cudaGetLastError();
+		if (cuda_status != cudaSuccess)
+		{
+			cudaFree(d_embedding_table);
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = psprintf("CUDA error after memcpy: %s",
+					cudaGetErrorString(cuda_status));
 			return -1;
 		}
 
 		entry->device_weights_ptr = d_embedding_table;
 		entry->device_weights_bytes = embed_table_bytes;
 		entry->weights_on_device = true;
-	}
-	else
+	} else
 	{
-		d_embedding_table = (float *) entry->device_weights_ptr;
+		/* Validate device pointer */
+		if (entry->device_weights_ptr == NULL)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(embed_context);
+			if (errstr)
+				*errstr = pstrdup("device weights pointer is NULL");
+			return -1;
+		}
+		d_embedding_table = (float *)entry->device_weights_ptr;
 	}
 
 	/* Allocate output embedding in embed context */
-	embedding = (float *) palloc(sizeof(float) * embed_dim);
+	embedding = (float *)palloc(sizeof(float) * embed_dim);
+	if (embedding == NULL)
+	{
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(embed_context);
+		if (errstr)
+			*errstr = pstrdup("failed to allocate output embedding");
+		return -1;
+	}
 
 	/* Call CUDA kernel for embedding inference */
 	rc = ndb_cuda_hf_embed_inference(model_name,
-					 token_ids,
-					 attention_mask,
-					 seq_len,
-					 d_embedding_table,
-					 config.vocab_size,
-					 embed_dim,
-					 embedding,
-					 errstr);
+		token_ids,
+		attention_mask,
+		seq_len,
+		d_embedding_table,
+		config.vocab_size,
+		embed_dim,
+		embedding,
+		errstr);
 	if (rc != 0)
 	{
 		MemoryContextSwitchTo(oldcontext);
@@ -397,9 +718,26 @@ ndb_cuda_hf_embed(const char *model_name,
 		return -1;
 	}
 
+	/* Validate embedding output */
+	if (embedding == NULL)
+	{
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(embed_context);
+		if (errstr)
+			*errstr = pstrdup("embedding inference returned NULL");
+		return -1;
+	}
+
 	/* Copy embedding to parent context */
 	MemoryContextSwitchTo(oldcontext);
-	*vec_out = (float *) palloc(sizeof(float) * embed_dim);
+	*vec_out = (float *)palloc(sizeof(float) * embed_dim);
+	if (*vec_out == NULL)
+	{
+		MemoryContextDelete(embed_context);
+		if (errstr)
+			*errstr = pstrdup("failed to allocate output vector");
+		return -1;
+	}
 	memcpy(*vec_out, embedding, sizeof(float) * embed_dim);
 	*dim_out = embed_dim;
 
@@ -429,9 +767,9 @@ ndb_cuda_hf_embed(const char *model_name,
  */
 static int
 ndb_cuda_hf_parse_gen_params(const char *params_json,
-			     const char *model_name,
-			     NdbCudaHfGenParams *gen_params,
-			     char **errstr)
+	const char *model_name,
+	NdbCudaHfGenParams *gen_params,
+	char **errstr)
 {
 	char *json_copy = NULL;
 	char *p = NULL;
@@ -447,7 +785,8 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 	if (!params_json || !gen_params)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for parse_gen_params");
+			*errstr = pstrdup(
+				"invalid parameters for parse_gen_params");
 		return -1;
 	}
 
@@ -455,12 +794,12 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 	memset(gen_params, 0, sizeof(NdbCudaHfGenParams));
 	gen_params->temperature = 1.0f;
 	gen_params->top_p = 1.0f;
-	gen_params->top_k = 0;		/* 0 = disabled */
+	gen_params->top_k = 0; /* 0 = disabled */
 	gen_params->max_tokens = 100;
 	gen_params->min_tokens = 0;
 	gen_params->repetition_penalty = 1.0f;
 	gen_params->do_sample = false;
-		gen_params->num_stop_sequences = 0;
+	gen_params->num_stop_sequences = 0;
 	gen_params->return_prompt = false;
 	gen_params->seed = 0;
 	gen_params->streaming = false;
@@ -475,14 +814,14 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 	p = json_copy;
 
 	/* Skip whitespace and opening brace */
-	while (*p && (isspace((unsigned char) *p) || *p == '{'))
+	while (*p && (isspace((unsigned char)*p) || *p == '{'))
 		p++;
 
 	/* Parse key-value pairs */
 	while (*p && *p != '}')
 	{
 		/* Skip whitespace and commas */
-		while (*p && (isspace((unsigned char) *p) || *p == ','))
+		while (*p && (isspace((unsigned char)*p) || *p == ','))
 			p++;
 
 		if (*p == '}' || *p == '\0')
@@ -493,10 +832,11 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 		{
 			pfree(json_copy);
 			if (errstr)
-				*errstr = pstrdup("invalid JSON format: expected key");
+				*errstr = pstrdup(
+					"invalid JSON format: expected key");
 			return -1;
 		}
-		p++;	/* Skip opening quote */
+		p++; /* Skip opening quote */
 		key = p;
 		while (*p && *p != '"')
 			p++;
@@ -504,14 +844,15 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 		{
 			pfree(json_copy);
 			if (errstr)
-				*errstr = pstrdup("invalid JSON format: unterminated key");
+				*errstr = pstrdup("invalid JSON format: "
+						  "unterminated key");
 			return -1;
 		}
-		*p = '\0';	/* Null-terminate key */
-		p++;	/* Skip closing quote */
+		*p = '\0'; /* Null-terminate key */
+		p++; /* Skip closing quote */
 
 		/* Skip colon */
-		while (*p && (isspace((unsigned char) *p) || *p == ':'))
+		while (*p && (isspace((unsigned char)*p) || *p == ':'))
 			p++;
 
 		/* Parse value based on key */
@@ -520,76 +861,79 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 			float_val = strtof(p, &endptr);
 			if (endptr != p && float_val > 0.0f)
 				gen_params->temperature = float_val;
-		}
-		else if (strcmp(key, "top_p") == 0)
+		} else if (strcmp(key, "top_p") == 0)
 		{
 			float_val = strtof(p, &endptr);
-			if (endptr != p && float_val > 0.0f && float_val <= 1.0f)
+			if (endptr != p && float_val > 0.0f
+				&& float_val <= 1.0f)
 				gen_params->top_p = float_val;
-		}
-		else if (strcmp(key, "top_k") == 0)
+		} else if (strcmp(key, "top_k") == 0)
 		{
-			int_val = (int) strtol(p, &endptr, 10);
+			int_val = (int)strtol(p, &endptr, 10);
 			if (endptr != p && int_val >= 0)
 				gen_params->top_k = int_val;
-		}
-		else if (strcmp(key, "max_tokens") == 0 || strcmp(key, "max_length") == 0)
+		} else if (strcmp(key, "max_tokens") == 0
+			|| strcmp(key, "max_length") == 0)
 		{
-			int_val = (int) strtol(p, &endptr, 10);
+			int_val = (int)strtol(p, &endptr, 10);
 			if (endptr != p && int_val > 0)
 				gen_params->max_tokens = int_val;
-		}
-		else if (strcmp(key, "min_tokens") == 0 || strcmp(key, "min_length") == 0)
+		} else if (strcmp(key, "min_tokens") == 0
+			|| strcmp(key, "min_length") == 0)
 		{
-			int_val = (int) strtol(p, &endptr, 10);
+			int_val = (int)strtol(p, &endptr, 10);
 			if (endptr != p && int_val >= 0)
 				gen_params->min_tokens = int_val;
-		}
-		else if (strcmp(key, "repetition_penalty") == 0)
+		} else if (strcmp(key, "repetition_penalty") == 0)
 		{
 			float_val = strtof(p, &endptr);
 			if (endptr != p && float_val > 0.0f)
 				gen_params->repetition_penalty = float_val;
-		}
-		else if (strcmp(key, "do_sample") == 0)
+		} else if (strcmp(key, "do_sample") == 0)
 		{
-			if (strncmp(p, "true", 4) == 0 || strncmp(p, "TRUE", 4) == 0)
+			if (strncmp(p, "true", 4) == 0
+				|| strncmp(p, "TRUE", 4) == 0)
 				gen_params->do_sample = true;
-			else if (strncmp(p, "false", 5) == 0 || strncmp(p, "FALSE", 5) == 0)
+			else if (strncmp(p, "false", 5) == 0
+				|| strncmp(p, "FALSE", 5) == 0)
 				gen_params->do_sample = false;
-		}
-		else if (strcmp(key, "return_prompt") == 0)
+		} else if (strcmp(key, "return_prompt") == 0)
 		{
-			if (strncmp(p, "true", 4) == 0 || strncmp(p, "TRUE", 4) == 0)
+			if (strncmp(p, "true", 4) == 0
+				|| strncmp(p, "TRUE", 4) == 0)
 				gen_params->return_prompt = true;
-			else if (strncmp(p, "false", 5) == 0 || strncmp(p, "FALSE", 5) == 0)
+			else if (strncmp(p, "false", 5) == 0
+				|| strncmp(p, "FALSE", 5) == 0)
 				gen_params->return_prompt = false;
-		}
-		else if (strcmp(key, "seed") == 0)
+		} else if (strcmp(key, "seed") == 0)
 		{
-			int_val = (int) strtol(p, &endptr, 10);
+			int_val = (int)strtol(p, &endptr, 10);
 			if (endptr != p)
 				gen_params->seed = int_val;
-		}
-		else if (strcmp(key, "streaming") == 0 || strcmp(key, "stream") == 0)
+		} else if (strcmp(key, "streaming") == 0
+			|| strcmp(key, "stream") == 0)
 		{
-			if (strncmp(p, "true", 4) == 0 || strncmp(p, "TRUE", 4) == 0)
+			if (strncmp(p, "true", 4) == 0
+				|| strncmp(p, "TRUE", 4) == 0)
 				gen_params->streaming = true;
-			else if (strncmp(p, "false", 5) == 0 || strncmp(p, "FALSE", 5) == 0)
+			else if (strncmp(p, "false", 5) == 0
+				|| strncmp(p, "FALSE", 5) == 0)
 				gen_params->streaming = false;
-		}
-		else if (strcmp(key, "logit_bias") == 0 || strcmp(key, "bias") == 0)
+		} else if (strcmp(key, "logit_bias") == 0
+			|| strcmp(key, "bias") == 0)
 		{
 			/* Parse logit bias map: {"token_id": bias_value, ...} or [token_id, bias_value, ...] */
 			if (*p == '{')
 			{
 				/* JSON object format: {"token_id": bias_value, ...} */
-				p++;	/* Skip '{' */
+				p++; /* Skip '{' */
 				i = 0;
 				while (*p && *p != '}' && i < 256)
 				{
 					/* Skip whitespace and commas */
-					while (*p && (isspace((unsigned char) *p) || *p == ','))
+					while (*p
+						&& (isspace((unsigned char)*p)
+							|| *p == ','))
 						p++;
 
 					if (*p == '}')
@@ -599,137 +943,177 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 					if (*p == '"')
 					{
 						/* Quoted key: "123": 0.5 */
-						p++;	/* Skip opening quote */
-						int_val = (int) strtol(p, &endptr, 10);
-						if (endptr != p && *endptr == '"' && int_val >= 0)
+						p++; /* Skip opening quote */
+						int_val = (int)strtol(
+							p, &endptr, 10);
+						if (endptr != p
+							&& *endptr == '"'
+							&& int_val >= 0)
 						{
-							p = endptr + 1;	/* Skip closing quote */
-							gen_params->logit_bias_tokens[i] = (int32_t) int_val;
+							p = endptr
+								+ 1; /* Skip closing quote */
+							gen_params
+								->logit_bias_tokens
+									[i] =
+								(int32_t)
+									int_val;
 
 							/* Skip colon */
-							while (*p && (isspace((unsigned char) *p) || *p == ':'))
+							while (*p
+								&& (isspace((
+									    unsigned char)*p)
+									|| *p == ':'))
 								p++;
 
 							/* Parse bias value */
-							float_val = strtof(p, &endptr);
+							float_val = strtof(
+								p, &endptr);
 							if (endptr != p)
 							{
-								gen_params->logit_bias_values[i] = float_val;
+								gen_params->logit_bias_values
+									[i] =
+									float_val;
 								p = endptr;
 								i++;
-								gen_params->num_logit_bias = i;
+								gen_params
+									->num_logit_bias =
+									i;
 							}
-						}
-						else
+						} else
 						{
 							/* Invalid token ID, skip to next entry */
-							while (*p && *p != '"' && *p != '}')
+							while (*p && *p != '"'
+								&& *p != '}')
 								p++;
 							if (*p == '"')
 								p++;
 							/* Skip value */
-							while (*p && *p != ',' && *p != '}')
+							while (*p && *p != ','
+								&& *p != '}')
 							{
 								if (*p == '"')
 								{
 									p++;
-									while (*p && *p != '"')
+									while (*p
+										&& *p != '"')
 										p++;
 									if (*p == '"')
 										p++;
-								}
-								else
+								} else
 									p++;
 							}
 						}
-					}
-					else if (isdigit((unsigned char) *p) || *p == '-' || *p == '+')
+					} else if (isdigit((unsigned char)*p)
+						|| *p == '-' || *p == '+')
 					{
 						/* Unquoted numeric key: 123: 0.5 */
-						int_val = (int) strtol(p, &endptr, 10);
+						int_val = (int)strtol(
+							p, &endptr, 10);
 						if (endptr != p && int_val >= 0)
 						{
 							p = endptr;
-							gen_params->logit_bias_tokens[i] = (int32_t) int_val;
+							gen_params
+								->logit_bias_tokens
+									[i] =
+								(int32_t)
+									int_val;
 
 							/* Skip colon */
-							while (*p && (isspace((unsigned char) *p) || *p == ':'))
+							while (*p
+								&& (isspace((
+									    unsigned char)*p)
+									|| *p == ':'))
 								p++;
 
 							/* Parse bias value */
-							float_val = strtof(p, &endptr);
+							float_val = strtof(
+								p, &endptr);
 							if (endptr != p)
 							{
-								gen_params->logit_bias_values[i] = float_val;
+								gen_params->logit_bias_values
+									[i] =
+									float_val;
 								p = endptr;
 								i++;
-								gen_params->num_logit_bias = i;
+								gen_params
+									->num_logit_bias =
+									i;
 							}
-						}
-						else
+						} else
 						{
 							/* Invalid format, skip to next entry */
-							while (*p && *p != ',' && *p != '}')
+							while (*p && *p != ','
+								&& *p != '}')
 								p++;
 						}
-					}
-					else
+					} else
 					{
 						/* Unexpected character, skip to next entry */
-						while (*p && *p != ',' && *p != '}')
+						while (*p && *p != ','
+							&& *p != '}')
 							p++;
 					}
 				}
-			}
-			else if (*p == '[')
+			} else if (*p == '[')
 			{
 				/* Array format: [token_id, bias_value, ...] */
-				p++;	/* Skip '[' */
+				p++; /* Skip '[' */
 				i = 0;
 				while (*p && *p != ']' && i < 256)
 				{
 					/* Skip whitespace and commas */
-					while (*p && (isspace((unsigned char) *p) || *p == ','))
+					while (*p
+						&& (isspace((unsigned char)*p)
+							|| *p == ','))
 						p++;
 
 					if (*p == ']')
 						break;
 
 					/* Parse token ID */
-					int_val = (int) strtol(p, &endptr, 10);
+					int_val = (int)strtol(p, &endptr, 10);
 					if (endptr != p && int_val >= 0)
 					{
-						gen_params->logit_bias_tokens[i] = (int32_t) int_val;
+						gen_params
+							->logit_bias_tokens[i] =
+							(int32_t)int_val;
 						p = endptr;
 
 						/* Skip comma */
-						while (*p && (isspace((unsigned char) *p) || *p == ','))
+						while (*p
+							&& (isspace((
+								    unsigned char)*p)
+								|| *p == ','))
 							p++;
 
 						/* Parse bias value */
 						float_val = strtof(p, &endptr);
 						if (endptr != p)
 						{
-							gen_params->logit_bias_values[i] = float_val;
+							gen_params
+								->logit_bias_values
+									[i] =
+								float_val;
 							p = endptr;
 							i++;
-							gen_params->num_logit_bias = i;
+							gen_params
+								->num_logit_bias =
+								i;
 						}
-					}
-					else
+					} else
 					{
 						break;
 					}
 				}
 			}
-		}
-		else if (strcmp(key, "stop_sequences") == 0 || strcmp(key, "stop") == 0)
+		} else if (strcmp(key, "stop_sequences") == 0
+			|| strcmp(key, "stop") == 0)
 		{
 			/* Parse stop sequences - supports both string and array format */
 			if (*p == '"')
 			{
 				/* Single string format: "stop" */
-				p++;	/* Skip opening quote */
+				p++; /* Skip opening quote */
 				value = p;
 				while (*p && *p != '"')
 				{
@@ -741,8 +1125,8 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 				}
 				if (*p == '"')
 				{
-					*p = '\0';	/* Null-terminate value */
-					p++;	/* Skip closing quote */
+					*p = '\0'; /* Null-terminate value */
+					p++; /* Skip closing quote */
 
 					/* Tokenize stop sequence using proper tokenizer */
 #ifdef HAVE_ONNX_RUNTIME
@@ -751,32 +1135,64 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 
 					PG_TRY();
 					{
-						stop_token_ids = neurondb_tokenize_with_model(value, NDB_HF_MAX_STOP_SEQ_LEN, &stop_token_len, model_name);
-						if (stop_token_ids && stop_token_len > 0 && stop_token_len <= NDB_HF_MAX_STOP_SEQ_LEN)
+						stop_token_ids =
+							neurondb_tokenize_with_model(
+								value,
+								NDB_HF_MAX_STOP_SEQ_LEN,
+								&stop_token_len,
+								model_name);
+						if (stop_token_ids
+							&& stop_token_len > 0
+							&& stop_token_len
+								<= NDB_HF_MAX_STOP_SEQ_LEN)
 						{
 							/* Copy token IDs to stop sequences array */
 							int j;
 							int actual_len = 0;
 
 							/* Skip CLS token (first token) and SEP token (last token) if present */
-							int start_idx = (stop_token_len > 0 && stop_token_ids[0] == 101) ? 1 : 0;
-							int end_idx = (stop_token_len > 1 && stop_token_ids[stop_token_len - 1] == 102) ? stop_token_len - 1 : stop_token_len;
+							int start_idx =
+								(stop_token_len > 0
+									&& stop_token_ids
+											[0]
+										== 101)
+								? 1
+								: 0;
+							int end_idx =
+								(stop_token_len > 1
+									&& stop_token_ids[stop_token_len
+										   - 1]
+										== 102)
+								? stop_token_len
+									- 1
+								: stop_token_len;
 
-							for (j = start_idx; j < end_idx && actual_len < NDB_HF_MAX_STOP_SEQ_LEN; j++)
+							for (j = start_idx;
+								j < end_idx
+								&& actual_len
+									< NDB_HF_MAX_STOP_SEQ_LEN;
+								j++)
 							{
-								gen_params->stop_sequences[0][actual_len] = stop_token_ids[j];
+								gen_params->stop_sequences
+									[0]
+									[actual_len] =
+									stop_token_ids
+										[j];
 								actual_len++;
 							}
 
 							if (actual_len > 0)
 							{
-								gen_params->stop_seq_lens[0] = actual_len;
-								gen_params->num_stop_sequences = 1;
+								gen_params->stop_seq_lens
+									[0] =
+									actual_len;
+								gen_params
+									->num_stop_sequences =
+									1;
 							}
 
 							pfree(stop_token_ids);
-						}
-						else
+						} else
 						{
 							if (stop_token_ids)
 								pfree(stop_token_ids);
@@ -791,16 +1207,18 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 					PG_END_TRY();
 #endif
 				}
-			}
-			else if (*p == '[')
+			} else if (*p == '[')
 			{
 				/* Array format: ["\n", "END"] */
-				p++;	/* Skip '[' */
+				p++; /* Skip '[' */
 				i = 0;
-				while (*p && *p != ']' && i < NDB_HF_MAX_STOP_SEQUENCES)
+				while (*p && *p != ']'
+					&& i < NDB_HF_MAX_STOP_SEQUENCES)
 				{
 					/* Skip whitespace and commas */
-					while (*p && (isspace((unsigned char) *p) || *p == ','))
+					while (*p
+						&& (isspace((unsigned char)*p)
+							|| *p == ','))
 						p++;
 
 					if (*p == ']')
@@ -809,86 +1227,138 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 					/* Parse string value */
 					if (*p == '"')
 					{
-						p++;	/* Skip opening quote */
+						p++; /* Skip opening quote */
 						value = p;
 						while (*p && *p != '"')
 						{
 							/* Handle escape sequences */
-							if (*p == '\\' && *(p + 1) != '\0')
+							if (*p == '\\'
+								&& *(p + 1)
+									!= '\0')
 								p += 2;
 							else
 								p++;
 						}
 						if (*p == '"')
 						{
-							*p = '\0';	/* Null-terminate value */
-							p++;	/* Skip closing quote */
+							*p = '\0'; /* Null-terminate value */
+							p++; /* Skip closing quote */
 
 							/* Tokenize stop sequence using proper tokenizer */
 #ifdef HAVE_ONNX_RUNTIME
-							int32_t *stop_token_ids = NULL;
-							int32_t stop_token_len = 0;
+							int32_t *
+								stop_token_ids =
+									NULL;
+							int32_t stop_token_len =
+								0;
 
 							PG_TRY();
 							{
-								stop_token_ids = neurondb_tokenize_with_model(value, NDB_HF_MAX_STOP_SEQ_LEN, &stop_token_len, model_name);
-								if (stop_token_ids && stop_token_len > 0 && stop_token_len <= NDB_HF_MAX_STOP_SEQ_LEN)
+								stop_token_ids = neurondb_tokenize_with_model(
+									value,
+									NDB_HF_MAX_STOP_SEQ_LEN,
+									&stop_token_len,
+									model_name);
+								if (stop_token_ids
+									&& stop_token_len
+										> 0
+									&& stop_token_len
+										<= NDB_HF_MAX_STOP_SEQ_LEN)
 								{
 									/* Copy token IDs to stop sequences array */
 									int j;
-									int actual_len = 0;
+									int actual_len =
+										0;
 
 									/* Skip CLS token (first token) and SEP token (last token) if present */
-									int start_idx = (stop_token_len > 0 && stop_token_ids[0] == 101) ? 1 : 0;
-									int end_idx = (stop_token_len > 1 && stop_token_ids[stop_token_len - 1] == 102) ? stop_token_len - 1 : stop_token_len;
+									int start_idx =
+										(stop_token_len > 0
+											&& stop_token_ids
+													[0]
+												== 101)
+										? 1
+										: 0;
+									int end_idx =
+										(stop_token_len > 1
+											&& stop_token_ids[stop_token_len
+												   - 1]
+												== 102)
+										? stop_token_len
+											- 1
+										: stop_token_len;
 
-									for (j = start_idx; j < end_idx && actual_len < NDB_HF_MAX_STOP_SEQ_LEN; j++)
+									for (j = start_idx;
+										j < end_idx
+										&& actual_len
+											< NDB_HF_MAX_STOP_SEQ_LEN;
+										j++)
 									{
-										gen_params->stop_sequences[i][actual_len] = stop_token_ids[j];
+										gen_params
+											->stop_sequences
+												[i]
+												[actual_len] = stop_token_ids
+											[j];
 										actual_len++;
 									}
 
-									if (actual_len > 0)
+									if (actual_len
+										> 0)
 									{
-										gen_params->stop_seq_lens[i] = actual_len;
-										gen_params->num_stop_sequences++;
+										gen_params
+											->stop_seq_lens
+												[i] =
+											actual_len;
+										gen_params
+											->num_stop_sequences++;
 										i++;
 									}
 
 									pfree(stop_token_ids);
-								}
-								else
+								} else
 								{
 									/* Fallback: use word count estimation */
 									if (stop_token_ids)
 										pfree(stop_token_ids);
 
-									const char *ptr = value;
-									int word_count = 0;
-									int in_word = 0;
+									const char *ptr =
+										value;
+									int word_count =
+										0;
+									int in_word =
+										0;
 
 									while (*ptr)
 									{
-										if (!isspace((unsigned char) *ptr))
+										if (!isspace((
+											    unsigned char)*ptr))
 										{
 											if (!in_word)
 											{
 												word_count++;
-												in_word = 1;
+												in_word =
+													1;
 											}
-										}
-										else
+										} else
 										{
-											in_word = 0;
+											in_word =
+												0;
 										}
 										ptr++;
 									}
 
-									if (word_count > 0)
+									if (word_count
+										> 0)
 									{
 										/* Use simplified tokenization for fallback */
-										gen_params->stop_seq_lens[i] = word_count > NDB_HF_MAX_STOP_SEQ_LEN ? NDB_HF_MAX_STOP_SEQ_LEN : word_count;
-										gen_params->num_stop_sequences++;
+										gen_params
+											->stop_seq_lens
+												[i] =
+											word_count
+												> NDB_HF_MAX_STOP_SEQ_LEN
+											? NDB_HF_MAX_STOP_SEQ_LEN
+											: word_count;
+										gen_params
+											->num_stop_sequences++;
 										i++;
 									}
 								}
@@ -911,17 +1381,19 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 
 							while (*ptr)
 							{
-								if (!isspace((unsigned char) *ptr))
+								if (!isspace((
+									    unsigned char)*ptr))
 								{
 									if (!in_word)
 									{
 										word_count++;
-										in_word = 1;
+										in_word =
+											1;
 									}
-								}
-								else
+								} else
 								{
-									in_word = 0;
+									in_word =
+										0;
 								}
 								ptr++;
 							}
@@ -929,19 +1401,24 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 							if (word_count > 0)
 							{
 								/* Use simplified tokenization for fallback */
-								gen_params->stop_seq_lens[i] = word_count > NDB_HF_MAX_STOP_SEQ_LEN ? NDB_HF_MAX_STOP_SEQ_LEN : word_count;
-								gen_params->num_stop_sequences++;
+								gen_params->stop_seq_lens
+									[i] =
+									word_count
+										> NDB_HF_MAX_STOP_SEQ_LEN
+									? NDB_HF_MAX_STOP_SEQ_LEN
+									: word_count;
+								gen_params
+									->num_stop_sequences++;
 								i++;
 							}
 #endif
 						}
 					}
 				}
-			}
-			else if (*p == '"')
+			} else if (*p == '"')
 			{
 				/* Single string format: "\n" */
-				p++;	/* Skip opening quote */
+				p++; /* Skip opening quote */
 				value = p;
 				while (*p && *p != '"')
 				{
@@ -953,7 +1430,7 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 				if (*p == '"')
 				{
 					*p = '\0';
-					p++;	/* Skip closing quote */
+					p++; /* Skip closing quote */
 
 					/* Tokenize stop sequence using proper tokenizer */
 					int32_t *stop_token_ids = NULL;
@@ -962,32 +1439,62 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 #ifdef HAVE_ONNX_RUNTIME
 					PG_TRY();
 					{
-						stop_token_ids = neurondb_tokenize_with_model(value, NDB_HF_MAX_STOP_SEQ_LEN, &stop_token_len, model_name);
-						if (stop_token_ids && stop_token_len > 0 && stop_token_len <= NDB_HF_MAX_STOP_SEQ_LEN)
+						stop_token_ids =
+							neurondb_tokenize_with_model(
+								value,
+								NDB_HF_MAX_STOP_SEQ_LEN,
+								&stop_token_len,
+								model_name);
+						if (stop_token_ids
+							&& stop_token_len > 0
+							&& stop_token_len
+								<= NDB_HF_MAX_STOP_SEQ_LEN)
 						{
 							/* Copy token IDs to stop sequences array */
 							int j;
 							int actual_len = 0;
 
 							/* Skip CLS token (first token) and SEP token (last token) if present */
-							int start_idx = (stop_token_ids[0] == 101) ? 1 : 0;
-							int end_idx = (stop_token_len > 1 && stop_token_ids[stop_token_len - 1] == 102) ? stop_token_len - 1 : stop_token_len;
+							int start_idx =
+								(stop_token_ids[0]
+									== 101)
+								? 1
+								: 0;
+							int end_idx =
+								(stop_token_len > 1
+									&& stop_token_ids[stop_token_len
+										   - 1]
+										== 102)
+								? stop_token_len
+									- 1
+								: stop_token_len;
 
-							for (j = start_idx; j < end_idx && actual_len < NDB_HF_MAX_STOP_SEQ_LEN; j++)
+							for (j = start_idx;
+								j < end_idx
+								&& actual_len
+									< NDB_HF_MAX_STOP_SEQ_LEN;
+								j++)
 							{
-								gen_params->stop_sequences[0][actual_len] = stop_token_ids[j];
+								gen_params->stop_sequences
+									[0]
+									[actual_len] =
+									stop_token_ids
+										[j];
 								actual_len++;
 							}
 
 							if (actual_len > 0)
 							{
-								gen_params->stop_seq_lens[0] = actual_len;
-								gen_params->num_stop_sequences = 1;
+								gen_params->stop_seq_lens
+									[0] =
+									actual_len;
+								gen_params
+									->num_stop_sequences =
+									1;
 							}
 
 							pfree(stop_token_ids);
-						}
-						else
+						} else
 						{
 							/* Fallback: use word count estimation */
 							if (stop_token_ids)
@@ -999,17 +1506,19 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 
 							while (*ptr)
 							{
-								if (!isspace((unsigned char) *ptr))
+								if (!isspace((
+									    unsigned char)*ptr))
 								{
 									if (!in_word)
 									{
 										word_count++;
-										in_word = 1;
+										in_word =
+											1;
 									}
-								}
-								else
+								} else
 								{
-									in_word = 0;
+									in_word =
+										0;
 								}
 								ptr++;
 							}
@@ -1017,8 +1526,15 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 							if (word_count > 0)
 							{
 								/* Use simplified tokenization for fallback */
-								gen_params->stop_seq_lens[0] = word_count > NDB_HF_MAX_STOP_SEQ_LEN ? NDB_HF_MAX_STOP_SEQ_LEN : word_count;
-								gen_params->num_stop_sequences = 1;
+								gen_params->stop_seq_lens
+									[0] =
+									word_count
+										> NDB_HF_MAX_STOP_SEQ_LEN
+									? NDB_HF_MAX_STOP_SEQ_LEN
+									: word_count;
+								gen_params
+									->num_stop_sequences =
+									1;
 							}
 						}
 					}
@@ -1036,15 +1552,16 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 
 						while (*ptr)
 						{
-							if (!isspace((unsigned char) *ptr))
+							if (!isspace((
+								    unsigned char)*ptr))
 							{
 								if (!in_word)
 								{
 									word_count++;
-									in_word = 1;
+									in_word =
+										1;
 								}
-							}
-							else
+							} else
 							{
 								in_word = 0;
 							}
@@ -1053,8 +1570,16 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 
 						if (word_count > 0)
 						{
-							gen_params->stop_seq_lens[0] = word_count > NDB_HF_MAX_STOP_SEQ_LEN ? NDB_HF_MAX_STOP_SEQ_LEN : word_count;
-							gen_params->num_stop_sequences = 1;
+							gen_params
+								->stop_seq_lens
+									[0] =
+								word_count
+									> NDB_HF_MAX_STOP_SEQ_LEN
+								? NDB_HF_MAX_STOP_SEQ_LEN
+								: word_count;
+							gen_params
+								->num_stop_sequences =
+								1;
 						}
 					}
 					PG_END_TRY();
@@ -1066,15 +1591,15 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 
 					while (*ptr)
 					{
-						if (!isspace((unsigned char) *ptr))
+						if (!isspace((
+							    unsigned char)*ptr))
 						{
 							if (!in_word)
 							{
 								word_count++;
 								in_word = 1;
 							}
-						}
-						else
+						} else
 						{
 							in_word = 0;
 						}
@@ -1083,8 +1608,13 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 
 					if (word_count > 0)
 					{
-						gen_params->stop_seq_lens[0] = word_count > NDB_HF_MAX_STOP_SEQ_LEN ? NDB_HF_MAX_STOP_SEQ_LEN : word_count;
-						gen_params->num_stop_sequences = 1;
+						gen_params->stop_seq_lens[0] =
+							word_count
+								> NDB_HF_MAX_STOP_SEQ_LEN
+							? NDB_HF_MAX_STOP_SEQ_LEN
+							: word_count;
+						gen_params->num_stop_sequences =
+							1;
 					}
 #endif
 				}
@@ -1096,7 +1626,7 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 		{
 			if (*p == '"')
 			{
-				p++;	/* Skip opening quote */
+				p++; /* Skip opening quote */
 				while (*p && *p != '"')
 				{
 					if (*p == '\\' && *(p + 1) != '\0')
@@ -1105,9 +1635,8 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 						p++;
 				}
 				if (*p == '"')
-					p++;	/* Skip closing quote */
-			}
-			else if (*p == '[')
+					p++; /* Skip closing quote */
+			} else if (*p == '[')
 			{
 				/* Skip array */
 				int depth = 1;
@@ -1120,8 +1649,7 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 						depth--;
 					p++;
 				}
-			}
-			else
+			} else
 			{
 				p++;
 			}
@@ -1140,10 +1668,10 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
  */
 static int
 ndb_cuda_hf_decode_tokens(const int32_t *token_ids,
-			  int num_tokens,
-			  const char *model_name,
-			  char **text_out,
-			  char **errstr)
+	int num_tokens,
+	const char *model_name,
+	char **text_out,
+	char **errstr)
 {
 	char *decoded_text = NULL;
 
@@ -1152,7 +1680,8 @@ ndb_cuda_hf_decode_tokens(const int32_t *token_ids,
 	if (!token_ids || num_tokens <= 0 || !text_out)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for decode_tokens");
+			*errstr =
+				pstrdup("invalid parameters for decode_tokens");
 		return -1;
 	}
 
@@ -1160,7 +1689,8 @@ ndb_cuda_hf_decode_tokens(const int32_t *token_ids,
 	/* Use proper tokenizer for detokenization */
 	PG_TRY();
 	{
-		decoded_text = neurondb_detokenize((const int32 *) token_ids, num_tokens, model_name);
+		decoded_text = neurondb_detokenize(
+			(const int32 *)token_ids, num_tokens, model_name);
 		if (!decoded_text)
 		{
 			if (errstr)
@@ -1191,17 +1721,17 @@ ndb_cuda_hf_decode_tokens(const int32_t *token_ids,
 
 			/* Skip special tokens */
 			if (token_id == 101 || token_id == 102 || token_id == 0)
-				continue;	/* [CLS], [SEP], [PAD] */
+				continue; /* [CLS], [SEP], [PAD] */
 
 			/* Map token ID to character (simplified) */
 			if (token_id > 0 && token_id < 128)
 			{
-				appendStringInfoChar(&buf, (char) token_id);
-			}
-			else
+				appendStringInfoChar(&buf, (char)token_id);
+			} else
 			{
 				/* For tokens outside ASCII, use placeholder */
-				appendStringInfo(&buf, " [token_%d] ", token_id);
+				appendStringInfo(
+					&buf, " [token_%d] ", token_id);
 			}
 		}
 
@@ -1216,8 +1746,8 @@ ndb_cuda_hf_decode_tokens(const int32_t *token_ids,
  */
 static int
 ndb_cuda_hf_init_kv_cache(NdbCudaHfKVCache *kv_cache,
-			  const NdbCudaHfModelConfig *config,
-			  char **errstr)
+	const NdbCudaHfModelConfig *config,
+	char **errstr)
 {
 	cudaError_t cuda_status;
 	size_t cache_bytes;
@@ -1228,21 +1758,23 @@ ndb_cuda_hf_init_kv_cache(NdbCudaHfKVCache *kv_cache,
 	if (!kv_cache || !config)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for init_kv_cache");
+			*errstr =
+				pstrdup("invalid parameters for init_kv_cache");
 		return -1;
 	}
 
 	head_dim = config->embed_dim / config->num_heads;
-	cache_bytes = sizeof(float) * config->num_layers * config->max_seq_len *
-		config->num_heads * head_dim;
+	cache_bytes = sizeof(float) * config->num_layers * config->max_seq_len
+		* config->num_heads * head_dim;
 
 	/* Allocate key cache on device */
 	cuda_status = cudaMalloc((void **)&kv_cache->key_cache, cache_bytes);
 	if (cuda_status != cudaSuccess)
 	{
 		if (errstr)
-			*errstr = psprintf("CUDA malloc failed for key cache: %s",
-					   cudaGetErrorString(cuda_status));
+			*errstr =
+				psprintf("CUDA malloc failed for key cache: %s",
+					cudaGetErrorString(cuda_status));
 		return -1;
 	}
 
@@ -1252,8 +1784,9 @@ ndb_cuda_hf_init_kv_cache(NdbCudaHfKVCache *kv_cache,
 	{
 		cudaFree(kv_cache->key_cache);
 		if (errstr)
-			*errstr = psprintf("CUDA malloc failed for value cache: %s",
-					   cudaGetErrorString(cuda_status));
+			*errstr = psprintf(
+				"CUDA malloc failed for value cache: %s",
+				cudaGetErrorString(cuda_status));
 		return -1;
 	}
 
@@ -1310,10 +1843,10 @@ ndb_cuda_hf_free_kv_cache(NdbCudaHfKVCache *kv_cache)
  */
 int
 ndb_cuda_hf_complete(const char *model_name,
-		     const char *prompt,
-		     const char *params_json,
-		     char **text_out,
-		     char **errstr)
+	const char *prompt,
+	const char *params_json,
+	char **text_out,
+	char **errstr)
 {
 	NdbCudaHfModelEntry *entry = NULL;
 	NdbCudaHfModelConfig config;
@@ -1342,28 +1875,29 @@ ndb_cuda_hf_complete(const char *model_name,
 	if (model_name == NULL || prompt == NULL || text_out == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for CUDA HF complete");
+			*errstr = pstrdup(
+				"invalid parameters for CUDA HF complete");
 		return -1;
 	}
 
 	/* Create memory context for this operation */
 	complete_context = AllocSetContextCreate(CurrentMemoryContext,
-						 "cuda_hf_complete_ctx",
-						 ALLOCSET_DEFAULT_SIZES);
+		"cuda_hf_complete_ctx",
+		ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(complete_context);
 
 	/* Parse generation parameters */
 	if (params_json && strlen(params_json) > 0)
 	{
-		rc = ndb_cuda_hf_parse_gen_params(params_json, model_name, &gen_params, errstr);
+		rc = ndb_cuda_hf_parse_gen_params(
+			params_json, model_name, &gen_params, errstr);
 		if (rc != 0)
 		{
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(complete_context);
 			return -1;
 		}
-	}
-	else
+	} else
 	{
 		/* Use defaults */
 		memset(&gen_params, 0, sizeof(NdbCudaHfGenParams));
@@ -1384,7 +1918,8 @@ ndb_cuda_hf_complete(const char *model_name,
 	if (entry == NULL || !entry->loaded)
 	{
 		/* Load model (for now, use dummy weights) */
-		rc = ndb_cuda_hf_load_model_weights(model_name, NULL, &config, &weights, errstr);
+		rc = ndb_cuda_hf_load_model_weights(
+			model_name, NULL, &config, &weights, errstr);
 		if (rc != 0)
 		{
 			MemoryContextSwitchTo(oldcontext);
@@ -1395,20 +1930,68 @@ ndb_cuda_hf_complete(const char *model_name,
 		/* Set model type to generation */
 		config.model_type = NDB_HF_MODEL_GENERATION;
 
-		/* Allocate new cache entry */
-		entry = (NdbCudaHfModelEntry *) palloc(sizeof(NdbCudaHfModelEntry));
+		/* Switch to CacheMemoryContext for persistent cache entry */
+		MemoryContextSwitchTo(oldcontext);
+		oldcontext = MemoryContextSwitchTo(CacheMemoryContext);
+
+		/* Allocate new cache entry in CacheMemoryContext (persistent) */
+		entry = (NdbCudaHfModelEntry *)palloc(
+			sizeof(NdbCudaHfModelEntry));
 		memset(entry, 0, sizeof(NdbCudaHfModelEntry));
-		strncpy(entry->model_name, model_name, NDB_HF_MAX_MODEL_NAME - 1);
+		strncpy(entry->model_name,
+			model_name,
+			NDB_HF_MAX_MODEL_NAME - 1);
 		entry->config = config;
-		entry->weights = weights;
+
+		/* Copy weights to CacheMemoryContext */
+		{
+			size_t embed_table_size =
+				config.vocab_size * config.embed_dim * sizeof(float);
+			size_t position_embed_size =
+				config.max_seq_len * config.embed_dim * sizeof(float);
+			size_t lm_head_size =
+				config.vocab_size * config.embed_dim * sizeof(float);
+
+			entry->weights.embedding_table =
+				(float *)palloc(embed_table_size);
+			memcpy(entry->weights.embedding_table,
+				weights.embedding_table,
+				embed_table_size);
+
+			entry->weights.position_embeddings =
+				(float *)palloc(position_embed_size);
+			memcpy(entry->weights.position_embeddings,
+				weights.position_embeddings,
+				position_embed_size);
+
+			entry->weights.lm_head_weights =
+				(float *)palloc(lm_head_size);
+			memcpy(entry->weights.lm_head_weights,
+				weights.lm_head_weights,
+				lm_head_size);
+
+			entry->weights.total_bytes = weights.total_bytes;
+		}
+
 		entry->loaded = true;
 		entry->weights_on_device = false;
 		entry->last_used = time(NULL);
 		entry->next = g_model_cache;
 		g_model_cache = entry;
 		g_model_cache_count++;
-	}
-	else
+
+		/* Switch back to original context before deleting temp context */
+		MemoryContextSwitchTo(oldcontext);
+
+		/* Delete temporary context used for loading */
+		MemoryContextDelete(complete_context);
+
+		/* Recreate temporary context for operation */
+		complete_context = AllocSetContextCreate(CurrentMemoryContext,
+			"cuda_hf_complete_ctx",
+			ALLOCSET_DEFAULT_SIZES);
+		oldcontext = MemoryContextSwitchTo(complete_context);
+	} else
 	{
 		config = entry->config;
 		weights = entry->weights;
@@ -1421,13 +2004,19 @@ ndb_cuda_hf_complete(const char *model_name,
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(complete_context);
 		if (errstr)
-			*errstr = psprintf("model '%s' is not a generation model", model_name);
+			*errstr =
+				psprintf("model '%s' is not a generation model",
+					model_name);
 		return -1;
 	}
 
 	/* Tokenize prompt */
-	rc = ndb_cuda_hf_tokenize_text(prompt, model_name, input_token_ids, attention_mask,
-				       &input_seq_len, errstr);
+	rc = ndb_cuda_hf_tokenize_text(prompt,
+		model_name,
+		input_token_ids,
+		attention_mask,
+		&input_seq_len,
+		errstr);
 	if (rc != 0)
 	{
 		MemoryContextSwitchTo(oldcontext);
@@ -1448,23 +2037,29 @@ ndb_cuda_hf_complete(const char *model_name,
 	/* Allocate model weights on device if not already loaded */
 	if (!entry->weights_on_device || entry->device_weights_ptr == NULL)
 	{
-		embed_table_bytes = config.vocab_size * config.embed_dim * sizeof(float);
-		position_embed_bytes = config.max_seq_len * config.embed_dim * sizeof(float);
-		lm_head_bytes = config.vocab_size * config.embed_dim * sizeof(float);
+		embed_table_bytes =
+			config.vocab_size * config.embed_dim * sizeof(float);
+		position_embed_bytes =
+			config.max_seq_len * config.embed_dim * sizeof(float);
+		lm_head_bytes =
+			config.vocab_size * config.embed_dim * sizeof(float);
 
-		cuda_status = cudaMalloc((void **)&d_embedding_table, embed_table_bytes);
+		cuda_status = cudaMalloc(
+			(void **)&d_embedding_table, embed_table_bytes);
 		if (cuda_status != cudaSuccess)
 		{
 			ndb_cuda_hf_free_kv_cache(&kv_cache);
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(complete_context);
 			if (errstr)
-				*errstr = psprintf("CUDA malloc failed for embedding table: %s",
-						   cudaGetErrorString(cuda_status));
+				*errstr = psprintf("CUDA malloc failed for "
+						   "embedding table: %s",
+					cudaGetErrorString(cuda_status));
 			return -1;
 		}
 
-		cuda_status = cudaMalloc((void **)&d_position_embeddings, position_embed_bytes);
+		cuda_status = cudaMalloc(
+			(void **)&d_position_embeddings, position_embed_bytes);
 		if (cuda_status != cudaSuccess)
 		{
 			cudaFree(d_embedding_table);
@@ -1472,12 +2067,14 @@ ndb_cuda_hf_complete(const char *model_name,
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(complete_context);
 			if (errstr)
-				*errstr = psprintf("CUDA malloc failed for position embeddings: %s",
-						   cudaGetErrorString(cuda_status));
+				*errstr = psprintf("CUDA malloc failed for "
+						   "position embeddings: %s",
+					cudaGetErrorString(cuda_status));
 			return -1;
 		}
 
-		cuda_status = cudaMalloc((void **)&d_lm_head_weights, lm_head_bytes);
+		cuda_status =
+			cudaMalloc((void **)&d_lm_head_weights, lm_head_bytes);
 		if (cuda_status != cudaSuccess)
 		{
 			cudaFree(d_embedding_table);
@@ -1486,16 +2083,19 @@ ndb_cuda_hf_complete(const char *model_name,
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(complete_context);
 			if (errstr)
-				*errstr = psprintf("CUDA malloc failed for LM head weights: %s",
-						   cudaGetErrorString(cuda_status));
+				*errstr = psprintf("CUDA malloc failed for LM "
+						   "head weights: %s",
+					cudaGetErrorString(cuda_status));
 			return -1;
 		}
 
 		/* Copy weights to device */
-		if (weights.embedding_table)
+		if (entry->weights.embedding_table)
 		{
-			cuda_status = cudaMemcpy(d_embedding_table, weights.embedding_table,
-						 embed_table_bytes, cudaMemcpyHostToDevice);
+			cuda_status = cudaMemcpy(d_embedding_table,
+				entry->weights.embedding_table,
+				embed_table_bytes,
+				cudaMemcpyHostToDevice);
 			if (cuda_status != cudaSuccess)
 			{
 				cudaFree(d_embedding_table);
@@ -1505,16 +2105,21 @@ ndb_cuda_hf_complete(const char *model_name,
 				MemoryContextSwitchTo(oldcontext);
 				MemoryContextDelete(complete_context);
 				if (errstr)
-					*errstr = psprintf("CUDA memcpy failed for embedding table: %s",
-							   cudaGetErrorString(cuda_status));
+					*errstr = psprintf(
+						"CUDA memcpy failed for "
+						"embedding table: %s",
+						cudaGetErrorString(
+							cuda_status));
 				return -1;
 			}
 		}
 
-		if (weights.position_embeddings)
+		if (entry->weights.position_embeddings)
 		{
-			cuda_status = cudaMemcpy(d_position_embeddings, weights.position_embeddings,
-						 position_embed_bytes, cudaMemcpyHostToDevice);
+			cuda_status = cudaMemcpy(d_position_embeddings,
+				entry->weights.position_embeddings,
+				position_embed_bytes,
+				cudaMemcpyHostToDevice);
 			if (cuda_status != cudaSuccess)
 			{
 				cudaFree(d_embedding_table);
@@ -1524,16 +2129,21 @@ ndb_cuda_hf_complete(const char *model_name,
 				MemoryContextSwitchTo(oldcontext);
 				MemoryContextDelete(complete_context);
 				if (errstr)
-					*errstr = psprintf("CUDA memcpy failed for position embeddings: %s",
-							   cudaGetErrorString(cuda_status));
+					*errstr = psprintf(
+						"CUDA memcpy failed for "
+						"position embeddings: %s",
+						cudaGetErrorString(
+							cuda_status));
 				return -1;
 			}
 		}
 
-		if (weights.lm_head_weights)
+		if (entry->weights.lm_head_weights)
 		{
-			cuda_status = cudaMemcpy(d_lm_head_weights, weights.lm_head_weights,
-						 lm_head_bytes, cudaMemcpyHostToDevice);
+			cuda_status = cudaMemcpy(d_lm_head_weights,
+				entry->weights.lm_head_weights,
+				lm_head_bytes,
+				cudaMemcpyHostToDevice);
 			if (cuda_status != cudaSuccess)
 			{
 				cudaFree(d_embedding_table);
@@ -1543,8 +2153,11 @@ ndb_cuda_hf_complete(const char *model_name,
 				MemoryContextSwitchTo(oldcontext);
 				MemoryContextDelete(complete_context);
 				if (errstr)
-					*errstr = psprintf("CUDA memcpy failed for LM head weights: %s",
-							   cudaGetErrorString(cuda_status));
+					*errstr = psprintf(
+						"CUDA memcpy failed for LM "
+						"head weights: %s",
+						cudaGetErrorString(
+							cuda_status));
 				return -1;
 			}
 		}
@@ -1556,16 +2169,19 @@ ndb_cuda_hf_complete(const char *model_name,
 		entry->device_position_embed_bytes = position_embed_bytes;
 		entry->device_lm_head_bytes = lm_head_bytes;
 		entry->weights_on_device = true;
-	}
-	else
+	} else
 	{
-		d_embedding_table = (float *) entry->device_weights_ptr;
-		d_position_embeddings = (float *) entry->device_position_embeddings;
-		d_lm_head_weights = (float *) entry->device_lm_head_weights;
+		d_embedding_table = (float *)entry->device_weights_ptr;
+		d_position_embeddings =
+			(float *)entry->device_position_embeddings;
+		d_lm_head_weights = (float *)entry->device_lm_head_weights;
 		if (!d_position_embeddings || !d_lm_head_weights)
 		{
 			if (errstr)
-				*errstr = psprintf("Model weights partially loaded - position embeddings or LM head missing");
+				*errstr =
+					psprintf("Model weights partially "
+						 "loaded - position embeddings "
+						 "or LM head missing");
 			ndb_cuda_hf_free_kv_cache(&kv_cache);
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(complete_context);
@@ -1575,18 +2191,18 @@ ndb_cuda_hf_complete(const char *model_name,
 
 	/* Call CUDA generation kernel */
 	rc = ndb_cuda_hf_generate_inference(model_name,
-					    input_token_ids,
-					    input_seq_len,
-					    d_embedding_table,
-					    d_position_embeddings,
-					    d_lm_head_weights,
-					    &weights,
-					    &config,
-					    &gen_params,
-					    &kv_cache,
-					    output_token_ids,
-					    &output_seq_len,
-					    errstr);
+		input_token_ids,
+		input_seq_len,
+		d_embedding_table,
+		d_position_embeddings,
+		d_lm_head_weights,
+		&entry->weights,
+		&config,
+		&gen_params,
+		&kv_cache,
+		output_token_ids,
+		&output_seq_len,
+		errstr);
 	if (rc != 0)
 	{
 		ndb_cuda_hf_free_kv_cache(&kv_cache);
@@ -1596,8 +2212,11 @@ ndb_cuda_hf_complete(const char *model_name,
 	}
 
 	/* Decode generated tokens to text */
-	rc = ndb_cuda_hf_decode_tokens(output_token_ids, output_seq_len, model_name,
-				       &generated_text, errstr);
+	rc = ndb_cuda_hf_decode_tokens(output_token_ids,
+		output_seq_len,
+		model_name,
+		&generated_text,
+		errstr);
 	if (rc != 0)
 	{
 		ndb_cuda_hf_free_kv_cache(&kv_cache);
@@ -1614,8 +2233,7 @@ ndb_cuda_hf_complete(const char *model_name,
 	if (generated_text)
 	{
 		*text_out = pstrdup(generated_text);
-	}
-	else
+	} else
 	{
 		*text_out = pstrdup("");
 	}
@@ -1635,11 +2253,11 @@ ndb_cuda_hf_complete(const char *model_name,
  */
 int
 ndb_cuda_hf_generate_stream(const char *model_name,
-			   const char *prompt,
-			   const char *params_json,
-			   ndb_cuda_hf_stream_callback callback,
-			   void *user_data,
-			   char **errstr)
+	const char *prompt,
+	const char *params_json,
+	ndb_cuda_hf_stream_callback callback,
+	void *user_data,
+	char **errstr)
 {
 	NdbCudaHfGenParams gen_params;
 	NdbCudaHfModelEntry *entry = NULL;
@@ -1662,28 +2280,29 @@ ndb_cuda_hf_generate_stream(const char *model_name,
 	if (model_name == NULL || prompt == NULL || callback == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for CUDA HF generate_stream");
+			*errstr = pstrdup("invalid parameters for CUDA HF "
+					  "generate_stream");
 		return -1;
 	}
 
 	/* Create memory context for this operation */
 	stream_context = AllocSetContextCreate(CurrentMemoryContext,
-					      "cuda_hf_stream_ctx",
-					      ALLOCSET_DEFAULT_SIZES);
+		"cuda_hf_stream_ctx",
+		ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(stream_context);
 
 	/* Parse generation parameters */
 	if (params_json && strlen(params_json) > 0)
 	{
-		rc = ndb_cuda_hf_parse_gen_params(params_json, model_name, &gen_params, errstr);
+		rc = ndb_cuda_hf_parse_gen_params(
+			params_json, model_name, &gen_params, errstr);
 		if (rc != 0)
 		{
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(stream_context);
 			return -1;
 		}
-	}
-	else
+	} else
 	{
 		/* Use defaults */
 		memset(&gen_params, 0, sizeof(NdbCudaHfGenParams));
@@ -1697,7 +2316,7 @@ ndb_cuda_hf_generate_stream(const char *model_name,
 		gen_params.num_stop_sequences = 0;
 		gen_params.return_prompt = false;
 		gen_params.seed = 0;
-		gen_params.streaming = true;	/* Enable streaming */
+		gen_params.streaming = true; /* Enable streaming */
 		gen_params.num_logit_bias = 0;
 	}
 
@@ -1709,7 +2328,8 @@ ndb_cuda_hf_generate_stream(const char *model_name,
 	if (entry == NULL || !entry->loaded)
 	{
 		/* Load model */
-		rc = ndb_cuda_hf_load_model_weights(model_name, NULL, &config, &weights, errstr);
+		rc = ndb_cuda_hf_load_model_weights(
+			model_name, NULL, &config, &weights, errstr);
 		if (rc != 0)
 		{
 			MemoryContextSwitchTo(oldcontext);
@@ -1718,19 +2338,68 @@ ndb_cuda_hf_generate_stream(const char *model_name,
 		}
 		config.model_type = NDB_HF_MODEL_GENERATION;
 
-		entry = (NdbCudaHfModelEntry *) palloc(sizeof(NdbCudaHfModelEntry));
+		/* Switch to CacheMemoryContext for persistent cache entry */
+		MemoryContextSwitchTo(oldcontext);
+		oldcontext = MemoryContextSwitchTo(CacheMemoryContext);
+
+		/* Allocate new cache entry in CacheMemoryContext (persistent) */
+		entry = (NdbCudaHfModelEntry *)palloc(
+			sizeof(NdbCudaHfModelEntry));
 		memset(entry, 0, sizeof(NdbCudaHfModelEntry));
-		strncpy(entry->model_name, model_name, NDB_HF_MAX_MODEL_NAME - 1);
+		strncpy(entry->model_name,
+			model_name,
+			NDB_HF_MAX_MODEL_NAME - 1);
 		entry->config = config;
-		entry->weights = weights;
+
+		/* Copy weights to CacheMemoryContext */
+		{
+			size_t embed_table_size =
+				config.vocab_size * config.embed_dim * sizeof(float);
+			size_t position_embed_size =
+				config.max_seq_len * config.embed_dim * sizeof(float);
+			size_t lm_head_size =
+				config.vocab_size * config.embed_dim * sizeof(float);
+
+			entry->weights.embedding_table =
+				(float *)palloc(embed_table_size);
+			memcpy(entry->weights.embedding_table,
+				weights.embedding_table,
+				embed_table_size);
+
+			entry->weights.position_embeddings =
+				(float *)palloc(position_embed_size);
+			memcpy(entry->weights.position_embeddings,
+				weights.position_embeddings,
+				position_embed_size);
+
+			entry->weights.lm_head_weights =
+				(float *)palloc(lm_head_size);
+			memcpy(entry->weights.lm_head_weights,
+				weights.lm_head_weights,
+				lm_head_size);
+
+			entry->weights.total_bytes = weights.total_bytes;
+		}
+
 		entry->loaded = true;
 		entry->weights_on_device = false;
 		entry->last_used = time(NULL);
 		entry->next = g_model_cache;
 		g_model_cache = entry;
 		g_model_cache_count++;
-	}
-	else
+
+		/* Switch back to original context before deleting temp context */
+		MemoryContextSwitchTo(oldcontext);
+
+		/* Delete temporary context used for loading */
+		MemoryContextDelete(stream_context);
+
+		/* Recreate temporary context for operation */
+		stream_context = AllocSetContextCreate(CurrentMemoryContext,
+			"cuda_hf_stream_ctx",
+			ALLOCSET_DEFAULT_SIZES);
+		oldcontext = MemoryContextSwitchTo(stream_context);
+	} else
 	{
 		config = entry->config;
 		weights = entry->weights;
@@ -1742,13 +2411,19 @@ ndb_cuda_hf_generate_stream(const char *model_name,
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(stream_context);
 		if (errstr)
-			*errstr = psprintf("model '%s' is not a generation model", model_name);
+			*errstr =
+				psprintf("model '%s' is not a generation model",
+					model_name);
 		return -1;
 	}
 
 	/* Tokenize prompt */
-	rc = ndb_cuda_hf_tokenize_text(prompt, model_name, input_token_ids, attention_mask,
-				      &input_seq_len, errstr);
+	rc = ndb_cuda_hf_tokenize_text(prompt,
+		model_name,
+		input_token_ids,
+		attention_mask,
+		&input_seq_len,
+		errstr);
 	if (rc != 0)
 	{
 		MemoryContextSwitchTo(oldcontext);
@@ -1774,18 +2449,18 @@ ndb_cuda_hf_generate_stream(const char *model_name,
 	 * pausing generation after each token and calling the callback.
 	 * For now, we generate all tokens and then stream them via callback. */
 	rc = ndb_cuda_hf_generate_inference(model_name,
-					   input_token_ids,
-					   input_seq_len,
-					   weights.embedding_table,
-					   weights.position_embeddings,
-					   weights.lm_head_weights,
-					   &weights,
-					   &config,
-					   &gen_params,
-					   &kv_cache,
-					   output_token_ids,
-					   &output_seq_len,
-					   errstr);
+		input_token_ids,
+		input_seq_len,
+		entry->weights.embedding_table,
+		entry->weights.position_embeddings,
+		entry->weights.lm_head_weights,
+		&entry->weights,
+		&config,
+		&gen_params,
+		&kv_cache,
+		output_token_ids,
+		&output_seq_len,
+		errstr);
 	if (rc != 0)
 	{
 		ndb_cuda_hf_free_kv_cache(&kv_cache);
@@ -1801,16 +2476,21 @@ ndb_cuda_hf_generate_stream(const char *model_name,
 		char *decoded_token = NULL;
 
 		/* Decode single token */
-		rc = ndb_cuda_hf_decode_tokens(&token_id, 1, model_name, &decoded_token, errstr);
+		rc = ndb_cuda_hf_decode_tokens(
+			&token_id, 1, model_name, &decoded_token, errstr);
 		if (rc == 0 && decoded_token)
 		{
-			strncpy(token_text, decoded_token, sizeof(token_text) - 1);
+			strncpy(token_text,
+				decoded_token,
+				sizeof(token_text) - 1);
 			token_text[sizeof(token_text) - 1] = '\0';
 			pfree(decoded_token);
-		}
-		else
+		} else
 		{
-			snprintf(token_text, sizeof(token_text), "[token_%d]", token_id);
+			snprintf(token_text,
+				sizeof(token_text),
+				"[token_%d]",
+				token_id);
 		}
 
 		/* Call callback */
@@ -1836,33 +2516,35 @@ ndb_cuda_hf_generate_stream(const char *model_name,
  */
 int
 ndb_cuda_hf_generate_batch(const char *model_name,
-			  const char **prompts,
-			  int num_prompts,
-			  const char *params_json,
-			  NdbCudaHfBatchResult *results,
-			  char **errstr)
+	const char **prompts,
+	int num_prompts,
+	const char *params_json,
+	NdbCudaHfBatchResult *results,
+	char **errstr)
 {
 	int i;
 	int rc = 0;
 	cudaStream_t *streams = NULL;
-	const int max_streams = 8;	/* Maximum number of concurrent streams */
+	const int max_streams = 8; /* Maximum number of concurrent streams */
 	int num_streams;
 	MemoryContext oldctx;
 	MemoryContext batchctx;
 
 	if (errstr)
 		*errstr = NULL;
-	if (model_name == NULL || prompts == NULL || results == NULL || num_prompts <= 0)
+	if (model_name == NULL || prompts == NULL || results == NULL
+		|| num_prompts <= 0)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for CUDA HF generate_batch");
+			*errstr = pstrdup("invalid parameters for CUDA HF "
+					  "generate_batch");
 		return -1;
 	}
 
 	/* Create memory context for batch processing */
 	batchctx = AllocSetContextCreate(CurrentMemoryContext,
-					 "CUDA HF Batch Generation",
-					 ALLOCSET_DEFAULT_SIZES);
+		"CUDA HF Batch Generation",
+		ALLOCSET_DEFAULT_SIZES);
 	oldctx = MemoryContextSwitchTo(batchctx);
 
 	/* Initialize results */
@@ -1876,7 +2558,7 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 	num_streams = (num_prompts < max_streams) ? num_prompts : max_streams;
 
 	/* Create CUDA streams for parallel processing */
-	streams = (cudaStream_t *) palloc0(num_streams * sizeof(cudaStream_t));
+	streams = (cudaStream_t *)palloc0(num_streams * sizeof(cudaStream_t));
 	for (i = 0; i < num_streams; i++)
 	{
 		cudaError_t cuda_err = cudaStreamCreate(&streams[i]);
@@ -1884,7 +2566,9 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 		{
 			/* Fall back to sequential processing if stream creation fails */
 			if (errstr)
-				*errstr = pstrdup("failed to create CUDA streams, falling back to sequential processing");
+				*errstr = pstrdup("failed to create CUDA "
+						  "streams, falling back to "
+						  "sequential processing");
 			num_streams = 0;
 			break;
 		}
@@ -1893,6 +2577,7 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 	/* Process prompts in parallel using streams */
 	if (num_streams > 0)
 	{
+		elog(NOTICE, "neurondb: batch completion using %d streams for %d prompts", num_streams, num_prompts);
 		/* Use parallel processing with streams */
 		for (i = 0; i < num_prompts; i++)
 		{
@@ -1901,82 +2586,98 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 			char *prompt_err = NULL;
 
 			/* Set current stream */
-			cudaSetDevice(0);	/* TODO: Support multi-GPU */
+			cudaSetDevice(0); /* TODO: Support multi-GPU */
 			cudaStreamSynchronize(streams[stream_idx]);
 
 			/* Process prompt */
-			rc = ndb_cuda_hf_complete(model_name, prompts[i], params_json, &text_out, &prompt_err);
-			if (rc == 0 && text_out)
+			elog(NOTICE, "neurondb: batch processing prompt %d/%d", i + 1, num_prompts);
+			rc = ndb_cuda_hf_complete(model_name,
+				prompts[i],
+				params_json,
+				&text_out,
+				&prompt_err);
+			elog(NOTICE, "neurondb: prompt %d completed with rc=%d, text_out=%s", i + 1, rc, text_out ? (strlen(text_out) > 0 ? "non-empty" : "empty") : "NULL");
+			if (rc == 0)
 			{
 #ifdef HAVE_ONNX_RUNTIME
 				int32 token_length;
 				int32 *token_ids = NULL;
 
-			/* Count tokens from generated text */
-			PG_TRY();
-			{
-				token_ids = neurondb_tokenize_with_model(text_out, 2048, &token_length, model_name);
-				if (token_ids && token_length > 0)
+				/* Count tokens from generated text */
+				PG_TRY();
 				{
-					results[i].num_tokens = token_length;
+					token_ids =
+						neurondb_tokenize_with_model(
+							text_out,
+							2048,
+							&token_length,
+							model_name);
+					if (token_ids && token_length > 0)
+					{
+						results[i].num_tokens =
+							token_length;
+					} else
+					{
+						/* Fallback: estimate from word count */
+						const char *ptr = text_out;
+						int word_count = 0;
+						int in_word = 0;
+
+						while (*ptr)
+						{
+							if (!isspace((
+								    unsigned char)*ptr))
+							{
+								if (!in_word)
+								{
+									word_count++;
+									in_word =
+										1;
+								}
+							} else
+							{
+								in_word = 0;
+							}
+							ptr++;
+						}
+						results[i].num_tokens =
+							word_count > 0
+							? word_count
+							: 1;
+					}
+					if (token_ids)
+						pfree(token_ids);
 				}
-				else
+				PG_CATCH();
 				{
-					/* Fallback: estimate from word count */
+					/* On error, use word count fallback */
+					EmitErrorReport();
+					FlushErrorState();
+					if (token_ids)
+						pfree(token_ids);
+
 					const char *ptr = text_out;
 					int word_count = 0;
 					int in_word = 0;
 
 					while (*ptr)
 					{
-						if (!isspace((unsigned char) *ptr))
+						if (!isspace((
+							    unsigned char)*ptr))
 						{
 							if (!in_word)
 							{
 								word_count++;
 								in_word = 1;
 							}
-						}
-						else
+						} else
 						{
 							in_word = 0;
 						}
 						ptr++;
 					}
-					results[i].num_tokens = word_count > 0 ? word_count : 1;
-				}
-				if (token_ids)
-					pfree(token_ids);
-			}
-			PG_CATCH();
-			{
-				/* On error, use word count fallback */
-				EmitErrorReport();
-				FlushErrorState();
-				if (token_ids)
-					pfree(token_ids);
-
-					const char *ptr = text_out;
-					int word_count = 0;
-					int in_word = 0;
-
-					while (*ptr)
-					{
-						if (!isspace((unsigned char) *ptr))
-						{
-							if (!in_word)
-							{
-								word_count++;
-								in_word = 1;
-							}
-						}
-						else
-						{
-							in_word = 0;
-						}
-						ptr++;
-					}
-					results[i].num_tokens = word_count > 0 ? word_count : 1;
+					results[i].num_tokens =
+						word_count > 0 ? word_count : 1;
 				}
 				PG_END_TRY();
 #else
@@ -1987,26 +2688,26 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 
 				while (*ptr)
 				{
-					if (!isspace((unsigned char) *ptr))
+					if (!isspace((unsigned char)*ptr))
 					{
 						if (!in_word)
 						{
 							word_count++;
 							in_word = 1;
 						}
-					}
-					else
+					} else
 					{
 						in_word = 0;
 					}
 					ptr++;
 				}
-				results[i].num_tokens = word_count > 0 ? word_count : 1;
+				results[i].num_tokens =
+					word_count > 0 ? word_count : 1;
 #endif
 
 				/* Copy result to parent context */
 				MemoryContextSwitchTo(CurrentMemoryContext);
-				results[i].text = pstrdup(text_out);
+				results[i].text = text_out ? pstrdup(text_out) : pstrdup("");
 				results[i].status = 0;
 				results[i].error = NULL;
 				MemoryContextSwitchTo(batchctx);
@@ -2014,12 +2715,13 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 					pfree(text_out);
 				if (prompt_err)
 					pfree(prompt_err);
-			}
-			else
+			} else
 			{
 				MemoryContextSwitchTo(CurrentMemoryContext);
 				results[i].status = -1;
-				results[i].error = prompt_err ? pstrdup(prompt_err) : pstrdup("generation failed");
+				results[i].error = prompt_err
+					? pstrdup(prompt_err)
+					: pstrdup("generation failed");
 				MemoryContextSwitchTo(batchctx);
 				if (text_out)
 					pfree(text_out);
@@ -2036,92 +2738,129 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 		}
 		if (streams)
 			pfree(streams);
-	}
-	else
+
+		/* Check if at least one prompt succeeded */
+		rc = -1;
+		for (i = 0; i < num_prompts; i++)
+		{
+			elog(NOTICE, "neurondb: batch result[%d]: status=%d, text=%s", i, results[i].status, results[i].text ? (strlen(results[i].text) > 0 ? "non-empty" : "empty") : "NULL");
+			if (results[i].status == 0)
+			{
+				rc = 0;
+				elog(NOTICE, "neurondb: found successful prompt at index %d", i);
+				break;
+			}
+		}
+		if (rc != 0)
+		{
+			/* All prompts failed */
+			elog(NOTICE, "neurondb: all %d batch completions failed", num_prompts);
+			if (errstr)
+				*errstr = pstrdup("all batch completions failed");
+		} else
+		{
+			elog(NOTICE, "neurondb: batch completion succeeded (at least one prompt succeeded)");
+		}
+	} else
 	{
+		elog(NOTICE, "neurondb: batch completion falling back to sequential processing for %d prompts", num_prompts);
 		/* Fall back to sequential processing */
 		for (i = 0; i < num_prompts; i++)
 		{
 			char *text_out = NULL;
 			char *prompt_err = NULL;
 
-			rc = ndb_cuda_hf_complete(model_name, prompts[i], params_json, &text_out, &prompt_err);
-			if (rc == 0 && text_out)
+			rc = ndb_cuda_hf_complete(model_name,
+				prompts[i],
+				params_json,
+				&text_out,
+				&prompt_err);
+			if (rc == 0)
 			{
 				int32 token_length;
 				int32 *token_ids = NULL;
 
-			/* Count tokens from generated text */
-			PG_TRY();
-			{
-				token_ids = neurondb_tokenize_with_model(text_out, 2048, &token_length, model_name);
-				if (token_ids && token_length > 0)
+				/* Count tokens from generated text */
+				PG_TRY();
 				{
-					results[i].num_tokens = token_length;
+					token_ids =
+						neurondb_tokenize_with_model(
+							text_out,
+							2048,
+							&token_length,
+							model_name);
+					if (token_ids && token_length > 0)
+					{
+						results[i].num_tokens =
+							token_length;
+					} else
+					{
+						/* Fallback: estimate from word count */
+						const char *ptr = text_out;
+						int word_count = 0;
+						int in_word = 0;
+
+						while (*ptr)
+						{
+							if (!isspace((
+								    unsigned char)*ptr))
+							{
+								if (!in_word)
+								{
+									word_count++;
+									in_word =
+										1;
+								}
+							} else
+							{
+								in_word = 0;
+							}
+							ptr++;
+						}
+						results[i].num_tokens =
+							word_count > 0
+							? word_count
+							: 1;
+					}
+					if (token_ids)
+						pfree(token_ids);
 				}
-				else
+				PG_CATCH();
 				{
-					/* Fallback: estimate from word count */
+					/* On error, use word count fallback */
+					EmitErrorReport();
+					FlushErrorState();
+					if (token_ids)
+						pfree(token_ids);
+
 					const char *ptr = text_out;
 					int word_count = 0;
 					int in_word = 0;
 
 					while (*ptr)
 					{
-						if (!isspace((unsigned char) *ptr))
+						if (!isspace((
+							    unsigned char)*ptr))
 						{
 							if (!in_word)
 							{
 								word_count++;
 								in_word = 1;
 							}
-						}
-						else
+						} else
 						{
 							in_word = 0;
 						}
 						ptr++;
 					}
-					results[i].num_tokens = word_count > 0 ? word_count : 1;
-				}
-				if (token_ids)
-					pfree(token_ids);
-			}
-			PG_CATCH();
-			{
-				/* On error, use word count fallback */
-				EmitErrorReport();
-				FlushErrorState();
-				if (token_ids)
-					pfree(token_ids);
-
-					const char *ptr = text_out;
-					int word_count = 0;
-					int in_word = 0;
-
-					while (*ptr)
-					{
-						if (!isspace((unsigned char) *ptr))
-						{
-							if (!in_word)
-							{
-								word_count++;
-								in_word = 1;
-							}
-						}
-						else
-						{
-							in_word = 0;
-						}
-						ptr++;
-					}
-					results[i].num_tokens = word_count > 0 ? word_count : 1;
+					results[i].num_tokens =
+						word_count > 0 ? word_count : 1;
 				}
 				PG_END_TRY();
 
 				/* Copy result to parent context */
 				MemoryContextSwitchTo(CurrentMemoryContext);
-				results[i].text = pstrdup(text_out);
+				results[i].text = text_out ? pstrdup(text_out) : pstrdup("");
 				results[i].status = 0;
 				results[i].error = NULL;
 				MemoryContextSwitchTo(batchctx);
@@ -2129,12 +2868,13 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 					pfree(text_out);
 				if (prompt_err)
 					pfree(prompt_err);
-			}
-			else
+			} else
 			{
 				MemoryContextSwitchTo(CurrentMemoryContext);
 				results[i].status = -1;
-				results[i].error = prompt_err ? pstrdup(prompt_err) : pstrdup("generation failed");
+				results[i].error = prompt_err
+					? pstrdup(prompt_err)
+					: pstrdup("generation failed");
 				MemoryContextSwitchTo(batchctx);
 				if (text_out)
 					pfree(text_out);
@@ -2142,13 +2882,37 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 					pfree(prompt_err);
 			}
 		}
+
+		/* Check if at least one prompt succeeded */
+		rc = -1;
+		for (i = 0; i < num_prompts; i++)
+		{
+			elog(NOTICE, "neurondb: sequential batch result[%d]: status=%d, text=%s", i, results[i].status, results[i].text ? (strlen(results[i].text) > 0 ? "non-empty" : "empty") : "NULL");
+			if (results[i].status == 0)
+			{
+				rc = 0;
+				elog(NOTICE, "neurondb: sequential found successful prompt at index %d", i);
+				break;
+			}
+		}
+		if (rc != 0)
+		{
+			/* All prompts failed */
+			elog(NOTICE, "neurondb: sequential all %d batch completions failed", num_prompts);
+			if (errstr)
+				*errstr = pstrdup("all batch completions failed");
+		} else
+		{
+			elog(NOTICE, "neurondb: sequential batch completion succeeded (at least one prompt succeeded)");
+		}
 	}
 
+	elog(NOTICE, "neurondb: ndb_cuda_hf_generate_batch returning rc=%d", rc);
 	/* Switch back to original context and clean up */
 	MemoryContextSwitchTo(oldctx);
 	MemoryContextDelete(batchctx);
 
-	return 0;
+	return rc;
 }
 
 /*
@@ -2165,24 +2929,27 @@ ndb_cuda_hf_generate_batch(const char *model_name,
  */
 int
 ndb_cuda_hf_rerank(const char *model_name,
-		   const char *query,
-		   const char **docs,
-		   int ndocs,
-		   float **scores_out,
-		   char **errstr)
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out,
+	char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
-	if (model_name == NULL || query == NULL || docs == NULL || scores_out == NULL)
+	if (model_name == NULL || query == NULL || docs == NULL
+		|| scores_out == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for CUDA HF rerank");
+			*errstr = pstrdup(
+				"invalid parameters for CUDA HF rerank");
 		return -1;
 	}
 	if (ndocs <= 0)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid number of documents for CUDA HF rerank");
+			*errstr = pstrdup("invalid number of documents for "
+					  "CUDA HF rerank");
 		return -1;
 	}
 
@@ -2196,7 +2963,8 @@ ndb_cuda_hf_rerank(const char *model_name,
 	 * - Extract relevance scores from output logits
 	 */
 	if (errstr)
-		*errstr = pstrdup("CUDA HF reranking not yet implemented - use HTTP or ONNX fallback");
+		*errstr = pstrdup("CUDA HF reranking not yet implemented - use "
+				  "HTTP or ONNX fallback");
 	return -1;
 }
 
@@ -2213,10 +2981,10 @@ ndb_cuda_hf_rerank(const char *model_name,
  */
 int
 ndb_cuda_hf_load_model(const char *model_name,
-		       const char *model_path,
-		       NdbHfModelType model_type,
-		       NdbCudaHfModelConfig *config,
-		       char **errstr)
+	const char *model_path,
+	NdbHfModelType model_type,
+	NdbCudaHfModelConfig *config,
+	char **errstr)
 {
 	NdbCudaHfModelEntry *entry = NULL;
 	NdbCudaHfModelWeights weights;
@@ -2227,7 +2995,8 @@ ndb_cuda_hf_load_model(const char *model_name,
 	if (!model_name || !config)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for model loading");
+			*errstr =
+				pstrdup("invalid parameters for model loading");
 		return -1;
 	}
 
@@ -2240,23 +3009,62 @@ ndb_cuda_hf_load_model(const char *model_name,
 	}
 
 	/* Load model weights */
-	rc = ndb_cuda_hf_load_model_weights(model_name, model_path, config, &weights, errstr);
+	rc = ndb_cuda_hf_load_model_weights(
+		model_name, model_path, config, &weights, errstr);
 	if (rc != 0)
 		return -1;
 
-	/* Create cache entry */
-	entry = (NdbCudaHfModelEntry *) palloc(sizeof(NdbCudaHfModelEntry));
-	memset(entry, 0, sizeof(NdbCudaHfModelEntry));
-	strncpy(entry->model_name, model_name, NDB_HF_MAX_MODEL_NAME - 1);
-	entry->config = *config;
-	entry->config.model_type = model_type;
-	entry->weights = weights;
-	entry->loaded = true;
-	entry->weights_on_device = false;
-	entry->last_used = time(NULL);
-	entry->next = g_model_cache;
-	g_model_cache = entry;
-	g_model_cache_count++;
+	/* Switch to CacheMemoryContext for persistent cache entry */
+	{
+		MemoryContext oldcontext = MemoryContextSwitchTo(CacheMemoryContext);
+
+		/* Create cache entry in CacheMemoryContext (persistent) */
+		entry = (NdbCudaHfModelEntry *)palloc(sizeof(NdbCudaHfModelEntry));
+		memset(entry, 0, sizeof(NdbCudaHfModelEntry));
+		strncpy(entry->model_name, model_name, NDB_HF_MAX_MODEL_NAME - 1);
+		entry->config = *config;
+		entry->config.model_type = model_type;
+
+		/* Copy weights to CacheMemoryContext */
+		{
+			size_t embed_table_size =
+				config->vocab_size * config->embed_dim * sizeof(float);
+			size_t position_embed_size =
+				config->max_seq_len * config->embed_dim * sizeof(float);
+			size_t lm_head_size =
+				config->vocab_size * config->embed_dim * sizeof(float);
+
+			entry->weights.embedding_table =
+				(float *)palloc(embed_table_size);
+			memcpy(entry->weights.embedding_table,
+				weights.embedding_table,
+				embed_table_size);
+
+			entry->weights.position_embeddings =
+				(float *)palloc(position_embed_size);
+			memcpy(entry->weights.position_embeddings,
+				weights.position_embeddings,
+				position_embed_size);
+
+			entry->weights.lm_head_weights =
+				(float *)palloc(lm_head_size);
+			memcpy(entry->weights.lm_head_weights,
+				weights.lm_head_weights,
+				lm_head_size);
+
+			entry->weights.total_bytes = weights.total_bytes;
+		}
+
+		entry->loaded = true;
+		entry->weights_on_device = false;
+		entry->last_used = time(NULL);
+		entry->next = g_model_cache;
+		g_model_cache = entry;
+		g_model_cache_count++;
+
+		/* Switch back to original context */
+		MemoryContextSwitchTo(oldcontext);
+	}
 
 	return 0;
 }
@@ -2277,12 +3085,14 @@ ndb_cuda_hf_unload_model(const char *model_name, char **errstr)
 	if (!model_name)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for model unloading");
+			*errstr = pstrdup(
+				"invalid parameters for model unloading");
 		return -1;
 	}
 
 	/* Find model in cache */
-	for (entry = g_model_cache; entry != NULL; prev = entry, entry = entry->next)
+	for (entry = g_model_cache; entry != NULL;
+		prev = entry, entry = entry->next)
 	{
 		if (strcmp(entry->model_name, model_name) == 0)
 			break;
@@ -2291,7 +3101,8 @@ ndb_cuda_hf_unload_model(const char *model_name, char **errstr)
 	if (entry == NULL)
 	{
 		if (errstr)
-			*errstr = psprintf("model '%s' not found in cache", model_name);
+			*errstr = psprintf(
+				"model '%s' not found in cache", model_name);
 		return -1;
 	}
 
@@ -2302,24 +3113,28 @@ ndb_cuda_hf_unload_model(const char *model_name, char **errstr)
 		{
 			cuda_status = cudaFree(entry->device_weights_ptr);
 			if (cuda_status != cudaSuccess && errstr)
-				*errstr = psprintf("CUDA free failed for embedding table: %s",
-						   cudaGetErrorString(cuda_status));
+				*errstr = psprintf("CUDA free failed for "
+						   "embedding table: %s",
+					cudaGetErrorString(cuda_status));
 			entry->device_weights_ptr = NULL;
 		}
 		if (entry->device_position_embeddings != NULL)
 		{
-			cuda_status = cudaFree(entry->device_position_embeddings);
+			cuda_status =
+				cudaFree(entry->device_position_embeddings);
 			if (cuda_status != cudaSuccess && errstr)
-				*errstr = psprintf("CUDA free failed for position embeddings: %s",
-						   cudaGetErrorString(cuda_status));
+				*errstr = psprintf("CUDA free failed for "
+						   "position embeddings: %s",
+					cudaGetErrorString(cuda_status));
 			entry->device_position_embeddings = NULL;
 		}
 		if (entry->device_lm_head_weights != NULL)
 		{
 			cuda_status = cudaFree(entry->device_lm_head_weights);
 			if (cuda_status != cudaSuccess && errstr)
-				*errstr = psprintf("CUDA free failed for LM head weights: %s",
-						   cudaGetErrorString(cuda_status));
+				*errstr = psprintf("CUDA free failed for LM "
+						   "head weights: %s",
+					cudaGetErrorString(cuda_status));
 			entry->device_lm_head_weights = NULL;
 		}
 		entry->weights_on_device = false;
@@ -2367,8 +3182,8 @@ ndb_cuda_hf_model_loaded(const char *model_name)
  */
 int
 ndb_cuda_hf_get_model_config(const char *model_name,
-			     NdbCudaHfModelConfig *config,
-			     char **errstr)
+	NdbCudaHfModelConfig *config,
+	char **errstr)
 {
 	NdbCudaHfModelEntry *entry;
 
@@ -2377,7 +3192,8 @@ ndb_cuda_hf_get_model_config(const char *model_name,
 	if (!model_name || !config)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for get model config");
+			*errstr = pstrdup(
+				"invalid parameters for get model config");
 		return -1;
 	}
 
@@ -2385,7 +3201,8 @@ ndb_cuda_hf_get_model_config(const char *model_name,
 	if (entry == NULL || !entry->loaded)
 	{
 		if (errstr)
-			*errstr = psprintf("model '%s' not found or not loaded", model_name);
+			*errstr = psprintf("model '%s' not found or not loaded",
+				model_name);
 		return -1;
 	}
 
@@ -2399,23 +3216,29 @@ ndb_cuda_hf_get_model_config(const char *model_name,
  */
 int
 ndb_cuda_hf_tokenize(const char *text,
-		     const char *model_name,
-		     int32_t *token_ids_out,
-		     int32_t *attention_mask_out,
-		     int *seq_len_out,
-		     char **errstr)
+	const char *model_name,
+	int32_t *token_ids_out,
+	int32_t *attention_mask_out,
+	int *seq_len_out,
+	char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
-	if (!text || !model_name || !token_ids_out || !attention_mask_out || !seq_len_out)
+	if (!text || !model_name || !token_ids_out || !attention_mask_out
+		|| !seq_len_out)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for tokenization");
+			*errstr =
+				pstrdup("invalid parameters for tokenization");
 		return -1;
 	}
 
-	return ndb_cuda_hf_tokenize_text(text, model_name, token_ids_out,
-					 attention_mask_out, seq_len_out, errstr);
+	return ndb_cuda_hf_tokenize_text(text,
+		model_name,
+		token_ids_out,
+		attention_mask_out,
+		seq_len_out,
+		errstr);
 }
 
 #else /* NDB_GPU_CUDA */
@@ -2425,10 +3248,10 @@ ndb_cuda_hf_tokenize(const char *text,
  */
 int
 ndb_cuda_hf_embed(const char *model_name,
-		  const char *text,
-		  float **vec_out,
-		  int *dim_out,
-		  char **errstr)
+	const char *text,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA support not compiled in");
@@ -2437,10 +3260,10 @@ ndb_cuda_hf_embed(const char *model_name,
 
 int
 ndb_cuda_hf_complete(const char *model_name,
-		     const char *prompt,
-		     const char *params_json,
-		     char **text_out,
-		     char **errstr)
+	const char *prompt,
+	const char *params_json,
+	char **text_out,
+	char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA support not compiled in");
@@ -2449,11 +3272,11 @@ ndb_cuda_hf_complete(const char *model_name,
 
 int
 ndb_cuda_hf_rerank(const char *model_name,
-		   const char *query,
-		   const char **docs,
-		   int ndocs,
-		   float **scores_out,
-		   char **errstr)
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out,
+	char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA support not compiled in");
@@ -2462,10 +3285,10 @@ ndb_cuda_hf_rerank(const char *model_name,
 
 int
 ndb_cuda_hf_load_model(const char *model_name,
-		       const char *model_path,
-		       NdbHfModelType model_type,
-		       NdbCudaHfModelConfig *config,
-		       char **errstr)
+	const char *model_path,
+	NdbHfModelType model_type,
+	NdbCudaHfModelConfig *config,
+	char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA support not compiled in");
@@ -2488,8 +3311,8 @@ ndb_cuda_hf_model_loaded(const char *model_name)
 
 int
 ndb_cuda_hf_get_model_config(const char *model_name,
-			     NdbCudaHfModelConfig *config,
-			     char **errstr)
+	NdbCudaHfModelConfig *config,
+	char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA support not compiled in");
@@ -2498,11 +3321,11 @@ ndb_cuda_hf_get_model_config(const char *model_name,
 
 int
 ndb_cuda_hf_tokenize(const char *text,
-		     const char *model_name,
-		     int32_t *token_ids_out,
-		     int32_t *attention_mask_out,
-		     int *seq_len_out,
-		     char **errstr)
+	const char *model_name,
+	int32_t *token_ids_out,
+	int32_t *attention_mask_out,
+	int *seq_len_out,
+	char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA support not compiled in");
@@ -2510,4 +3333,3 @@ ndb_cuda_hf_tokenize(const char *text,
 }
 
 #endif /* NDB_GPU_CUDA */
-

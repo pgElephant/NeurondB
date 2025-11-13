@@ -31,4 +31,3 @@ typedef struct LRModel
 } LRModel;
 
 #endif /* ML_LOGISTIC_REGRESSION_INTERNAL_H */
-

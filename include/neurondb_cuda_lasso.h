@@ -31,7 +31,7 @@ typedef struct NdbCudaLassoModelHeader
 	int32 feature_dim;
 	int32 n_samples;
 	float intercept;
-	float *coefficients;  /* Array of feature_dim floats */
+	float *coefficients; /* Array of feature_dim floats */
 	double lambda;
 	int32 max_iters;
 	double r_squared;
@@ -68,4 +68,3 @@ extern int ndb_cuda_lasso_predict(const bytea *model_data,
 #endif
 
 #endif /* NEURONDB_CUDA_LASSO_H */
-

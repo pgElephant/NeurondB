@@ -38,4 +38,3 @@ extern int ndb_gpu_linreg_pack_model(const struct LinRegModel *model,
 	char **errstr);
 
 #endif /* NEURONDB_ML_GPU_LINEAR_REGRESSION_H */
-

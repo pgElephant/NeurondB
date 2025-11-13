@@ -44,24 +44,24 @@
 #include "neurondb_bgworkers.h"
 
 /* Defrag configuration parameters (GUCs; see also neurandefrag_init_guc) */
-static int      neurandefrag_naptime = 300000;
-static int      neurandefrag_compact_threshold = 10000;
-static double   neurandefrag_fragmentation_threshold = 0.3;
-static bool     neurandefrag_enabled = true;
-static char    *neurandefrag_maintenance_window = "02:00-04:00";
+static int neurandefrag_naptime = 300000;
+static int neurandefrag_compact_threshold = 10000;
+static double neurandefrag_fragmentation_threshold = 0.3;
+static bool neurandefrag_enabled = true;
+static char *neurandefrag_maintenance_window = "02:00-04:00";
 
 /* Shared state structure for defrag worker, lives in shmem */
 typedef struct NeurandefragSharedState
 {
-	LWLock       *lock;
-	int64         compactions_done;
-	int64         edges_cleaned;
-	int64         tombstones_pruned;
-	int64         rebalances_done;
-	TimestampTz   last_heartbeat;
-	TimestampTz   last_full_rebuild;
-	pid_t         worker_pid;
-	bool          in_maintenance_window;
+	LWLock *lock;
+	int64 compactions_done;
+	int64 edges_cleaned;
+	int64 tombstones_pruned;
+	int64 rebalances_done;
+	TimestampTz last_heartbeat;
+	TimestampTz last_full_rebuild;
+	pid_t worker_pid;
+	bool in_maintenance_window;
 } NeurandefragSharedState;
 
 /* Pointer to shared memory state */
@@ -81,7 +81,8 @@ PG_FUNCTION_INFO_V1(neurandefrag_run);
 Datum
 neurandefrag_run(PG_FUNCTION_ARGS)
 {
-	elog(NOTICE, "neurondb: neurandefrag_run invoked (stub implementation)");
+	elog(NOTICE,
+		"neurondb: neurandefrag_run invoked (stub implementation)");
 	PG_RETURN_BOOL(false);
 }
 
@@ -119,7 +120,9 @@ neurandefrag_segv_handler(int signum)
 		return;
 	}
 	segv_recursed = 1;
-	elog(LOG, "neurondb: neurandefrag worker caught SIGSEGV, recovering via longjmp");
+	elog(LOG,
+		"neurondb: neurandefrag worker caught SIGSEGV, recovering via "
+		"longjmp");
 	longjmp(segv_jmp_buf, 1);
 }
 
@@ -128,49 +131,66 @@ void
 neurandefrag_init_guc(void)
 {
 	DefineCustomIntVariable("neurondb.neurandefrag_naptime",
-							"Duration between maintenance cycles (ms)",
-							NULL,
-							&neurandefrag_naptime,
-							300000, 60000, 3600000,
-							PGC_SIGHUP,
-							0,
-							NULL, NULL, NULL);
+		"Duration between maintenance cycles (ms)",
+		NULL,
+		&neurandefrag_naptime,
+		300000,
+		60000,
+		3600000,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomIntVariable("neurondb.neurandefrag_compact_threshold",
-							"Edge count threshold for compaction trigger",
-							NULL,
-							&neurandefrag_compact_threshold,
-							10000, 1000, 1000000,
-							PGC_SIGHUP,
-							0,
-							NULL, NULL, NULL);
+		"Edge count threshold for compaction trigger",
+		NULL,
+		&neurandefrag_compact_threshold,
+		10000,
+		1000,
+		1000000,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-	DefineCustomRealVariable("neurondb.neurandefrag_fragmentation_threshold",
-							 "Fragmentation ratio necessary to trigger a full rebuild",
-							 NULL,
-							 &neurandefrag_fragmentation_threshold,
-							 0.3, 0.1, 0.9,
-							 PGC_SIGHUP,
-							 0,
-							 NULL, NULL, NULL);
+	DefineCustomRealVariable(
+		"neurondb.neurandefrag_fragmentation_threshold",
+		"Fragmentation ratio necessary to trigger a full rebuild",
+		NULL,
+		&neurandefrag_fragmentation_threshold,
+		0.3,
+		0.1,
+		0.9,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomStringVariable("neurondb.neurandefrag_maintenance_window",
-							   "Maintenance window in HH:MM-HH:MM format",
-							   NULL,
-							   &neurandefrag_maintenance_window,
-							   "02:00-04:00",
-							   PGC_SIGHUP,
-							   0,
-							   NULL, NULL, NULL);
+		"Maintenance window in HH:MM-HH:MM format",
+		NULL,
+		&neurandefrag_maintenance_window,
+		"02:00-04:00",
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomBoolVariable("neurondb.neurandefrag_enabled",
-							 "Enable/disable the Neurandefrag background worker",
-							 NULL,
-							 &neurandefrag_enabled,
-							 true,
-							 PGC_SIGHUP,
-							 0,
-							 NULL, NULL, NULL);
+		"Enable/disable the Neurandefrag background worker",
+		NULL,
+		&neurandefrag_enabled,
+		true,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 }
 
 /* Shared memory size required for the worker */
@@ -188,15 +208,15 @@ neurandefrag_shmem_init(void)
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
-	neurandefrag_state = (NeurandefragSharedState *) ShmemInitStruct(
+	neurandefrag_state = (NeurandefragSharedState *)ShmemInitStruct(
 		"NeuronDB Defrag Worker State",
 		neurandefrag_shmem_size(),
-		&found
-	);
+		&found);
 
 	if (!found)
 	{
-		neurandefrag_state->lock = &(GetNamedLWLockTranche("neurondb_defrag"))->lock;
+		neurandefrag_state->lock =
+			&(GetNamedLWLockTranche("neurondb_defrag"))->lock;
 		neurandefrag_state->compactions_done = 0;
 		neurandefrag_state->edges_cleaned = 0;
 		neurandefrag_state->tombstones_pruned = 0;
@@ -228,11 +248,11 @@ neurandefrag_on_exit(int code, Datum arg)
 void
 neurandefrag_main(Datum main_arg)
 {
-	sigjmp_buf	local_sigjmp_buf;
-	MemoryContext	worker_memctx;
-	MemoryContext	oldctx;
-	bool		found;
-	int			wait_events;
+	sigjmp_buf local_sigjmp_buf;
+	MemoryContext worker_memctx;
+	MemoryContext oldctx;
+	bool found;
+	int wait_events;
 
 	BackgroundWorkerUnblockSignals();
 	pqsignal(SIGTERM, neurandefrag_sigterm);
@@ -243,16 +263,17 @@ neurandefrag_main(Datum main_arg)
 
 	/* Attach to shmem state */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
-	neurandefrag_state = (NeurandefragSharedState *) ShmemInitStruct(
+	neurandefrag_state = (NeurandefragSharedState *)ShmemInitStruct(
 		"NeuronDB Defrag Worker State",
 		neurandefrag_shmem_size(),
-		&found
-	);
+		&found);
 	LWLockRelease(AddinShmemInitLock);
 
 	if (!found || neurandefrag_state == NULL)
 	{
-		ereport(ERROR, (errmsg("neurondb: unable to attach defrag shared state")));
+		ereport(ERROR,
+			(errmsg("neurondb: unable to attach defrag shared "
+				"state")));
 		proc_exit(1);
 	}
 
@@ -264,7 +285,9 @@ neurandefrag_main(Datum main_arg)
 		MemoryContextSwitchTo(TopMemoryContext);
 		if (worker_memctx)
 			MemoryContextReset(worker_memctx);
-		ereport(LOG, (errmsg("neurondb: neurandefrag worker error, restarting loop")));
+		ereport(LOG,
+			(errmsg("neurondb: neurandefrag worker error, "
+				"restarting loop")));
 		pg_usleep(1000000L); /* sleep 1s before retry */
 	}
 	PG_exception_stack = &local_sigjmp_buf;
@@ -273,17 +296,19 @@ neurandefrag_main(Datum main_arg)
 		"neurandefrag worker context",
 		ALLOCSET_DEFAULT_SIZES);
 
-	ereport(LOG, (errmsg("neurondb: neurandefrag worker started (PID %d)", MyProcPid)));
+	ereport(LOG,
+		(errmsg("neurondb: neurandefrag worker started (PID %d)",
+			MyProcPid)));
 
-	on_shmem_exit(neurandefrag_on_exit, (Datum) 0);
+	on_shmem_exit(neurandefrag_on_exit, (Datum)0);
 
 	while (!got_sigterm)
 	{
 		long timeout_ms = Max(neurandefrag_naptime, 1000);
 		wait_events = WaitLatch(MyLatch,
-							 WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-							 timeout_ms,
-							 PG_WAIT_EXTENSION);
+			WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+			timeout_ms,
+			PG_WAIT_EXTENSION);
 		ResetLatch(MyLatch);
 		CHECK_FOR_INTERRUPTS();
 
@@ -297,7 +322,9 @@ neurandefrag_main(Datum main_arg)
 		{
 			got_sighup = 0;
 			ProcessConfigFile(PGC_SIGHUP);
-			ereport(LOG, (errmsg("neurondb: neurandefrag worker processed SIGHUP")));
+			ereport(LOG,
+				(errmsg("neurondb: neurandefrag worker "
+					"processed SIGHUP")));
 		}
 
 		if (!neurandefrag_enabled)
@@ -316,12 +343,17 @@ neurandefrag_main(Datum main_arg)
 		 *  - rebalance structures if needed
 		 *  - update shared state counters/statistics
 		 */
-		ereport(DEBUG1, (errmsg("neurondb: neurandefrag worker heartbeat (PID %d)", MyProcPid)));
+		ereport(DEBUG1,
+			(errmsg("neurondb: neurandefrag worker heartbeat (PID "
+				"%d)",
+				MyProcPid)));
 
 		MemoryContextSwitchTo(oldctx);
 		MemoryContextReset(worker_memctx);
 	}
 
-	ereport(LOG, (errmsg("neurondb: neurandefrag worker shutting down (PID %d)", MyProcPid)));
+	ereport(LOG,
+		(errmsg("neurondb: neurandefrag worker shutting down (PID %d)",
+			MyProcPid)));
 	proc_exit(0);
 }

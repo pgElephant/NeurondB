@@ -35,4 +35,3 @@ extern int ndb_gpu_dt_pack_model(const struct DTModel *model,
 	char **errstr);
 
 #endif /* NEURONDB_ML_GPU_DECISION_TREE_H */
-

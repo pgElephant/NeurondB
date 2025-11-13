@@ -31,4 +31,3 @@ typedef struct LassoModel
 } LassoModel;
 
 #endif /* ML_LASSO_REGRESSION_INTERNAL_H */
-

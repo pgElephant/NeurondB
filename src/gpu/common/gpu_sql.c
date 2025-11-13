@@ -50,10 +50,10 @@ PG_FUNCTION_INFO_V1(vector_l2_distance_gpu);
 Datum
 vector_l2_distance_gpu(PG_FUNCTION_ARGS)
 {
-	Vector	   *a = PG_GETARG_VECTOR_P(0);
-	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float4		result = -1.0f;
-	extern float4 l2_distance(Vector *a, Vector *b);
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	float4 result = -1.0f;
+	extern float4 l2_distance(Vector * a, Vector * b);
 
 	if (ndb_gpu_can_run("l2") && a->dim == b->dim)
 	{
@@ -76,10 +76,10 @@ PG_FUNCTION_INFO_V1(vector_cosine_distance_gpu);
 Datum
 vector_cosine_distance_gpu(PG_FUNCTION_ARGS)
 {
-	Vector	   *a = PG_GETARG_VECTOR_P(0);
-	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float4		result = -1.0f;
-	extern float4 cosine_distance(Vector *a, Vector *b);
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	float4 result = -1.0f;
+	extern float4 cosine_distance(Vector * a, Vector * b);
 
 	if (ndb_gpu_can_run("cosine") && a->dim == b->dim)
 	{
@@ -100,10 +100,10 @@ PG_FUNCTION_INFO_V1(vector_inner_product_gpu);
 Datum
 vector_inner_product_gpu(PG_FUNCTION_ARGS)
 {
-	Vector	   *a = PG_GETARG_VECTOR_P(0);
-	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float4		result = -1.0f;
-	extern float4 inner_product_distance(Vector *a, Vector *b);
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	float4 result = -1.0f;
+	extern float4 inner_product_distance(Vector * a, Vector * b);
 
 	if (ndb_gpu_can_run("ip") && a->dim == b->dim)
 	{
@@ -124,27 +124,27 @@ PG_FUNCTION_INFO_V1(vector_to_int8_gpu);
 Datum
 vector_to_int8_gpu(PG_FUNCTION_ARGS)
 {
-	Vector	   *v = PG_GETARG_VECTOR_P(0);
-	int			count = v->dim;
-	bytea	   *out;
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	int count = v->dim;
+	bytea *out;
 
-	out = (bytea *) palloc(VARHDRSZ + count);
+	out = (bytea *)palloc(VARHDRSZ + count);
 	SET_VARSIZE(out, VARHDRSZ + count);
 
 	if (ndb_gpu_can_run("quantize"))
 	{
-		neurondb_gpu_quantize_int8(v->data, (int8 *) VARDATA(out), count);
-	}
-	else
+		neurondb_gpu_quantize_int8(
+			v->data, (int8 *)VARDATA(out), count);
+	} else
 	{
-		int			i;
-		float		maxv = 0.0f;
-		float		scale;
-		int8	   *quantized = (int8 *) VARDATA(out);
+		int i;
+		float maxv = 0.0f;
+		float scale;
+		int8 *quantized = (int8 *)VARDATA(out);
 
 		for (i = 0; i < count; i++)
 		{
-			float	val = fabsf(v->data[i]);
+			float val = fabsf(v->data[i]);
 			if (val > maxv)
 				maxv = val;
 		}
@@ -153,14 +153,14 @@ vector_to_int8_gpu(PG_FUNCTION_ARGS)
 
 		for (i = 0; i < count; i++)
 		{
-			float	scaled = v->data[i] * scale;
+			float scaled = v->data[i] * scale;
 
 			if (scaled > 127.0f)
 				scaled = 127.0f;
 			else if (scaled < -128.0f)
 				scaled = -128.0f;
 
-			quantized[i] = (int8) lrintf(scaled);
+			quantized[i] = (int8)lrintf(scaled);
 		}
 	}
 
@@ -176,32 +176,35 @@ PG_FUNCTION_INFO_V1(vector_to_fp16_gpu);
 Datum
 vector_to_fp16_gpu(PG_FUNCTION_ARGS)
 {
-	Vector	   *v = PG_GETARG_VECTOR_P(0);
-	int			count = v->dim;
-	int			out_bytes = count * 2;	/* 2 bytes per fp16 */
-	bytea	   *out;
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	int count = v->dim;
+	int out_bytes = count * 2; /* 2 bytes per fp16 */
+	bytea *out;
 
-	out = (bytea *) palloc(VARHDRSZ + out_bytes);
+	out = (bytea *)palloc(VARHDRSZ + out_bytes);
 	SET_VARSIZE(out, VARHDRSZ + out_bytes);
 
 	if (ndb_gpu_can_run("quantize"))
 	{
-		neurondb_gpu_quantize_fp16(v->data, (void *) VARDATA(out), count);
-	}
-	else
+		neurondb_gpu_quantize_fp16(
+			v->data, (void *)VARDATA(out), count);
+	} else
 	{
-		int			i;
-		uint16	   *dst = (uint16 *) VARDATA(out);
+		int i;
+		uint16 *dst = (uint16 *)VARDATA(out);
 
 		for (i = 0; i < count; i++)
 		{
-			float		f = v->data[i];
-			union { float f; uint32 u; } in;
-			uint32		f32;
-			uint32		sign;
-			int32		exp;
-			uint32		mant;
-			uint16		out_fp16;
+			float f = v->data[i];
+			union {
+				float f;
+				uint32 u;
+			} in;
+			uint32 f32;
+			uint32 sign;
+			int32 exp;
+			uint32 mant;
+			uint16 out_fp16;
 
 			in.f = f;
 			f32 = in.u;
@@ -215,31 +218,31 @@ vector_to_fp16_gpu(PG_FUNCTION_ARGS)
 			{
 				/* Signed zero */
 				out_fp16 = sign << 15;
-			}
-			else if ((f32 & 0x7F800000) == 0x7F800000)
+			} else if ((f32 & 0x7F800000) == 0x7F800000)
 			{
 				/* NaN or Inf */
 				if ((f32 & 0x007FFFFF) == 0)
 				{
 					out_fp16 = (sign << 15) | (0x1F << 10);
-				}
-				else
+				} else
 				{
-					out_fp16 = (sign << 15) | (0x1F << 10) | ((mant >> 13) ? (mant >> 13) : 1);
+					out_fp16 = (sign << 15) | (0x1F << 10)
+						| ((mant >> 13) ? (mant >> 13)
+								: 1);
 				}
-			}
-			else if (exp > 15)
+			} else if (exp > 15)
 			{
 				/* Overflow => Inf */
 				out_fp16 = (sign << 15) | (0x1F << 10);
-			}
-			else if (exp >= -14)
+			} else if (exp >= -14)
 			{
-				uint32	new_exp = exp + 15;
-				uint32	mant_fp16 = mant >> 13;
+				uint32 new_exp = exp + 15;
+				uint32 mant_fp16 = mant >> 13;
 
 				/* Round-to-nearest/evens. */
-				if (((mant >> 12) & 1) && (((mant & 0xFFF) > 0) || (mant_fp16 & 1)))
+				if (((mant >> 12) & 1)
+					&& (((mant & 0xFFF) > 0)
+						|| (mant_fp16 & 1)))
 				{
 					mant_fp16 += 1;
 					if (mant_fp16 == 0x400)
@@ -248,18 +251,20 @@ vector_to_fp16_gpu(PG_FUNCTION_ARGS)
 						new_exp++;
 						if (new_exp == 0x1F)
 						{
-							out_fp16 = (sign << 15) | (0x1F << 10);
+							out_fp16 = (sign << 15)
+								| (0x1F << 10);
 							dst[i] = out_fp16;
 							continue;
 						}
 					}
 				}
-				out_fp16 = (sign << 15) | ((new_exp & 0x1F) << 10) | (mant_fp16 & 0x3FF);
-			}
-			else if (exp >= -24)
+				out_fp16 = (sign << 15)
+					| ((new_exp & 0x1F) << 10)
+					| (mant_fp16 & 0x3FF);
+			} else if (exp >= -24)
 			{
-				uint32	shift = (uint32) (-14 - exp);
-				uint32	mantissa;
+				uint32 shift = (uint32)(-14 - exp);
+				uint32 mantissa;
 				if (shift > 24)
 					shift = 24;
 				mantissa = (mant | 0x800000) >> (shift + 13);
@@ -267,8 +272,7 @@ vector_to_fp16_gpu(PG_FUNCTION_ARGS)
 				if (((mant | 0x800000) >> (shift + 12)) & 1)
 					mantissa += 1;
 				out_fp16 = (sign << 15) | mantissa;
-			}
-			else
+			} else
 			{
 				out_fp16 = (sign << 15);
 			}
@@ -289,12 +293,12 @@ PG_FUNCTION_INFO_V1(vector_to_binary_gpu);
 Datum
 vector_to_binary_gpu(PG_FUNCTION_ARGS)
 {
-	Vector	   *v = PG_GETARG_VECTOR_P(0);
-	int			count = v->dim;
-	int			out_bytes = (count + 7) / 8;
-	bytea	   *out;
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	int count = v->dim;
+	int out_bytes = (count + 7) / 8;
+	bytea *out;
 
-	out = (bytea *) palloc(VARHDRSZ + out_bytes);
+	out = (bytea *)palloc(VARHDRSZ + out_bytes);
 	SET_VARSIZE(out, VARHDRSZ + out_bytes);
 
 	/* Clear all bits (avoid garbage bits in final bytes). */
@@ -302,12 +306,12 @@ vector_to_binary_gpu(PG_FUNCTION_ARGS)
 
 	if (ndb_gpu_can_run("quantize"))
 	{
-		neurondb_gpu_quantize_binary(v->data, (uint8 *) VARDATA(out), count);
-	}
-	else
+		neurondb_gpu_quantize_binary(
+			v->data, (uint8 *)VARDATA(out), count);
+	} else
 	{
-		int			i;
-		uint8	   *dst = (uint8 *) VARDATA(out);
+		int i;
+		uint8 *dst = (uint8 *)VARDATA(out);
 
 		for (i = 0; i < count; i++)
 		{
@@ -328,14 +332,15 @@ PG_FUNCTION_INFO_V1(hnsw_knn_search_gpu);
 Datum
 hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 {
-	(void) PG_GETARG_VECTOR_P(0);
-	(void) PG_GETARG_INT32(1);
+	(void)PG_GETARG_VECTOR_P(0);
+	(void)PG_GETARG_INT32(1);
 	if (PG_NARGS() > 2)
-		(void) PG_GETARG_INT32(2);
+		(void)PG_GETARG_INT32(2);
 
 	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("hnsw_knn_search_gpu is not implemented in this build")));
+		(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			errmsg("hnsw_knn_search_gpu is not implemented in this "
+			       "build")));
 	PG_RETURN_NULL();
 }
 
@@ -347,13 +352,14 @@ PG_FUNCTION_INFO_V1(ivf_knn_search_gpu);
 Datum
 ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 {
-	(void) PG_GETARG_VECTOR_P(0);
-	(void) PG_GETARG_INT32(1);
+	(void)PG_GETARG_VECTOR_P(0);
+	(void)PG_GETARG_INT32(1);
 	if (PG_NARGS() > 2)
-		(void) PG_GETARG_INT32(2);
+		(void)PG_GETARG_INT32(2);
 
 	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("ivf_knn_search_gpu is not implemented in this build")));
+		(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			errmsg("ivf_knn_search_gpu is not implemented in this "
+			       "build")));
 	PG_RETURN_NULL();
 }

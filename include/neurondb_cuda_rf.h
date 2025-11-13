@@ -26,28 +26,28 @@ struct RFModel;
 
 typedef struct NdbCudaRfNode
 {
-	int			feature_idx;
-	float		threshold;
-	int			left_child;
-	int			right_child;
-	float		value;
+	int feature_idx;
+	float threshold;
+	int left_child;
+	int right_child;
+	float value;
 } NdbCudaRfNode;
 
 typedef struct NdbCudaRfModelHeader
 {
-	int			tree_count;
-	int			feature_dim;
-	int			class_count;
-	int			sample_count;
-	int			majority_class;
-	double		majority_fraction;
+	int tree_count;
+	int feature_dim;
+	int class_count;
+	int sample_count;
+	int majority_class;
+	double majority_fraction;
 } NdbCudaRfModelHeader;
 
 typedef struct NdbCudaRfTreeHeader
 {
-	int			node_count;
-	int			nodes_start;
-	int			root_index;
+	int node_count;
+	int nodes_start;
+	int root_index;
 } NdbCudaRfTreeHeader;
 
 #ifdef __cplusplus

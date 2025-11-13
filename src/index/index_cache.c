@@ -27,19 +27,19 @@
 #include "utils/typcache.h"
 #include "funcapi.h"
 
-#define MAX_CACHE_ENTRIES	128
+#define MAX_CACHE_ENTRIES 128
 
 /*
  * Cached entry point
  */
 typedef struct CacheEntry
 {
-	Oid			indexOid;
+	Oid indexOid;
 	BlockNumber entryPoint;
-	int			entryLevel;
-	int			maxLevel;
+	int entryLevel;
+	int maxLevel;
 	TimestampTz lastAccess;
-	bool		valid;
+	bool valid;
 } CacheEntry;
 
 /*
@@ -47,14 +47,14 @@ typedef struct CacheEntry
  */
 typedef struct EntrypointCache
 {
-	LWLock	   *lock;
-	int			maxEntries;
-	int			currentEntries;
-	CacheEntry	entries[MAX_CACHE_ENTRIES];
+	LWLock *lock;
+	int maxEntries;
+	int currentEntries;
+	CacheEntry entries[MAX_CACHE_ENTRIES];
 } EntrypointCache;
 
 static EntrypointCache *ep_cache = NULL;
-static int	cache_size = MAX_CACHE_ENTRIES;
+static int cache_size = MAX_CACHE_ENTRIES;
 
 /*
  * Initialize GUC
@@ -63,15 +63,17 @@ void
 entrypoint_cache_init_guc(void)
 {
 	DefineCustomIntVariable("neurondb.entrypoint_cache_size",
-							"Number of HNSW entrypoints to cache",
-							NULL,
-							&cache_size,
-							MAX_CACHE_ENTRIES,
-							16,
-							1024,
-							PGC_POSTMASTER,
-							0,
-							NULL, NULL, NULL);
+		"Number of HNSW entrypoints to cache",
+		NULL,
+		&cache_size,
+		MAX_CACHE_ENTRIES,
+		16,
+		1024,
+		PGC_POSTMASTER,
+		0,
+		NULL,
+		NULL,
+		NULL);
 }
 
 /*
@@ -89,19 +91,21 @@ entrypoint_cache_shmem_size(void)
 void
 entrypoint_cache_shmem_init(void)
 {
-	bool		found;
+	bool found;
 
-	ep_cache = (EntrypointCache *)
-		ShmemInitStruct("neurondb_entrypoint_cache",
-						entrypoint_cache_shmem_size(),
-						&found);
+	ep_cache =
+		(EntrypointCache *)ShmemInitStruct("neurondb_entrypoint_cache",
+			entrypoint_cache_shmem_size(),
+			&found);
 
 	if (!found)
 	{
-		ep_cache->lock = &(GetNamedLWLockTranche("neurondb_entrypoint_cache"))->lock;
+		ep_cache->lock =
+			&(GetNamedLWLockTranche("neurondb_entrypoint_cache"))
+				 ->lock;
 		ep_cache->maxEntries = cache_size;
 		ep_cache->currentEntries = 0;
-		
+
 		for (int i = 0; i < MAX_CACHE_ENTRIES; i++)
 		{
 			ep_cache->entries[i].valid = false;
@@ -113,10 +117,13 @@ entrypoint_cache_shmem_init(void)
  * Lookup entrypoint in cache
  */
 bool
-entrypoint_cache_lookup(Oid indexOid, BlockNumber *entryPoint, int *entryLevel, int *maxLevel)
+entrypoint_cache_lookup(Oid indexOid,
+	BlockNumber *entryPoint,
+	int *entryLevel,
+	int *maxLevel)
 {
-	bool		found = false;
-	int			i;
+	bool found = false;
+	int i;
 
 	if (ep_cache == NULL)
 		return false;
@@ -125,8 +132,8 @@ entrypoint_cache_lookup(Oid indexOid, BlockNumber *entryPoint, int *entryLevel, 
 
 	for (i = 0; i < ep_cache->currentEntries; i++)
 	{
-		if (ep_cache->entries[i].valid && 
-			ep_cache->entries[i].indexOid == indexOid)
+		if (ep_cache->entries[i].valid
+			&& ep_cache->entries[i].indexOid == indexOid)
 		{
 			*entryPoint = ep_cache->entries[i].entryPoint;
 			*entryLevel = ep_cache->entries[i].entryLevel;
@@ -140,9 +147,13 @@ entrypoint_cache_lookup(Oid indexOid, BlockNumber *entryPoint, int *entryLevel, 
 	LWLockRelease(ep_cache->lock);
 
 	if (found)
-		elog(DEBUG2, "neurondb: Entrypoint cache HIT for index %u", indexOid);
+		elog(DEBUG2,
+			"neurondb: Entrypoint cache HIT for index %u",
+			indexOid);
 	else
-		elog(DEBUG2, "neurondb: Entrypoint cache MISS for index %u", indexOid);
+		elog(DEBUG2,
+			"neurondb: Entrypoint cache MISS for index %u",
+			indexOid);
 
 	return found;
 }
@@ -151,11 +162,14 @@ entrypoint_cache_lookup(Oid indexOid, BlockNumber *entryPoint, int *entryLevel, 
  * Store entrypoint in cache
  */
 void
-entrypoint_cache_store(Oid indexOid, BlockNumber entryPoint, int entryLevel, int maxLevel)
+entrypoint_cache_store(Oid indexOid,
+	BlockNumber entryPoint,
+	int entryLevel,
+	int maxLevel)
 {
-	int			victim = -1;
+	int victim = -1;
 	TimestampTz oldest = GetCurrentTimestamp();
-	int			i;
+	int i;
 
 	if (ep_cache == NULL)
 		return;
@@ -165,8 +179,8 @@ entrypoint_cache_store(Oid indexOid, BlockNumber entryPoint, int entryLevel, int
 	/* Check if already exists */
 	for (i = 0; i < ep_cache->currentEntries; i++)
 	{
-		if (ep_cache->entries[i].valid &&
-			ep_cache->entries[i].indexOid == indexOid)
+		if (ep_cache->entries[i].valid
+			&& ep_cache->entries[i].indexOid == indexOid)
 		{
 			/* Update existing */
 			ep_cache->entries[i].entryPoint = entryPoint;
@@ -183,8 +197,7 @@ entrypoint_cache_store(Oid indexOid, BlockNumber entryPoint, int entryLevel, int
 	{
 		victim = ep_cache->currentEntries;
 		ep_cache->currentEntries++;
-	}
-	else
+	} else
 	{
 		/* Find LRU entry */
 		for (i = 0; i < ep_cache->currentEntries; i++)
@@ -206,8 +219,10 @@ entrypoint_cache_store(Oid indexOid, BlockNumber entryPoint, int entryLevel, int
 		ep_cache->entries[victim].maxLevel = maxLevel;
 		ep_cache->entries[victim].lastAccess = GetCurrentTimestamp();
 		ep_cache->entries[victim].valid = true;
-		
-		elog(DEBUG2, "neurondb: Stored entrypoint in cache for index %u", indexOid);
+
+		elog(DEBUG2,
+			"neurondb: Stored entrypoint in cache for index %u",
+			indexOid);
 	}
 
 	LWLockRelease(ep_cache->lock);
@@ -219,7 +234,7 @@ entrypoint_cache_store(Oid indexOid, BlockNumber entryPoint, int entryLevel, int
 void
 entrypoint_cache_invalidate(Oid indexOid)
 {
-	int			i;
+	int i;
 
 	if (ep_cache == NULL)
 		return;
@@ -228,11 +243,14 @@ entrypoint_cache_invalidate(Oid indexOid)
 
 	for (i = 0; i < ep_cache->currentEntries; i++)
 	{
-		if (ep_cache->entries[i].valid &&
-			ep_cache->entries[i].indexOid == indexOid)
+		if (ep_cache->entries[i].valid
+			&& ep_cache->entries[i].indexOid == indexOid)
 		{
 			ep_cache->entries[i].valid = false;
-			elog(DEBUG1, "neurondb: Invalidated entrypoint cache for index %u", indexOid);
+			elog(DEBUG1,
+				"neurondb: Invalidated entrypoint cache for "
+				"index %u",
+				indexOid);
 			break;
 		}
 	}
@@ -248,11 +266,11 @@ PG_FUNCTION_INFO_V1(neurondb_clear_entrypoint_cache);
 Datum
 neurondb_clear_entrypoint_cache(PG_FUNCTION_ARGS)
 {
-	int			i;
+	int i;
 
 	if (ep_cache == NULL)
 		ereport(ERROR,
-				(errmsg("neurondb: Entrypoint cache not initialized")));
+			(errmsg("neurondb: Entrypoint cache not initialized")));
 
 	LWLockAcquire(ep_cache->lock, LW_EXCLUSIVE);
 
@@ -277,21 +295,23 @@ PG_FUNCTION_INFO_V1(neurondb_entrypoint_cache_stats);
 Datum
 neurondb_entrypoint_cache_stats(PG_FUNCTION_ARGS)
 {
-	TupleDesc	tupdesc;
-	Datum		values[3];
-	bool		nulls[3];
-	HeapTuple	tuple;
-	int			valid_count = 0;
-	int			i;
+	TupleDesc tupdesc;
+	Datum values[3];
+	bool nulls[3];
+	HeapTuple tuple;
+	int valid_count = 0;
+	int i;
 
 	if (ep_cache == NULL)
 		ereport(ERROR,
-				(errmsg("neurondb: Entrypoint cache not initialized")));
+			(errmsg("neurondb: Entrypoint cache not initialized")));
 
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("function returning record called in context that cannot accept type record")));
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("function returning record called in "
+				       "context that cannot accept type "
+				       "record")));
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
@@ -315,4 +335,3 @@ neurondb_entrypoint_cache_stats(PG_FUNCTION_ARGS)
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(tuple));
 }
-

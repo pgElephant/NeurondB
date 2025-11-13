@@ -16,4 +16,3 @@ extern void neurondb_gpu_register_linreg_model(void);
 extern void neurondb_gpu_register_svm_model(void);
 
 #endif /* NEURONDB_ML_GPU_REGISTRY_H */
-

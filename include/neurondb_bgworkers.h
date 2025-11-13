@@ -54,5 +54,4 @@ Datum neurandefrag_run(PG_FUNCTION_ARGS);
 
 /* Worker watchdog view - to be implemented separately if needed */
 
-#endif   /* NEURONDB_BGWORKERS_H */
-
+#endif /* NEURONDB_BGWORKERS_H */

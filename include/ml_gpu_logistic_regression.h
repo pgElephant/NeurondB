@@ -38,4 +38,3 @@ extern int ndb_gpu_lr_pack_model(const struct LRModel *model,
 	char **errstr);
 
 #endif /* NEURONDB_ML_GPU_LOGISTIC_REGRESSION_H */
-

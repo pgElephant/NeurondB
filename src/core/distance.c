@@ -27,8 +27,10 @@ check_dimensions(const Vector *a, const Vector *b)
 {
 	if (a->dim != b->dim)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("vector dimensions must match: %d vs %d", a->dim, b->dim)));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("vector dimensions must match: %d vs %d",
+					a->dim,
+					b->dim)));
 }
 
 /* L2 (Euclidean) distance, uses Kahan summation for numerical stability */
@@ -202,8 +204,8 @@ vector_minkowski_distance(PG_FUNCTION_ARGS)
 
 	if (p <= 0 || isnan(p) || isinf(p))
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("p must be positive and finite")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("p must be positive and finite")));
 
 	if (p == 1.0)
 	{
@@ -211,8 +213,7 @@ vector_minkowski_distance(PG_FUNCTION_ARGS)
 		for (i = 0; i < a->dim; i++)
 			sum += fabs((double)a->data[i] - (double)b->data[i]);
 		PG_RETURN_FLOAT8(sum);
-	}
-	else if (p == 2.0)
+	} else if (p == 2.0)
 	{
 		/* Shortcut: L2 distance */
 		double partial = 0.0, c = 0.0;
@@ -225,24 +226,24 @@ vector_minkowski_distance(PG_FUNCTION_ARGS)
 			partial = t;
 		}
 		PG_RETURN_FLOAT8(sqrt(partial));
-	}
-	else if (p == INFINITY || p > 1e10) /* Large p treated as Chebyshev */
+	} else if (p == INFINITY || p > 1e10) /* Large p treated as Chebyshev */
 	{
 		double max_diff = 0.0;
 		for (i = 0; i < a->dim; i++)
 		{
-			double this_diff = fabs((double)a->data[i] - (double)b->data[i]);
+			double this_diff =
+				fabs((double)a->data[i] - (double)b->data[i]);
 			if (this_diff > max_diff)
 				max_diff = this_diff;
 		}
 		PG_RETURN_FLOAT8(max_diff);
-	}
-	else
+	} else
 	{
 		/* General Minkowski sum */
 		for (i = 0; i < a->dim; i++)
 		{
-			double diff = fabs((double)a->data[i] - (double)b->data[i]);
+			double diff =
+				fabs((double)a->data[i] - (double)b->data[i]);
 			sum += pow(diff, p);
 		}
 		PG_RETURN_FLOAT8(pow(sum, 1.0 / p));

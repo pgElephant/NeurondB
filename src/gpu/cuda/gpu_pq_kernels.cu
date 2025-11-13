@@ -52,21 +52,21 @@
  */
 CUDA_KERNEL void
 pq_encode_kernel(const float *vectors,
-                 const float *codebooks,
-                 uint8_t *codes,
-                 int nvec,
-                 int dim,
-                 int m,
-                 int ks)
+	const float *codebooks,
+	uint8_t *codes,
+	int nvec,
+	int dim,
+	int m,
+	int ks)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	
+
 	if (idx >= nvec)
 		return;
 
 	const float *vec = vectors + idx * dim;
 	uint8_t *code = codes + idx * m;
-	
+
 	int subspace_dim = dim / m;
 
 	/* Encode each subspace */
@@ -74,7 +74,7 @@ pq_encode_kernel(const float *vectors,
 	{
 		const float *vec_sub = vec + sub * subspace_dim;
 		const float *codebook = codebooks + sub * ks * subspace_dim;
-		
+
 		float min_dist = FLT_MAX;
 		uint8_t best_idx = 0;
 
@@ -119,16 +119,16 @@ pq_encode_kernel(const float *vectors,
  */
 CUDA_KERNEL void
 pq_asymmetric_distance_kernel(const float *query,
-                               const uint8_t *codes,
-                               const float *codebooks,
-                               float *distances,
-                               int nvec,
-                               int dim,
-                               int m,
-                               int ks)
+	const uint8_t *codes,
+	const float *codebooks,
+	float *distances,
+	int nvec,
+	int dim,
+	int m,
+	int ks)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	
+
 	if (idx >= nvec)
 		return;
 
@@ -142,7 +142,7 @@ pq_asymmetric_distance_kernel(const float *query,
 		const float *query_sub = query + sub * subspace_dim;
 		const float *codebook = codebooks + sub * ks * subspace_dim;
 		uint8_t code_idx = code[sub];
-		
+
 		const float *codeword = codebook + code_idx * subspace_dim;
 		float dist_sub = 0.0f;
 
@@ -163,12 +163,12 @@ pq_asymmetric_distance_kernel(const float *query,
  */
 extern "C" int
 gpu_pq_encode_batch(const float *h_vectors,
-                    const float *h_codebooks,
-                    uint8_t *h_codes,
-                    int nvec,
-                    int dim,
-                    int m,
-                    int ks)
+	const float *h_codebooks,
+	uint8_t *h_codes,
+	int nvec,
+	int dim,
+	int m,
+	int ks)
 {
 	float *d_vectors = NULL;
 	float *d_codebooks = NULL;
@@ -182,16 +182,26 @@ gpu_pq_encode_batch(const float *h_vectors,
 	cudaMalloc(&d_codes, nvec * m * sizeof(uint8_t));
 
 	/* Copy data to device */
-	cudaMemcpy(d_vectors, h_vectors, nvec * dim * sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_codebooks, h_codebooks, m * ks * subspace_dim * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_vectors,
+		h_vectors,
+		nvec * dim * sizeof(float),
+		cudaMemcpyHostToDevice);
+	cudaMemcpy(d_codebooks,
+		h_codebooks,
+		m * ks * subspace_dim * sizeof(float),
+		cudaMemcpyHostToDevice);
 
 	/* Launch kernel */
 	int threads = 256;
 	int blocks = (nvec + threads - 1) / threads;
-	pq_encode_kernel<<<blocks, threads>>>(d_vectors, d_codebooks, d_codes, nvec, dim, m, ks);
+	pq_encode_kernel<<<blocks, threads>>>(
+		d_vectors, d_codebooks, d_codes, nvec, dim, m, ks);
 
 	/* Copy results back */
-	cudaMemcpy(h_codes, d_codes, nvec * m * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_codes,
+		d_codes,
+		nvec * m * sizeof(uint8_t),
+		cudaMemcpyDeviceToHost);
 
 	/* Cleanup */
 	cudaFree(d_vectors);
@@ -206,13 +216,13 @@ gpu_pq_encode_batch(const float *h_vectors,
  */
 extern "C" int
 gpu_pq_asymmetric_distance_batch(const float *h_query,
-                                  const uint8_t *h_codes,
-                                  const float *h_codebooks,
-                                  float *h_distances,
-                                  int nvec,
-                                  int dim,
-                                  int m,
-                                  int ks)
+	const uint8_t *h_codes,
+	const float *h_codebooks,
+	float *h_distances,
+	int nvec,
+	int dim,
+	int m,
+	int ks)
 {
 	float *d_query = NULL;
 	uint8_t *d_codes = NULL;
@@ -228,17 +238,28 @@ gpu_pq_asymmetric_distance_batch(const float *h_query,
 	cudaMalloc(&d_distances, nvec * sizeof(float));
 
 	/* Copy data to device */
-	cudaMemcpy(d_query, h_query, dim * sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_codes, h_codes, nvec * m * sizeof(uint8_t), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_codebooks, h_codebooks, m * ks * subspace_dim * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(
+		d_query, h_query, dim * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_codes,
+		h_codes,
+		nvec * m * sizeof(uint8_t),
+		cudaMemcpyHostToDevice);
+	cudaMemcpy(d_codebooks,
+		h_codebooks,
+		m * ks * subspace_dim * sizeof(float),
+		cudaMemcpyHostToDevice);
 
 	/* Launch kernel */
 	int threads = 256;
 	int blocks = (nvec + threads - 1) / threads;
-	pq_asymmetric_distance_kernel<<<blocks, threads>>>(d_query, d_codes, d_codebooks, d_distances, nvec, dim, m, ks);
+	pq_asymmetric_distance_kernel<<<blocks, threads>>>(
+		d_query, d_codes, d_codebooks, d_distances, nvec, dim, m, ks);
 
 	/* Copy results back */
-	cudaMemcpy(h_distances, d_distances, nvec * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_distances,
+		d_distances,
+		nvec * sizeof(float),
+		cudaMemcpyDeviceToHost);
 
 	/* Cleanup */
 	cudaFree(d_query);
@@ -248,4 +269,3 @@ gpu_pq_asymmetric_distance_batch(const float *h_query,
 
 	return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
-

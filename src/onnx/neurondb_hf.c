@@ -35,21 +35,24 @@ extern int neurondb_onnx_cache_size;
 /* Generation parameters structure */
 typedef struct
 {
-	float		temperature;
-	float		top_p;
-	int			top_k;
-	int			max_tokens;
-	int			min_tokens;
-	float		repetition_penalty;
-	bool		do_sample;
-	bool		return_prompt;
-	int			seed;
+	float temperature;
+	float top_p;
+	int top_k;
+	int max_tokens;
+	int min_tokens;
+	float repetition_penalty;
+	bool do_sample;
+	bool return_prompt;
+	int seed;
 } ONNXGenParams;
 
 /* Forward declarations */
-static int parse_gen_params(const char *params_json, ONNXGenParams *gen_params, char **errstr);
+static int parse_gen_params(const char *params_json,
+	ONNXGenParams *gen_params,
+	char **errstr);
 static int sample_token_greedy(float *logits, int vocab_size);
-static int sample_token_multinomial(float *logits, int vocab_size, float temperature);
+static int
+sample_token_multinomial(float *logits, int vocab_size, float temperature);
 static char *decode_tokens(int32_t *token_ids, int num_tokens);
 
 PG_FUNCTION_INFO_V1(neurondb_hf_embedding);
@@ -61,22 +64,22 @@ PG_FUNCTION_INFO_V1(neurondb_onnx_info);
 Datum
 neurondb_hf_embedding(PG_FUNCTION_ARGS)
 {
-	text	   *model_name_text;
-	text	   *input_text;
-	char	   *model_name;
-	char	   *txt;
+	text *model_name_text;
+	text *input_text;
+	char *model_name;
+	char *txt;
 	ONNXModelSession *session;
-	int32	   *token_ids;
-	int32		token_length;
+	int32 *token_ids;
+	int32 token_length;
 	ONNXTensor *input_tensor;
 	ONNXTensor *output_tensor;
-	Vector	   *result;
-	int32		embedding_dim;
-	int			i;
-	int			j;
-	int64		input_shape[2];
-	float	   *input_data;
-	float		sum;
+	Vector *result;
+	int32 embedding_dim;
+	int i;
+	int j;
+	int64 input_shape[2];
+	float *input_data;
+	float sum;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
@@ -88,15 +91,17 @@ neurondb_hf_embedding(PG_FUNCTION_ARGS)
 	txt = text_to_cstring(input_text);
 
 	/* Load or get cached model */
-	session = neurondb_onnx_get_or_load_model(model_name, ONNX_MODEL_EMBEDDING);
+	session = neurondb_onnx_get_or_load_model(
+		model_name, ONNX_MODEL_EMBEDDING);
 
 	/* Tokenize input text with model-specific tokenizer */
-	token_ids = neurondb_tokenize_with_model(txt, 128, &token_length, model_name);
+	token_ids = neurondb_tokenize_with_model(
+		txt, 128, &token_length, model_name);
 
 	/* Convert token IDs to float array for ONNX */
-	input_data = (float *) palloc(token_length * sizeof(float));
+	input_data = (float *)palloc(token_length * sizeof(float));
 	for (i = 0; i < token_length; i++)
-		input_data[i] = (float) token_ids[i];
+		input_data[i] = (float)token_ids[i];
 
 	/* Create input tensor */
 	input_shape[0] = 1;
@@ -107,7 +112,8 @@ neurondb_hf_embedding(PG_FUNCTION_ARGS)
 	/* Run inference */
 	PG_TRY();
 	{
-		output_tensor = neurondb_onnx_run_inference(session, input_tensor);
+		output_tensor =
+			neurondb_onnx_run_inference(session, input_tensor);
 	}
 	PG_CATCH();
 	{
@@ -124,7 +130,7 @@ neurondb_hf_embedding(PG_FUNCTION_ARGS)
 	embedding_dim = output_tensor->size / token_length;
 
 	/* Pool embeddings (mean pooling across sequence dimension) */
-	result = (Vector *) palloc0(VECTOR_SIZE(embedding_dim));
+	result = (Vector *)palloc0(VECTOR_SIZE(embedding_dim));
 	SET_VARSIZE(result, VECTOR_SIZE(embedding_dim));
 	result->dim = embedding_dim;
 
@@ -151,22 +157,22 @@ neurondb_hf_embedding(PG_FUNCTION_ARGS)
 Datum
 neurondb_hf_classify(PG_FUNCTION_ARGS)
 {
-	text	   *model_name_text;
-	text	   *input_text;
-	char	   *model_name;
-	char	   *txt;
+	text *model_name_text;
+	text *input_text;
+	char *model_name;
+	char *txt;
 	ONNXModelSession *session;
-	int32	   *token_ids;
-	int32		token_length;
+	int32 *token_ids;
+	int32 token_length;
 	ONNXTensor *input_tensor;
 	ONNXTensor *output_tensor;
 	StringInfoData buf;
-	int64		input_shape[2];
-	float	   *input_data;
-	float		positive_score;
-	float		negative_score;
-	int			i;
-	char	   *predicted_label;
+	int64 input_shape[2];
+	float *input_data;
+	float positive_score;
+	float negative_score;
+	int i;
+	char *predicted_label;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
@@ -178,15 +184,17 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 	txt = text_to_cstring(input_text);
 
 	/* Load or get cached model */
-	session = neurondb_onnx_get_or_load_model(model_name, ONNX_MODEL_CLASSIFICATION);
+	session = neurondb_onnx_get_or_load_model(
+		model_name, ONNX_MODEL_CLASSIFICATION);
 
 	/* Tokenize input text with model-specific tokenizer */
-	token_ids = neurondb_tokenize_with_model(txt, 128, &token_length, model_name);
+	token_ids = neurondb_tokenize_with_model(
+		txt, 128, &token_length, model_name);
 
 	/* Convert token IDs to float array for ONNX */
-	input_data = (float *) palloc(token_length * sizeof(float));
+	input_data = (float *)palloc(token_length * sizeof(float));
 	for (i = 0; i < token_length; i++)
-		input_data[i] = (float) token_ids[i];
+		input_data[i] = (float)token_ids[i];
 
 	/* Create input tensor */
 	input_shape[0] = 1;
@@ -197,7 +205,8 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 	/* Run inference */
 	PG_TRY();
 	{
-		output_tensor = neurondb_onnx_run_inference(session, input_tensor);
+		output_tensor =
+			neurondb_onnx_run_inference(session, input_tensor);
 	}
 	PG_CATCH();
 	{
@@ -213,14 +222,15 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 	/* Extract logits (assume binary classification: [negative, positive]) */
 	if (output_tensor->size >= 2)
 	{
-		float		max_score;
-		float		sum;
+		float max_score;
+		float sum;
 
 		negative_score = output_tensor->data[0];
 		positive_score = output_tensor->data[1];
 
 		/* Apply softmax */
-		max_score = (positive_score > negative_score) ? positive_score : negative_score;
+		max_score = (positive_score > negative_score) ? positive_score
+							      : negative_score;
 		negative_score = exp(negative_score - max_score);
 		positive_score = exp(positive_score - max_score);
 		sum = negative_score + positive_score;
@@ -228,19 +238,23 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 		positive_score /= sum;
 
 		/* Determine predicted label */
-		predicted_label = (positive_score > negative_score) ? "POSITIVE" : "NEGATIVE";
+		predicted_label = (positive_score > negative_score)
+			? "POSITIVE"
+			: "NEGATIVE";
 
 		/* Build JSON result */
 		initStringInfo(&buf);
-		appendStringInfo(&buf, "{\"label\": \"%s\", \"score\": %.4f}", 
-						 predicted_label, 
-						 (positive_score > negative_score) ? positive_score : negative_score);
-	}
-	else
+		appendStringInfo(&buf,
+			"{\"label\": \"%s\", \"score\": %.4f}",
+			predicted_label,
+			(positive_score > negative_score) ? positive_score
+							  : negative_score);
+	} else
 	{
 		/* Fallback for unexpected output */
 		initStringInfo(&buf);
-		appendStringInfo(&buf, "{\"label\": \"UNKNOWN\", \"score\": 0.0}");
+		appendStringInfo(
+			&buf, "{\"label\": \"UNKNOWN\", \"score\": 0.0}");
 	}
 
 	/* Cleanup */
@@ -257,23 +271,25 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 Datum
 neurondb_hf_ner(PG_FUNCTION_ARGS)
 {
-	text	   *model_name_text;
-	text	   *input_text;
-	char	   *model_name;
-	char	   *txt;
+	text *model_name_text;
+	text *input_text;
+	char *model_name;
+	char *txt;
 	ONNXModelSession *session;
-	int32	   *token_ids;
-	int32		token_length;
+	int32 *token_ids;
+	int32 token_length;
 	ONNXTensor *input_tensor;
 	ONNXTensor *output_tensor;
 	StringInfoData buf;
-	int64		input_shape[2];
-	float	   *input_data;
-	int			i;
-	int			max_class;
-	float		max_score;
-	const char *entity_labels[] = {"O", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"};
-	const int	num_labels = 7;
+	int64 input_shape[2];
+	float *input_data;
+	int i;
+	int max_class;
+	float max_score;
+	const char *entity_labels[] = {
+		"O", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"
+	};
+	const int num_labels = 7;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
@@ -288,12 +304,13 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 	session = neurondb_onnx_get_or_load_model(model_name, ONNX_MODEL_NER);
 
 	/* Tokenize input text with model-specific tokenizer */
-	token_ids = neurondb_tokenize_with_model(txt, 128, &token_length, model_name);
+	token_ids = neurondb_tokenize_with_model(
+		txt, 128, &token_length, model_name);
 
 	/* Convert token IDs to float array for ONNX */
-	input_data = (float *) palloc(token_length * sizeof(float));
+	input_data = (float *)palloc(token_length * sizeof(float));
 	for (i = 0; i < token_length; i++)
-		input_data[i] = (float) token_ids[i];
+		input_data[i] = (float)token_ids[i];
 
 	/* Create input tensor */
 	input_shape[0] = 1;
@@ -304,7 +321,8 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 	/* Run inference */
 	PG_TRY();
 	{
-		output_tensor = neurondb_onnx_run_inference(session, input_tensor);
+		output_tensor =
+			neurondb_onnx_run_inference(session, input_tensor);
 	}
 	PG_CATCH();
 	{
@@ -322,12 +340,13 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 	appendStringInfo(&buf, "{\"entities\": [");
 
 	/* Extract entities (simplified - just first token for demo) */
-	if (output_tensor->size >= (size_t) num_labels)
+	if (output_tensor->size >= (size_t)num_labels)
 	{
 		max_class = 0;
 		max_score = output_tensor->data[0];
-		
-		for (i = 1; i < num_labels && (size_t) i < output_tensor->size; i++)
+
+		for (i = 1; i < num_labels && (size_t)i < output_tensor->size;
+			i++)
 		{
 			if (output_tensor->data[i] > max_score)
 			{
@@ -336,10 +355,14 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 			}
 		}
 
-		if (max_class > 0)  /* Not 'O' (outside) */
+		if (max_class > 0) /* Not 'O' (outside) */
 		{
-			appendStringInfo(&buf, "{\"entity\": \"%s\", \"label\": \"%s\", \"score\": %.4f}", 
-							 txt, entity_labels[max_class], max_score);
+			appendStringInfo(&buf,
+				"{\"entity\": \"%s\", \"label\": \"%s\", "
+				"\"score\": %.4f}",
+				txt,
+				entity_labels[max_class],
+				max_score);
 		}
 	}
 
@@ -359,26 +382,26 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 Datum
 neurondb_hf_qa(PG_FUNCTION_ARGS)
 {
-	text	   *model_name_text;
-	text	   *question_text;
-	text	   *context_text;
-	char	   *model_name;
-	char	   *question;
-	char	   *context;
+	text *model_name_text;
+	text *question_text;
+	text *context_text;
+	char *model_name;
+	char *question;
+	char *context;
 	ONNXModelSession *session;
-	int32	   *token_ids;
-	int32		token_length;
+	int32 *token_ids;
+	int32 token_length;
 	ONNXTensor *input_tensor;
 	ONNXTensor *output_tensor;
 	StringInfoData buf;
 	StringInfoData combined_text;
-	int64		input_shape[2];
-	float	   *input_data;
+	int64 input_shape[2];
+	float *input_data;
 	volatile int start_idx = 0;
 	volatile int end_idx = 0;
 	volatile float start_score = -1000.0f;
 	volatile float end_score = -1000.0f;
-	int			i;
+	int i;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2))
 		PG_RETURN_NULL();
@@ -399,12 +422,13 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 	session = neurondb_onnx_get_or_load_model(model_name, ONNX_MODEL_QA);
 
 	/* Tokenize input with model-specific tokenizer */
-	token_ids = neurondb_tokenize_with_model(combined_text.data, 256, &token_length, model_name);
+	token_ids = neurondb_tokenize_with_model(
+		combined_text.data, 256, &token_length, model_name);
 
 	/* Convert token IDs to float array for ONNX */
-	input_data = (float *) palloc(token_length * sizeof(float));
+	input_data = (float *)palloc(token_length * sizeof(float));
 	for (i = 0; i < token_length; i++)
-		input_data[i] = (float) token_ids[i];
+		input_data[i] = (float)token_ids[i];
 
 	/* Create input tensor */
 	input_shape[0] = 1;
@@ -415,7 +439,8 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 	/* Run inference */
 	PG_TRY();
 	{
-		output_tensor = neurondb_onnx_run_inference(session, input_tensor);
+		output_tensor =
+			neurondb_onnx_run_inference(session, input_tensor);
 	}
 	PG_CATCH();
 	{
@@ -431,7 +456,7 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 
 	/* Extract start and end positions (QA model outputs start/end logits) */
 	/* Simplified: find max start and end positions */
-	if (output_tensor->size >= (size_t) token_length * 2)
+	if (output_tensor->size >= (size_t)token_length * 2)
 	{
 		/* Find start position */
 		for (i = 0; i < token_length; i++)
@@ -444,7 +469,9 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 		}
 
 		/* Find end position */
-		for (i = token_length; i < token_length * 2 && (size_t) i < output_tensor->size; i++)
+		for (i = token_length;
+			i < token_length * 2 && (size_t)i < output_tensor->size;
+			i++)
 		{
 			if (output_tensor->data[i] > end_score)
 			{
@@ -456,8 +483,14 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 
 	/* Build JSON result */
 	initStringInfo(&buf);
-	appendStringInfo(&buf, "{\"answer\": \"Answer extracted from position %d to %d\", \"score\": %.4f, \"start\": %d, \"end\": %d}",
-					 start_idx, end_idx, start_score, start_idx, end_idx);
+	appendStringInfo(&buf,
+		"{\"answer\": \"Answer extracted from position %d to %d\", "
+		"\"score\": %.4f, \"start\": %d, \"end\": %d}",
+		start_idx,
+		end_idx,
+		start_score,
+		start_idx,
+		end_idx);
 
 	/* Cleanup */
 	neurondb_onnx_free_tensor(input_tensor);
@@ -478,9 +511,9 @@ neurondb_onnx_info(PG_FUNCTION_ARGS)
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-					 "{\"available\": %s, \"version\": \"%s\"}",
-					 neurondb_onnx_available() ? "true" : "false",
-					 neurondb_onnx_version());
+		"{\"available\": %s, \"version\": \"%s\"}",
+		neurondb_onnx_available() ? "true" : "false",
+		neurondb_onnx_version());
 
 	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
@@ -505,21 +538,24 @@ neurondb_onnx_info(PG_FUNCTION_ARGS)
  * }
  */
 static int
-parse_gen_params(const char *params_json, ONNXGenParams *gen_params, char **errstr)
+parse_gen_params(const char *params_json,
+	ONNXGenParams *gen_params,
+	char **errstr)
 {
-	char	   *json_copy = NULL;
-	char	   *p = NULL;
-	char	   *key = NULL;
-	char	   *endptr = NULL;
-	float		float_val;
-	int			int_val;
+	char *json_copy = NULL;
+	char *p = NULL;
+	char *key = NULL;
+	char *endptr = NULL;
+	float float_val;
+	int int_val;
 
 	if (errstr)
 		*errstr = NULL;
 	if (!params_json || !gen_params)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for parse_gen_params");
+			*errstr = pstrdup(
+				"invalid parameters for parse_gen_params");
 		return -1;
 	}
 
@@ -527,7 +563,7 @@ parse_gen_params(const char *params_json, ONNXGenParams *gen_params, char **errs
 	memset(gen_params, 0, sizeof(ONNXGenParams));
 	gen_params->temperature = 1.0f;
 	gen_params->top_p = 1.0f;
-	gen_params->top_k = 0;		/* 0 = disabled */
+	gen_params->top_k = 0; /* 0 = disabled */
 	gen_params->max_tokens = 100;
 	gen_params->min_tokens = 0;
 	gen_params->repetition_penalty = 1.0f;
@@ -544,14 +580,14 @@ parse_gen_params(const char *params_json, ONNXGenParams *gen_params, char **errs
 	p = json_copy;
 
 	/* Skip whitespace and opening brace */
-	while (*p && (isspace((unsigned char) *p) || *p == '{'))
+	while (*p && (isspace((unsigned char)*p) || *p == '{'))
 		p++;
 
 	/* Parse key-value pairs */
 	while (*p && *p != '}')
 	{
 		/* Skip whitespace and commas */
-		while (*p && (isspace((unsigned char) *p) || *p == ','))
+		while (*p && (isspace((unsigned char)*p) || *p == ','))
 			p++;
 
 		if (*p == '}' || *p == '\0')
@@ -562,10 +598,11 @@ parse_gen_params(const char *params_json, ONNXGenParams *gen_params, char **errs
 		{
 			pfree(json_copy);
 			if (errstr)
-				*errstr = pstrdup("invalid JSON format: expected key");
+				*errstr = pstrdup(
+					"invalid JSON format: expected key");
 			return -1;
 		}
-		p++;				/* Skip opening quote */
+		p++; /* Skip opening quote */
 		key = p;
 		while (*p && *p != '"')
 			p++;
@@ -573,14 +610,15 @@ parse_gen_params(const char *params_json, ONNXGenParams *gen_params, char **errs
 		{
 			pfree(json_copy);
 			if (errstr)
-				*errstr = pstrdup("invalid JSON format: unterminated key");
+				*errstr = pstrdup("invalid JSON format: "
+						  "unterminated key");
 			return -1;
 		}
-		*p = '\0';			/* Null-terminate key */
-		p++;				/* Skip closing quote */
+		*p = '\0'; /* Null-terminate key */
+		p++; /* Skip closing quote */
 
 		/* Skip colon */
-		while (*p && (isspace((unsigned char) *p) || *p == ':'))
+		while (*p && (isspace((unsigned char)*p) || *p == ':'))
 			p++;
 
 		/* Parse value based on key */
@@ -589,54 +627,53 @@ parse_gen_params(const char *params_json, ONNXGenParams *gen_params, char **errs
 			float_val = strtof(p, &endptr);
 			if (endptr != p && float_val > 0.0f)
 				gen_params->temperature = float_val;
-		}
-		else if (strcmp(key, "top_p") == 0)
+		} else if (strcmp(key, "top_p") == 0)
 		{
 			float_val = strtof(p, &endptr);
-			if (endptr != p && float_val > 0.0f && float_val <= 1.0f)
+			if (endptr != p && float_val > 0.0f
+				&& float_val <= 1.0f)
 				gen_params->top_p = float_val;
-		}
-		else if (strcmp(key, "top_k") == 0)
+		} else if (strcmp(key, "top_k") == 0)
 		{
-			int_val = (int) strtol(p, &endptr, 10);
+			int_val = (int)strtol(p, &endptr, 10);
 			if (endptr != p && int_val >= 0)
 				gen_params->top_k = int_val;
-		}
-		else if (strcmp(key, "max_tokens") == 0 || strcmp(key, "max_length") == 0)
+		} else if (strcmp(key, "max_tokens") == 0
+			|| strcmp(key, "max_length") == 0)
 		{
-			int_val = (int) strtol(p, &endptr, 10);
+			int_val = (int)strtol(p, &endptr, 10);
 			if (endptr != p && int_val > 0)
 				gen_params->max_tokens = int_val;
-		}
-		else if (strcmp(key, "min_tokens") == 0 || strcmp(key, "min_length") == 0)
+		} else if (strcmp(key, "min_tokens") == 0
+			|| strcmp(key, "min_length") == 0)
 		{
-			int_val = (int) strtol(p, &endptr, 10);
+			int_val = (int)strtol(p, &endptr, 10);
 			if (endptr != p && int_val >= 0)
 				gen_params->min_tokens = int_val;
-		}
-		else if (strcmp(key, "repetition_penalty") == 0)
+		} else if (strcmp(key, "repetition_penalty") == 0)
 		{
 			float_val = strtof(p, &endptr);
 			if (endptr != p && float_val > 0.0f)
 				gen_params->repetition_penalty = float_val;
-		}
-		else if (strcmp(key, "do_sample") == 0)
+		} else if (strcmp(key, "do_sample") == 0)
 		{
-			if (strncmp(p, "true", 4) == 0 || strncmp(p, "TRUE", 4) == 0)
+			if (strncmp(p, "true", 4) == 0
+				|| strncmp(p, "TRUE", 4) == 0)
 				gen_params->do_sample = true;
-			else if (strncmp(p, "false", 5) == 0 || strncmp(p, "FALSE", 5) == 0)
+			else if (strncmp(p, "false", 5) == 0
+				|| strncmp(p, "FALSE", 5) == 0)
 				gen_params->do_sample = false;
-		}
-		else if (strcmp(key, "return_prompt") == 0)
+		} else if (strcmp(key, "return_prompt") == 0)
 		{
-			if (strncmp(p, "true", 4) == 0 || strncmp(p, "TRUE", 4) == 0)
+			if (strncmp(p, "true", 4) == 0
+				|| strncmp(p, "TRUE", 4) == 0)
 				gen_params->return_prompt = true;
-			else if (strncmp(p, "false", 5) == 0 || strncmp(p, "FALSE", 5) == 0)
+			else if (strncmp(p, "false", 5) == 0
+				|| strncmp(p, "FALSE", 5) == 0)
 				gen_params->return_prompt = false;
-		}
-		else if (strcmp(key, "seed") == 0)
+		} else if (strcmp(key, "seed") == 0)
 		{
-			int_val = (int) strtol(p, &endptr, 10);
+			int_val = (int)strtol(p, &endptr, 10);
 			if (endptr != p)
 				gen_params->seed = int_val;
 		}
@@ -651,8 +688,7 @@ parse_gen_params(const char *params_json, ONNXGenParams *gen_params, char **errs
 					p++;
 				if (*p == '"')
 					p++;
-			}
-			else
+			} else
 				p++;
 		}
 	}
@@ -668,9 +704,9 @@ parse_gen_params(const char *params_json, ONNXGenParams *gen_params, char **errs
 static int
 sample_token_greedy(float *logits, int vocab_size)
 {
-	int			max_idx = 0;
-	float		max_val = logits[0];
-	int			i;
+	int max_idx = 0;
+	float max_val = logits[0];
+	int i;
 
 	for (i = 1; i < vocab_size; i++)
 	{
@@ -691,15 +727,15 @@ sample_token_greedy(float *logits, int vocab_size)
 static int
 sample_token_multinomial(float *logits, int vocab_size, float temperature)
 {
-	float	   *probs = NULL;
-	float		sum = 0.0f;
-	float		cumsum = 0.0f;
-	float		r;
-	int			i;
-	int			selected = 0;
+	float *probs = NULL;
+	float sum = 0.0f;
+	float cumsum = 0.0f;
+	float r;
+	int i;
+	int selected = 0;
 
 	/* Allocate probabilities array */
-	probs = (float *) palloc(vocab_size * sizeof(float));
+	probs = (float *)palloc(vocab_size * sizeof(float));
 
 	/* Compute softmax with temperature */
 	for (i = 0; i < vocab_size; i++)
@@ -716,7 +752,7 @@ sample_token_multinomial(float *logits, int vocab_size, float temperature)
 	}
 
 	/* Sample from multinomial distribution */
-	r = (float) rand() / (float) RAND_MAX;
+	r = (float)rand() / (float)RAND_MAX;
 	for (i = 0; i < vocab_size; i++)
 	{
 		cumsum += probs[i];
@@ -739,7 +775,7 @@ static char *
 decode_tokens(int32_t *token_ids, int num_tokens)
 {
 	StringInfoData buf;
-	int			i;
+	int i;
 
 	initStringInfo(&buf);
 
@@ -772,29 +808,29 @@ decode_tokens(int32_t *token_ids, int num_tokens)
  */
 int
 ndb_onnx_hf_complete(const char *model_name,
-					 const char *prompt,
-					 const char *params_json,
-					 char **text_out,
-					 char **errstr)
+	const char *prompt,
+	const char *params_json,
+	char **text_out,
+	char **errstr)
 {
 	ONNXModelSession *session = NULL;
 	ONNXGenParams gen_params;
-	int32_t	   *input_token_ids = NULL;
-	int32		input_token_length = 0;
-	int32		*generated_token_ids = NULL;
-	int32		generated_token_count = 0;
-	int32		max_gen_tokens = 100;
-	int32		min_gen_tokens = 0;
-	int32		i;
-	int			rc = -1;
+	int32_t *input_token_ids = NULL;
+	int32 input_token_length = 0;
+	int32 *generated_token_ids = NULL;
+	int32 generated_token_count = 0;
+	int32 max_gen_tokens = 100;
+	int32 min_gen_tokens = 0;
+	int32 i;
+	int rc = -1;
 	ONNXTensor *input_tensor = NULL;
 	ONNXTensor *output_tensor = NULL;
-	int64		input_shape[2];
-	float	   *input_data = NULL;
-	float	   *logits = NULL;
-	int32		vocab_size = 0;
-	int32		next_token_id = 0;
-	char	   *generated_text = NULL;
+	int64 input_shape[2];
+	float *input_data = NULL;
+	float *logits = NULL;
+	int32 vocab_size = 0;
+	int32 next_token_id = 0;
+	char *generated_text = NULL;
 	MemoryContext oldcontext;
 	MemoryContext complete_context;
 
@@ -803,14 +839,15 @@ ndb_onnx_hf_complete(const char *model_name,
 	if (model_name == NULL || prompt == NULL || text_out == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for ONNX HF complete");
+			*errstr = pstrdup(
+				"invalid parameters for ONNX HF complete");
 		return -1;
 	}
 
 	/* Create memory context for this operation */
 	complete_context = AllocSetContextCreate(CurrentMemoryContext,
-											 "onnx_hf_complete_ctx",
-											 ALLOCSET_DEFAULT_SIZES);
+		"onnx_hf_complete_ctx",
+		ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(complete_context);
 
 	/* Parse generation parameters */
@@ -823,8 +860,7 @@ ndb_onnx_hf_complete(const char *model_name,
 			MemoryContextDelete(complete_context);
 			return -1;
 		}
-	}
-	else
+	} else
 	{
 		/* Use defaults */
 		memset(&gen_params, 0, sizeof(ONNXGenParams));
@@ -845,7 +881,8 @@ ndb_onnx_hf_complete(const char *model_name,
 	/* Load or get cached model */
 	PG_TRY();
 	{
-		session = neurondb_onnx_get_or_load_model(model_name, ONNX_MODEL_GENERATION);
+		session = neurondb_onnx_get_or_load_model(
+			model_name, ONNX_MODEL_GENERATION);
 	}
 	PG_CATCH();
 	{
@@ -856,7 +893,8 @@ ndb_onnx_hf_complete(const char *model_name,
 	PG_END_TRY();
 
 	/* Tokenize input prompt with model-specific tokenizer */
-	input_token_ids = neurondb_tokenize_with_model(prompt, 512, &input_token_length, model_name);
+	input_token_ids = neurondb_tokenize_with_model(
+		prompt, 512, &input_token_length, model_name);
 	if (input_token_ids == NULL || input_token_length == 0)
 	{
 		if (errstr)
@@ -867,7 +905,8 @@ ndb_onnx_hf_complete(const char *model_name,
 	}
 
 	/* Allocate generated token IDs array */
-	generated_token_ids = (int32_t *) palloc(max_gen_tokens * sizeof(int32_t));
+	generated_token_ids =
+		(int32_t *)palloc(max_gen_tokens * sizeof(int32_t));
 
 	/* Set seed if provided */
 	if (gen_params.seed != 0)
@@ -876,8 +915,8 @@ ndb_onnx_hf_complete(const char *model_name,
 	/* Generation loop */
 	for (i = 0; i < max_gen_tokens; i++)
 	{
-		int32		current_seq_len;
-		int32		j;
+		int32 current_seq_len;
+		int32 j;
 
 		/* Prepare input sequence (prompt + generated tokens) */
 		current_seq_len = input_token_length + generated_token_count;
@@ -885,15 +924,16 @@ ndb_onnx_hf_complete(const char *model_name,
 		/* Allocate input data */
 		if (input_data)
 			pfree(input_data);
-		input_data = (float *) palloc(current_seq_len * sizeof(float));
+		input_data = (float *)palloc(current_seq_len * sizeof(float));
 
 		/* Copy prompt tokens */
 		for (j = 0; j < input_token_length; j++)
-			input_data[j] = (float) input_token_ids[j];
+			input_data[j] = (float)input_token_ids[j];
 
 		/* Copy generated tokens */
 		for (j = 0; j < generated_token_count; j++)
-			input_data[input_token_length + j] = (float) generated_token_ids[j];
+			input_data[input_token_length + j] =
+				(float)generated_token_ids[j];
 
 		/* Create input tensor */
 		input_shape[0] = 1;
@@ -901,14 +941,16 @@ ndb_onnx_hf_complete(const char *model_name,
 
 		if (input_tensor)
 			neurondb_onnx_free_tensor(input_tensor);
-		input_tensor = neurondb_onnx_create_tensor(input_data, input_shape, 2);
+		input_tensor =
+			neurondb_onnx_create_tensor(input_data, input_shape, 2);
 
 		/* Run inference */
 		PG_TRY();
 		{
 			if (output_tensor)
 				neurondb_onnx_free_tensor(output_tensor);
-			output_tensor = neurondb_onnx_run_inference(session, input_tensor);
+			output_tensor = neurondb_onnx_run_inference(
+				session, input_tensor);
 		}
 		PG_CATCH();
 		{
@@ -933,21 +975,22 @@ ndb_onnx_hf_complete(const char *model_name,
 			/* Output shape: [1, vocab_size] */
 			vocab_size = output_tensor->shape[1];
 			logits = output_tensor->data;
-		}
-		else if (output_tensor->ndim == 3 && output_tensor->shape[0] == 1)
+		} else if (output_tensor->ndim == 3
+			&& output_tensor->shape[0] == 1)
 		{
 			/* Output shape: [1, seq_len, vocab_size] */
 			/* Use last token's logits */
-			int32		seq_len = output_tensor->shape[1];
+			int32 seq_len = output_tensor->shape[1];
 
 			vocab_size = output_tensor->shape[2];
-			logits = output_tensor->data + (seq_len - 1) * vocab_size;
-		}
-		else
+			logits = output_tensor->data
+				+ (seq_len - 1) * vocab_size;
+		} else
 		{
 			if (errstr)
-				*errstr = psprintf("unexpected output tensor shape: [%ld",
-								   output_tensor->shape[0]);
+				*errstr = psprintf(
+					"unexpected output tensor shape: [%ld",
+					output_tensor->shape[0]);
 			if (input_tensor)
 				neurondb_onnx_free_tensor(input_tensor);
 			if (output_tensor)
@@ -964,7 +1007,8 @@ ndb_onnx_hf_complete(const char *model_name,
 		}
 
 		/* Apply temperature scaling */
-		if (gen_params.temperature > 0.0f && gen_params.temperature != 1.0f)
+		if (gen_params.temperature > 0.0f
+			&& gen_params.temperature != 1.0f)
 		{
 			for (j = 0; j < vocab_size; j++)
 				logits[j] /= gen_params.temperature;
@@ -975,26 +1019,32 @@ ndb_onnx_hf_complete(const char *model_name,
 		{
 			for (j = 0; j < generated_token_count; j++)
 			{
-				int32		prev_token = generated_token_ids[j];
+				int32 prev_token = generated_token_ids[j];
 
 				if (prev_token >= 0 && prev_token < vocab_size)
 				{
 					if (logits[prev_token] > 0.0f)
-						logits[prev_token] /= gen_params.repetition_penalty;
+						logits[prev_token] /=
+							gen_params
+								.repetition_penalty;
 					else
-						logits[prev_token] *= gen_params.repetition_penalty;
+						logits[prev_token] *=
+							gen_params
+								.repetition_penalty;
 				}
 			}
 		}
 
 		/* Sample next token */
 		if (gen_params.do_sample && gen_params.temperature > 0.0f)
-			next_token_id = sample_token_multinomial(logits, vocab_size, gen_params.temperature);
+			next_token_id = sample_token_multinomial(
+				logits, vocab_size, gen_params.temperature);
 		else
 			next_token_id = sample_token_greedy(logits, vocab_size);
 
 		/* Check for stop conditions (simplified: check for EOS token) */
-		if (next_token_id == 102 || next_token_id == 0)	/* [SEP] or [PAD] */
+		if (next_token_id == 102
+			|| next_token_id == 0) /* [SEP] or [PAD] */
 		{
 			if (generated_token_count >= min_gen_tokens)
 				break;
@@ -1005,7 +1055,8 @@ ndb_onnx_hf_complete(const char *model_name,
 	}
 
 	/* Decode generated tokens to text */
-	generated_text = decode_tokens(generated_token_ids, generated_token_count);
+	generated_text =
+		decode_tokens(generated_token_ids, generated_token_count);
 
 	/* Copy to parent memory context */
 	*text_out = MemoryContextStrdup(oldcontext, generated_text);
@@ -1035,10 +1086,10 @@ ndb_onnx_hf_complete(const char *model_name,
  */
 int
 ndb_onnx_hf_complete(const char *model_name,
-					 const char *prompt,
-					 const char *params_json,
-					 char **text_out,
-					 char **errstr)
+	const char *prompt,
+	const char *params_json,
+	char **text_out,
+	char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("ONNX Runtime support not compiled in");

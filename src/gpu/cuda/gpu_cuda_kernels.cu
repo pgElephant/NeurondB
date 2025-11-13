@@ -40,29 +40,29 @@
  *-------------------------------------------------------------------------
  */
 __global__ void
-cuda_l2_distance_kernel(const float * __restrict__ a,
-					   const float * __restrict__ b,
-					   float * __restrict__ result,
-					   int dim)
+cuda_l2_distance_kernel(const float *__restrict__ a,
+	const float *__restrict__ b,
+	float *__restrict__ result,
+	int dim)
 {
-	int			tid;
+	int tid;
 
 	tid = threadIdx.x + blockIdx.x * blockDim.x;
 
 	if (tid == 0)
 	{
-		double		sum;
-		int			i;
+		double sum;
+		int i;
 
 		sum = 0.0;
 		for (i = 0; i < dim; i++)
 		{
-			double	diff;
+			double diff;
 
 			diff = (double)a[i] - (double)b[i];
 			sum += diff * diff;
 		}
-		*result = (float) sqrt(sum);
+		*result = (float)sqrt(sum);
 	}
 }
 
@@ -85,15 +85,15 @@ cuda_l2_distance_kernel(const float * __restrict__ a,
  *-------------------------------------------------------------------------
  */
 __global__ void
-cuda_batch_l2_kernel(const float * __restrict__ queries,
-					 const float * __restrict__ targets,
-					 float * __restrict__ distances,
-					 int nq,
-					 int nt,
-					 int dim)
+cuda_batch_l2_kernel(const float *__restrict__ queries,
+	const float *__restrict__ targets,
+	float *__restrict__ distances,
+	int nq,
+	int nt,
+	int dim)
 {
-	int			query_idx;
-	int			target_idx;
+	int query_idx;
+	int target_idx;
 
 	query_idx = blockIdx.y;
 	target_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -102,20 +102,20 @@ cuda_batch_l2_kernel(const float * __restrict__ queries,
 	{
 		const float *q;
 		const float *t;
-		double		sum;
-		int			i;
+		double sum;
+		int i;
 
 		q = queries + (query_idx * dim);
 		t = targets + (target_idx * dim);
 		sum = 0.0;
 		for (i = 0; i < dim; i++)
 		{
-			double	diff;
+			double diff;
 
 			diff = (double)q[i] - (double)t[i];
 			sum += diff * diff;
 		}
-		distances[query_idx * nt + target_idx] = (float) sqrt(sum);
+		distances[query_idx * nt + target_idx] = (float)sqrt(sum);
 	}
 }
 
@@ -135,29 +135,29 @@ cuda_batch_l2_kernel(const float * __restrict__ queries,
  *-------------------------------------------------------------------------
  */
 __global__ void
-cuda_cosine_distance_kernel(const float * __restrict__ a,
-						   const float * __restrict__ b,
-						   float * __restrict__ result,
-						   int dim)
+cuda_cosine_distance_kernel(const float *__restrict__ a,
+	const float *__restrict__ b,
+	float *__restrict__ result,
+	int dim)
 {
-	int		tid;
+	int tid;
 
 	tid = threadIdx.x + blockIdx.x * blockDim.x;
 
 	if (tid == 0)
 	{
-		double	dot;
-		double	norm_a;
-		double	norm_b;
-		int		i;
+		double dot;
+		double norm_a;
+		double norm_b;
+		int i;
 
 		dot = 0.0;
 		norm_a = 0.0;
 		norm_b = 0.0;
 		for (i = 0; i < dim; i++)
 		{
-			double	ai = (double)a[i];
-			double	bi = (double)b[i];
+			double ai = (double)a[i];
+			double bi = (double)b[i];
 
 			dot += ai * bi;
 			norm_a += ai * ai;
@@ -168,7 +168,7 @@ cuda_cosine_distance_kernel(const float * __restrict__ a,
 
 		if (norm_a > 0.0 && norm_b > 0.0)
 		{
-			double	cosine_sim;
+			double cosine_sim;
 
 			cosine_sim = dot / (norm_a * norm_b);
 
@@ -178,8 +178,7 @@ cuda_cosine_distance_kernel(const float * __restrict__ a,
 				cosine_sim = 1.0;
 
 			*result = 1.0f - (float)cosine_sim;
-		}
-		else
+		} else
 		{
 			/* At least one zero vector: define distance as 1 */
 			*result = 1.0f;
@@ -200,19 +199,19 @@ cuda_cosine_distance_kernel(const float * __restrict__ a,
  *-------------------------------------------------------------------------
  */
 __global__ void
-cuda_inner_product_kernel(const float * __restrict__ a,
-						 const float * __restrict__ b,
-						 float * __restrict__ result,
-						 int dim)
+cuda_inner_product_kernel(const float *__restrict__ a,
+	const float *__restrict__ b,
+	float *__restrict__ result,
+	int dim)
 {
-	int		tid;
+	int tid;
 
 	tid = threadIdx.x + blockIdx.x * blockDim.x;
 
 	if (tid == 0)
 	{
-		double	accum;
-		int		i;
+		double accum;
+		int i;
 
 		accum = 0.0;
 		for (i = 0; i < dim; i++)
@@ -234,20 +233,20 @@ cuda_inner_product_kernel(const float * __restrict__ a,
 extern "C" float
 cuda_compute_l2_distance(const float *a, const float *b, int dim)
 {
-	float	   *d_a = NULL;
-	float	   *d_b = NULL;
-	float	   *d_result = NULL;
-	float		h_result = 0.0f;
-	cudaError_t	cerr;
+	float *d_a = NULL;
+	float *d_b = NULL;
+	float *d_result = NULL;
+	float h_result = 0.0f;
+	cudaError_t cerr;
 
 	/* Allocate device memory for inputs and result */
-	cerr = cudaMalloc((void **) &d_a, dim * sizeof(float));
+	cerr = cudaMalloc((void **)&d_a, dim * sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
-	cerr = cudaMalloc((void **) &d_b, dim * sizeof(float));
+	cerr = cudaMalloc((void **)&d_b, dim * sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
-	cerr = cudaMalloc((void **) &d_result, sizeof(float));
+	cerr = cudaMalloc((void **)&d_result, sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
 
@@ -266,7 +265,8 @@ cuda_compute_l2_distance(const float *a, const float *b, int dim)
 		goto fail;
 
 	/* Copy result back to host memory */
-	cerr = cudaMemcpy(&h_result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
+	cerr = cudaMemcpy(
+		&h_result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
 	if (cerr != cudaSuccess)
 		goto fail;
 
@@ -307,35 +307,41 @@ fail:
  */
 extern "C" void
 cuda_compute_batch_l2(const float *queries,
-					  const float *targets,
-					  float *distances,
-					  int nq,
-					  int nt,
-					  int dim)
+	const float *targets,
+	float *distances,
+	int nq,
+	int nt,
+	int dim)
 {
-	float	   *d_queries = NULL;
-	float	   *d_targets = NULL;
-	float	   *d_distances = NULL;
-	cudaError_t	cerr;
-	dim3		block;
-	dim3		grid;
+	float *d_queries = NULL;
+	float *d_targets = NULL;
+	float *d_distances = NULL;
+	cudaError_t cerr;
+	dim3 block;
+	dim3 grid;
 
 	/* Allocate device memory for input/output matrices */
-	cerr = cudaMalloc((void **) &d_queries, nq * dim * sizeof(float));
+	cerr = cudaMalloc((void **)&d_queries, nq * dim * sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
-	cerr = cudaMalloc((void **) &d_targets, nt * dim * sizeof(float));
+	cerr = cudaMalloc((void **)&d_targets, nt * dim * sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
-	cerr = cudaMalloc((void **) &d_distances, nq * nt * sizeof(float));
+	cerr = cudaMalloc((void **)&d_distances, nq * nt * sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
 
 	/* Copy host memory to device memory */
-	cerr = cudaMemcpy(d_queries, queries, nq * dim * sizeof(float), cudaMemcpyHostToDevice);
+	cerr = cudaMemcpy(d_queries,
+		queries,
+		nq * dim * sizeof(float),
+		cudaMemcpyHostToDevice);
 	if (cerr != cudaSuccess)
 		goto fail;
-	cerr = cudaMemcpy(d_targets, targets, nt * dim * sizeof(float), cudaMemcpyHostToDevice);
+	cerr = cudaMemcpy(d_targets,
+		targets,
+		nt * dim * sizeof(float),
+		cudaMemcpyHostToDevice);
 	if (cerr != cudaSuccess)
 		goto fail;
 
@@ -346,12 +352,16 @@ cuda_compute_batch_l2(const float *queries,
 	grid.y = nq;
 	grid.z = 1;
 
-	cuda_batch_l2_kernel<<<grid, block>>>(d_queries, d_targets, d_distances, nq, nt, dim);
+	cuda_batch_l2_kernel<<<grid, block>>>(
+		d_queries, d_targets, d_distances, nq, nt, dim);
 	cerr = cudaGetLastError();
 	if (cerr != cudaSuccess)
 		goto fail;
 
-	cerr = cudaMemcpy(distances, d_distances, nq * nt * sizeof(float), cudaMemcpyDeviceToHost);
+	cerr = cudaMemcpy(distances,
+		d_distances,
+		nq * nt * sizeof(float),
+		cudaMemcpyDeviceToHost);
 	if (cerr != cudaSuccess)
 		goto fail;
 
@@ -362,9 +372,12 @@ cuda_compute_batch_l2(const float *queries,
 	return;
 
 fail:
-	if (d_queries) cudaFree(d_queries);
-	if (d_targets) cudaFree(d_targets);
-	if (d_distances) cudaFree(d_distances);
+	if (d_queries)
+		cudaFree(d_queries);
+	if (d_targets)
+		cudaFree(d_targets);
+	if (d_distances)
+		cudaFree(d_distances);
 	return;
 }
 
@@ -380,19 +393,19 @@ fail:
 extern "C" float
 cuda_compute_cosine_distance(const float *a, const float *b, int dim)
 {
-	float	   *d_a = NULL;
-	float	   *d_b = NULL;
-	float	   *d_result = NULL;
-	float		h_result = 1.0f;
-	cudaError_t	cerr;
+	float *d_a = NULL;
+	float *d_b = NULL;
+	float *d_result = NULL;
+	float h_result = 1.0f;
+	cudaError_t cerr;
 
-	cerr = cudaMalloc((void **) &d_a, dim * sizeof(float));
+	cerr = cudaMalloc((void **)&d_a, dim * sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
-	cerr = cudaMalloc((void **) &d_b, dim * sizeof(float));
+	cerr = cudaMalloc((void **)&d_b, dim * sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
-	cerr = cudaMalloc((void **) &d_result, sizeof(float));
+	cerr = cudaMalloc((void **)&d_result, sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
 
@@ -408,7 +421,8 @@ cuda_compute_cosine_distance(const float *a, const float *b, int dim)
 	if (cerr != cudaSuccess)
 		goto fail;
 
-	cerr = cudaMemcpy(&h_result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
+	cerr = cudaMemcpy(
+		&h_result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
 	if (cerr != cudaSuccess)
 		goto fail;
 
@@ -437,19 +451,19 @@ fail:
 extern "C" float
 cuda_compute_inner_product(const float *a, const float *b, int dim)
 {
-	float	   *d_a = NULL;
-	float	   *d_b = NULL;
-	float	   *d_result = NULL;
-	float		h_result = 0.0f;
-	cudaError_t	cerr;
+	float *d_a = NULL;
+	float *d_b = NULL;
+	float *d_result = NULL;
+	float h_result = 0.0f;
+	cudaError_t cerr;
 
-	cerr = cudaMalloc((void **) &d_a, dim * sizeof(float));
+	cerr = cudaMalloc((void **)&d_a, dim * sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
-	cerr = cudaMalloc((void **) &d_b, dim * sizeof(float));
+	cerr = cudaMalloc((void **)&d_b, dim * sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
-	cerr = cudaMalloc((void **) &d_result, sizeof(float));
+	cerr = cudaMalloc((void **)&d_result, sizeof(float));
 	if (cerr != cudaSuccess)
 		goto fail;
 
@@ -465,7 +479,8 @@ cuda_compute_inner_product(const float *a, const float *b, int dim)
 	if (cerr != cudaSuccess)
 		goto fail;
 
-	cerr = cudaMemcpy(&h_result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
+	cerr = cudaMemcpy(
+		&h_result, d_result, sizeof(float), cudaMemcpyDeviceToHost);
 	if (cerr != cudaSuccess)
 		goto fail;
 
@@ -494,8 +509,8 @@ fail:
 extern "C" int
 cuda_check_available(void)
 {
-	int				deviceCount = 0;
-	cudaError_t		error;
+	int deviceCount = 0;
+	cudaError_t error;
 
 	error = cudaGetDeviceCount(&deviceCount);
 
@@ -519,19 +534,17 @@ cuda_check_available(void)
 extern "C" void
 cuda_get_device_name(char *name, int maxlen)
 {
-	cudaDeviceProp	prop;
-	int				device = 0;
-	cudaError_t		error;
+	cudaDeviceProp prop;
+	int device = 0;
+	cudaError_t error;
 
 	error = cudaGetDeviceProperties(&prop, device);
 
 	if (error == cudaSuccess)
 	{
 		snprintf(name, maxlen, "%s", prop.name);
-	}
-	else
+	} else
 	{
 		snprintf(name, maxlen, "CUDA Device (Unknown)");
 	}
 }
-

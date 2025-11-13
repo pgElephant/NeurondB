@@ -28,20 +28,20 @@
 
 /* Architecture detection */
 #if defined(__x86_64__) || defined(_M_X64)
-	#define NEURONDB_X86_64 1
-	#ifdef USE_AVX2
-		#include <immintrin.h>
-		#define NEURONDB_HAS_AVX2 1
-	#endif
-	#ifdef USE_AVX512
-		#define NEURONDB_HAS_AVX512 1
-	#endif
+#define NEURONDB_X86_64 1
+#ifdef USE_AVX2
+#include <immintrin.h>
+#define NEURONDB_HAS_AVX2 1
+#endif
+#ifdef USE_AVX512
+#define NEURONDB_HAS_AVX512 1
+#endif
 #elif defined(__aarch64__) || defined(_M_ARM64)
-	#define NEURONDB_ARM64 1
-	#ifdef USE_NEON
-		#include <arm_neon.h>
-		#define NEURONDB_HAS_NEON 1
-	#endif
+#define NEURONDB_ARM64 1
+#ifdef USE_NEON
+#include <arm_neon.h>
+#define NEURONDB_HAS_NEON 1
+#endif
 #endif
 
 /* Alignment requirements */
@@ -50,13 +50,13 @@
 #define NEURONDB_SIMD_ALIGN_NEON 16
 
 #ifdef NEURONDB_HAS_AVX512
-	#define NEURONDB_SIMD_ALIGN NEURONDB_SIMD_ALIGN_AVX512
+#define NEURONDB_SIMD_ALIGN NEURONDB_SIMD_ALIGN_AVX512
 #elif NEURONDB_HAS_AVX2
-	#define NEURONDB_SIMD_ALIGN NEURONDB_SIMD_ALIGN_AVX2
+#define NEURONDB_SIMD_ALIGN NEURONDB_SIMD_ALIGN_AVX2
 #elif NEURONDB_HAS_NEON
-	#define NEURONDB_SIMD_ALIGN NEURONDB_SIMD_ALIGN_NEON
+#define NEURONDB_SIMD_ALIGN NEURONDB_SIMD_ALIGN_NEON
 #else
-	#define NEURONDB_SIMD_ALIGN 8
+#define NEURONDB_SIMD_ALIGN 8
 #endif
 
 /*
@@ -204,4 +204,3 @@ neurondb_cosine_similarity(const float *a, const float *b, int n)
 }
 
 #endif /* NEURONDB_SIMD_H */
-

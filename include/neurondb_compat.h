@@ -30,25 +30,24 @@
  * hardcoded %lld or %lu to ensure compatibility across all versions.
  */
 #if PG_VERSION_NUM >= 180000
-	/* PostgreSQL 18+: Use long long format specifiers */
-	#define NDB_INT64_FMT "%lld"
-	#define NDB_UINT64_FMT "%llu"
+/* PostgreSQL 18+: Use long long format specifiers */
+#define NDB_INT64_FMT "%lld"
+#define NDB_UINT64_FMT "%llu"
 #else
-	/* PostgreSQL 16/17: Use long format specifiers */
-	#define NDB_INT64_FMT "%ld"
-	#define NDB_UINT64_FMT "%lu"
+/* PostgreSQL 16/17: Use long format specifiers */
+#define NDB_INT64_FMT "%ld"
+#define NDB_UINT64_FMT "%lu"
 #endif
 
 /*
  * Cast macros for consistent type handling
  */
 #if PG_VERSION_NUM >= 180000
-	#define NDB_INT64_CAST(x) ((long long)(x))
-	#define NDB_UINT64_CAST(x) ((unsigned long long)(x))
+#define NDB_INT64_CAST(x) ((long long)(x))
+#define NDB_UINT64_CAST(x) ((unsigned long long)(x))
 #else
-	#define NDB_INT64_CAST(x) ((long)(x))
-	#define NDB_UINT64_CAST(x) ((unsigned long)(x))
+#define NDB_INT64_CAST(x) ((long)(x))
+#define NDB_UINT64_CAST(x) ((unsigned long)(x))
 #endif
 
 #endif /* NEURONDB_COMPAT_H */
-

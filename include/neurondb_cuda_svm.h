@@ -38,9 +38,9 @@ typedef struct NdbCudaSvmModelHeader
 	int32 n_samples;
 	int32 n_support_vectors;
 	float bias;
-	float *alphas;  /* Array of n_support_vectors floats */
-	float *support_vectors;  /* Array of n_support_vectors * feature_dim floats */
-	int32 *support_vector_indices;  /* Array of n_support_vectors ints */
+	float *alphas; /* Array of n_support_vectors floats */
+	float *support_vectors; /* Array of n_support_vectors * feature_dim floats */
+	int32 *support_vector_indices; /* Array of n_support_vectors ints */
 	double C;
 	int32 max_iters;
 } NdbCudaSvmModelHeader;
@@ -87,4 +87,3 @@ extern void ndb_cuda_svm_predict_kernel(const float *input,
 #endif
 
 #endif /* NEURONDB_CUDA_SVM_H */
-

@@ -34,12 +34,12 @@
 static void
 kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 {
-	bool   *selected;
+	bool *selected;
 	double *dist;
-	int		c, i, d;
+	int c, i, d;
 
-	selected = (bool *) palloc0(sizeof(bool) * nvec);
-	dist = (double *) palloc(sizeof(double) * nvec);
+	selected = (bool *)palloc0(sizeof(bool) * nvec);
+	dist = (double *)palloc(sizeof(double) * nvec);
 
 	/* Pick first centroid randomly */
 	centroids[0] = rand() % nvec;
@@ -48,7 +48,7 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 	/* Compute initial distances from first centroid */
 	for (i = 0; i < nvec; i++)
 	{
-		double	acc = 0.0;
+		double acc = 0.0;
 
 		for (d = 0; d < dim; d++)
 		{
@@ -61,15 +61,15 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 	/* Pick remaining centroids */
 	for (c = 1; c < k; c++)
 	{
-		double	sum = 0.0;
-		double	r;
-		int		picked = -1;
+		double sum = 0.0;
+		double r;
+		int picked = -1;
 
 		for (i = 0; i < nvec; i++)
 			if (!selected[i])
 				sum += dist[i];
 
-		r = ((double) rand() / (double) RAND_MAX) * sum;
+		r = ((double)rand() / (double)RAND_MAX) * sum;
 
 		for (i = 0; i < nvec; i++)
 		{
@@ -93,13 +93,16 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 				}
 			}
 		}
-		
+
 		/* Safety check */
 		if (picked < 0 || picked >= nvec)
 		{
 			pfree(dist);
 			pfree(selected);
-			elog(ERROR, "neurondb: k-means++ failed to select centroid %d", c);
+			elog(ERROR,
+				"neurondb: k-means++ failed to select centroid "
+				"%d",
+				c);
 		}
 
 		centroids[c] = picked;
@@ -110,7 +113,8 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 		{
 			double acc = 0.0;
 			for (d = 0; d < dim; d++)
-				acc += (data[i][d] - data[picked][d]) * (data[i][d] - data[picked][d]);
+				acc += (data[i][d] - data[picked][d])
+					* (data[i][d] - data[picked][d]);
 			if (acc < dist[i])
 				dist[i] = acc;
 		}
@@ -129,22 +133,22 @@ PG_FUNCTION_INFO_V1(cluster_kmeans);
 Datum
 cluster_kmeans(PG_FUNCTION_ARGS)
 {
-	text   *table_name = PG_GETARG_TEXT_PP(0);
-	text   *vector_col = PG_GETARG_TEXT_PP(1);
-	int32	num_clusters = PG_GETARG_INT32(2);
-	int32	max_iters = PG_GETARG_INT32(3);
+	text *table_name = PG_GETARG_TEXT_PP(0);
+	text *vector_col = PG_GETARG_TEXT_PP(1);
+	int32 num_clusters = PG_GETARG_INT32(2);
+	int32 max_iters = PG_GETARG_INT32(3);
 
-	char   *tbl_str;
-	char   *col_str;
-	int		nvec = 0;
-	int		dim = 0;
-	int    *assignments = NULL;
-	int    *centroids_idx = NULL;
+	char *tbl_str;
+	char *col_str;
+	int nvec = 0;
+	int dim = 0;
+	int *assignments = NULL;
+	int *centroids_idx = NULL;
 	float **data = NULL;
 	float **centers = NULL;
-	bool	changed = false;
-	int		iter, i, c, d;
-	Datum  *out_datums;
+	bool changed = false;
+	int iter, i, c, d;
+	Datum *out_datums;
 	ArrayType *out_array;
 
 	tbl_str = text_to_cstring(table_name);
@@ -152,8 +156,9 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 
 	if (num_clusters <= 1)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("number of clusters must be at least 2")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("number of clusters must be at least "
+				       "2")));
 	if (max_iters < 1)
 		max_iters = 100;
 
@@ -161,20 +166,22 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 
 	if (!data || nvec < num_clusters)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("not enough vectors for cluster count (need >= %d, have %d)",
-						num_clusters, nvec)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("not enough vectors for cluster count "
+				       "(need >= %d, have %d)",
+					num_clusters,
+					nvec)));
 
-	assignments = (int *) palloc0(sizeof(int) * nvec);
-	centroids_idx = (int *) palloc(sizeof(int) * num_clusters);
+	assignments = (int *)palloc0(sizeof(int) * nvec);
+	centroids_idx = (int *)palloc(sizeof(int) * num_clusters);
 
 	/* Initialize centroids using k-means++ */
 	kmeanspp_init(data, nvec, dim, num_clusters, centroids_idx);
 
-	centers = (float **) palloc(sizeof(float *) * num_clusters);
+	centers = (float **)palloc(sizeof(float *) * num_clusters);
 	for (c = 0; c < num_clusters; c++)
 	{
-		centers[c] = (float *) palloc(sizeof(float) * dim);
+		centers[c] = (float *)palloc(sizeof(float) * dim);
 		memcpy(centers[c], data[centroids_idx[c]], sizeof(float) * dim);
 	}
 
@@ -184,20 +191,21 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 
 	for (iter = 0; iter < max_iters && changed; iter++)
 	{
-		int   *counts;
+		int *counts;
 
 		changed = false;
 		/* Assignment phase - SIMD optimized */
 		for (i = 0; i < nvec; i++)
 		{
 			double min_dist = DBL_MAX;
-			int    best = -1;
+			int best = -1;
 
 			for (c = 0; c < num_clusters; c++)
 			{
 				/* Use SIMD-optimized L2 distance */
-				double dist = neurondb_l2_distance_squared(data[i], centers[c], dim);
-				
+				double dist = neurondb_l2_distance_squared(
+					data[i], centers[c], dim);
+
 				if (dist < min_dist)
 				{
 					min_dist = dist;
@@ -215,7 +223,7 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 		for (c = 0; c < num_clusters; c++)
 			memset(centers[c], 0, sizeof(float) * dim);
 
-		counts = (int *) palloc0(sizeof(int) * num_clusters);
+		counts = (int *)palloc0(sizeof(int) * num_clusters);
 
 		for (i = 0; i < nvec; i++)
 		{
@@ -236,7 +244,7 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 	}
 
 	/* Build output int array (nvec x 1) for 1-based cluster labels */
-	out_datums = (Datum *) palloc(sizeof(Datum) * nvec);
+	out_datums = (Datum *)palloc(sizeof(Datum) * nvec);
 	for (i = 0; i < nvec; i++)
 		out_datums[i] = Int32GetDatum(assignments[i] + 1);
 
@@ -256,4 +264,3 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(out_array);
 }
-

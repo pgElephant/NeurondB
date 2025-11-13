@@ -31,7 +31,10 @@
  * Helper function to serialize tree nodes recursively
  */
 static int
-dt_serialize_node_recursive(const DTNode *node, NdbCudaDtNode *dest, int *node_idx, int *max_idx)
+dt_serialize_node_recursive(const DTNode *node,
+	NdbCudaDtNode *dest,
+	int *node_idx,
+	int *max_idx)
 {
 	int current_idx;
 	int left_idx = -1;
@@ -55,12 +58,16 @@ dt_serialize_node_recursive(const DTNode *node, NdbCudaDtNode *dest, int *node_i
 	{
 		(*node_idx)++;
 		left_idx = *node_idx;
-		if (dt_serialize_node_recursive(node->left, dest, node_idx, max_idx) < 0)
+		if (dt_serialize_node_recursive(
+			    node->left, dest, node_idx, max_idx)
+			< 0)
 			return -1;
 
 		(*node_idx)++;
 		right_idx = *node_idx;
-		if (dt_serialize_node_recursive(node->right, dest, node_idx, max_idx) < 0)
+		if (dt_serialize_node_recursive(
+			    node->right, dest, node_idx, max_idx)
+			< 0)
 			return -1;
 
 		dest[current_idx].left_child = left_idx;
@@ -111,7 +118,8 @@ ndb_cuda_dt_pack_model(const DTModel *model,
 	if (model->root == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("decision_tree model has no root node");
+			*errstr =
+				pstrdup("decision_tree model has no root node");
 		return -1;
 	}
 
@@ -139,11 +147,14 @@ ndb_cuda_dt_pack_model(const DTModel *model,
 	hdr->node_count = node_count;
 
 	nodes = (NdbCudaDtNode *)(base + sizeof(NdbCudaDtModelHeader));
-	if (dt_serialize_node_recursive(model->root, nodes, &node_idx, &node_count) < 0)
+	if (dt_serialize_node_recursive(
+		    model->root, nodes, &node_idx, &node_count)
+		< 0)
 	{
 		pfree(blob);
 		if (errstr)
-			*errstr = pstrdup("failed to serialize decision tree nodes");
+			*errstr = pstrdup(
+				"failed to serialize decision tree nodes");
 		return -1;
 	}
 
@@ -167,8 +178,8 @@ ndb_cuda_dt_pack_model(const DTModel *model,
 			model->min_samples_split,
 			node_count);
 
-		metrics_json = DatumGetJsonbP(
-			DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+			jsonb_in, CStringGetDatum(buf.data)));
 		pfree(buf.data);
 		*metrics = metrics_json;
 	}
@@ -190,7 +201,8 @@ ndb_cuda_dt_train(const float *features,
 	/* Decision Tree training on GPU is complex - for now, fall back to CPU */
 	/* This can be enhanced later with GPU-accelerated split finding */
 	if (errstr)
-		*errstr = pstrdup("Decision Tree GPU training not yet implemented, use CPU training");
+		*errstr = pstrdup("Decision Tree GPU training not yet "
+				  "implemented, use CPU training");
 	return -1;
 }
 
@@ -211,12 +223,14 @@ ndb_cuda_dt_predict(const bytea *model_data,
 	if (model_data == NULL || input == NULL || prediction_out == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for CUDA DT predict");
+			*errstr = pstrdup(
+				"invalid parameters for CUDA DT predict");
 		return -1;
 	}
 
 	/* Detoast the bytea to ensure we have the full data */
-	detoasted = (const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+	detoasted =
+		(const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
 
 	/* Validate bytea size */
 	{
@@ -226,8 +240,11 @@ ndb_cuda_dt_predict(const bytea *model_data,
 		if (actual_size < min_size)
 		{
 			if (errstr)
-				*errstr = psprintf("model data too small: expected at least %zu bytes, got %zu",
-					min_size, actual_size);
+				*errstr = psprintf(
+					"model data too small: expected at "
+					"least %zu bytes, got %zu",
+					min_size,
+					actual_size);
 			return -1;
 		}
 	}
@@ -236,12 +253,15 @@ ndb_cuda_dt_predict(const bytea *model_data,
 	if (hdr->feature_dim != feature_dim)
 	{
 		if (errstr)
-			*errstr = psprintf("feature dimension mismatch: model has %d, input has %d",
-				hdr->feature_dim, feature_dim);
+			*errstr = psprintf("feature dimension mismatch: model "
+					   "has %d, input has %d",
+				hdr->feature_dim,
+				feature_dim);
 		return -1;
 	}
 
-	nodes = (const NdbCudaDtNode *)((const char *)hdr + sizeof(NdbCudaDtModelHeader));
+	nodes = (const NdbCudaDtNode *)((const char *)hdr
+		+ sizeof(NdbCudaDtModelHeader));
 
 	/* Traverse tree to make prediction */
 	while (node_idx >= 0 && node_idx < hdr->node_count)
@@ -261,9 +281,9 @@ ndb_cuda_dt_predict(const bytea *model_data,
 	}
 
 	if (errstr)
-		*errstr = pstrdup("tree traversal failed - invalid tree structure");
+		*errstr = pstrdup(
+			"tree traversal failed - invalid tree structure");
 	return -1;
 }
 
 #endif /* NDB_GPU_CUDA */
-

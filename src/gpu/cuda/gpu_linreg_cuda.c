@@ -92,8 +92,8 @@ ndb_cuda_linreg_pack_model(const LinRegModel *model,
 			model->mse,
 			model->mae);
 
-		metrics_json = DatumGetJsonbP(
-			DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+			jsonb_in, CStringGetDatum(buf.data)));
 		pfree(buf.data);
 		*metrics = metrics_json;
 	}
@@ -137,17 +137,20 @@ ndb_cuda_linreg_train(const float *features,
 	if (errstr)
 		*errstr = NULL;
 
-	if (features == NULL || targets == NULL || n_samples <= 0 || feature_dim <= 0)
+	if (features == NULL || targets == NULL || n_samples <= 0
+		|| feature_dim <= 0)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid input parameters for CUDA LinReg train");
+			*errstr = pstrdup("invalid input parameters for CUDA "
+					  "LinReg train");
 		return -1;
 	}
 
 	dim_with_intercept = feature_dim + 1;
 
 	/* Allocate host memory for matrices */
-	XtX_bytes = sizeof(double) * (size_t)dim_with_intercept * (size_t)dim_with_intercept;
+	XtX_bytes = sizeof(double) * (size_t)dim_with_intercept
+		* (size_t)dim_with_intercept;
 	Xty_bytes = sizeof(double) * (size_t)dim_with_intercept;
 	beta_bytes = sizeof(double) * (size_t)dim_with_intercept;
 
@@ -160,22 +163,24 @@ ndb_cuda_linreg_train(const float *features,
 	for (i = 0; i < n_samples; i++)
 	{
 		const float *row = features + (i * feature_dim);
-		double *xi = (double *)palloc(sizeof(double) * dim_with_intercept);
-		
+		double *xi =
+			(double *)palloc(sizeof(double) * dim_with_intercept);
+
 		xi[0] = 1.0; /* intercept */
 		for (k = 1; k < dim_with_intercept; k++)
-			xi[k] = row[k-1];
-		
+			xi[k] = row[k - 1];
+
 		/* X'X accumulation */
 		for (j = 0; j < dim_with_intercept; j++)
 		{
 			for (k = 0; k < dim_with_intercept; k++)
-				h_XtX[j * dim_with_intercept + k] += xi[j] * xi[k];
-			
+				h_XtX[j * dim_with_intercept + k] +=
+					xi[j] * xi[k];
+
 			/* X'y accumulation */
 			h_Xty[j] += xi[j] * targets[i];
 		}
-		
+
 		pfree(xi);
 	}
 
@@ -185,19 +190,23 @@ ndb_cuda_linreg_train(const float *features,
 		int row, col, k;
 		double pivot, factor;
 		bool invert_success = true;
-		
+
 		/* Create augmented matrix [A | I] */
-		augmented = (double **)palloc(sizeof(double *) * dim_with_intercept);
+		augmented = (double **)palloc(
+			sizeof(double *) * dim_with_intercept);
 		for (row = 0; row < dim_with_intercept; row++)
 		{
-			augmented[row] = (double *)palloc(sizeof(double) * 2 * dim_with_intercept);
+			augmented[row] = (double *)palloc(
+				sizeof(double) * 2 * dim_with_intercept);
 			for (col = 0; col < dim_with_intercept; col++)
 			{
-				augmented[row][col] = h_XtX[row * dim_with_intercept + col];
-				augmented[row][col + dim_with_intercept] = (row == col) ? 1.0 : 0.0;
+				augmented[row][col] =
+					h_XtX[row * dim_with_intercept + col];
+				augmented[row][col + dim_with_intercept] =
+					(row == col) ? 1.0 : 0.0;
 			}
 		}
-		
+
 		/* Gauss-Jordan elimination */
 		for (row = 0; row < dim_with_intercept; row++)
 		{
@@ -223,32 +232,37 @@ ndb_cuda_linreg_train(const float *features,
 					break;
 				}
 			}
-			
+
 			for (col = 0; col < 2 * dim_with_intercept; col++)
 				augmented[row][col] /= pivot;
-			
+
 			for (k = 0; k < dim_with_intercept; k++)
 			{
 				if (k != row)
 				{
 					factor = augmented[k][row];
-					for (col = 0; col < 2 * dim_with_intercept; col++)
-						augmented[k][col] -= factor * augmented[row][col];
+					for (col = 0;
+						col < 2 * dim_with_intercept;
+						col++)
+						augmented[k][col] -= factor
+							* augmented[row][col];
 				}
 			}
 		}
-		
+
 		if (invert_success)
 		{
 			for (row = 0; row < dim_with_intercept; row++)
 				for (col = 0; col < dim_with_intercept; col++)
-					h_XtX_inv[row * dim_with_intercept + col] = augmented[row][col + dim_with_intercept];
+					h_XtX_inv[row * dim_with_intercept
+						+ col] = augmented[row][col
+						+ dim_with_intercept];
 		}
-		
+
 		for (row = 0; row < dim_with_intercept; row++)
 			pfree(augmented[row]);
 		pfree(augmented);
-		
+
 		if (!invert_success)
 		{
 			pfree(h_XtX);
@@ -256,7 +270,8 @@ ndb_cuda_linreg_train(const float *features,
 			pfree(h_XtX_inv);
 			pfree(h_beta);
 			if (errstr)
-				*errstr = pstrdup("Matrix is singular, cannot compute linear regression");
+				*errstr = pstrdup("Matrix is singular, cannot "
+						  "compute linear regression");
 			return -1;
 		}
 	}
@@ -266,7 +281,8 @@ ndb_cuda_linreg_train(const float *features,
 	{
 		h_beta[i] = 0.0;
 		for (j = 0; j < dim_with_intercept; j++)
-			h_beta[i] += h_XtX_inv[i * dim_with_intercept + j] * h_Xty[j];
+			h_beta[i] += h_XtX_inv[i * dim_with_intercept + j]
+				* h_Xty[j];
 	}
 
 	/* Build model */
@@ -281,7 +297,8 @@ ndb_cuda_linreg_train(const float *features,
 		model.n_features = feature_dim;
 		model.n_samples = n_samples;
 		model.intercept = h_beta[0];
-		model.coefficients = (double *)palloc(sizeof(double) * feature_dim);
+		model.coefficients =
+			(double *)palloc(sizeof(double) * feature_dim);
 		for (i = 0; i < feature_dim; i++)
 			model.coefficients[i] = h_beta[i + 1];
 
@@ -314,8 +331,9 @@ ndb_cuda_linreg_train(const float *features,
 		model.mae = mae;
 
 		/* Pack model */
-		rc = ndb_cuda_linreg_pack_model(&model, &payload, &metrics_json, errstr);
-		
+		rc = ndb_cuda_linreg_pack_model(
+			&model, &payload, &metrics_json, errstr);
+
 		pfree(model.coefficients);
 	}
 
@@ -359,37 +377,46 @@ ndb_cuda_linreg_predict(const bytea *model_data,
 	if (model_data == NULL || input == NULL || prediction_out == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for CUDA LinReg predict");
+			*errstr = pstrdup(
+				"invalid parameters for CUDA LinReg predict");
 		return -1;
 	}
 
 	/* Detoast the bytea to ensure we have the full data */
-	detoasted = (const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
-	
+	detoasted =
+		(const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+
 	/* Validate bytea size */
 	{
-		size_t expected_size = sizeof(NdbCudaLinRegModelHeader) + sizeof(float) * (size_t)feature_dim;
+		size_t expected_size = sizeof(NdbCudaLinRegModelHeader)
+			+ sizeof(float) * (size_t)feature_dim;
 		size_t actual_size = VARSIZE(detoasted) - VARHDRSZ;
-		
+
 		if (actual_size < expected_size)
 		{
 			if (errstr)
-				*errstr = psprintf("model data too small: expected %zu bytes, got %zu", 
-					expected_size, actual_size);
+				*errstr =
+					psprintf("model data too small: "
+						 "expected %zu bytes, got %zu",
+						expected_size,
+						actual_size);
 			return -1;
 		}
 	}
-	
+
 	hdr = (const NdbCudaLinRegModelHeader *)VARDATA(detoasted);
 	if (hdr->feature_dim != feature_dim)
 	{
 		if (errstr)
-			*errstr = psprintf("feature dimension mismatch: model has %d, input has %d", 
-				hdr->feature_dim, feature_dim);
+			*errstr = psprintf("feature dimension mismatch: model "
+					   "has %d, input has %d",
+				hdr->feature_dim,
+				feature_dim);
 		return -1;
 	}
 
-	coefficients = (const float *)((const char *)hdr + sizeof(NdbCudaLinRegModelHeader));
+	coefficients = (const float *)((const char *)hdr
+		+ sizeof(NdbCudaLinRegModelHeader));
 
 	prediction = hdr->intercept;
 	for (i = 0; i < feature_dim; i++)
@@ -400,4 +427,3 @@ ndb_cuda_linreg_predict(const bytea *model_data,
 }
 
 #endif /* NDB_GPU_CUDA */
-

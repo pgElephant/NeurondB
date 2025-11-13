@@ -35,5 +35,3 @@ extern int ml_gpu_context_device(const MLGpuContext *ctx);
 extern const char *ml_gpu_context_tag(const MLGpuContext *ctx);
 
 #endif /* ML_GPU_CONTEXT_H */
-
-

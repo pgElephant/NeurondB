@@ -92,40 +92,50 @@ train_opq_rotation(PG_FUNCTION_ARGS)
 
 	if (num_subspaces < 2 || num_subspaces > 64)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("num_subspaces must be between 2 and 64")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_subspaces must be between 2 and "
+				       "64")));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_column);
 
-	elog(DEBUG1, "neurondb: Training OPQ rotation (m=%d subspaces)", num_subspaces);
+	elog(DEBUG1,
+		"neurondb: Training OPQ rotation (m=%d subspaces)",
+		num_subspaces);
 
 	/* Fetch training data */
 	data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
 
 	if (dim % num_subspaces != 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Vector dimension %d must be divisible by num_subspaces %d", 
-						dim, num_subspaces)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Vector dimension %d must be divisible "
+				       "by num_subspaces %d",
+					dim,
+					num_subspaces)));
 
 	/* Initialize rotation matrix to identity (simplified OPQ) */
 	/* Full OPQ would iterate: optimize codebook -> optimize R (SVD) -> repeat */
-	rotation_matrix = (double *) palloc0(sizeof(double) * dim * dim);
-	
-	for (i = 0; i < dim; i++)
-		rotation_matrix[i * dim + i] = 1.0;  /* Identity matrix */
+	rotation_matrix = (double *)palloc0(sizeof(double) * dim * dim);
 
-	elog(NOTICE, "OPQ: Using identity rotation (simplified). "
-				  "For optimal results, train with full OPQ offline.");
+	for (i = 0; i < dim; i++)
+		rotation_matrix[i * dim + i] = 1.0; /* Identity matrix */
+
+	elog(NOTICE,
+		"OPQ: Using identity rotation (simplified). "
+		"For optimal results, train with full OPQ offline.");
 
 	/* Build result array */
-	result_datums = (Datum *) palloc(sizeof(Datum) * dim * dim);
+	result_datums = (Datum *)palloc(sizeof(Datum) * dim * dim);
 	for (i = 0; i < dim * dim; i++)
 		result_datums[i] = Float8GetDatum(rotation_matrix[i]);
 
-	result = construct_array(result_datums, dim * dim, FLOAT8OID,
-							 sizeof(float8), FLOAT8PASSBYVAL, 'd');
+	result = construct_array(result_datums,
+		dim * dim,
+		FLOAT8OID,
+		sizeof(float8),
+		FLOAT8PASSBYVAL,
+		'd');
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
@@ -178,42 +188,48 @@ apply_opq_rotation(PG_FUNCTION_ARGS)
 
 	if (ARR_NDIM(vector_array) != 1)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Vector must be 1-dimensional")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Vector must be 1-dimensional")));
 
 	dim = ARR_DIMS(vector_array)[0];
 	rotation_dim = (int)sqrt((double)ARR_DIMS(rotation_array)[0]);
 
 	if (rotation_dim * rotation_dim != ARR_DIMS(rotation_array)[0])
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Rotation matrix must be square")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Rotation matrix must be square")));
 
 	if (dim != rotation_dim)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Dimension mismatch: vector=%d, rotation=%d", dim, rotation_dim)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Dimension mismatch: vector=%d, "
+				       "rotation=%d",
+					dim,
+					rotation_dim)));
 
-	vector = (float8 *) ARR_DATA_PTR(vector_array);
-	rotation = (float8 *) ARR_DATA_PTR(rotation_array);
+	vector = (float8 *)ARR_DATA_PTR(vector_array);
+	rotation = (float8 *)ARR_DATA_PTR(rotation_array);
 
 	/* Apply rotation: rotated = R · vector */
-	rotated = (double *) palloc0(sizeof(double) * dim);
+	rotated = (double *)palloc0(sizeof(double) * dim);
 	for (i = 0; i < dim; i++)
 		for (j = 0; j < dim; j++)
 			rotated[i] += rotation[i * dim + j] * vector[j];
 
 	/* Build result */
-	result_datums = (Datum *) palloc(sizeof(Datum) * dim);
+	result_datums = (Datum *)palloc(sizeof(Datum) * dim);
 	for (i = 0; i < dim; i++)
 		result_datums[i] = Float8GetDatum(rotated[i]);
 
-	result = construct_array(result_datums, dim, FLOAT8OID,
-							 sizeof(float8), FLOAT8PASSBYVAL, 'd');
+	result = construct_array(result_datums,
+		dim,
+		FLOAT8OID,
+		sizeof(float8),
+		FLOAT8PASSBYVAL,
+		'd');
 
 	pfree(rotated);
 	pfree(result_datums);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
-

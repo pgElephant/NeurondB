@@ -15,9 +15,9 @@
 
 void
 ml_gpu_call_begin(MLGpuCallState *state,
-				  const char *tag,
-				  const char *kernel_name,
-				  bool must_have_kernel)
+	const char *tag,
+	const char *kernel_name,
+	bool must_have_kernel)
 {
 	Assert(state != NULL);
 
@@ -29,24 +29,23 @@ ml_gpu_call_begin(MLGpuCallState *state,
 
 	state->ctx = ml_gpu_context_acquire(tag);
 	state->gpu_ready = ml_gpu_context_ready(state->ctx);
-	state->kernel_allowed = (kernel_name == NULL) ?
-		true : ndb_gpu_kernel_enabled(kernel_name);
+	state->kernel_allowed = (kernel_name == NULL)
+		? true
+		: ndb_gpu_kernel_enabled(kernel_name);
 	state->use_gpu = state->gpu_ready && state->kernel_allowed;
 
-	if (state->must_have &&
-		state->gpu_enabled &&
-		!state->use_gpu &&
-		!neurondb_gpu_fail_open)
+	if (state->must_have && state->gpu_enabled && !state->use_gpu
+		&& !neurondb_gpu_fail_open)
 	{
 		if (kernel_name)
 			ereport(ERROR,
-					(errmsg("GPU kernel \"%s\" unavailable for %s",
-							kernel_name,
-							tag ? tag : "ML call")));
+				(errmsg("GPU kernel \"%s\" unavailable for %s",
+					kernel_name,
+					tag ? tag : "ML call")));
 		else
 			ereport(ERROR,
-					(errmsg("GPU unavailable for %s",
-							tag ? tag : "ML call")));
+				(errmsg("GPU unavailable for %s",
+					tag ? tag : "ML call")));
 	}
 }
 
@@ -75,5 +74,3 @@ ml_gpu_call_end(MLGpuCallState *state)
 
 	memset(state, 0, sizeof(MLGpuCallState));
 }
-
-

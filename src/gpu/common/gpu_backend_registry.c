@@ -249,13 +249,15 @@ ndb_gpu_lr_train(const float *features,
 	char **errstr)
 {
 	int rc;
-	
+
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->lr_train == NULL)
 		return -1;
-	
-	elog(DEBUG1, "ndb_gpu_lr_train: calling backend->lr_train, metrics=%p", (void *)metrics);
+
+	elog(DEBUG1,
+		"ndb_gpu_lr_train: calling backend->lr_train, metrics=%p",
+		(void *)metrics);
 	rc = active_backend->lr_train(features,
 		labels,
 		n_samples,
@@ -264,8 +266,10 @@ ndb_gpu_lr_train(const float *features,
 		model_data,
 		metrics,
 		errstr);
-	elog(DEBUG1, "ndb_gpu_lr_train: backend->lr_train returned %d, *metrics=%p", 
-		rc, metrics ? (void *)*metrics : NULL);
+	elog(DEBUG1,
+		"ndb_gpu_lr_train: backend->lr_train returned %d, *metrics=%p",
+		rc,
+		metrics ? (void *)*metrics : NULL);
 	return rc;
 }
 
@@ -385,8 +389,12 @@ ndb_gpu_svm_predict(const bytea *model_data,
 		*errstr = NULL;
 	if (!active_backend || active_backend->svm_predict == NULL)
 		return -1;
-	return active_backend->svm_predict(
-		model_data, input, feature_dim, class_out, confidence_out, errstr);
+	return active_backend->svm_predict(model_data,
+		input,
+		feature_dim,
+		class_out,
+		confidence_out,
+		errstr);
 }
 
 int
@@ -418,8 +426,12 @@ ndb_gpu_svm_predict_double(const bytea *model_data,
 	if (prediction_out == NULL)
 		return -1;
 
-	rc = ndb_gpu_svm_predict(model_data, input, feature_dim,
-		&class_out, &confidence_out, errstr);
+	rc = ndb_gpu_svm_predict(model_data,
+		input,
+		feature_dim,
+		&class_out,
+		&confidence_out,
+		errstr);
 	if (rc != 0)
 		return rc;
 

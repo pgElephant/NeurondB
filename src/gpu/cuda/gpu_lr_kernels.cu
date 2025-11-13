@@ -23,8 +23,11 @@ ndb_cuda_lr_forward_pass_kernel(const float *features,
 		return;
 
 	if (idx == 0)
-		printf("[CUDA kernel] forward_pass: n_samples=%d, feature_dim=%d, bias=%f\n", 
-			n_samples, feature_dim, bias);
+		printf("[CUDA kernel] forward_pass: n_samples=%d, "
+		       "feature_dim=%d, bias=%f\n",
+			n_samples,
+			feature_dim,
+			bias);
 
 	const float *row = features + idx * feature_dim;
 	double z = (double)bias;
@@ -39,9 +42,7 @@ ndb_cuda_lr_forward_pass_kernel(const float *features,
 }
 
 __global__ static void
-ndb_cuda_lr_sigmoid_kernel(const double *inputs,
-	int n,
-	double *outputs)
+ndb_cuda_lr_sigmoid_kernel(const double *inputs, int n, double *outputs)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -117,45 +118,55 @@ ndb_cuda_lr_forward_pass(const float *features,
 	status = cudaMalloc((void **)&d_features, feature_bytes);
 	if (status != cudaSuccess)
 	{
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMalloc d_features failed: %s\n", 
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMalloc "
+		       "d_features failed: %s\n",
 			cudaGetErrorString(status));
 		return -1;
 	}
-	printf("[CUDA host] ndb_cuda_lr_forward_pass: d_features allocated: %p\n", d_features);
+	printf("[CUDA host] ndb_cuda_lr_forward_pass: d_features allocated: "
+	       "%p\n",
+		d_features);
 
 	status = cudaMalloc((void **)&d_weights, weight_bytes);
 	if (status != cudaSuccess)
 	{
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMalloc d_weights failed: %s\n", 
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMalloc "
+		       "d_weights failed: %s\n",
 			cudaGetErrorString(status));
 		cudaFree(d_features);
 		return -1;
 	}
-	printf("[CUDA host] ndb_cuda_lr_forward_pass: d_weights allocated: %p\n", d_weights);
+	printf("[CUDA host] ndb_cuda_lr_forward_pass: d_weights allocated: "
+	       "%p\n",
+		d_weights);
 
 	status = cudaMalloc((void **)&d_outputs, output_bytes);
 	if (status != cudaSuccess)
 	{
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMalloc d_outputs failed: %s\n", 
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMalloc "
+		       "d_outputs failed: %s\n",
 			cudaGetErrorString(status));
 		cudaFree(d_weights);
 		cudaFree(d_features);
 		return -1;
 	}
-	printf("[CUDA host] ndb_cuda_lr_forward_pass: d_outputs allocated: %p\n", d_outputs);
+	printf("[CUDA host] ndb_cuda_lr_forward_pass: d_outputs allocated: "
+	       "%p\n",
+		d_outputs);
 
-	printf("[CUDA host] ndb_cuda_lr_forward_pass: copying features to GPU\n");
-	status = cudaMemcpy(d_features,
-		features,
-		feature_bytes,
-		cudaMemcpyHostToDevice);
+	printf("[CUDA host] ndb_cuda_lr_forward_pass: copying features to "
+	       "GPU\n");
+	status = cudaMemcpy(
+		d_features, features, feature_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 	{
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMemcpy features failed: %s\n", 
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMemcpy "
+		       "features failed: %s\n",
 			cudaGetErrorString(status));
 		goto cleanup_outputs;
 	}
-	printf("[CUDA host] ndb_cuda_lr_forward_pass: features copied to GPU\n");
+	printf("[CUDA host] ndb_cuda_lr_forward_pass: features copied to "
+	       "GPU\n");
 
 	{
 		float *h_weights = (float *)malloc(weight_bytes);
@@ -173,59 +184,72 @@ ndb_cuda_lr_forward_pass(const float *features,
 	}
 
 	blocks = (n_samples + threads - 1) / threads;
-	printf("[CUDA host] ndb_cuda_lr_forward_pass: launching kernel: blocks=%d, threads=%d\n", 
-		blocks, threads);
-	ndb_cuda_lr_forward_pass_kernel<<<blocks, threads>>>(
-		d_features, d_weights, (float)bias, n_samples, feature_dim, d_outputs);
+	printf("[CUDA host] ndb_cuda_lr_forward_pass: launching kernel: "
+	       "blocks=%d, threads=%d\n",
+		blocks,
+		threads);
+	ndb_cuda_lr_forward_pass_kernel<<<blocks, threads>>>(d_features,
+		d_weights,
+		(float)bias,
+		n_samples,
+		feature_dim,
+		d_outputs);
 
 	status = cudaGetLastError();
 	if (status != cudaSuccess)
 	{
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: kernel launch error: %s\n", 
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: kernel launch "
+		       "error: %s\n",
 			cudaGetErrorString(status));
 		goto cleanup_outputs;
 	}
-	printf("[CUDA host] ndb_cuda_lr_forward_pass: kernel launched successfully\n");
+	printf("[CUDA host] ndb_cuda_lr_forward_pass: kernel launched "
+	       "successfully\n");
 
-	printf("[CUDA host] ndb_cuda_lr_forward_pass: copying outputs from GPU\n");
-	status = cudaMemcpy(outputs,
-		d_outputs,
-		output_bytes,
-		cudaMemcpyDeviceToHost);
+	printf("[CUDA host] ndb_cuda_lr_forward_pass: copying outputs from "
+	       "GPU\n");
+	status = cudaMemcpy(
+		outputs, d_outputs, output_bytes, cudaMemcpyDeviceToHost);
 	if (status != cudaSuccess)
 	{
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMemcpy outputs failed: %s\n", 
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: cudaMemcpy "
+		       "outputs failed: %s\n",
 			cudaGetErrorString(status));
 		goto cleanup_outputs;
 	}
-	printf("[CUDA host] ndb_cuda_lr_forward_pass: outputs copied from GPU, first value: %f\n", 
+	printf("[CUDA host] ndb_cuda_lr_forward_pass: outputs copied from GPU, "
+	       "first value: %f\n",
 		outputs[0]);
 
 cleanup_outputs:
 	if (d_outputs != NULL)
 	{
 		cudaFree(d_outputs);
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: freed d_outputs\n");
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: freed "
+		       "d_outputs\n");
 	}
 	if (d_weights != NULL)
 	{
 		cudaFree(d_weights);
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: freed d_weights\n");
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: freed "
+		       "d_weights\n");
 	}
 	if (d_features != NULL)
 	{
 		cudaFree(d_features);
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: freed d_features\n");
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: freed "
+		       "d_features\n");
 	}
 
 	if (status == cudaSuccess)
 	{
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: success, returning 0\n");
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: success, "
+		       "returning 0\n");
 		return 0;
-	}
-	else
+	} else
 	{
-		printf("[CUDA host] ndb_cuda_lr_forward_pass: failure, returning -1\n");
+		printf("[CUDA host] ndb_cuda_lr_forward_pass: failure, "
+		       "returning -1\n");
 		return -1;
 	}
 }
@@ -251,8 +275,10 @@ ndb_cuda_lr_forward_pass_gpu(const float *d_features,
 	cudaGetLastError();
 
 	blocks = (n_samples + threads - 1) / threads;
-	printf("[CUDA host] ndb_cuda_lr_forward_pass_gpu: launching kernel: blocks=%d, threads=%d\n", 
-		blocks, threads);
+	printf("[CUDA host] ndb_cuda_lr_forward_pass_gpu: launching kernel: "
+	       "blocks=%d, threads=%d\n",
+		blocks,
+		threads);
 
 	ndb_cuda_lr_forward_pass_kernel<<<blocks, threads>>>(
 		d_features, d_weights, bias, n_samples, feature_dim, d_outputs);
@@ -260,19 +286,19 @@ ndb_cuda_lr_forward_pass_gpu(const float *d_features,
 	status = cudaGetLastError();
 	if (status != cudaSuccess)
 	{
-		printf("[CUDA host] ndb_cuda_lr_forward_pass_gpu: kernel launch error: %s\n", 
+		printf("[CUDA host] ndb_cuda_lr_forward_pass_gpu: kernel "
+		       "launch error: %s\n",
 			cudaGetErrorString(status));
 		return -1;
 	}
 
-	printf("[CUDA host] ndb_cuda_lr_forward_pass_gpu: kernel launched successfully\n");
+	printf("[CUDA host] ndb_cuda_lr_forward_pass_gpu: kernel launched "
+	       "successfully\n");
 	return 0;
 }
 
 extern "C" int
-ndb_cuda_lr_sigmoid(const double *inputs,
-	int n,
-	double *outputs)
+ndb_cuda_lr_sigmoid(const double *inputs, int n, double *outputs)
 {
 	double *d_inputs = NULL;
 	double *d_outputs = NULL;
@@ -295,10 +321,8 @@ ndb_cuda_lr_sigmoid(const double *inputs,
 	if (status != cudaSuccess)
 		goto cleanup_inputs;
 
-	status = cudaMemcpy(d_inputs,
-		inputs,
-		input_bytes,
-		cudaMemcpyHostToDevice);
+	status = cudaMemcpy(
+		d_inputs, inputs, input_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto cleanup_outputs;
 
@@ -309,10 +333,8 @@ ndb_cuda_lr_sigmoid(const double *inputs,
 	if (status != cudaSuccess)
 		goto cleanup_outputs;
 
-	status = cudaMemcpy(outputs,
-		d_outputs,
-		output_bytes,
-		cudaMemcpyDeviceToHost);
+	status = cudaMemcpy(
+		outputs, d_outputs, output_bytes, cudaMemcpyDeviceToHost);
 
 cleanup_outputs:
 	cudaFree(d_outputs);
@@ -346,8 +368,8 @@ ndb_cuda_lr_compute_gradients(const float *features,
 	int blocks;
 
 	if (features == NULL || labels == NULL || predictions == NULL
-		|| grad_weights == NULL || grad_bias == NULL
-		|| n_samples <= 0 || feature_dim <= 0)
+		|| grad_weights == NULL || grad_bias == NULL || n_samples <= 0
+		|| feature_dim <= 0)
 		return -1;
 
 	feature_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
@@ -375,22 +397,16 @@ ndb_cuda_lr_compute_gradients(const float *features,
 	if (status != cudaSuccess)
 		goto cleanup_grad_weights;
 
-	status = cudaMemcpy(d_features,
-		features,
-		feature_bytes,
-		cudaMemcpyHostToDevice);
+	status = cudaMemcpy(
+		d_features, features, feature_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto cleanup_grad_bias;
-	status = cudaMemcpy(d_labels,
-		labels,
-		label_bytes,
-		cudaMemcpyHostToDevice);
+	status = cudaMemcpy(
+		d_labels, labels, label_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto cleanup_grad_bias;
-	status = cudaMemcpy(d_predictions,
-		predictions,
-		pred_bytes,
-		cudaMemcpyHostToDevice);
+	status = cudaMemcpy(
+		d_predictions, predictions, pred_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto cleanup_grad_bias;
 
@@ -402,8 +418,7 @@ ndb_cuda_lr_compute_gradients(const float *features,
 		goto cleanup_grad_bias;
 
 	blocks = (n_samples + threads - 1) / threads;
-	ndb_cuda_lr_compute_gradients_kernel<<<blocks, threads>>>(
-		d_features,
+	ndb_cuda_lr_compute_gradients_kernel<<<blocks, threads>>>(d_features,
 		d_labels,
 		d_predictions,
 		n_samples,
@@ -439,4 +454,3 @@ cleanup_features:
 
 	return (status == cudaSuccess) ? 0 : -1;
 }
-

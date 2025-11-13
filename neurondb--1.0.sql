@@ -1845,20 +1845,13 @@ COMMENT ON TABLE neurondb.neurondb_prometheus_metrics IS 'Staging table for Prom
 
 -- LLM cache table
 CREATE TABLE IF NOT EXISTS neurondb.neurondb_llm_cache (
-    cache_key text PRIMARY KEY,
-    model_name text NOT NULL,
-    operation text NOT NULL,
-    request_hash text NOT NULL,
-    response_text text,
-    response_vector vector,
-    created_at timestamptz DEFAULT now(),
-    accessed_at timestamptz DEFAULT now(),
-    access_count bigint DEFAULT 1
+    key text PRIMARY KEY,
+    value jsonb NOT NULL,
+    created_at timestamptz DEFAULT now()
 );
 COMMENT ON TABLE neurondb.neurondb_llm_cache IS 'LLM response cache with automatic expiration';
 
-CREATE INDEX IF NOT EXISTS idx_llm_cache_model ON neurondb.neurondb_llm_cache(model_name, created_at);
-CREATE INDEX IF NOT EXISTS idx_llm_cache_accessed ON neurondb.neurondb_llm_cache(accessed_at);
+CREATE INDEX IF NOT EXISTS idx_llm_cache_created ON neurondb.neurondb_llm_cache(created_at);
 
 -- LLM job queue table
 CREATE TABLE IF NOT EXISTS neurondb.neurondb_llm_jobs (
@@ -2289,7 +2282,7 @@ CREATE OR REPLACE FUNCTION neurondb.llm_gpu_utilization() RETURNS TABLE(
     memory_utilization_pct real,
     temperature_c integer,
     power_w real,
-    timestamp timestamptz
+    "timestamp" timestamptz
 )
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
@@ -5276,9 +5269,9 @@ GRANT EXECUTE ON FUNCTION neurondb.fill_mask TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.text2text TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.zero_shot_classify TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.load_dataset TO PUBLIC;
-GRANT EXECUTE ON FUNCTION neurondb.tokenize TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.tokenize(text, text, integer) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.tokenize(text, integer) TO PUBLIC;
-GRANT EXECUTE ON FUNCTION neurondb.detokenize TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.detokenize(text, integer[]) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.detokenize(integer[]) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.distance TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.similarity TO PUBLIC;

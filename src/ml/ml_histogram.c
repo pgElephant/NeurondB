@@ -48,8 +48,10 @@ double_cmp(const void *a, const void *b)
 {
 	double da = *(const double *)a;
 	double db = *(const double *)b;
-	if (da < db) return -1;
-	if (da > db) return 1;
+	if (da < db)
+		return -1;
+	if (da > db)
+		return 1;
 	return 0;
 }
 
@@ -126,34 +128,39 @@ similarity_histogram(PG_FUNCTION_ARGS)
 
 	if (num_samples < 10 || num_samples > 100000)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("num_samples must be between 10 and 100000")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_samples must be between 10 and "
+				       "100000")));
 
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
 
-	elog(DEBUG1, "neurondb: Computing similarity histogram (%d samples)", num_samples);
+	elog(DEBUG1,
+		"neurondb: Computing similarity histogram (%d samples)",
+		num_samples);
 
 	/* Fetch vectors */
-	vectors = neurondb_fetch_vectors_from_table(tbl_str, vec_col_str, &nvec, &dim);
+	vectors = neurondb_fetch_vectors_from_table(
+		tbl_str, vec_col_str, &nvec, &dim);
 	if (nvec < 2)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Need at least 2 vectors")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("Need at least 2 vectors")));
 
 	/* Sample random pairs and compute distances */
-	distances = (double *) palloc(sizeof(double) * num_samples);
-	
+	distances = (double *)palloc(sizeof(double) * num_samples);
+
 	for (i = 0; i < num_samples; i++)
 	{
 		int idx1 = rand() % nvec;
 		int idx2 = rand() % nvec;
-		
+
 		/* Ensure different vectors */
 		while (idx2 == idx1)
 			idx2 = rand() % nvec;
-		
-		distances[i] = euclidean_distance(vectors[idx1], vectors[idx2], dim);
+
+		distances[i] =
+			euclidean_distance(vectors[idx1], vectors[idx2], dim);
 	}
 
 	/* Sort distances for percentile calculation */
@@ -182,14 +189,21 @@ similarity_histogram(PG_FUNCTION_ARGS)
 	p95 = distances[(int)(num_samples * 0.95)];
 	p99 = distances[(int)(num_samples * 0.99)];
 
-	elog(DEBUG1, "neurondb: Distance stats: min=%.4f, max=%.4f, mean=%.4f, p50=%.4f",
-		 min_dist, max_dist, mean_dist, p50);
+	elog(DEBUG1,
+		"neurondb: Distance stats: min=%.4f, max=%.4f, mean=%.4f, "
+		"p50=%.4f",
+		min_dist,
+		max_dist,
+		mean_dist,
+		p50);
 
 	/* Build result tuple */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("Function returning record called in context that cannot accept type record")));
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("Function returning record called in "
+				       "context that cannot accept type "
+				       "record")));
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
@@ -201,8 +215,8 @@ similarity_histogram(PG_FUNCTION_ARGS)
 	values[5] = Float8GetDatum(p90);
 	values[6] = Float8GetDatum(p95);
 	values[7] = Float8GetDatum(p99);
-	values[8] = Int32GetDatum(num_samples);  /* Return sample count */
-	
+	values[8] = Int32GetDatum(num_samples); /* Return sample count */
+
 	for (i = 0; i < 9; i++)
 		nulls[i] = false;
 
@@ -218,4 +232,3 @@ similarity_histogram(PG_FUNCTION_ARGS)
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(tuple));
 }
-

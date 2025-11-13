@@ -44,12 +44,10 @@ extern double rf_split_gini(const int *left_counts,
 	int *right_majority_out);
 
 /* Tree utilities */
-extern void rf_tree_iterate_nodes(const GTree *tree,
-	rf_node_iter_fn iter,
-	void *arg);
+extern void
+rf_tree_iterate_nodes(const GTree *tree, rf_node_iter_fn iter, void *arg);
 
 /* Metrics JSON building */
 extern Jsonb *rf_build_metrics_json(const RFMetricsSpec *spec);
 
 #endif /* ML_RANDOM_FOREST_SHARED_H */
-

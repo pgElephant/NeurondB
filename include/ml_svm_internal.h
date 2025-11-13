@@ -31,4 +31,3 @@ typedef struct SVMModel
 } SVMModel;
 
 #endif /* ML_SVM_INTERNAL_H */
-

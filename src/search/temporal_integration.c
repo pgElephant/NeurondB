@@ -27,19 +27,19 @@
 #include <math.h>
 
 /* Temporal scoring parameters */
-#define DEFAULT_DECAY_RATE		0.1		/* Per day */
-#define DEFAULT_RECENCY_WEIGHT	0.3		/* 0..1 */
+#define DEFAULT_DECAY_RATE 0.1 /* Per day */
+#define DEFAULT_RECENCY_WEIGHT 0.3 /* 0..1 */
 
 /*
  * Temporal scoring configuration
  */
 typedef struct TemporalConfig
 {
-	float4		decayRate;		/* Exponential decay rate */
-	float4		recencyWeight;	/* Weight for temporal component */
-	TimestampTz referenceTime;	/* Reference timestamp (usually now) */
-	Interval   *timeWindow;		/* Optional time window filter */
-	bool		enabled;
+	float4 decayRate; /* Exponential decay rate */
+	float4 recencyWeight; /* Weight for temporal component */
+	TimestampTz referenceTime; /* Reference timestamp (usually now) */
+	Interval *timeWindow; /* Optional time window filter */
+	bool enabled;
 } TemporalConfig;
 
 /*
@@ -51,15 +51,15 @@ typedef struct TemporalConfig
 static float4
 compute_time_decay(TimestampTz docTime, TimestampTz refTime, float4 decayRate)
 {
-	float8		age_seconds;
-	float8		age_days;
-	float4		decay;
+	float8 age_seconds;
+	float8 age_days;
+	float4 decay;
 
-	age_seconds = (float8) (refTime - docTime) / USECS_PER_SEC;
+	age_seconds = (float8)(refTime - docTime) / USECS_PER_SEC;
 	age_days = age_seconds / (24.0 * 3600.0);
 
 	/* Exponential decay */
-	decay = (float4) exp(-decayRate * age_days);
+	decay = (float4)exp(-decayRate * age_days);
 
 	return decay;
 }
@@ -70,12 +70,13 @@ compute_time_decay(TimestampTz docTime, TimestampTz refTime, float4 decayRate)
  * final_score = (1 - w) * vector_similarity + w * temporal_score
  */
 static float4
-temporal_compute_hybrid_score(float4 vectorDistance, TimestampTz docTime,
-							   TemporalConfig *config)
+temporal_compute_hybrid_score(float4 vectorDistance,
+	TimestampTz docTime,
+	TemporalConfig *config)
 {
-	float4		vectorScore;
-	float4		temporalScore;
-	float4		finalScore;
+	float4 vectorScore;
+	float4 temporalScore;
+	float4 finalScore;
 
 	if (!config->enabled)
 		return 1.0 / (1.0 + vectorDistance); /* Vector-only */
@@ -84,11 +85,12 @@ temporal_compute_hybrid_score(float4 vectorDistance, TimestampTz docTime,
 	vectorScore = 1.0 / (1.0 + vectorDistance);
 
 	/* Compute temporal score */
-	temporalScore = compute_time_decay(docTime, config->referenceTime, config->decayRate);
+	temporalScore = compute_time_decay(
+		docTime, config->referenceTime, config->decayRate);
 
 	/* Weighted combination */
-	finalScore = (1.0 - config->recencyWeight) * vectorScore + 
-				 config->recencyWeight * temporalScore;
+	finalScore = (1.0 - config->recencyWeight) * vectorScore
+		+ config->recencyWeight * temporalScore;
 
 	return finalScore;
 }
@@ -107,7 +109,8 @@ temporal_in_window(TimestampTz docTime, TemporalConfig *config)
 	/* Compute window start time */
 	/* windowStart = config->referenceTime - config->timeWindow; */
 	/* TODO: Proper interval subtraction */
-	windowStart = config->referenceTime - (7 * 24 * 3600 * USECS_PER_SEC); /* 7 days */
+	windowStart = config->referenceTime
+		- (7 * 24 * 3600 * USECS_PER_SEC); /* 7 days */
 
 	return docTime >= windowStart;
 }
@@ -117,14 +120,16 @@ temporal_in_window(TimestampTz docTime, TemporalConfig *config)
  *
  * Takes a set of results and re-orders them by combined vector+temporal score.
  */
-static void pg_attribute_unused()
-temporal_rerank_results(ItemPointer *items, float4 *distances, 
-						TimestampTz *timestamps, int count,
-						TemporalConfig *config)
+static void
+pg_attribute_unused() temporal_rerank_results(ItemPointer *items,
+	float4 *distances,
+	TimestampTz *timestamps,
+	int count,
+	TemporalConfig *config)
 {
-	float4	   *scores;
-	int			i, j;
-	float4		temp_score, temp_dist;
+	float4 *scores;
+	int i, j;
+	float4 temp_score, temp_dist;
 	ItemPointer temp_item;
 	TimestampTz temp_ts;
 
@@ -132,11 +137,12 @@ temporal_rerank_results(ItemPointer *items, float4 *distances,
 		return;
 
 	/* Compute hybrid scores */
-	scores = (float4 *) palloc(count * sizeof(float4));
-	
+	scores = (float4 *)palloc(count * sizeof(float4));
+
 	for (i = 0; i < count; i++)
 	{
-		scores[i] = temporal_compute_hybrid_score(distances[i], timestamps[i], config);
+		scores[i] = temporal_compute_hybrid_score(
+			distances[i], timestamps[i], config);
 	}
 
 	/* Simple bubble sort (for small result sets) */
@@ -180,12 +186,12 @@ PG_FUNCTION_INFO_V1(neurondb_temporal_score);
 Datum
 neurondb_temporal_score(PG_FUNCTION_ARGS)
 {
-	float4		vectorDistance = PG_GETARG_FLOAT4(0);
+	float4 vectorDistance = PG_GETARG_FLOAT4(0);
 	TimestampTz docTime = PG_GETARG_TIMESTAMPTZ(1);
-	float4		decayRate = PG_GETARG_FLOAT4(2);
-	float4		recencyWeight = PG_GETARG_FLOAT4(3);
+	float4 decayRate = PG_GETARG_FLOAT4(2);
+	float4 recencyWeight = PG_GETARG_FLOAT4(3);
 	TemporalConfig config;
-	float4		score;
+	float4 score;
 
 	config.decayRate = decayRate;
 	config.recencyWeight = recencyWeight;
@@ -207,9 +213,9 @@ Datum
 neurondb_temporal_filter(PG_FUNCTION_ARGS)
 {
 	TimestampTz docTime = PG_GETARG_TIMESTAMPTZ(0);
-	Interval   *window = PG_GETARG_INTERVAL_P(1);
+	Interval *window = PG_GETARG_INTERVAL_P(1);
 	TemporalConfig config;
-	bool		inWindow;
+	bool inWindow;
 
 	config.referenceTime = GetCurrentTimestamp();
 	config.timeWindow = window;
@@ -228,7 +234,7 @@ temporal_create_config(float4 decayRate, float4 recencyWeight)
 {
 	TemporalConfig *config;
 
-	config = (TemporalConfig *) palloc0(sizeof(TemporalConfig));
+	config = (TemporalConfig *)palloc0(sizeof(TemporalConfig));
 	config->decayRate = decayRate;
 	config->recencyWeight = recencyWeight;
 	config->referenceTime = GetCurrentTimestamp();
@@ -244,23 +250,25 @@ temporal_create_config(float4 decayRate, float4 recencyWeight)
  * This would be called from the HNSW search function to apply
  * temporal boosting to results.
  */
-static void pg_attribute_unused()
-temporal_integrate_hnsw_search(BlockNumber *results, float4 *distances,
-								int resultCount, float4 decayRate, 
-								float4 recencyWeight)
+static void
+pg_attribute_unused() temporal_integrate_hnsw_search(BlockNumber *results,
+	float4 *distances,
+	int resultCount,
+	float4 decayRate,
+	float4 recencyWeight)
 {
 	TimestampTz *timestamps;
 	TemporalConfig *config;
-	int			i;
+	int i;
 
-	(void) results;		/* Unused - would fetch from blocks */
-	(void) distances;	/* Used later for reranking */
+	(void)results; /* Unused - would fetch from blocks */
+	(void)distances; /* Used later for reranking */
 
 	if (resultCount == 0)
 		return;
 
 	/* Allocate timestamp array */
-	timestamps = (TimestampTz *) palloc(resultCount * sizeof(TimestampTz));
+	timestamps = (TimestampTz *)palloc(resultCount * sizeof(TimestampTz));
 
 	/* TODO: Fetch timestamps from heap tuples */
 	for (i = 0; i < resultCount; i++)
@@ -283,13 +291,14 @@ temporal_integrate_hnsw_search(BlockNumber *results, float4 *distances,
 /*
  * Helper: Extract timestamp from heap tuple
  */
-static TimestampTz pg_attribute_unused()
-temporal_get_tuple_timestamp(HeapTuple tuple, TupleDesc tupdesc, 
-							  const char *columnName)
+static TimestampTz
+pg_attribute_unused() temporal_get_tuple_timestamp(HeapTuple tuple,
+	TupleDesc tupdesc,
+	const char *columnName)
 {
-	bool		isnull;
-	Datum		datum;
-	int			attnum;
+	bool isnull;
+	Datum datum;
+	int attnum;
 
 	/* Find timestamp column */
 	attnum = SPI_fnumber(tupdesc, columnName);
@@ -302,4 +311,3 @@ temporal_get_tuple_timestamp(HeapTuple tuple, TupleDesc tupdesc,
 
 	return DatumGetTimestampTz(datum);
 }
-

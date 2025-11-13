@@ -41,11 +41,11 @@
  */
 typedef struct QuotaLimits
 {
-	int64		maxVectors;		/* Maximum vectors per tenant */
-	int64		maxStorageBytes; /* Maximum storage per tenant */
-	int64		maxIndexSize;	/* Maximum index size per tenant */
-	int			maxQPS;			/* Maximum queries per second */
-	bool		enforceHard;	/* Hard enforcement vs. warning */
+	int64 maxVectors; /* Maximum vectors per tenant */
+	int64 maxStorageBytes; /* Maximum storage per tenant */
+	int64 maxIndexSize; /* Maximum index size per tenant */
+	int maxQPS; /* Maximum queries per second */
+	bool enforceHard; /* Hard enforcement vs. warning */
 } QuotaLimits;
 
 /*
@@ -53,19 +53,19 @@ typedef struct QuotaLimits
  */
 typedef struct QuotaUsage
 {
-	char	   *tenantId;
-	int64		vectorCount;
-	int64		storageBytes;
-	int64		indexSize;
-	int			currentQPS;
+	char *tenantId;
+	int64 vectorCount;
+	int64 storageBytes;
+	int64 indexSize;
+	int currentQPS;
 	TimestampTz lastCheck;
 } QuotaUsage;
 
 /* GUCs for default quotas */
 static int64 default_max_vectors = 1000000;
 static int64 default_max_storage_mb = 10240; /* 10 GB */
-static int	default_max_qps = 1000;
-static bool	enforce_quotas = true;
+static int default_max_qps = 1000;
+static bool enforce_quotas = true;
 
 /*
  * Module initialization
@@ -74,46 +74,54 @@ void
 ndb_quota_init_guc(void)
 {
 	DefineCustomIntVariable("neurondb.default_max_vectors",
-							"Default maximum vectors per tenant (thousands)",
-							NULL,
-							(int *) &default_max_vectors,
-							1000000,
-							1000,
-							INT_MAX,
-							PGC_SIGHUP,
-							0,
-							NULL, NULL, NULL);
+		"Default maximum vectors per tenant (thousands)",
+		NULL,
+		(int *)&default_max_vectors,
+		1000000,
+		1000,
+		INT_MAX,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomIntVariable("neurondb.default_max_storage_mb",
-							"Default maximum storage (MB) per tenant",
-							NULL,
-							(int *) &default_max_storage_mb,
-							10240,
-							100,
-							INT_MAX,
-							PGC_SIGHUP,
-							0,
-							NULL, NULL, NULL);
+		"Default maximum storage (MB) per tenant",
+		NULL,
+		(int *)&default_max_storage_mb,
+		10240,
+		100,
+		INT_MAX,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomIntVariable("neurondb.default_max_qps",
-							"Default maximum queries per second per tenant",
-							NULL,
-							&default_max_qps,
-							1000,
-							1,
-							INT_MAX,
-							PGC_SIGHUP,
-							0,
-							NULL, NULL, NULL);
+		"Default maximum queries per second per tenant",
+		NULL,
+		&default_max_qps,
+		1000,
+		1,
+		INT_MAX,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomBoolVariable("neurondb.enforce_quotas",
-							 "Enable hard quota enforcement",
-							 NULL,
-							 &enforce_quotas,
-							 true,
-							 PGC_SUSET,
-							 0,
-							 NULL, NULL, NULL);
+		"Enable hard quota enforcement",
+		NULL,
+		&enforce_quotas,
+		true,
+		PGC_SUSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 }
 
 /*
@@ -124,8 +132,8 @@ get_tenant_quota(const char *tenantId)
 {
 	QuotaLimits *limits;
 
-	limits = (QuotaLimits *) palloc0(sizeof(QuotaLimits));
-	
+	limits = (QuotaLimits *)palloc0(sizeof(QuotaLimits));
+
 	/* TODO: Query neurondb.tenant_quotas table */
 	/* For now, use defaults */
 	limits->maxVectors = default_max_vectors;
@@ -144,10 +152,10 @@ static QuotaUsage *
 get_tenant_usage(const char *tenantId, Oid indexOid)
 {
 	QuotaUsage *usage;
-	int			ret;
-	bool		isnull;
+	int ret;
+	bool isnull;
 
-	usage = (QuotaUsage *) palloc0(sizeof(QuotaUsage));
+	usage = (QuotaUsage *)palloc0(sizeof(QuotaUsage));
 	usage->tenantId = pstrdup(tenantId);
 	usage->lastCheck = GetCurrentTimestamp();
 
@@ -155,14 +163,18 @@ get_tenant_usage(const char *tenantId, Oid indexOid)
 	SPI_connect();
 
 	/* Get vector count */
-	ret = SPI_execute("SELECT count(*) FROM neurondb.tenant_usage WHERE tenant_id = $1",
-					  true, 0);
-	
+	ret = SPI_execute("SELECT count(*) FROM neurondb.tenant_usage WHERE "
+			  "tenant_id = $1",
+		true,
+		0);
+
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		usage->vectorCount = DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
-														  SPI_tuptable->tupdesc,
-														  1, &isnull));
+		usage->vectorCount =
+			DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
+				SPI_tuptable->tupdesc,
+				1,
+				&isnull));
 	}
 
 	/* TODO: Get storage size from pg_class */
@@ -177,12 +189,14 @@ get_tenant_usage(const char *tenantId, Oid indexOid)
  * Check if operation would exceed quota
  */
 bool
-ndb_quota_check(const char *tenantId, Oid indexOid, int64 additionalVectors,
-				int64 additionalBytes)
+ndb_quota_check(const char *tenantId,
+	Oid indexOid,
+	int64 additionalVectors,
+	int64 additionalBytes)
 {
 	QuotaLimits *limits;
 	QuotaUsage *usage;
-	bool		allowed = true;
+	bool allowed = true;
 
 	if (!enforce_quotas)
 		return true;
@@ -199,21 +213,26 @@ ndb_quota_check(const char *tenantId, Oid indexOid, int64 additionalVectors,
 		if (limits->enforceHard)
 		{
 			ereport(ERROR,
-					(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-					 errmsg("neurondb: quota exceeded for tenant '%s'", tenantId),
-					 errdetail("Vector count %lld + %lld would exceed limit %lld",
-							   (long long) usage->vectorCount,
-							   (long long) additionalVectors,
-							   (long long) limits->maxVectors),
-					 errhint("Contact administrator to increase quota or delete old vectors")));
-		}
-		else
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+					errmsg("neurondb: quota exceeded for "
+					       "tenant '%s'",
+						tenantId),
+					errdetail("Vector count %lld + %lld "
+						  "would exceed limit %lld",
+						(long long)usage->vectorCount,
+						(long long)additionalVectors,
+						(long long)limits->maxVectors),
+					errhint("Contact administrator to "
+						"increase quota or delete old "
+						"vectors")));
+		} else
 		{
 			ereport(WARNING,
-					(errmsg("neurondb: tenant '%s' approaching vector quota (%lld/%lld)",
-							tenantId,
-							(long long) usage->vectorCount,
-							(long long) limits->maxVectors)));
+				(errmsg("neurondb: tenant '%s' approaching "
+					"vector quota (%lld/%lld)",
+					tenantId,
+					(long long)usage->vectorCount,
+					(long long)limits->maxVectors)));
 		}
 		allowed = false;
 	}
@@ -224,12 +243,16 @@ ndb_quota_check(const char *tenantId, Oid indexOid, int64 additionalVectors,
 		if (limits->enforceHard)
 		{
 			ereport(ERROR,
-					(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-					 errmsg("neurondb: storage quota exceeded for tenant '%s'", tenantId),
-					 errdetail("Storage %lld + %lld bytes would exceed limit %lld",
-							   (long long) usage->storageBytes,
-							   (long long) additionalBytes,
-							   (long long) limits->maxStorageBytes)));
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+					errmsg("neurondb: storage quota "
+					       "exceeded for tenant '%s'",
+						tenantId),
+					errdetail("Storage %lld + %lld bytes "
+						  "would exceed limit %lld",
+						(long long)usage->storageBytes,
+						(long long)additionalBytes,
+						(long long)limits
+							->maxStorageBytes)));
 		}
 		allowed = false;
 	}
@@ -246,10 +269,12 @@ ndb_quota_check(const char *tenantId, Oid indexOid, int64 additionalVectors,
  * Called from index insert functions before writing.
  */
 void
-ndb_quota_enforce_insert(Relation index, const char *tenantId,
-						 int64 vectorCount, int64 estimatedBytes)
+ndb_quota_enforce_insert(Relation index,
+	const char *tenantId,
+	int64 vectorCount,
+	int64 estimatedBytes)
 {
-	Oid			indexOid = RelationGetRelid(index);
+	Oid indexOid = RelationGetRelid(index);
 
 	if (!ndb_quota_check(tenantId, indexOid, vectorCount, estimatedBytes))
 	{
@@ -264,8 +289,10 @@ ndb_quota_enforce_insert(Relation index, const char *tenantId,
  * Update usage statistics
  */
 void
-ndb_quota_update_usage(const char *tenantId, Oid indexOid,
-					   int64 vectorsDelta, int64 bytesDelta)
+ndb_quota_update_usage(const char *tenantId,
+	Oid indexOid,
+	int64 vectorsDelta,
+	int64 bytesDelta)
 {
 	StringInfoData query;
 
@@ -276,17 +303,21 @@ ndb_quota_update_usage(const char *tenantId, Oid indexOid,
 
 	/* Upsert usage record */
 	appendStringInfo(&query,
-					 "INSERT INTO neurondb.tenant_usage "
-					 "(tenant_id, index_oid, vector_count, storage_bytes, last_updated) "
-					 "VALUES ('%s', %u, %lld, %lld, now()) "
-					 "ON CONFLICT (tenant_id, index_oid) "
-					 "DO UPDATE SET "
-					 "vector_count = neurondb.tenant_usage.vector_count + %lld, "
-					 "storage_bytes = neurondb.tenant_usage.storage_bytes + %lld, "
-					 "last_updated = now()",
-					 tenantId, indexOid,
-					 (long long) vectorsDelta, (long long) bytesDelta,
-					 (long long) vectorsDelta, (long long) bytesDelta);
+		"INSERT INTO neurondb.tenant_usage "
+		"(tenant_id, index_oid, vector_count, storage_bytes, "
+		"last_updated) "
+		"VALUES ('%s', %u, %lld, %lld, now()) "
+		"ON CONFLICT (tenant_id, index_oid) "
+		"DO UPDATE SET "
+		"vector_count = neurondb.tenant_usage.vector_count + %lld, "
+		"storage_bytes = neurondb.tenant_usage.storage_bytes + %lld, "
+		"last_updated = now()",
+		tenantId,
+		indexOid,
+		(long long)vectorsDelta,
+		(long long)bytesDelta,
+		(long long)vectorsDelta,
+		(long long)bytesDelta);
 
 	SPI_connect();
 	SPI_execute(query.data, false, 0);
@@ -303,11 +334,11 @@ PG_FUNCTION_INFO_V1(neurondb_check_quota);
 Datum
 neurondb_check_quota(PG_FUNCTION_ARGS)
 {
-	text	   *tenant_id_text = PG_GETARG_TEXT_PP(0);
-	Oid			index_oid = PG_GETARG_OID(1);
-	int64		additional_vectors = PG_GETARG_INT64(2);
-	char	   *tenant_id = text_to_cstring(tenant_id_text);
-	bool		allowed;
+	text *tenant_id_text = PG_GETARG_TEXT_PP(0);
+	Oid index_oid = PG_GETARG_OID(1);
+	int64 additional_vectors = PG_GETARG_INT64(2);
+	char *tenant_id = text_to_cstring(tenant_id_text);
+	bool allowed;
 
 	allowed = ndb_quota_check(tenant_id, index_oid, additional_vectors, 0);
 
@@ -322,23 +353,25 @@ PG_FUNCTION_INFO_V1(neurondb_get_quota_usage);
 Datum
 neurondb_get_quota_usage(PG_FUNCTION_ARGS)
 {
-	text	   *tenant_id_text = PG_GETARG_TEXT_PP(0);
-	Oid			index_oid = PG_GETARG_OID(1);
-	char	   *tenant_id = text_to_cstring(tenant_id_text);
+	text *tenant_id_text = PG_GETARG_TEXT_PP(0);
+	Oid index_oid = PG_GETARG_OID(1);
+	char *tenant_id = text_to_cstring(tenant_id_text);
 	QuotaUsage *usage;
 	QuotaLimits *limits;
-	TupleDesc	tupdesc;
-	Datum		values[6];
-	bool		nulls[6];
-	HeapTuple	tuple;
+	TupleDesc tupdesc;
+	Datum values[6];
+	bool nulls[6];
+	HeapTuple tuple;
 
 	usage = get_tenant_usage(tenant_id, index_oid);
 	limits = get_tenant_quota(tenant_id);
 
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("function returning record called in context that cannot accept type record")));
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("function returning record called in "
+				       "context that cannot accept type "
+				       "record")));
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
@@ -364,15 +397,16 @@ PG_FUNCTION_INFO_V1(neurondb_reset_quota);
 Datum
 neurondb_reset_quota(PG_FUNCTION_ARGS)
 {
-	text	   *tenant_id_text = PG_GETARG_TEXT_PP(0);
-	char	   *tenant_id = text_to_cstring(tenant_id_text);
+	text *tenant_id_text = PG_GETARG_TEXT_PP(0);
+	char *tenant_id = text_to_cstring(tenant_id_text);
 
 	SPI_connect();
-	SPI_execute("DELETE FROM neurondb.tenant_usage WHERE tenant_id = $1", false, 0);
+	SPI_execute("DELETE FROM neurondb.tenant_usage WHERE tenant_id = $1",
+		false,
+		0);
 	SPI_finish();
 
 	elog(NOTICE, "neurondb: Reset quota for tenant '%s'", tenant_id);
 
 	PG_RETURN_VOID();
 }
-

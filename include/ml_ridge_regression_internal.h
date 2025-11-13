@@ -30,4 +30,3 @@ typedef struct RidgeModel
 } RidgeModel;
 
 #endif /* ML_RIDGE_REGRESSION_INTERNAL_H */
-

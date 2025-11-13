@@ -108,13 +108,13 @@ recall_at_k(PG_FUNCTION_ARGS)
 	/* Extract arrays */
 	n_retrieved = ARR_DIMS(retrieved_array)[0];
 	n_relevant = ARR_DIMS(relevant_array)[0];
-	retrieved_ids = (int32 *) ARR_DATA_PTR(retrieved_array);
-	relevant_ids = (int32 *) ARR_DATA_PTR(relevant_array);
+	retrieved_ids = (int32 *)ARR_DATA_PTR(retrieved_array);
+	relevant_ids = (int32 *)ARR_DATA_PTR(relevant_array);
 
 	if (n_relevant == 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("relevant_ids cannot be empty")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("relevant_ids cannot be empty")));
 
 	if (k < 0 || k > n_retrieved)
 		k = n_retrieved;
@@ -134,9 +134,13 @@ recall_at_k(PG_FUNCTION_ARGS)
 	}
 
 	recall = (double)found_count / n_relevant;
-	
-	elog(DEBUG2, "neurondb: Recall@%d = %.4f (found %d of %d)",
-		 k, recall, found_count, n_relevant);
+
+	elog(DEBUG2,
+		"neurondb: Recall@%d = %.4f (found %d of %d)",
+		k,
+		recall,
+		found_count,
+		n_relevant);
 
 	PG_RETURN_FLOAT8(recall);
 }
@@ -168,13 +172,13 @@ precision_at_k(PG_FUNCTION_ARGS)
 
 	n_retrieved = ARR_DIMS(retrieved_array)[0];
 	n_relevant = ARR_DIMS(relevant_array)[0];
-	retrieved_ids = (int32 *) ARR_DATA_PTR(retrieved_array);
-	relevant_ids = (int32 *) ARR_DATA_PTR(relevant_array);
+	retrieved_ids = (int32 *)ARR_DATA_PTR(retrieved_array);
+	relevant_ids = (int32 *)ARR_DATA_PTR(relevant_array);
 
 	if (n_relevant == 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("relevant_ids cannot be empty")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("relevant_ids cannot be empty")));
 
 	if (k < 0 || k > n_retrieved)
 		k = n_retrieved;
@@ -227,13 +231,13 @@ f1_at_k(PG_FUNCTION_ARGS)
 
 	n_retrieved = ARR_DIMS(retrieved_array)[0];
 	n_relevant = ARR_DIMS(relevant_array)[0];
-	retrieved_ids = (int32 *) ARR_DATA_PTR(retrieved_array);
-	relevant_ids = (int32 *) ARR_DATA_PTR(relevant_array);
+	retrieved_ids = (int32 *)ARR_DATA_PTR(retrieved_array);
+	relevant_ids = (int32 *)ARR_DATA_PTR(relevant_array);
 
 	if (n_relevant == 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("relevant_ids cannot be empty")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("relevant_ids cannot be empty")));
 
 	if (k < 0 || k > n_retrieved)
 		k = n_retrieved;
@@ -309,8 +313,8 @@ mean_reciprocal_rank(PG_FUNCTION_ARGS)
 
 	if (ndim_retrieved != 2 || ndim_relevant != 2)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Both arrays must be 2-dimensional")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Both arrays must be 2-dimensional")));
 
 	dims_retrieved = ARR_DIMS(retrieved_array);
 	dims_relevant = ARR_DIMS(relevant_array);
@@ -320,11 +324,12 @@ mean_reciprocal_rank(PG_FUNCTION_ARGS)
 
 	if (dims_relevant[0] != n_queries)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Number of queries must match in both arrays")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Number of queries must match in both "
+				       "arrays")));
 
-	retrieved_data = (int32 *) ARR_DATA_PTR(retrieved_array);
-	relevant_data = (int32 *) ARR_DATA_PTR(relevant_array);
+	retrieved_data = (int32 *)ARR_DATA_PTR(retrieved_array);
+	relevant_data = (int32 *)ARR_DATA_PTR(relevant_array);
 
 	/* Compute reciprocal ranks */
 	sum_rr = 0.0;
@@ -339,9 +344,11 @@ mean_reciprocal_rank(PG_FUNCTION_ARGS)
 		{
 			for (j = 0; j < max_relevant_len; j++)
 			{
-				if (query_retrieved[i] == query_relevant[j] && query_relevant[j] > 0)
+				if (query_retrieved[i] == query_relevant[j]
+					&& query_relevant[j] > 0)
 				{
-					first_relevant_rank = i + 1;  /* 1-based rank */
+					first_relevant_rank =
+						i + 1; /* 1-based rank */
 					break;
 				}
 			}
@@ -357,4 +364,3 @@ mean_reciprocal_rank(PG_FUNCTION_ARGS)
 	mrr = sum_rr / n_queries;
 	PG_RETURN_FLOAT8(mrr);
 }
-

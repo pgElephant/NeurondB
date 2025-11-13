@@ -81,13 +81,10 @@ extern int ndb_cuda_lr_compute_gradients(const float *features,
 	double *grad_weights,
 	double *grad_bias);
 
-extern int ndb_cuda_lr_sigmoid(const double *inputs,
-	int n,
-	double *outputs);
+extern int ndb_cuda_lr_sigmoid(const double *inputs, int n, double *outputs);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* NEURONDB_CUDA_LR_H */
-

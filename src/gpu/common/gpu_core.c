@@ -61,23 +61,25 @@ static const float *rf_sort_feat_ptr = NULL;
 static int
 cmp_idx_by_feat(const void *a, const void *b)
 {
-	int ia = *(const int *) a;
-	int ib = *(const int *) b;
+	int ia = *(const int *)a;
+	int ib = *(const int *)b;
 	float va = rf_sort_feat_ptr[ia];
 	float vb = rf_sort_feat_ptr[ib];
-	if (va < vb) return -1;
-	if (va > vb) return 1;
+	if (va < vb)
+		return -1;
+	if (va > vb)
+		return 1;
 	return 0;
 }
 
 static double
 ndb_elapsed_ms(TimestampTz start, TimestampTz end)
 {
-	long		secs;
-	int			usecs;
+	long secs;
+	int usecs;
 
 	TimestampDifference(start, end, &secs, &usecs);
-	return ((double) secs * 1000.0) + ((double) usecs / 1000.0);
+	return ((double)secs * 1000.0) + ((double)usecs / 1000.0);
 }
 
 void
@@ -94,182 +96,210 @@ ndb_gpu_stats_record(bool used_gpu, double gpu_ms, double cpu_ms, bool fallback)
 	if (gpu_stats.queries_executed > 0)
 	{
 		gpu_stats.avg_latency_ms =
-			(gpu_stats.total_gpu_time_ms + gpu_stats.total_cpu_time_ms) /
-			(double) gpu_stats.queries_executed;
-	}
-	else
+			(gpu_stats.total_gpu_time_ms
+				+ gpu_stats.total_cpu_time_ms)
+			/ (double)gpu_stats.queries_executed;
+	} else
 		gpu_stats.avg_latency_ms = 0.0;
 }
 
 void
 neurondb_gpu_init_guc(void)
 {
-    DefineCustomBoolVariable("neurondb.gpu_enabled",
-        "Enable GPU acceleration for vector operations",
-        NULL,
-        &neurondb_gpu_enabled,
-        false,
-        PGC_USERSET,
-        0,
-        NULL, NULL, NULL);
+	DefineCustomBoolVariable("neurondb.gpu_enabled",
+		"Enable GPU acceleration for vector operations",
+		NULL,
+		&neurondb_gpu_enabled,
+		false,
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomIntVariable("neurondb.gpu_device",
-        "GPU device ID to use (0-based)",
-        NULL,
-        &neurondb_gpu_device,
-        0,
-        0, 16,
-        PGC_USERSET,
-        0,
-        NULL, NULL, NULL);
+	DefineCustomIntVariable("neurondb.gpu_device",
+		"GPU device ID to use (0-based)",
+		NULL,
+		&neurondb_gpu_device,
+		0,
+		0,
+		16,
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomIntVariable("neurondb.gpu_batch_size",
-        "Batch size for GPU operations",
-        NULL,
-        &neurondb_gpu_batch_size,
-        8192,
-        64, 65536,
-        PGC_USERSET,
-        0,
-        NULL, NULL, NULL);
+	DefineCustomIntVariable("neurondb.gpu_batch_size",
+		"Batch size for GPU operations",
+		NULL,
+		&neurondb_gpu_batch_size,
+		8192,
+		64,
+		65536,
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomIntVariable("neurondb.gpu_streams",
-        "Number of CUDA/HIP streams for parallel operations",
-        NULL,
-        &neurondb_gpu_streams,
-        2,
-        1, 8,
-        PGC_USERSET,
-        0,
-        NULL, NULL, NULL);
+	DefineCustomIntVariable("neurondb.gpu_streams",
+		"Number of CUDA/HIP streams for parallel operations",
+		NULL,
+		&neurondb_gpu_streams,
+		2,
+		1,
+		8,
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomRealVariable("neurondb.gpu_memory_pool_mb",
-        "GPU memory pool size in MB",
-        NULL,
-        &neurondb_gpu_memory_pool_mb,
-        512.0,
-        64.0, 32768.0,
-        PGC_USERSET,
-        0,
-        NULL, NULL, NULL);
+	DefineCustomRealVariable("neurondb.gpu_memory_pool_mb",
+		"GPU memory pool size in MB",
+		NULL,
+		&neurondb_gpu_memory_pool_mb,
+		512.0,
+		64.0,
+		32768.0,
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomBoolVariable("neurondb.gpu_fail_open",
-        "Fallback to CPU on GPU errors (true = fail open)",
-        NULL,
-        &neurondb_gpu_fail_open,
-        true,
-        PGC_USERSET,
-        0,
-        NULL, NULL, NULL);
+	DefineCustomBoolVariable("neurondb.gpu_fail_open",
+		"Fallback to CPU on GPU errors (true = fail open)",
+		NULL,
+		&neurondb_gpu_fail_open,
+		true,
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomStringVariable("neurondb.gpu_kernels",
-        "List of GPU-accelerated kernels (comma-separated: l2,cosine,ip)",
-        NULL,
-        &neurondb_gpu_kernels,
-        "l2,cosine,ip,rf_split,rf_predict",
-        PGC_USERSET,
-        0,
-        NULL, NULL, NULL);
+	DefineCustomStringVariable("neurondb.gpu_kernels",
+		"List of GPU-accelerated kernels (comma-separated: "
+		"l2,cosine,ip)",
+		NULL,
+		&neurondb_gpu_kernels,
+		"l2,cosine,ip,rf_split,rf_predict",
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomStringVariable("neurondb.gpu_backend",
-        "GPU backend: 'cuda' (NVIDIA), 'rocm' (AMD), 'metal' (Apple), 'auto' (detect), 'cpu' (disable)",
-        NULL,
-        &neurondb_gpu_backend,
-        "auto",
-        PGC_USERSET,
-        0,
-        NULL, NULL, NULL);
+	DefineCustomStringVariable("neurondb.gpu_backend",
+		"GPU backend: 'cuda' (NVIDIA), 'rocm' (AMD), 'metal' (Apple), "
+		"'auto' (detect), 'cpu' (disable)",
+		NULL,
+		&neurondb_gpu_backend,
+		"auto",
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomIntVariable("neurondb.gpu_timeout_ms",
-        "GPU kernel execution timeout in milliseconds",
-        NULL,
-        &neurondb_gpu_timeout_ms,
-        30000,
-        1000, 300000,
-        PGC_USERSET,
-        0,
-        NULL, NULL, NULL);
+	DefineCustomIntVariable("neurondb.gpu_timeout_ms",
+		"GPU kernel execution timeout in milliseconds",
+		NULL,
+		&neurondb_gpu_timeout_ms,
+		30000,
+		1000,
+		300000,
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 }
 
 bool
 ndb_gpu_kernel_enabled(const char *kernel_name)
 {
-    const char *k;
-    size_t nlen;
+	const char *k;
+	size_t nlen;
 
-    if (!neurondb_gpu_kernels || strlen(neurondb_gpu_kernels) == 0)
-        return true;
-    
-    /* Check for kernel name, allow comma boundary or start/end */
-    k = neurondb_gpu_kernels;
-    nlen = strlen(kernel_name);
-    while (*k) {
-        /* skip whitespace and commas */
-        while (*k == ',' || *k == ' ') k++;
-        if (strncmp(k, kernel_name, nlen) == 0 &&
-            (k[nlen] == 0 || k[nlen] == ',' || k[nlen] == ' '))
-        {
-            return true;
-        }
-        /* skip to next */
-        while (*k && *k != ',') k++;
-        if (*k == ',') k++;
-    }
-    return false;
+	if (!neurondb_gpu_kernels || strlen(neurondb_gpu_kernels) == 0)
+		return true;
+
+	/* Check for kernel name, allow comma boundary or start/end */
+	k = neurondb_gpu_kernels;
+	nlen = strlen(kernel_name);
+	while (*k)
+	{
+		/* skip whitespace and commas */
+		while (*k == ',' || *k == ' ')
+			k++;
+		if (strncmp(k, kernel_name, nlen) == 0
+			&& (k[nlen] == 0 || k[nlen] == ',' || k[nlen] == ' '))
+		{
+			return true;
+		}
+		/* skip to next */
+		while (*k && *k != ',')
+			k++;
+		if (*k == ',')
+			k++;
+	}
+	return false;
 }
 
 int
 ndb_gpu_runtime_init(int *device_id)
 {
-    const char *requested = neurondb_gpu_backend;
-    const ndb_gpu_backend *backend;
+	const char *requested = neurondb_gpu_backend;
+	const ndb_gpu_backend *backend;
 
-    if (device_id)
-        *device_id = 0;
+	if (device_id)
+		*device_id = 0;
 
-    if (requested && pg_strcasecmp(requested, "cpu") == 0)
-        return -1;
+	if (requested && pg_strcasecmp(requested, "cpu") == 0)
+		return -1;
 
-    backend = ndb_gpu_select_backend(requested);
-    if (backend == NULL)
-        return -1;
+	backend = ndb_gpu_select_backend(requested);
+	if (backend == NULL)
+		return -1;
 
-    if (ndb_gpu_set_active_backend(backend) != 0)
-        return -1;
+	if (ndb_gpu_set_active_backend(backend) != 0)
+		return -1;
 
-    active_backend = ndb_gpu_get_active_backend();
-    if (active_backend == NULL)
-        return -1;
+	active_backend = ndb_gpu_get_active_backend();
+	if (active_backend == NULL)
+		return -1;
 
-    current_backend = (GPUBackend) active_backend->kind;
+	current_backend = (GPUBackend)active_backend->kind;
 
-    if (active_backend->set_device != NULL)
-    {
-        int rc = active_backend->set_device(neurondb_gpu_device);
-        if (rc != 0)
-            return -1;
-        active_device_id = neurondb_gpu_device;
-    }
-    else
-    {
-        active_device_id = 0;
-    }
+	if (active_backend->set_device != NULL)
+	{
+		int rc = active_backend->set_device(neurondb_gpu_device);
+		if (rc != 0)
+			return -1;
+		active_device_id = neurondb_gpu_device;
+	} else
+	{
+		active_device_id = 0;
+	}
 
-    if (device_id)
-        *device_id = active_device_id;
+	if (device_id)
+		*device_id = active_device_id;
 
-    return 0;
+	return 0;
 }
 
 void
 ndb_gpu_mem_pool_init(int pool_size_mb)
 {
-    (void) pool_size_mb;
+	(void)pool_size_mb;
 
-    if (!active_backend)
-        return;
+	if (!active_backend)
+		return;
 
-    /* Memory pooling will be wired up in a later revision once device
+	/* Memory pooling will be wired up in a later revision once device
      * allocation helpers are in place. For now, rely on per-operation
      * allocations. */
 }
@@ -277,176 +307,187 @@ ndb_gpu_mem_pool_init(int pool_size_mb)
 void
 ndb_gpu_streams_init(int num_streams)
 {
-    (void) num_streams;
+	(void)num_streams;
 
-    if (!active_backend)
-        return;
+	if (!active_backend)
+		return;
 
-    /* Stream creation will be delegated to backend stream helpers when wired. */
+	/* Stream creation will be delegated to backend stream helpers when wired. */
 }
 
 void
 ndb_gpu_init_if_needed(void)
 {
-    int device_id = 0;
-    int rc;
+	int device_id = 0;
+	int rc;
 
-    if (gpu_ready || gpu_disabled)
-        return;
-    if (!neurondb_gpu_enabled)
-        return;
+	if (gpu_ready || gpu_disabled)
+		return;
+	if (!neurondb_gpu_enabled)
+		return;
 
-    rc = ndb_gpu_runtime_init(&device_id);
-    if (rc != 0)
-    {
-        gpu_ready = false;
-        gpu_disabled = true;
-        current_backend = GPU_BACKEND_NONE;
-        active_backend = NULL;
-        if (!neurondb_gpu_fail_open)
-        {
-            ereport(ERROR,
-                    (errcode(ERRCODE_SYSTEM_ERROR),
-                     errmsg("neurondb: GPU initialization failed")));
-        }
-        ereport(WARNING,
-                (errmsg("neurondb: GPU init failed. Using CPU fallback")));
-        return;
-    }
+	rc = ndb_gpu_runtime_init(&device_id);
+	if (rc != 0)
+	{
+		gpu_ready = false;
+		gpu_disabled = true;
+		current_backend = GPU_BACKEND_NONE;
+		active_backend = NULL;
+		if (!neurondb_gpu_fail_open)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+					errmsg("neurondb: GPU initialization "
+					       "failed")));
+		}
+		ereport(WARNING,
+			(errmsg("neurondb: GPU init failed. Using CPU "
+				"fallback")));
+		return;
+	}
 
-    active_device_id = device_id;
-    gpu_ready = true;
-    gpu_disabled = false;
+	active_device_id = device_id;
+	gpu_ready = true;
+	gpu_disabled = false;
 
-    ndb_gpu_mem_pool_init((int) neurondb_gpu_memory_pool_mb);
-    ndb_gpu_streams_init(neurondb_gpu_streams);
+	ndb_gpu_mem_pool_init((int)neurondb_gpu_memory_pool_mb);
+	ndb_gpu_streams_init(neurondb_gpu_streams);
 
-    if (active_backend)
-    {
-        elog(LOG, "neurondb: GPU backend %s (%s) initialized on device %d",
-             active_backend->name ? active_backend->name : "unknown",
-             active_backend->provider ? active_backend->provider : "unknown",
-             active_device_id);
-    }
-    else
-    {
-        elog(LOG, "neurondb: GPU initialized successfully on device %d",
-             active_device_id);
-    }
+	if (active_backend)
+	{
+		elog(LOG,
+			"neurondb: GPU backend %s (%s) initialized on device "
+			"%d",
+			active_backend->name ? active_backend->name : "unknown",
+			active_backend->provider ? active_backend->provider
+						 : "unknown",
+			active_device_id);
+	} else
+	{
+		elog(LOG,
+			"neurondb: GPU initialized successfully on device %d",
+			active_device_id);
+	}
 }
 
 void
 neurondb_gpu_init(void)
 {
-    ndb_gpu_init_if_needed();
+	ndb_gpu_init_if_needed();
 }
 
 void
 neurondb_gpu_shutdown(void)
 {
-    if (!gpu_ready)
-        return;
+	if (!gpu_ready)
+		return;
 
-    ndb_gpu_set_active_backend(NULL);
-    active_backend = NULL;
-    gpu_ready = false;
-    gpu_disabled = false;
-    current_backend = GPU_BACKEND_NONE;
-    active_device_id = 0;
+	ndb_gpu_set_active_backend(NULL);
+	active_backend = NULL;
+	gpu_ready = false;
+	gpu_disabled = false;
+	current_backend = GPU_BACKEND_NONE;
+	active_device_id = 0;
 	ndb_gpu_clear_model_registry();
 
-    elog(DEBUG1, "neurondb: GPU backend shut down");
+	elog(DEBUG1, "neurondb: GPU backend shut down");
 }
 
 bool
 neurondb_gpu_is_available(void)
 {
-    return gpu_ready && neurondb_gpu_enabled && !gpu_disabled;
+	return gpu_ready && neurondb_gpu_enabled && !gpu_disabled;
 }
 
 GPUBackend
 neurondb_gpu_get_backend(void)
 {
-    return current_backend;
+	return current_backend;
 }
 
 int
 neurondb_gpu_get_device_count(void)
 {
-    if (!active_backend || active_backend->device_count == NULL)
-        return 0;
+	if (!active_backend || active_backend->device_count == NULL)
+		return 0;
 
-    return active_backend->device_count();
+	return active_backend->device_count();
 }
 
 GPUDeviceInfo *
 neurondb_gpu_get_device_info(int device_id)
 {
-    GPUDeviceInfo *info;
-    NDBGpuDeviceInfo native;
+	GPUDeviceInfo *info;
+	NDBGpuDeviceInfo native;
 
-    info = (GPUDeviceInfo *) palloc0(sizeof(GPUDeviceInfo));
-    info->device_id = device_id;
-    info->is_available = false;
+	info = (GPUDeviceInfo *)palloc0(sizeof(GPUDeviceInfo));
+	info->device_id = device_id;
+	info->is_available = false;
 
-    if (!active_backend || active_backend->device_info == NULL)
-        return info;
+	if (!active_backend || active_backend->device_info == NULL)
+		return info;
 
-    if (active_backend->device_info(device_id, &native) != 0)
-        return info;
+	if (active_backend->device_info(device_id, &native) != 0)
+		return info;
 
-    info->device_id = native.device_id;
-    strncpy(info->name, native.name, sizeof(info->name) - 1);
-    info->name[sizeof(info->name) - 1] = '\0';
-    info->total_memory_mb = (int64) (native.total_memory_bytes / (1024 * 1024));
-    info->free_memory_mb = (int64) (native.free_memory_bytes / (1024 * 1024));
-    info->compute_major = native.compute_major;
-    info->compute_minor = native.compute_minor;
-    info->is_available = native.is_available;
+	info->device_id = native.device_id;
+	strncpy(info->name, native.name, sizeof(info->name) - 1);
+	info->name[sizeof(info->name) - 1] = '\0';
+	info->total_memory_mb =
+		(int64)(native.total_memory_bytes / (1024 * 1024));
+	info->free_memory_mb =
+		(int64)(native.free_memory_bytes / (1024 * 1024));
+	info->compute_major = native.compute_major;
+	info->compute_minor = native.compute_minor;
+	info->is_available = native.is_available;
 
-    return info;
+	return info;
 }
 
 void
 neurondb_gpu_set_device(int device_id)
 {
-    if (!active_backend || active_backend->set_device == NULL)
-    {
-        elog(WARNING, "neurondb: no active GPU backend to set device");
-        return;
-    }
+	if (!active_backend || active_backend->set_device == NULL)
+	{
+		elog(WARNING, "neurondb: no active GPU backend to set device");
+		return;
+	}
 
-    if (active_backend->set_device(device_id) != 0)
-    {
-        elog(WARNING, "neurondb: failed to switch GPU device to %d", device_id);
-        return;
-    }
+	if (active_backend->set_device(device_id) != 0)
+	{
+		elog(WARNING,
+			"neurondb: failed to switch GPU device to %d",
+			device_id);
+		return;
+	}
 
-    neurondb_gpu_device = device_id;
-    active_device_id = device_id;
-    elog(LOG, "neurondb: switched GPU backend %s to device %d",
-         active_backend->name ? active_backend->name : "unknown",
-         device_id);
+	neurondb_gpu_device = device_id;
+	active_device_id = device_id;
+	elog(LOG,
+		"neurondb: switched GPU backend %s to device %d",
+		active_backend->name ? active_backend->name : "unknown",
+		device_id);
 }
 
 GPUStats *
 neurondb_gpu_get_stats(void)
 {
-    GPUStats *stats = (GPUStats *) palloc(sizeof(GPUStats));
-    memcpy(stats, &gpu_stats, sizeof(GPUStats));
-    if (stats->queries_executed > 0)
-        stats->avg_latency_ms = stats->total_gpu_time_ms / stats->queries_executed;
-    else
-        stats->avg_latency_ms = 0.0;
-    return stats;
+	GPUStats *stats = (GPUStats *)palloc(sizeof(GPUStats));
+	memcpy(stats, &gpu_stats, sizeof(GPUStats));
+	if (stats->queries_executed > 0)
+		stats->avg_latency_ms =
+			stats->total_gpu_time_ms / stats->queries_executed;
+	else
+		stats->avg_latency_ms = 0.0;
+	return stats;
 }
 
 void
 neurondb_gpu_reset_stats(void)
 {
-    memset(&gpu_stats, 0, sizeof(GPUStats));
-    gpu_stats.last_reset = GetCurrentTimestamp();
-    elog(LOG, "neurondb: GPU statistics reset");
+	memset(&gpu_stats, 0, sizeof(GPUStats));
+	gpu_stats.last_reset = GetCurrentTimestamp();
+	elog(LOG, "neurondb: GPU statistics reset");
 }
 
 /*
@@ -455,126 +496,139 @@ neurondb_gpu_reset_stats(void)
  */
 bool
 neurondb_gpu_rf_predict(const void *rf_hdr,
-                        const void *trees,
-                        const void *nodes,
-                        int node_capacity,
-                        const float *x,
-                        int n_features,
-                        int *class_out,
-                        char **errstr)
+	const void *trees,
+	const void *nodes,
+	int node_capacity,
+	const float *x,
+	int n_features,
+	int *class_out,
+	char **errstr)
 {
-    bool used_gpu = false;
-    bool ok = false;
-    TimestampTz t0 = GetCurrentTimestamp();
-    TimestampTz t1;
-    if (errstr)
-        *errstr = NULL;
-    if (!neurondb_gpu_is_available())
-        goto out;
-    if (!ndb_gpu_kernel_enabled("rf_predict"))
-        goto out;
-    if (!rf_hdr || !trees || !nodes || !x || !class_out)
-        goto out;
-    if (n_features <= 0 || node_capacity <= 0)
-        goto out;
+	bool used_gpu = false;
+	bool ok = false;
+	TimestampTz t0 = GetCurrentTimestamp();
+	TimestampTz t1;
+	if (errstr)
+		*errstr = NULL;
+	if (!neurondb_gpu_is_available())
+		goto out;
+	if (!ndb_gpu_kernel_enabled("rf_predict"))
+		goto out;
+	if (!rf_hdr || !trees || !nodes || !x || !class_out)
+		goto out;
+	if (n_features <= 0 || node_capacity <= 0)
+		goto out;
 #ifdef NDB_GPU_METAL
-    extern bool neurondb_gpu_rf_predict_backend(const void *, const void *, const void *, int, const float *, int, int *, char **);
-    if (neurondb_gpu_rf_predict_backend)
-    {
-        ok = neurondb_gpu_rf_predict_backend(rf_hdr, trees, nodes, node_capacity, x, n_features, class_out, errstr);
-        used_gpu = ok;
-    }
+	extern bool neurondb_gpu_rf_predict_backend(const void *,
+		const void *,
+		const void *,
+		int,
+		const float *,
+		int,
+		int *,
+		char **);
+	if (neurondb_gpu_rf_predict_backend)
+	{
+		ok = neurondb_gpu_rf_predict_backend(rf_hdr,
+			trees,
+			nodes,
+			node_capacity,
+			x,
+			n_features,
+			class_out,
+			errstr);
+		used_gpu = ok;
+	}
 #endif
 out:
-    t1 = GetCurrentTimestamp();
+	t1 = GetCurrentTimestamp();
 	ndb_gpu_stats_record(used_gpu,
 		used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
 		used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
 		!used_gpu);
-    return ok;
+	return ok;
 }
-
 
 PG_FUNCTION_INFO_V1(neurondb_gpu_enable);
 Datum
 neurondb_gpu_enable(PG_FUNCTION_ARGS)
 {
-    neurondb_gpu_enabled = true;
-    gpu_disabled = false;
-    ndb_gpu_init_if_needed();
+	neurondb_gpu_enabled = true;
+	gpu_disabled = false;
+	ndb_gpu_init_if_needed();
 
-    if (!gpu_ready)
-    {
-        elog(WARNING, "neurondb: GPU initialization failed");
-        PG_RETURN_BOOL(false);
-    }
+	if (!gpu_ready)
+	{
+		elog(WARNING, "neurondb: GPU initialization failed");
+		PG_RETURN_BOOL(false);
+	}
 
-    elog(NOTICE, "neurondb: GPU acceleration enabled");
-    PG_RETURN_BOOL(true);
+	elog(NOTICE, "neurondb: GPU acceleration enabled");
+	PG_RETURN_BOOL(true);
 }
 
 PG_FUNCTION_INFO_V1(neurondb_gpu_info);
 Datum
 neurondb_gpu_info(PG_FUNCTION_ARGS)
 {
-    ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
-    Datum values[7];
-    bool nulls[7] = {false, false, false, false, false, false, false};
-    GPUDeviceInfo *info;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
+	Datum values[7];
+	bool nulls[7] = { false, false, false, false, false, false, false };
+	GPUDeviceInfo *info;
 
-    /* Initialize tuple store */
-    InitMaterializedSRF(fcinfo, 0);
+	/* Initialize tuple store */
+	InitMaterializedSRF(fcinfo, 0);
 
-    /* Return basic GPU info - simplified for now */
-    info = neurondb_gpu_get_device_info(active_device_id);
+	/* Return basic GPU info - simplified for now */
+	info = neurondb_gpu_get_device_info(active_device_id);
 
-    values[0] = Int32GetDatum(info->device_id);
-    values[1] = CStringGetTextDatum(info->name);
-    values[2] = Int64GetDatum(info->total_memory_mb);
-    values[3] = Int64GetDatum(info->free_memory_mb);
-    values[4] = Int32GetDatum(info->compute_major);
-    values[5] = Int32GetDatum(info->compute_minor);
-    values[6] = BoolGetDatum(info->is_available);
+	values[0] = Int32GetDatum(info->device_id);
+	values[1] = CStringGetTextDatum(info->name);
+	values[2] = Int64GetDatum(info->total_memory_mb);
+	values[3] = Int64GetDatum(info->free_memory_mb);
+	values[4] = Int32GetDatum(info->compute_major);
+	values[5] = Int32GetDatum(info->compute_minor);
+	values[6] = BoolGetDatum(info->is_available);
 
-    tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+	tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 
-    if (info)
-        pfree(info);
+	if (info)
+		pfree(info);
 
-    return (Datum) 0;
+	return (Datum)0;
 }
 
 PG_FUNCTION_INFO_V1(neurondb_gpu_stats);
 Datum
 neurondb_gpu_stats(PG_FUNCTION_ARGS)
 {
-    ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
-    Datum values[6];
-    bool nulls[6] = {false, false, false, false, false, false};
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
+	Datum values[6];
+	bool nulls[6] = { false, false, false, false, false, false };
 
-    /* Initialize tuple store */
-    InitMaterializedSRF(fcinfo, 0);
+	/* Initialize tuple store */
+	InitMaterializedSRF(fcinfo, 0);
 
-    values[0] = Int64GetDatum(gpu_stats.queries_executed);
-    values[1] = Int64GetDatum(gpu_stats.fallback_count);
-    values[2] = Float8GetDatum(gpu_stats.total_gpu_time_ms);
-    values[3] = Float8GetDatum(gpu_stats.total_cpu_time_ms);
-    values[4] = Float8GetDatum(gpu_stats.avg_latency_ms);
-    values[5] = TimestampTzGetDatum(gpu_stats.last_reset);
+	values[0] = Int64GetDatum(gpu_stats.queries_executed);
+	values[1] = Int64GetDatum(gpu_stats.fallback_count);
+	values[2] = Float8GetDatum(gpu_stats.total_gpu_time_ms);
+	values[3] = Float8GetDatum(gpu_stats.total_cpu_time_ms);
+	values[4] = Float8GetDatum(gpu_stats.avg_latency_ms);
+	values[5] = TimestampTzGetDatum(gpu_stats.last_reset);
 
-    tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+	tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 
-    return (Datum) 0;
+	return (Datum)0;
 }
 
 PG_FUNCTION_INFO_V1(neurondb_gpu_reset_stats_func);
 Datum
 neurondb_gpu_reset_stats_func(PG_FUNCTION_ARGS)
 {
-    memset(&gpu_stats, 0, sizeof(GPUStats));
-    gpu_stats.last_reset = GetCurrentTimestamp();
-    elog(LOG, "neurondb: GPU statistics reset");
-    PG_RETURN_BOOL(true);
+	memset(&gpu_stats, 0, sizeof(GPUStats));
+	gpu_stats.last_reset = GetCurrentTimestamp();
+	elog(LOG, "neurondb: GPU statistics reset");
+	PG_RETURN_BOOL(true);
 }
 
 /*
@@ -589,41 +643,41 @@ neurondb_gpu_reset_stats_func(PG_FUNCTION_ARGS)
  */
 bool
 neurondb_gpu_rf_best_split_binary(const float *feature_values,
-                                  const uint8_t *labels01,
-                                  int n,
-                                  double *best_threshold,
-                                  double *best_gini,
-                                  int *left_count,
-                                  int *right_count)
+	const uint8_t *labels01,
+	int n,
+	double *best_threshold,
+	double *best_gini,
+	int *left_count,
+	int *right_count)
 {
-	int		total_pos;
-	int		*i_idx;
-	int		*prefix_pos;
-	int		i;
-	int		lp;
-	int		ln;
-	int		rp;
-	int		rn;
-	double	gini_l;
-	double	gini_r;
-	double	gini;
-	double	best_g;
-	double	best_t;
-	int		best_lc;
-	int		best_rc;
+	int total_pos;
+	int *i_idx;
+	int *prefix_pos;
+	int i;
+	int lp;
+	int ln;
+	int rp;
+	int rn;
+	double gini_l;
+	double gini_r;
+	double gini;
+	double best_g;
+	double best_t;
+	int best_lc;
+	int best_rc;
 	MemoryContext cx;
 	MemoryContext oldcx;
-	bool		success;
+	bool success;
 
 	if (!ndb_gpu_kernel_enabled("rf_split"))
 		return false;
-	if (!feature_values || !labels01 || n < 2 ||
-		!best_threshold || !best_gini || !left_count || !right_count)
+	if (!feature_values || !labels01 || n < 2 || !best_threshold
+		|| !best_gini || !left_count || !right_count)
 		return false;
 
 	cx = AllocSetContextCreate(CurrentMemoryContext,
-				   "rf_gpu_split_helper_ctx",
-				   ALLOCSET_SMALL_SIZES);
+		"rf_gpu_split_helper_ctx",
+		ALLOCSET_SMALL_SIZES);
 	oldcx = MemoryContextSwitchTo(cx);
 	success = false;
 	best_g = 1.0;
@@ -631,8 +685,8 @@ neurondb_gpu_rf_best_split_binary(const float *feature_values,
 	best_lc = 0;
 	best_rc = 0;
 
-	i_idx = (int *) palloc(sizeof(int) * n);
-	prefix_pos = (int *) palloc0(sizeof(int) * n);
+	i_idx = (int *)palloc(sizeof(int) * n);
+	prefix_pos = (int *)palloc0(sizeof(int) * n);
 	total_pos = 0;
 	for (i = 0; i < n; i++)
 	{
@@ -649,8 +703,8 @@ neurondb_gpu_rf_best_split_binary(const float *feature_values,
 	rf_sort_feat_ptr = NULL;
 
 	for (i = 0; i < n; i++)
-		prefix_pos[i] = (i == 0 ? 0 : prefix_pos[i - 1]) +
-					 (labels01[i_idx[i]] ? 1 : 0);
+		prefix_pos[i] = (i == 0 ? 0 : prefix_pos[i - 1])
+			+ (labels01[i_idx[i]] ? 1 : 0);
 
 	for (i = 1; i < n; i++)
 	{
@@ -665,20 +719,29 @@ neurondb_gpu_rf_best_split_binary(const float *feature_values,
 		ln = i - lp;
 		rp = total_pos - lp;
 		rn = (n - i) - rp;
-		gini_l = 1.0 - ((lp > 0 ? ((double) lp / (double) i) : 0.0) *
-					 (lp > 0 ? ((double) lp / (double) i) : 0.0)
-				   + (ln > 0 ? ((double) ln / (double) i) : 0.0) *
-					 (ln > 0 ? ((double) ln / (double) i) : 0.0));
-		gini_r = 1.0 - ((rp > 0 ? ((double) rp / (double) (n - i)) : 0.0) *
-					 (rp > 0 ? ((double) rp / (double) (n - i)) : 0.0)
-				   + (rn > 0 ? ((double) rn / (double) (n - i)) : 0.0) *
-					 (rn > 0 ? ((double) rn / (double) (n - i)) : 0.0));
-		gini = ((double) i / (double) n) * gini_l +
-				((double) (n - i) / (double) n) * gini_r;
+		gini_l = 1.0
+			- ((lp > 0 ? ((double)lp / (double)i) : 0.0)
+					* (lp > 0 ? ((double)lp / (double)i)
+						  : 0.0)
+				+ (ln > 0 ? ((double)ln / (double)i) : 0.0)
+					* (ln > 0 ? ((double)ln / (double)i)
+						  : 0.0));
+		gini_r = 1.0
+			- ((rp > 0 ? ((double)rp / (double)(n - i)) : 0.0)
+					* (rp > 0 ? ((double)rp
+							    / (double)(n - i))
+						  : 0.0)
+				+ (rn > 0 ? ((double)rn / (double)(n - i))
+					  : 0.0)
+					* (rn > 0 ? ((double)rn
+							    / (double)(n - i))
+						  : 0.0));
+		gini = ((double)i / (double)n) * gini_l
+			+ ((double)(n - i) / (double)n) * gini_r;
 		if (gini < best_g)
 		{
 			best_g = gini;
-			best_t = ((double) v0 + (double) v1) * 0.5;
+			best_t = ((double)v0 + (double)v1) * 0.5;
 			best_lc = i;
 			best_rc = n - i;
 		}
@@ -706,10 +769,10 @@ out:
  */
 int
 neurondb_gpu_hf_embed(const char *model_name,
-		      const char *text,
-		      float **vec_out,
-		      int *dim_out,
-		      char **errstr)
+	const char *text,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
 {
 	const ndb_gpu_backend *backend;
 	bool used_gpu = false;
@@ -736,9 +799,9 @@ neurondb_gpu_hf_embed(const char *model_name,
 out:
 	t1 = GetCurrentTimestamp();
 	ndb_gpu_stats_record(used_gpu,
-			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
-			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
-			     !used_gpu);
+		used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+		used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+		!used_gpu);
 	return rc;
 }
 
@@ -750,10 +813,10 @@ out:
  */
 int
 neurondb_gpu_hf_complete(const char *model_name,
-			 const char *prompt,
-			 const char *params_json,
-			 char **text_out,
-			 char **errstr)
+	const char *prompt,
+	const char *params_json,
+	char **text_out,
+	char **errstr)
 {
 	const ndb_gpu_backend *backend;
 	bool used_gpu = false;
@@ -774,15 +837,16 @@ neurondb_gpu_hf_complete(const char *model_name,
 	if (backend == NULL || backend->hf_complete == NULL)
 		goto out;
 
-	rc = backend->hf_complete(model_name, prompt, params_json, text_out, errstr);
+	rc = backend->hf_complete(
+		model_name, prompt, params_json, text_out, errstr);
 	used_gpu = (rc == 0);
 
 out:
 	t1 = GetCurrentTimestamp();
 	ndb_gpu_stats_record(used_gpu,
-			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
-			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
-			     !used_gpu);
+		used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+		used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+		!used_gpu);
 	return rc;
 }
 
@@ -794,11 +858,11 @@ out:
  */
 int
 neurondb_gpu_hf_rerank(const char *model_name,
-		       const char *query,
-		       const char **docs,
-		       int ndocs,
-		       float **scores_out,
-		       char **errstr)
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out,
+	char **errstr)
 {
 	const ndb_gpu_backend *backend;
 	bool used_gpu = false;
@@ -819,15 +883,16 @@ neurondb_gpu_hf_rerank(const char *model_name,
 	if (backend == NULL || backend->hf_rerank == NULL)
 		goto out;
 
-	rc = backend->hf_rerank(model_name, query, docs, ndocs, scores_out, errstr);
+	rc = backend->hf_rerank(
+		model_name, query, docs, ndocs, scores_out, errstr);
 	used_gpu = (rc == 0);
 
 out:
 	t1 = GetCurrentTimestamp();
 	ndb_gpu_stats_record(used_gpu,
-			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
-			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
-			     !used_gpu);
+		used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+		used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+		!used_gpu);
 	return rc;
 }
 
@@ -840,11 +905,11 @@ out:
  */
 int
 neurondb_gpu_hf_complete_batch(const char *model_name,
-			       const char **prompts,
-			       int num_prompts,
-			       const char *params_json,
-			       NdbCudaHfBatchResult *results,
-			       char **errstr)
+	const char **prompts,
+	int num_prompts,
+	const char *params_json,
+	NdbCudaHfBatchResult *results,
+	char **errstr)
 {
 	bool used_gpu = false;
 	TimestampTz t0 = GetCurrentTimestamp();
@@ -861,16 +926,18 @@ neurondb_gpu_hf_complete_batch(const char *model_name,
 		goto out;
 
 	/* Call CUDA batch generation function */
-	rc = ndb_cuda_hf_generate_batch(model_name, prompts, num_prompts,
-					params_json, results, errstr);
+	elog(NOTICE, "neurondb: gpu_core calling ndb_cuda_hf_generate_batch with %d prompts", num_prompts);
+	rc = ndb_cuda_hf_generate_batch(
+		model_name, prompts, num_prompts, params_json, results, errstr);
 	used_gpu = (rc == 0);
+	elog(NOTICE, "neurondb: gpu_core got rc=%d from ndb_cuda_hf_generate_batch", rc);
 
 out:
 	t1 = GetCurrentTimestamp();
 	ndb_gpu_stats_record(used_gpu,
-			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
-			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
-			     !used_gpu);
+		used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+		used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+		!used_gpu);
 	return rc;
 }
 #endif
@@ -883,13 +950,13 @@ out:
  */
 int
 neurondb_gpu_hf_rerank_batch(const char *model_name,
-			     const char **queries,
-			     const char ***docs_array,
-			     int *ndocs_array,
-			     int num_queries,
-			     float ***scores_out,
-			     int **nscores_out,
-			     char **errstr)
+	const char **queries,
+	const char ***docs_array,
+	int *ndocs_array,
+	int num_queries,
+	float ***scores_out,
+	int **nscores_out,
+	char **errstr)
 {
 	bool used_gpu = false;
 	TimestampTz t0 = GetCurrentTimestamp();
@@ -903,28 +970,31 @@ neurondb_gpu_hf_rerank_batch(const char *model_name,
 		goto out;
 	if (!ndb_gpu_kernel_enabled("hf_rerank"))
 		goto out;
-	if (!model_name || !queries || !docs_array || !ndocs_array ||
-	    !scores_out || !nscores_out || num_queries <= 0)
+	if (!model_name || !queries || !docs_array || !ndocs_array
+		|| !scores_out || !nscores_out || num_queries <= 0)
 		goto out;
 
 	/* For now, process sequentially */
 	/* TODO: Implement true batch processing with CUDA kernels */
-	*scores_out = (float **) palloc0(num_queries * sizeof(float *));
-	*nscores_out = (int *) palloc0(num_queries * sizeof(int));
+	*scores_out = (float **)palloc0(num_queries * sizeof(float *));
+	*nscores_out = (int *)palloc0(num_queries * sizeof(int));
 
 	for (i = 0; i < num_queries; i++)
 	{
 		float *scores = NULL;
 		int rc2;
 
-		rc2 = neurondb_gpu_hf_rerank(model_name, queries[i], docs_array[i],
-					     ndocs_array[i], &scores, errstr);
+		rc2 = neurondb_gpu_hf_rerank(model_name,
+			queries[i],
+			docs_array[i],
+			ndocs_array[i],
+			&scores,
+			errstr);
 		if (rc2 == 0 && scores != NULL)
 		{
 			(*scores_out)[i] = scores;
 			(*nscores_out)[i] = ndocs_array[i];
-		}
-		else
+		} else
 		{
 			(*scores_out)[i] = NULL;
 			(*nscores_out)[i] = 0;
@@ -937,8 +1007,8 @@ neurondb_gpu_hf_rerank_batch(const char *model_name,
 out:
 	t1 = GetCurrentTimestamp();
 	ndb_gpu_stats_record(used_gpu,
-			     used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
-			     used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
-			     !used_gpu);
+		used_gpu ? ndb_elapsed_ms(t0, t1) : 0.0,
+		used_gpu ? 0.0 : ndb_elapsed_ms(t0, t1),
+		!used_gpu);
 	return rc;
 }

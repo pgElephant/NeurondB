@@ -96,8 +96,8 @@ ndb_cuda_lr_pack_model(const LRModel *model,
 			model->final_loss,
 			model->accuracy);
 
-		metrics_json = DatumGetJsonbP(
-			DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+			jsonb_in, CStringGetDatum(buf.data)));
 		pfree(buf.data);
 		*metrics = metrics_json;
 	}
@@ -144,20 +144,31 @@ ndb_cuda_lr_train(const float *features,
 
 	if (errstr)
 		*errstr = NULL;
-	
-	elog(DEBUG1, "ndb_cuda_lr_train: entry: model_data=%p, features=%p, labels=%p, n_samples=%d, feature_dim=%d",
-		model_data, features, labels, n_samples, feature_dim);
-	
+
+	elog(DEBUG1,
+		"ndb_cuda_lr_train: entry: model_data=%p, features=%p, "
+		"labels=%p, n_samples=%d, feature_dim=%d",
+		model_data,
+		features,
+		labels,
+		n_samples,
+		feature_dim);
+
 	if (model_data == NULL || features == NULL || labels == NULL
 		|| n_samples <= 0 || feature_dim <= 0)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid input parameters for CUDA LR train");
+			*errstr = pstrdup(
+				"invalid input parameters for CUDA LR train");
 		elog(DEBUG1, "ndb_cuda_lr_train: invalid parameters detected");
 		return -1;
 	}
 
-	elog(DEBUG1, "ndb_cuda_lr_train: starting training: n_samples=%d, feature_dim=%d", n_samples, feature_dim);
+	elog(DEBUG1,
+		"ndb_cuda_lr_train: starting training: n_samples=%d, "
+		"feature_dim=%d",
+		n_samples,
+		feature_dim);
 
 	/* Extract hyperparameters from JSONB */
 	if (hyperparams != NULL)
@@ -168,8 +179,7 @@ ndb_cuda_lr_train(const float *features,
 		Datum numeric_datum;
 		Numeric num;
 
-		max_iters_datum = DirectFunctionCall2(
-			jsonb_object_field,
+		max_iters_datum = DirectFunctionCall2(jsonb_object_field,
 			JsonbPGetDatum(hyperparams),
 			CStringGetTextDatum("max_iters"));
 		if (DatumGetPointer(max_iters_datum) != NULL)
@@ -179,22 +189,20 @@ ndb_cuda_lr_train(const float *features,
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
-				max_iters = DatumGetInt32(
-					DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(num)));
+				max_iters = DatumGetInt32(DirectFunctionCall1(
+					numeric_int4, NumericGetDatum(num)));
 				if (max_iters <= 0)
 					max_iters = default_max_iters;
 			}
 		}
 
-		lr_datum = DirectFunctionCall2(
-			jsonb_object_field,
+		lr_datum = DirectFunctionCall2(jsonb_object_field,
 			JsonbPGetDatum(hyperparams),
 			CStringGetTextDatum("learning_rate"));
 		if (DatumGetPointer(lr_datum) != NULL)
 		{
-			numeric_datum = DirectFunctionCall1(
-				jsonb_numeric, lr_datum);
+			numeric_datum =
+				DirectFunctionCall1(jsonb_numeric, lr_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
@@ -206,8 +214,7 @@ ndb_cuda_lr_train(const float *features,
 			}
 		}
 
-		lambda_datum = DirectFunctionCall2(
-			jsonb_object_field,
+		lambda_datum = DirectFunctionCall2(jsonb_object_field,
 			JsonbPGetDatum(hyperparams),
 			CStringGetTextDatum("lambda"));
 		if (DatumGetPointer(lambda_datum) != NULL)
@@ -217,9 +224,8 @@ ndb_cuda_lr_train(const float *features,
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
-				lambda = DatumGetFloat8(
-					DirectFunctionCall1(numeric_float8,
-						NumericGetDatum(num)));
+				lambda = DatumGetFloat8(DirectFunctionCall1(
+					numeric_float8, NumericGetDatum(num)));
 				if (lambda < 0.0)
 					lambda = default_lambda;
 			}
@@ -237,55 +243,67 @@ ndb_cuda_lr_train(const float *features,
 	z_bytes = sizeof(double) * (size_t)n_samples;
 	weight_bytes = sizeof(double) * (size_t)feature_dim;
 
-	elog(DEBUG1, "ndb_cuda_lr_train: allocating GPU memory: feature_bytes=%zu (%.2f MB), label_bytes=%zu", 
-		feature_bytes, feature_bytes / (1024.0 * 1024.0), label_bytes);
-	
+	elog(DEBUG1,
+		"ndb_cuda_lr_train: allocating GPU memory: feature_bytes=%zu "
+		"(%.2f MB), label_bytes=%zu",
+		feature_bytes,
+		feature_bytes / (1024.0 * 1024.0),
+		label_bytes);
+
 	/* Check available GPU memory before allocation */
 	size_t free_mem, total_mem;
 	cudaMemGetInfo(&free_mem, &total_mem);
-	elog(DEBUG1, "ndb_cuda_lr_train: GPU memory: free=%.2f MB, total=%.2f MB", 
-		free_mem / (1024.0 * 1024.0), total_mem / (1024.0 * 1024.0));
-	
+	elog(DEBUG1,
+		"ndb_cuda_lr_train: GPU memory: free=%.2f MB, total=%.2f MB",
+		free_mem / (1024.0 * 1024.0),
+		total_mem / (1024.0 * 1024.0));
+
 	status = cudaMalloc((void **)&d_features, feature_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1, "ndb_cuda_lr_train: cudaMalloc d_features failed: %s", cudaGetErrorString(status));
+		elog(DEBUG1,
+			"ndb_cuda_lr_train: cudaMalloc d_features failed: %s",
+			cudaGetErrorString(status));
 		goto gpu_fail;
 	}
 	elog(DEBUG1, "ndb_cuda_lr_train: d_features allocated: %p", d_features);
-	
+
 	status = cudaMalloc((void **)&d_labels, label_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1, "ndb_cuda_lr_train: cudaMalloc d_labels failed: %s", cudaGetErrorString(status));
+		elog(DEBUG1,
+			"ndb_cuda_lr_train: cudaMalloc d_labels failed: %s",
+			cudaGetErrorString(status));
 		goto gpu_fail;
 	}
 	status = cudaMalloc((void **)&d_predictions, pred_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1, "ndb_cuda_lr_train: cudaMalloc d_predictions failed: %s", cudaGetErrorString(status));
+		elog(DEBUG1,
+			"ndb_cuda_lr_train: cudaMalloc d_predictions failed: "
+			"%s",
+			cudaGetErrorString(status));
 		goto gpu_fail;
 	}
 	status = cudaMalloc((void **)&d_z, z_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1, "ndb_cuda_lr_train: cudaMalloc d_z failed: %s", cudaGetErrorString(status));
+		elog(DEBUG1,
+			"ndb_cuda_lr_train: cudaMalloc d_z failed: %s",
+			cudaGetErrorString(status));
 		goto gpu_fail;
 	}
-	
-	elog(DEBUG1, "ndb_cuda_lr_train: all GPU memory allocated successfully");
+
+	elog(DEBUG1,
+		"ndb_cuda_lr_train: all GPU memory allocated successfully");
 
 	/* Copy data to GPU */
-	status = cudaMemcpy(d_features,
-		features,
-		feature_bytes,
-		cudaMemcpyHostToDevice);
+	status = cudaMemcpy(
+		d_features, features, feature_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto gpu_fail;
-	status = cudaMemcpy(d_labels,
-		labels,
-		label_bytes,
-		cudaMemcpyHostToDevice);
+	status = cudaMemcpy(
+		d_labels, labels, label_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto gpu_fail;
 
@@ -295,7 +313,9 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **)&d_weights, weight_bytes_gpu);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1, "ndb_cuda_lr_train: cudaMalloc d_weights failed: %s", cudaGetErrorString(status));
+		elog(DEBUG1,
+			"ndb_cuda_lr_train: cudaMalloc d_weights failed: %s",
+			cudaGetErrorString(status));
 		goto gpu_fail;
 	}
 
@@ -304,16 +324,23 @@ ndb_cuda_lr_train(const float *features,
 	{
 		/* Copy weights to GPU (convert double to float) */
 		{
-			float *h_weights = (float *)palloc(sizeof(float) * (size_t)feature_dim);
+			float *h_weights = (float *)palloc(
+				sizeof(float) * (size_t)feature_dim);
 			int i;
 
 			for (i = 0; i < feature_dim; i++)
 				h_weights[i] = (float)weights[i];
-			status = cudaMemcpy(d_weights, h_weights, weight_bytes_gpu, cudaMemcpyHostToDevice);
+			status = cudaMemcpy(d_weights,
+				h_weights,
+				weight_bytes_gpu,
+				cudaMemcpyHostToDevice);
 			pfree(h_weights);
 			if (status != cudaSuccess)
 			{
-				elog(DEBUG1, "ndb_cuda_lr_train: cudaMemcpy weights failed: %s", cudaGetErrorString(status));
+				elog(DEBUG1,
+					"ndb_cuda_lr_train: cudaMemcpy weights "
+					"failed: %s",
+					cudaGetErrorString(status));
 				goto gpu_fail;
 			}
 		}
@@ -323,13 +350,22 @@ ndb_cuda_lr_train(const float *features,
 			int ret;
 
 			/* Use the GPU wrapper function that accepts pre-allocated GPU memory */
-			ret = ndb_cuda_lr_forward_pass_gpu(d_features, d_weights, (float)bias,
-				n_samples, feature_dim, d_z);
+			ret = ndb_cuda_lr_forward_pass_gpu(d_features,
+				d_weights,
+				(float)bias,
+				n_samples,
+				feature_dim,
+				d_z);
 			if (ret != 0)
 			{
-				elog(DEBUG1, "ndb_cuda_lr_train: forward_pass_gpu failed at iter %d", iter);
+				elog(DEBUG1,
+					"ndb_cuda_lr_train: forward_pass_gpu "
+					"failed at iter %d",
+					iter);
 				if (errstr && *errstr == NULL)
-					*errstr = psprintf("forward_pass_gpu failed at iter %d", iter);
+					*errstr = psprintf("forward_pass_gpu "
+							   "failed at iter %d",
+						iter);
 				goto gpu_fail;
 			}
 
@@ -337,50 +373,74 @@ ndb_cuda_lr_train(const float *features,
 			status = cudaDeviceSynchronize();
 			if (status != cudaSuccess)
 			{
-				elog(DEBUG1, "ndb_cuda_lr_train: cudaDeviceSynchronize failed at iter %d: %s", 
-					iter, cudaGetErrorString(status));
+				elog(DEBUG1,
+					"ndb_cuda_lr_train: "
+					"cudaDeviceSynchronize failed at iter "
+					"%d: %s",
+					iter,
+					cudaGetErrorString(status));
 				if (errstr && *errstr == NULL)
-					*errstr = psprintf("CUDA sync failed: %s", cudaGetErrorString(status));
+					*errstr = psprintf(
+						"CUDA sync failed: %s",
+						cudaGetErrorString(status));
 				goto gpu_fail;
 			}
 
-			elog(DEBUG1, "ndb_cuda_lr_train: forward_pass succeeded at iter %d", iter);
+			elog(DEBUG1,
+				"ndb_cuda_lr_train: forward_pass succeeded at "
+				"iter %d",
+				iter);
 		}
 
 		/* Apply sigmoid */
 		/* Note: ndb_cuda_lr_sigmoid expects host pointers and handles GPU allocation internally */
 		/* We need to copy d_z to host first, then call sigmoid, then copy back */
 		{
-			double *host_z = (double *)palloc(sizeof(double) * (size_t)n_samples);
+			double *host_z = (double *)palloc(
+				sizeof(double) * (size_t)n_samples);
 			cudaError_t z_status;
 
-			z_status = cudaMemcpy(host_z, d_z, z_bytes, cudaMemcpyDeviceToHost);
+			z_status = cudaMemcpy(
+				host_z, d_z, z_bytes, cudaMemcpyDeviceToHost);
 			if (z_status != cudaSuccess)
 			{
 				pfree(host_z);
-				elog(DEBUG1, "ndb_cuda_lr_train: cudaMemcpy d_z failed: %s", cudaGetErrorString(z_status));
+				elog(DEBUG1,
+					"ndb_cuda_lr_train: cudaMemcpy d_z "
+					"failed: %s",
+					cudaGetErrorString(z_status));
 				goto gpu_fail;
 			}
 
 			if (ndb_cuda_lr_sigmoid(host_z, n_samples, host_z) != 0)
 			{
 				pfree(host_z);
-				elog(DEBUG1, "ndb_cuda_lr_train: sigmoid failed at iter %d", iter);
+				elog(DEBUG1,
+					"ndb_cuda_lr_train: sigmoid failed at "
+					"iter %d",
+					iter);
 				goto gpu_fail;
 			}
 
-			z_status = cudaMemcpy(d_predictions, host_z, pred_bytes, cudaMemcpyHostToDevice);
+			z_status = cudaMemcpy(d_predictions,
+				host_z,
+				pred_bytes,
+				cudaMemcpyHostToDevice);
 			pfree(host_z);
 			if (z_status != cudaSuccess)
 			{
-				elog(DEBUG1, "ndb_cuda_lr_train: cudaMemcpy predictions failed: %s", cudaGetErrorString(z_status));
+				elog(DEBUG1,
+					"ndb_cuda_lr_train: cudaMemcpy "
+					"predictions failed: %s",
+					cudaGetErrorString(z_status));
 				goto gpu_fail;
 			}
 		}
 
 		/* Copy predictions back to host for gradient computation */
 		{
-			double *host_predictions = (double *)palloc(sizeof(double) * (size_t)n_samples);
+			double *host_predictions = (double *)palloc(
+				sizeof(double) * (size_t)n_samples);
 
 			status = cudaMemcpy(host_predictions,
 				d_predictions,
@@ -395,16 +455,19 @@ ndb_cuda_lr_train(const float *features,
 			/* Compute gradients */
 			/* Note: ndb_cuda_lr_compute_gradients expects host pointers and handles GPU allocation internally */
 			if (ndb_cuda_lr_compute_gradients(features,
-					labels,
-					host_predictions,
-					n_samples,
-					feature_dim,
-					grad_weights,
-					&grad_bias)
+				    labels,
+				    host_predictions,
+				    n_samples,
+				    feature_dim,
+				    grad_weights,
+				    &grad_bias)
 				!= 0)
 			{
 				pfree(host_predictions);
-				elog(DEBUG1, "ndb_cuda_lr_train: compute_gradients failed at iter %d", iter);
+				elog(DEBUG1,
+					"ndb_cuda_lr_train: compute_gradients "
+					"failed at iter %d",
+					iter);
 				goto gpu_fail;
 			}
 
@@ -415,8 +478,7 @@ ndb_cuda_lr_train(const float *features,
 		grad_bias /= (double)n_samples;
 		for (i = 0; i < feature_dim; i++)
 		{
-			grad_weights[i] =
-				grad_weights[i] / (double)n_samples
+			grad_weights[i] = grad_weights[i] / (double)n_samples
 				+ lambda * weights[i];
 		}
 
@@ -465,14 +527,19 @@ ndb_cuda_lr_train(const float *features,
 		int correct = 0;
 
 		/* Copy final predictions from GPU (they were computed in the last iteration) */
-		host_preds = (double *)palloc(sizeof(double) * (size_t)n_samples);
-		status = cudaMemcpy(host_preds, d_predictions, pred_bytes, cudaMemcpyDeviceToHost);
+		host_preds =
+			(double *)palloc(sizeof(double) * (size_t)n_samples);
+		status = cudaMemcpy(host_preds,
+			d_predictions,
+			pred_bytes,
+			cudaMemcpyDeviceToHost);
 		if (status == cudaSuccess)
 		{
 			/* Predictions are already sigmoided from the last iteration */
 			for (i = 0; i < n_samples; i++)
 			{
-				double pred = fmax(1e-15, fmin(1.0 - 1e-15, host_preds[i]));
+				double pred = fmax(1e-15,
+					fmin(1.0 - 1e-15, host_preds[i]));
 				if (labels[i] > 0.5)
 					final_loss -= log(pred);
 				else
@@ -486,10 +553,11 @@ ndb_cuda_lr_train(const float *features,
 			accuracy = (correct > 0 && n_samples > 0)
 				? ((double)correct / (double)n_samples)
 				: 0.0;
-		}
-		else
+		} else
 		{
-			elog(WARNING, "ndb_cuda_lr_train: failed to copy predictions for metrics, using defaults");
+			elog(WARNING,
+				"ndb_cuda_lr_train: failed to copy predictions "
+				"for metrics, using defaults");
 			final_loss = 0.0;
 			accuracy = 0.0;
 		}
@@ -517,14 +585,18 @@ ndb_cuda_lr_train(const float *features,
 				final_loss,
 				accuracy);
 
-			metrics_json = DatumGetJsonbP(
-				DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+			metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+				jsonb_in, CStringGetDatum(buf.data)));
 			pfree(buf.data);
 			if (metrics_json == NULL)
 			{
-				elog(ERROR, "ndb_cuda_lr_train: failed to create metrics_json from JSON string");
+				elog(ERROR,
+					"ndb_cuda_lr_train: failed to create "
+					"metrics_json from JSON string");
 			}
-			elog(DEBUG1, "ndb_cuda_lr_train: created metrics_json: %p", (void *)metrics_json);
+			elog(DEBUG1,
+				"ndb_cuda_lr_train: created metrics_json: %p",
+				(void *)metrics_json);
 		}
 
 		if (host_preds != NULL)
@@ -532,19 +604,22 @@ ndb_cuda_lr_train(const float *features,
 	}
 
 	*model_data = payload;
-	
+
 	/* Always set metrics - build default if metrics_json is NULL */
 	if (metrics != NULL)
 	{
 		if (metrics_json == NULL)
 		{
-			elog(WARNING, "ndb_cuda_lr_train: metrics_json is NULL, building default metrics");
+			elog(WARNING,
+				"ndb_cuda_lr_train: metrics_json is NULL, "
+				"building default metrics");
 			/* Build default metrics JSON */
 			{
 				StringInfoData buf;
 				initStringInfo(&buf);
 				appendStringInfo(&buf,
-					"{\"algorithm\":\"logistic_regression\","
+					"{\"algorithm\":\"logistic_"
+					"regression\","
 					"\"storage\":\"gpu\","
 					"\"n_features\":%d,"
 					"\"n_samples\":%d,"
@@ -559,17 +634,21 @@ ndb_cuda_lr_train(const float *features,
 					learning_rate,
 					lambda);
 				metrics_json = DatumGetJsonbP(
-					DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+					DirectFunctionCall1(jsonb_in,
+						CStringGetDatum(buf.data)));
 				pfree(buf.data);
 			}
 		}
 		*metrics = metrics_json;
-		elog(DEBUG1, "ndb_cuda_lr_train: setting *metrics = %p (metrics_json=%p)", 
-			(void *)*metrics, (void *)metrics_json);
-	}
-	else
+		elog(DEBUG1,
+			"ndb_cuda_lr_train: setting *metrics = %p "
+			"(metrics_json=%p)",
+			(void *)*metrics,
+			(void *)metrics_json);
+	} else
 	{
-		elog(WARNING, "ndb_cuda_lr_train: metrics output parameter is NULL!");
+		elog(WARNING,
+			"ndb_cuda_lr_train: metrics output parameter is NULL!");
 	}
 	rc = 0;
 
@@ -615,44 +694,60 @@ ndb_cuda_lr_predict(const bytea *model_data,
 	if (model_data == NULL || input == NULL || probability_out == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for CUDA LR predict");
+			*errstr = pstrdup(
+				"invalid parameters for CUDA LR predict");
 		return -1;
 	}
 
 	/* Detoast the bytea to ensure we have the full data */
-	detoasted = (const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
-	
+	detoasted =
+		(const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+
 	/* Validate bytea size */
 	{
-		size_t expected_size = sizeof(NdbCudaLrModelHeader) + sizeof(float) * (size_t)feature_dim;
+		size_t expected_size = sizeof(NdbCudaLrModelHeader)
+			+ sizeof(float) * (size_t)feature_dim;
 		size_t actual_size = VARSIZE(detoasted) - VARHDRSZ;
-		
-		elog(DEBUG1, "ndb_cuda_lr_predict: payload size check: expected=%zu, actual=%zu, feature_dim=%d", 
-			expected_size, actual_size, feature_dim);
-		
+
+		elog(DEBUG1,
+			"ndb_cuda_lr_predict: payload size check: "
+			"expected=%zu, actual=%zu, feature_dim=%d",
+			expected_size,
+			actual_size,
+			feature_dim);
+
 		if (actual_size < expected_size)
 		{
 			if (errstr)
-				*errstr = psprintf("model data too small: expected %zu bytes, got %zu", 
-					expected_size, actual_size);
+				*errstr =
+					psprintf("model data too small: "
+						 "expected %zu bytes, got %zu",
+						expected_size,
+						actual_size);
 			elog(DEBUG1, "ndb_cuda_lr_predict: %s", *errstr);
 			return -1;
 		}
 	}
-	
+
 	hdr = (const NdbCudaLrModelHeader *)VARDATA(detoasted);
-	elog(DEBUG1, "ndb_cuda_lr_predict: header feature_dim=%d, input feature_dim=%d", 
-		hdr->feature_dim, feature_dim);
+	elog(DEBUG1,
+		"ndb_cuda_lr_predict: header feature_dim=%d, input "
+		"feature_dim=%d",
+		hdr->feature_dim,
+		feature_dim);
 	if (hdr->feature_dim != feature_dim)
 	{
 		if (errstr)
-			*errstr = psprintf("feature dimension mismatch: model has %d, input has %d", 
-				hdr->feature_dim, feature_dim);
+			*errstr = psprintf("feature dimension mismatch: model "
+					   "has %d, input has %d",
+				hdr->feature_dim,
+				feature_dim);
 		elog(DEBUG1, "ndb_cuda_lr_predict: %s", *errstr);
 		return -1;
 	}
 
-	weights = (const float *)((const char *)hdr + sizeof(NdbCudaLrModelHeader));
+	weights = (const float *)((const char *)hdr
+		+ sizeof(NdbCudaLrModelHeader));
 
 	z = hdr->bias;
 	for (i = 0; i < feature_dim; i++)
@@ -721,4 +816,3 @@ ndb_cuda_lr_predict(const bytea *model_data,
 /* These functions are implemented in gpu_lr_kernels.cu */
 
 #endif /* NDB_GPU_CUDA */
-

@@ -44,36 +44,38 @@
 #endif
 
 /* GUC variables -- safe defaults, error-proof, and validated by GUC constraints. */
-static int neuranq_naptime = 1000;          /* milliseconds */
-static int neuranq_queue_depth = 10000;     /* max queue size */
-static int neuranq_batch_size = 100;        /* jobs per cycle */
-static int neuranq_timeout = 30000;         /* job timeout ms */
+static int neuranq_naptime = 1000; /* milliseconds */
+static int neuranq_queue_depth = 10000; /* max queue size */
+static int neuranq_batch_size = 100; /* jobs per cycle */
+static int neuranq_timeout = 30000; /* job timeout ms */
 static int neuranq_max_retries = 3;
 static bool neuranq_enabled = true;
 
 /* Shared memory structure for robust queue statistics */
 typedef struct NeuranqSharedState
 {
-    LWLock    *lock;
-    int64      jobs_processed;
-    int64      jobs_failed;
-    int64      total_latency_ms;
-    TimestampTz last_heartbeat;
-    pid_t      worker_pid;
-    int        active_tenants;
-    int64      tenant_jobs[NEURANQ_MAX_TENANTS];        /* per-tenant job counts */
+	LWLock *lock;
+	int64 jobs_processed;
+	int64 jobs_failed;
+	int64 total_latency_ms;
+	TimestampTz last_heartbeat;
+	pid_t worker_pid;
+	int active_tenants;
+	int64 tenant_jobs[NEURANQ_MAX_TENANTS]; /* per-tenant job counts */
 } NeuranqSharedState;
 
 /* Ensure pointer initialized only once and globally visible */
-static NeuranqSharedState * volatile neuranq_state = NULL;
+static NeuranqSharedState *volatile neuranq_state = NULL;
 
 /* Forward declarations -- all error/edge conditions are handled in implementations elsewhere */
 PGDLLEXPORT void neuranq_main(Datum main_arg);
 static void neuranq_sigterm(SIGNAL_ARGS);
 static void neuranq_sighup(SIGNAL_ARGS);
 static void process_job_batch(void);
-static bool execute_job(int64 job_id, const char *job_type, const char *payload,
-                        int tenant_id);
+static bool execute_job(int64 job_id,
+	const char *job_type,
+	const char *payload,
+	int tenant_id);
 static int64 get_next_backoff_ms(int retry_count);
 
 /* Signal handler flags -- volatile for signal safety, crash-free */
@@ -87,12 +89,12 @@ static volatile sig_atomic_t got_sighup = 0;
 static void
 neuranq_sigterm(SIGNAL_ARGS)
 {
-    int save_errno = errno;
-    (void) postgres_signal_arg;  /* Unused in this context */
-    got_sigterm = 1;
-    if (MyLatch)
-        SetLatch(MyLatch);
-    errno = save_errno;
+	int save_errno = errno;
+	(void)postgres_signal_arg; /* Unused in this context */
+	got_sigterm = 1;
+	if (MyLatch)
+		SetLatch(MyLatch);
+	errno = save_errno;
 }
 
 /*
@@ -102,12 +104,12 @@ neuranq_sigterm(SIGNAL_ARGS)
 static void
 neuranq_sighup(SIGNAL_ARGS)
 {
-    int save_errno = errno;
-    (void) postgres_signal_arg;  /* Unused in this context */
-    got_sighup = 1;
-    if (MyLatch)
-        SetLatch(MyLatch);
-    errno = save_errno;
+	int save_errno = errno;
+	(void)postgres_signal_arg; /* Unused in this context */
+	got_sighup = 1;
+	if (MyLatch)
+		SetLatch(MyLatch);
+	errno = save_errno;
 }
 
 /*
@@ -116,59 +118,81 @@ neuranq_sighup(SIGNAL_ARGS)
 void
 neuranq_init_guc(void)
 {
-    DefineCustomIntVariable("neurondb.neuranq_naptime",
-                            "Duration between job processing cycles (ms)",
-                            NULL,
-                            &neuranq_naptime,
-                            1000, 100, 60000,
-                            PGC_SIGHUP,
-                            0,
-                            NULL, NULL, NULL);
+	DefineCustomIntVariable("neurondb.neuranq_naptime",
+		"Duration between job processing cycles (ms)",
+		NULL,
+		&neuranq_naptime,
+		1000,
+		100,
+		60000,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomIntVariable("neurondb.neuranq_queue_depth",
-                            "Maximum job queue size",
-                            NULL,
-                            &neuranq_queue_depth,
-                            10000, 100, 1000000,
-                            PGC_SIGHUP,
-                            0,
-                            NULL, NULL, NULL);
+	DefineCustomIntVariable("neurondb.neuranq_queue_depth",
+		"Maximum job queue size",
+		NULL,
+		&neuranq_queue_depth,
+		10000,
+		100,
+		1000000,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomIntVariable("neurondb.neuranq_batch_size",
-                            "Jobs to process per cycle",
-                            NULL,
-                            &neuranq_batch_size,
-                            100, 1, 10000,
-                            PGC_SIGHUP,
-                            0,
-                            NULL, NULL, NULL);
+	DefineCustomIntVariable("neurondb.neuranq_batch_size",
+		"Jobs to process per cycle",
+		NULL,
+		&neuranq_batch_size,
+		100,
+		1,
+		10000,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomIntVariable("neurondb.neuranq_timeout",
-                            "Job execution timeout (ms)",
-                            NULL,
-                            &neuranq_timeout,
-                            30000, 1000, 300000,
-                            PGC_SIGHUP,
-                            0,
-                            NULL, NULL, NULL);
+	DefineCustomIntVariable("neurondb.neuranq_timeout",
+		"Job execution timeout (ms)",
+		NULL,
+		&neuranq_timeout,
+		30000,
+		1000,
+		300000,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomIntVariable("neurondb.neuranq_max_retries",
-                            "Maximum retry attempts per job",
-                            NULL,
-                            &neuranq_max_retries,
-                            3, 0, 10,
-                            PGC_SIGHUP,
-                            0,
-                            NULL, NULL, NULL);
+	DefineCustomIntVariable("neurondb.neuranq_max_retries",
+		"Maximum retry attempts per job",
+		NULL,
+		&neuranq_max_retries,
+		3,
+		0,
+		10,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
-    DefineCustomBoolVariable("neurondb.neuranq_enabled",
-                             "Enable queue worker",
-                             NULL,
-                             &neuranq_enabled,
-                             true,
-                             PGC_SIGHUP,
-                             0,
-                             NULL, NULL, NULL);
+	DefineCustomBoolVariable("neurondb.neuranq_enabled",
+		"Enable queue worker",
+		NULL,
+		&neuranq_enabled,
+		true,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 }
 
 /*
@@ -177,7 +201,7 @@ neuranq_init_guc(void)
 Size
 neuranq_shmem_size(void)
 {
-    return MAXALIGN(sizeof(NeuranqSharedState));
+	return MAXALIGN(sizeof(NeuranqSharedState));
 }
 
 /*
@@ -186,44 +210,47 @@ neuranq_shmem_size(void)
 void
 neuranq_shmem_init(void)
 {
-    bool found = false;
+	bool found = false;
 
-    /*
+	/*
      * Lock must be held for exclusive shmem initialization.
      * If lwlock or allocation fails, Postgres will safely crash;
      * no undefined states possible. Defensive checks below.
      */
-    LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
-    neuranq_state = (NeuranqSharedState *)
-        ShmemInitStruct("NeuronDB Queue Worker State",
-                        neuranq_shmem_size(),
-                        &found);
+	neuranq_state = (NeuranqSharedState *)ShmemInitStruct(
+		"NeuronDB Queue Worker State", neuranq_shmem_size(), &found);
 
-    if (neuranq_state == NULL)
-    {
-        /* Failsafe: shared memory allocation failed */
-        LWLockRelease(AddinShmemInitLock);
-        elog(ERROR, "Failed to initialize NeuronDB Queue Worker State shared memory");
-        return; /* Unreachable, elog(ERROR) does not return */
-    }
+	if (neuranq_state == NULL)
+	{
+		/* Failsafe: shared memory allocation failed */
+		LWLockRelease(AddinShmemInitLock);
+		elog(ERROR,
+			"Failed to initialize NeuronDB Queue Worker State "
+			"shared memory");
+		return; /* Unreachable, elog(ERROR) does not return */
+	}
 
-    if (!found)
-    {
-        /* Lock already registered via RequestNamedLWLockTranche in _PG_init */
-        neuranq_state->lock = &(GetNamedLWLockTranche("neurondb_queue"))->lock;
-        neuranq_state->jobs_processed = 0;
-        neuranq_state->jobs_failed = 0;
-        neuranq_state->total_latency_ms = 0;
-        /* Use monotonic timestamp */
-        neuranq_state->last_heartbeat = GetCurrentTimestamp();
-        neuranq_state->worker_pid = 0;
-        neuranq_state->active_tenants = 0;
-        /* Zero-initialize with defensive size */
-        memset(neuranq_state->tenant_jobs, 0, sizeof(neuranq_state->tenant_jobs));
-    }
+	if (!found)
+	{
+		/* Lock already registered via RequestNamedLWLockTranche in _PG_init */
+		neuranq_state->lock =
+			&(GetNamedLWLockTranche("neurondb_queue"))->lock;
+		neuranq_state->jobs_processed = 0;
+		neuranq_state->jobs_failed = 0;
+		neuranq_state->total_latency_ms = 0;
+		/* Use monotonic timestamp */
+		neuranq_state->last_heartbeat = GetCurrentTimestamp();
+		neuranq_state->worker_pid = 0;
+		neuranq_state->active_tenants = 0;
+		/* Zero-initialize with defensive size */
+		memset(neuranq_state->tenant_jobs,
+			0,
+			sizeof(neuranq_state->tenant_jobs));
+	}
 
-    LWLockRelease(AddinShmemInitLock);
+	LWLockRelease(AddinShmemInitLock);
 }
 
 /*
@@ -232,113 +259,117 @@ neuranq_shmem_init(void)
 PGDLLEXPORT void
 neuranq_main(Datum main_arg)
 {
-    MemoryContext worker_ctx;
-    
-    (void) main_arg;  /* Unused */
+	MemoryContext worker_ctx;
 
-    /* Establish signal handlers */
-    pqsignal(SIGTERM, neuranq_sigterm);
-    pqsignal(SIGHUP, neuranq_sighup);
+	(void)main_arg; /* Unused */
 
-    /* We're now ready to receive signals */
-    BackgroundWorkerUnblockSignals();
+	/* Establish signal handlers */
+	pqsignal(SIGTERM, neuranq_sigterm);
+	pqsignal(SIGHUP, neuranq_sighup);
 
-    /* Connect to database */
-    BackgroundWorkerInitializeConnection("postgres", NULL, 0);
+	/* We're now ready to receive signals */
+	BackgroundWorkerUnblockSignals();
 
-    /* Create worker-lifetime memory context */
-    worker_ctx = AllocSetContextCreate(TopMemoryContext,
-                                       "NeuronDB Queue Worker",
-                                       ALLOCSET_DEFAULT_SIZES);
+	/* Connect to database */
+	BackgroundWorkerInitializeConnection("postgres", NULL, 0);
 
-    /* Update shared state */
-    if (neuranq_state && neuranq_state->lock)
-    {
-        LWLockAcquire(neuranq_state->lock, LW_EXCLUSIVE);
-        neuranq_state->worker_pid = MyProcPid;
-        neuranq_state->last_heartbeat = GetCurrentTimestamp();
-        LWLockRelease(neuranq_state->lock);
-    }
+	/* Create worker-lifetime memory context */
+	worker_ctx = AllocSetContextCreate(TopMemoryContext,
+		"NeuronDB Queue Worker",
+		ALLOCSET_DEFAULT_SIZES);
 
-    elog(LOG, "neurondb: neuranq worker started (PID %d)", MyProcPid);
+	/* Update shared state */
+	if (neuranq_state && neuranq_state->lock)
+	{
+		LWLockAcquire(neuranq_state->lock, LW_EXCLUSIVE);
+		neuranq_state->worker_pid = MyProcPid;
+		neuranq_state->last_heartbeat = GetCurrentTimestamp();
+		LWLockRelease(neuranq_state->lock);
+	}
 
-    /* Main loop */
-    while (!got_sigterm)
-    {
-        int rc;
+	elog(LOG, "neurondb: neuranq worker started (PID %d)", MyProcPid);
 
-        CHECK_FOR_INTERRUPTS();
+	/* Main loop */
+	while (!got_sigterm)
+	{
+		int rc;
 
-        /* Handle configuration reload */
-        if (got_sighup)
-        {
-            got_sighup = 0;
-            ProcessConfigFile(PGC_SIGHUP);
-            elog(LOG, "neurondb: neuranq reloaded configuration");
-        }
+		CHECK_FOR_INTERRUPTS();
 
-        /* Check if enabled */
-        if (!neuranq_enabled)
-        {
-            rc = WaitLatch(MyLatch,
-                          WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-                          neuranq_naptime,
-                          0);
-            ResetLatch(MyLatch);
-            if (rc & WL_POSTMASTER_DEATH)
-                proc_exit(1);
-            continue;
-        }
+		/* Handle configuration reload */
+		if (got_sighup)
+		{
+			got_sighup = 0;
+			ProcessConfigFile(PGC_SIGHUP);
+			elog(LOG, "neurondb: neuranq reloaded configuration");
+		}
 
-        /* Process batch with full error handling */
-        PG_TRY();
-        {
-            MemoryContext oldcontext = MemoryContextSwitchTo(worker_ctx);
-            
-            process_job_batch();
-            
-            MemoryContextSwitchTo(oldcontext);
-            MemoryContextReset(worker_ctx);
-        }
-        PG_CATCH();
-        {
-            MemoryContext oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-            
-            elog(WARNING, "neurondb: exception in neuranq main loop - recovering");
-            FlushErrorState();
-            
-            /* Transaction already aborted in process_job_batch() */
-            
-            MemoryContextSwitchTo(oldcontext);
-            MemoryContextReset(worker_ctx);
-        }
-        PG_END_TRY();
+		/* Check if enabled */
+		if (!neuranq_enabled)
+		{
+			rc = WaitLatch(MyLatch,
+				WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+				neuranq_naptime,
+				0);
+			ResetLatch(MyLatch);
+			if (rc & WL_POSTMASTER_DEATH)
+				proc_exit(1);
+			continue;
+		}
 
-        /* Update heartbeat */
-        if (neuranq_state && neuranq_state->lock)
-        {
-            LWLockAcquire(neuranq_state->lock, LW_EXCLUSIVE);
-            neuranq_state->last_heartbeat = GetCurrentTimestamp();
-            LWLockRelease(neuranq_state->lock);
-        }
+		/* Process batch with full error handling */
+		PG_TRY();
+		{
+			MemoryContext oldcontext =
+				MemoryContextSwitchTo(worker_ctx);
 
-        /* Wait for next cycle */
-        rc = WaitLatch(MyLatch,
-                      WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-                      neuranq_naptime,
-                      0);
-        ResetLatch(MyLatch);
+			process_job_batch();
 
-        /* Emergency bailout on postmaster death */
-        if (rc & WL_POSTMASTER_DEATH)
-            proc_exit(1);
-    }
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextReset(worker_ctx);
+		}
+		PG_CATCH();
+		{
+			MemoryContext oldcontext =
+				MemoryContextSwitchTo(TopMemoryContext);
 
-    /* Cleanup on shutdown */
-    MemoryContextDelete(worker_ctx);
-    
-    elog(LOG, "neurondb: neuranq worker shutting down");
-    proc_exit(0);
+			elog(WARNING,
+				"neurondb: exception in neuranq main loop - "
+				"recovering");
+			FlushErrorState();
+
+			/* Transaction already aborted in process_job_batch() */
+
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextReset(worker_ctx);
+		}
+		PG_END_TRY();
+
+		/* Update heartbeat */
+		if (neuranq_state && neuranq_state->lock)
+		{
+			LWLockAcquire(neuranq_state->lock, LW_EXCLUSIVE);
+			neuranq_state->last_heartbeat = GetCurrentTimestamp();
+			LWLockRelease(neuranq_state->lock);
+		}
+
+		/* Wait for next cycle */
+		rc = WaitLatch(MyLatch,
+			WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+			neuranq_naptime,
+			0);
+		ResetLatch(MyLatch);
+
+		/* Emergency bailout on postmaster death */
+		if (rc & WL_POSTMASTER_DEATH)
+			proc_exit(1);
+	}
+
+	/* Cleanup on shutdown */
+	MemoryContextDelete(worker_ctx);
+
+	elog(LOG, "neurondb: neuranq worker shutting down");
+	proc_exit(0);
 }
 
 /*
@@ -347,176 +378,242 @@ neuranq_main(Datum main_arg)
 static void
 process_job_batch(void)
 {
-    int ret;
-    
-    /* Start transaction - required for SPI */
-    StartTransactionCommand();
-    PushActiveSnapshot(GetTransactionSnapshot());
-    
-    PG_TRY();
-    {
-        /* Check if table exists first */
-        if (SPI_connect() != SPI_OK_CONNECT)
-            elog(ERROR, "neurondb: SPI_connect failed in neuranq");
+	int ret;
 
-        ret = SPI_execute("SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' AND tablename = 'neurondb_job_queue'", true, 0);
-        
-        if (ret != SPI_OK_SELECT || SPI_processed == 0)
-        {
-            /* Table doesn't exist yet - extension not created */
-            SPI_finish();
-            PopActiveSnapshot();
-            CommitTransactionCommand();
-            elog(DEBUG1, "neurondb: queue worker waiting for extension to be created");
-            return;
-        }
+	/* Start transaction - required for SPI */
+	StartTransactionCommand();
+	PushActiveSnapshot(GetTransactionSnapshot());
 
-        /* Fetch pending jobs */
-        ret = SPI_execute(
-            "SELECT job_id, job_type, payload::text, tenant_id, retry_count "
-            "FROM neurondb.neurondb_job_queue "
-            "WHERE status = 'pending' "
-            "  AND retry_count < max_retries "
-            "  AND (backoff_until IS NULL OR backoff_until < now()) "
-            "ORDER BY created_at "
-            "LIMIT 10 "
-            "FOR UPDATE SKIP LOCKED",
-            false, 0);
+	PG_TRY();
+	{
+		/* Check if table exists first */
+		if (SPI_connect() != SPI_OK_CONNECT)
+			elog(ERROR, "neurondb: SPI_connect failed in neuranq");
 
-        if (ret == SPI_OK_SELECT && SPI_processed > 0)
-        {
-            int i;
-            int processed = 0;
-            
-            for (i = 0; i < (int)SPI_processed; i++)
-            {
-                bool isnull;
-                int64 job_id;
-                char *job_type;
-                char *payload;
-                int tenant_id;
-                int retry_count;
-                bool success;
-                
-                /* Extract job data */
-                job_id = DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1, &isnull));
-                job_type = SPI_getvalue(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 2);
-                payload = SPI_getvalue(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 3);
-                tenant_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 4, &isnull));
-                retry_count = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 5, &isnull));
-                
-                /* Execute job */
-                success = execute_job(job_id, job_type, payload, tenant_id);
-                
-                if (success)
-                {
-                    /* Update job status to completed */
-                    SPI_execute_with_args(
-                        "UPDATE neurondb.neurondb_job_queue SET status = 'completed', completed_at = now() WHERE job_id = $1",
-                        1,
-                        (Oid[]){INT8OID},
-                        (Datum[]){Int64GetDatum(job_id)},
-                        NULL,
-                        false, 0);
-                    processed++;
-                }
-                else
-                {
-                    /* Update retry count and backoff */
-                    int64 backoff_ms = get_next_backoff_ms(retry_count);
-                    SPI_execute_with_args(
-                        "UPDATE neurondb.neurondb_job_queue "
-                        "SET retry_count = retry_count + 1, "
-                        "    backoff_until = now() + ($1 || ' milliseconds')::interval, "
-                        "    status = CASE WHEN retry_count + 1 >= max_retries THEN 'failed' ELSE 'pending' END "
-                        "WHERE job_id = $2",
-                        2,
-                        (Oid[]){INT8OID, INT8OID},
-                        (Datum[]){Int64GetDatum(backoff_ms), Int64GetDatum(job_id)},
-                        NULL,
-                        false, 0);
-                }
-            }
-            
-            elog(DEBUG1, "neurondb: neuranq processed %d jobs", processed);
-            
-            /* Update stats */
-            if (neuranq_state && neuranq_state->lock)
-            {
-                LWLockAcquire(neuranq_state->lock, LW_EXCLUSIVE);
-                neuranq_state->jobs_processed += processed;
-                LWLockRelease(neuranq_state->lock);
-            }
-        }
-        
-        SPI_finish();
-        PopActiveSnapshot();
-        CommitTransactionCommand();
-    }
-    PG_CATCH();
-    {
-        elog(WARNING, "neurondb: exception in process_job_batch - recovering");
-        FlushErrorState();
-        
-        if (IsTransactionState())
-            AbortCurrentTransaction();
-    }
-    PG_END_TRY();
+		ret = SPI_execute(
+			"SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' "
+			"AND tablename = 'neurondb_job_queue'",
+			true,
+			0);
+
+		if (ret != SPI_OK_SELECT || SPI_processed == 0)
+		{
+			/* Table doesn't exist yet - extension not created */
+			SPI_finish();
+			PopActiveSnapshot();
+			CommitTransactionCommand();
+			elog(DEBUG1,
+				"neurondb: queue worker waiting for extension "
+				"to be created");
+			return;
+		}
+
+		/* Fetch pending jobs */
+		ret = SPI_execute("SELECT job_id, job_type, payload::text, "
+				  "tenant_id, retry_count "
+				  "FROM neurondb.neurondb_job_queue "
+				  "WHERE status = 'pending' "
+				  "  AND retry_count < max_retries "
+				  "  AND (backoff_until IS NULL OR "
+				  "backoff_until < now()) "
+				  "ORDER BY created_at "
+				  "LIMIT 10 "
+				  "FOR UPDATE SKIP LOCKED",
+			false,
+			0);
+
+		if (ret == SPI_OK_SELECT && SPI_processed > 0)
+		{
+			int i;
+			int processed = 0;
+
+			for (i = 0; i < (int)SPI_processed; i++)
+			{
+				bool isnull;
+				int64 job_id;
+				char *job_type;
+				char *payload;
+				int tenant_id;
+				int retry_count;
+				bool success;
+
+				/* Extract job data */
+				job_id = DatumGetInt64(
+					SPI_getbinval(SPI_tuptable->vals[i],
+						SPI_tuptable->tupdesc,
+						1,
+						&isnull));
+				job_type = SPI_getvalue(SPI_tuptable->vals[i],
+					SPI_tuptable->tupdesc,
+					2);
+				payload = SPI_getvalue(SPI_tuptable->vals[i],
+					SPI_tuptable->tupdesc,
+					3);
+				tenant_id = DatumGetInt32(
+					SPI_getbinval(SPI_tuptable->vals[i],
+						SPI_tuptable->tupdesc,
+						4,
+						&isnull));
+				retry_count = DatumGetInt32(
+					SPI_getbinval(SPI_tuptable->vals[i],
+						SPI_tuptable->tupdesc,
+						5,
+						&isnull));
+
+				/* Execute job */
+				success = execute_job(
+					job_id, job_type, payload, tenant_id);
+
+				if (success)
+				{
+					/* Update job status to completed */
+					SPI_execute_with_args(
+						"UPDATE "
+						"neurondb.neurondb_job_queue "
+						"SET status = 'completed', "
+						"completed_at = now() WHERE "
+						"job_id = $1",
+						1,
+						(Oid[]) { INT8OID },
+						(Datum[]) {
+							Int64GetDatum(job_id) },
+						NULL,
+						false,
+						0);
+					processed++;
+				} else
+				{
+					/* Update retry count and backoff */
+					int64 backoff_ms = get_next_backoff_ms(
+						retry_count);
+					SPI_execute_with_args(
+						"UPDATE "
+						"neurondb.neurondb_job_queue "
+						"SET retry_count = retry_count "
+						"+ 1, "
+						"    backoff_until = now() + "
+						"($1 || ' "
+						"milliseconds')::interval, "
+						"    status = CASE WHEN "
+						"retry_count + 1 >= "
+						"max_retries THEN 'failed' "
+						"ELSE 'pending' END "
+						"WHERE job_id = $2",
+						2,
+						(Oid[]) { INT8OID, INT8OID },
+						(Datum[]) { Int64GetDatum(
+								    backoff_ms),
+							Int64GetDatum(job_id) },
+						NULL,
+						false,
+						0);
+				}
+			}
+
+			elog(DEBUG1,
+				"neurondb: neuranq processed %d jobs",
+				processed);
+
+			/* Update stats */
+			if (neuranq_state && neuranq_state->lock)
+			{
+				LWLockAcquire(
+					neuranq_state->lock, LW_EXCLUSIVE);
+				neuranq_state->jobs_processed += processed;
+				LWLockRelease(neuranq_state->lock);
+			}
+		}
+
+		SPI_finish();
+		PopActiveSnapshot();
+		CommitTransactionCommand();
+	}
+	PG_CATCH();
+	{
+		elog(WARNING,
+			"neurondb: exception in process_job_batch - "
+			"recovering");
+		FlushErrorState();
+
+		if (IsTransactionState())
+			AbortCurrentTransaction();
+	}
+	PG_END_TRY();
 }
 
 /*
  * Execute a single job - handles different job types
  */
 static bool
-execute_job(int64 job_id, const char *job_type, const char *payload, int tenant_id)
+execute_job(int64 job_id,
+	const char *job_type,
+	const char *payload,
+	int tenant_id)
 {
-    bool success = false;
-    
-    (void) tenant_id;  /* Future use for quota enforcement */
-    
-    PG_TRY();
-    {
-        if (strcmp(job_type, "embed") == 0)
-        {
-            /* Embedding generation job */
-            elog(DEBUG2, "neurondb: processing embed job " NDB_INT64_FMT ": %s", NDB_INT64_CAST(job_id), payload);
-            /* Call embedding generation function */
-            /* For now, just mark as success */
-            success = true;
-        }
-        else if (strcmp(job_type, "rerank") == 0)
-        {
-            /* Reranking job */
-            elog(DEBUG2, "neurondb: processing rerank job " NDB_INT64_FMT, NDB_INT64_CAST(job_id));
-            success = true;
-        }
-        else if (strcmp(job_type, "cache_refresh") == 0)
-        {
-            /* Cache refresh job */
-            elog(DEBUG2, "neurondb: processing cache_refresh job " NDB_INT64_FMT, NDB_INT64_CAST(job_id));
-            success = true;
-        }
-        else if (strcmp(job_type, "http_call") == 0)
-        {
-            /* External HTTP API call */
-            elog(DEBUG2, "neurondb: processing http_call job " NDB_INT64_FMT, NDB_INT64_CAST(job_id));
-            success = true;
-        }
-        else
-        {
-            elog(WARNING, "neurondb: unknown job type '%s' for job " NDB_INT64_FMT, job_type, NDB_INT64_CAST(job_id));
-            success = false;
-        }
-    }
-    PG_CATCH();
-    {
-        elog(WARNING, "neurondb: exception executing job " NDB_INT64_FMT " (type: %s)", NDB_INT64_CAST(job_id), job_type);
-        FlushErrorState();
-        success = false;
-    }
-    PG_END_TRY();
-    
-    return success;
+	bool success = false;
+
+	(void)tenant_id; /* Future use for quota enforcement */
+
+	PG_TRY();
+	{
+		if (strcmp(job_type, "embed") == 0)
+		{
+			/* Embedding generation job */
+			elog(DEBUG2,
+				"neurondb: processing embed job " NDB_INT64_FMT
+				": %s",
+				NDB_INT64_CAST(job_id),
+				payload);
+			/* Call embedding generation function */
+			/* For now, just mark as success */
+			success = true;
+		} else if (strcmp(job_type, "rerank") == 0)
+		{
+			/* Reranking job */
+			elog(DEBUG2,
+				"neurondb: processing rerank "
+				"job " NDB_INT64_FMT,
+				NDB_INT64_CAST(job_id));
+			success = true;
+		} else if (strcmp(job_type, "cache_refresh") == 0)
+		{
+			/* Cache refresh job */
+			elog(DEBUG2,
+				"neurondb: processing cache_refresh "
+				"job " NDB_INT64_FMT,
+				NDB_INT64_CAST(job_id));
+			success = true;
+		} else if (strcmp(job_type, "http_call") == 0)
+		{
+			/* External HTTP API call */
+			elog(DEBUG2,
+				"neurondb: processing http_call "
+				"job " NDB_INT64_FMT,
+				NDB_INT64_CAST(job_id));
+			success = true;
+		} else
+		{
+			elog(WARNING,
+				"neurondb: unknown job type '%s' for "
+				"job " NDB_INT64_FMT,
+				job_type,
+				NDB_INT64_CAST(job_id));
+			success = false;
+		}
+	}
+	PG_CATCH();
+	{
+		elog(WARNING,
+			"neurondb: exception executing job " NDB_INT64_FMT
+			" (type: %s)",
+			NDB_INT64_CAST(job_id),
+			job_type);
+		FlushErrorState();
+		success = false;
+	}
+	PG_END_TRY();
+
+	return success;
 }
 
 /*
@@ -525,15 +622,15 @@ execute_job(int64 job_id, const char *job_type, const char *payload, int tenant_
 static int64
 get_next_backoff_ms(int retry_count)
 {
-    /* Exponential backoff: 1s, 2s, 4s, 8s, etc. */
-    int64 base_ms = 1000;
-    int64 backoff = base_ms;
-    int i;
-    
-    for (i = 0; i < retry_count && i < 10; i++)
-        backoff *= 2;
-    
-    return backoff;
+	/* Exponential backoff: 1s, 2s, 4s, 8s, etc. */
+	int64 base_ms = 1000;
+	int64 backoff = base_ms;
+	int i;
+
+	for (i = 0; i < retry_count && i < 10; i++)
+		backoff *= 2;
+
+	return backoff;
 }
 
 /*
@@ -544,22 +641,26 @@ PG_FUNCTION_INFO_V1(neuranq_run_once);
 Datum
 neuranq_run_once(PG_FUNCTION_ARGS)
 {
-    bool safe = true;
-    
-    (void) fcinfo;  /* Unused */
-    
-    PG_TRY();
-    {
-        elog(NOTICE, "neurondb: manually triggering neuranq batch processing");
-        process_job_batch();
-    }
-    PG_CATCH();
-    {
-        elog(WARNING, "neurondb: exception during manual batch processing (crash safe)");
-        FlushErrorState();
-        safe = false;
-    }
-    PG_END_TRY();
-    
-    PG_RETURN_BOOL(safe);
+	bool safe = true;
+
+	(void)fcinfo; /* Unused */
+
+	PG_TRY();
+	{
+		elog(NOTICE,
+			"neurondb: manually triggering neuranq batch "
+			"processing");
+		process_job_batch();
+	}
+	PG_CATCH();
+	{
+		elog(WARNING,
+			"neurondb: exception during manual batch processing "
+			"(crash safe)");
+		FlushErrorState();
+		safe = false;
+	}
+	PG_END_TRY();
+
+	PG_RETURN_BOOL(safe);
 }

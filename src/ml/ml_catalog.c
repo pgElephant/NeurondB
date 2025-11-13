@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * ml_catalog.c
- *    Helpers for interacting with neurondb.ml_models catalog.
+ *	  Helpers for interacting with neurondb.ml_models catalog.
  *
  * These utilities provide a reusable way for algorithm implementations to
  * register their trained models and retrieve serialized payloads.
@@ -37,50 +37,53 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	const char *training_table;
 	const char *training_column;
 	const char *algorithm;
-	Jsonb *parameters;
-	Jsonb *metrics;
-	bytea *model_data;
-	int32 project_id = 0;
-	int32 version = 1;
-	int32 model_id = 0;
-	int32 ret;
-	StringInfoData sql;
-	Oid argtypes[3];
-	Datum values[3];
-	char nulls[3];
-	bool isnull = false;
+	Jsonb	   *parameters;
+	Jsonb	   *metrics;
+	bytea	   *model_data;
+	int32		project_id = 0;
+	int32		version = 1;
+	int32		model_id = 0;
+	int32		ret;
+	StringInfoData	sql;
+	Oid		argtypes[3];
+	Datum		values[3];
+	char		nulls[3];
+	bool		isnull = false;
 
 	if (spec == NULL)
 		elog(ERROR, "ml_catalog_register_model: invalid spec (NULL)");
 
 	algorithm = spec->algorithm;
 	if (algorithm == NULL)
-		elog(ERROR,
-			"ml_catalog_register_model: algorithm must be "
-			"provided");
+		elog(ERROR, "ml_catalog_register_model: algorithm must be provided");
 
 	training_table = spec->training_table;
 	if (training_table == NULL)
 		elog(ERROR,
-			"ml_catalog_register_model: training_table must be "
-			"provided");
+			 "ml_catalog_register_model: training_table must be provided");
 
 	training_column = spec->training_column;
-	model_type = (spec->model_type != NULL) ? spec->model_type
-						: "classification";
-	project_name = (spec->project_name != NULL)
-		? spec->project_name
-		: ml_catalog_default_project(algorithm, training_table);
+	if (spec->model_type != NULL)
+		model_type = spec->model_type;
+	else
+		model_type = "classification";
+	if (spec->project_name != NULL)
+		project_name = spec->project_name;
+	else
+		project_name = ml_catalog_default_project(algorithm, training_table);
 	parameters = spec->parameters;
 	metrics = spec->metrics;
 	model_data = spec->model_data;
-	
+
 	/* Debug: verify metrics are received */
 	if (metrics != NULL)
 	{
-		char *meta_txt = DatumGetCString(
-			DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metrics)));
-		elog(DEBUG1, "ml_catalog_register_model: received metrics: %s", meta_txt);
+		char   *meta_txt;
+
+		meta_txt = DatumGetCString(DirectFunctionCall1(jsonb_out,
+													   JsonbPGetDatum(metrics)));
+		elog(DEBUG1, "ml_catalog_register_model: received metrics: %s",
+			 meta_txt);
 		pfree(meta_txt);
 	}
 	else
@@ -116,25 +119,23 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 		false,
 		1);
 
-	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0
-		|| SPI_tuptable == NULL)
-		elog(ERROR,
-			"ml_catalog_register_model: failed to upsert project");
+	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0 ||
+		SPI_tuptable == NULL)
+		elog(ERROR, "ml_catalog_register_model: failed to upsert project");
 
 	project_id = DatumGetInt32(SPI_getbinval(
-		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+								SPI_tuptable->vals[0],
+								SPI_tuptable->tupdesc, 1, &isnull));
 	if (isnull)
-		elog(ERROR,
-			"ml_catalog_register_model: project_id NULL after "
-			"upsert");
+		elog(ERROR, "ml_catalog_register_model: project_id NULL after upsert");
 	isnull = false;
 
 	/* Determine next model version for project */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT COALESCE(MAX(version), 0) + 1 "
-		"FROM neurondb.ml_models WHERE project_id = %d",
-		project_id);
+					 "SELECT COALESCE(MAX(version), 0) + 1 "
+					 "FROM neurondb.ml_models WHERE project_id = %d",
+					 project_id);
 
 	ret = SPI_execute(sql.data, true, 1);
 	if (ret != SPI_OK_SELECT || SPI_processed == 0 || SPI_tuptable == NULL)
@@ -142,9 +143,8 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	else
 	{
 		version = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull));
+											  SPI_tuptable->tupdesc, 1,
+											  &isnull));
 		if (isnull)
 			version = 1;
 	}
@@ -153,28 +153,29 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 
 	/* Insert model row */
 	{
-		Oid insert_argtypes[11];
-		Datum insert_values[11];
-		char insert_nulls[11];
+		Oid		insert_argtypes[11];
+		Datum	insert_values[11];
+		char	insert_nulls[11];
 
 		memset(insert_nulls, ' ', sizeof(insert_nulls));
 
-		insert_argtypes[0] = INT4OID; /* project_id */
-		insert_argtypes[1] = INT4OID; /* version */
-		insert_argtypes[2] = TEXTOID; /* algorithm */
-		insert_argtypes[3] = TEXTOID; /* training_table */
-		insert_argtypes[4] = TEXTOID; /* training_column */
-		insert_argtypes[5] = JSONBOID; /* parameters */
-		insert_argtypes[6] = BYTEAOID; /* model_data */
-		insert_argtypes[7] = JSONBOID; /* metrics */
-		insert_argtypes[8] = INT4OID; /* training_time_ms */
-		insert_argtypes[9] = INT4OID; /* num_samples */
-		insert_argtypes[10] = INT4OID; /* num_features */
+		insert_argtypes[0] = INT4OID;
+		insert_argtypes[1] = INT4OID;
+		insert_argtypes[2] = TEXTOID;
+		insert_argtypes[3] = TEXTOID;
+		insert_argtypes[4] = TEXTOID;
+		insert_argtypes[5] = JSONBOID;
+		insert_argtypes[6] = BYTEAOID;
+		insert_argtypes[7] = JSONBOID;
+		insert_argtypes[8] = INT4OID;
+		insert_argtypes[9] = INT4OID;
+		insert_argtypes[10] = INT4OID;
 
 		insert_values[0] = Int32GetDatum(project_id);
 		insert_values[1] = Int32GetDatum(version);
 		insert_values[2] = CStringGetTextDatum(algorithm);
 		insert_values[3] = CStringGetTextDatum(training_table);
+
 		if (training_column != NULL)
 			insert_values[4] = CStringGetTextDatum(training_column);
 		else
@@ -192,21 +193,22 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 
 		if (metrics != NULL)
 		{
-			/* Ensure metrics Jsonb is in the correct memory context for SPI */
-			Jsonb *metrics_copy = (Jsonb *)PG_DETOAST_DATUM_COPY(PointerGetDatum(metrics));
+			Jsonb   *metrics_copy;
+
+			metrics_copy = (Jsonb *) PG_DETOAST_DATUM_COPY(PointerGetDatum(metrics));
 			insert_values[7] = PointerGetDatum(metrics_copy);
-			elog(DEBUG1, "ml_catalog_register_model: inserting metrics (size=%d)", 
-				VARSIZE(metrics_copy) - VARHDRSZ);
+			elog(DEBUG1, "ml_catalog_register_model: inserting metrics (size=%d)",
+				 VARSIZE(metrics_copy) - VARHDRSZ);
 		}
 		else
 		{
 			insert_nulls[7] = 'n';
-			elog(DEBUG1, "ml_catalog_register_model: metrics is NULL, setting null flag");
+			elog(DEBUG1,
+				 "ml_catalog_register_model: metrics is NULL, setting null flag");
 		}
 
 		if (spec->training_time_ms >= 0)
-			insert_values[8] =
-				Int32GetDatum(spec->training_time_ms);
+			insert_values[8] = Int32GetDatum(spec->training_time_ms);
 		else
 			insert_nulls[8] = 'n';
 
@@ -227,10 +229,8 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			"training_column, parameters, model_data, metrics, "
 			"training_time_ms, num_samples, num_features, "
 			"completed_at) "
-			"VALUES ($1, $2, $3::neurondb.ml_algorithm_type, "
-			"'completed', "
-			"$4, $5, COALESCE($6, '{}'::jsonb), $7, COALESCE($8, "
-			"'{}'::jsonb), "
+			"VALUES ($1, $2, $3::neurondb.ml_algorithm_type, 'completed', "
+			"$4, $5, COALESCE($6, '{}'::jsonb), $7, COALESCE($8, '{}'::jsonb), "
 			"$9, $10, $11, NOW()) "
 			"RETURNING model_id",
 			11,
@@ -243,29 +243,29 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 		if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0)
 		{
 			elog(ERROR,
-				"ml_catalog_register_model: failed to insert "
-				"ml_models row (ret=%d, processed=%lu)",
-				ret, (unsigned long)SPI_processed);
+				 "ml_catalog_register_model: failed to insert ml_models row "
+				 "(ret=%d, processed=%lu)",
+				 ret, (unsigned long) SPI_processed);
 		}
 
 		{
 			bool isnull_result = false;
+
 			model_id = DatumGetInt32(
 				SPI_getbinval(SPI_tuptable->vals[0],
-					SPI_tuptable->tupdesc,
-					1,
-					&isnull_result));
-			elog(DEBUG1, "ml_catalog_register_model: extracted model_id=%d (isnull=%d)",
-				model_id, isnull_result);
+							  SPI_tuptable->tupdesc, 1,
+							  &isnull_result));
+			elog(DEBUG1,
+				 "ml_catalog_register_model: extracted model_id=%d (isnull=%d)",
+				 model_id, isnull_result);
+
 			if (isnull_result)
 				elog(ERROR,
-					"ml_catalog_register_model: model_id "
-					"NULL "
-					"after insert");
+					 "ml_catalog_register_model: model_id NULL after insert");
 			if (model_id <= 0)
 				elog(WARNING,
-					"ml_catalog_register_model: model_id=%d is invalid (should be > 0)",
-					model_id);
+					 "ml_catalog_register_model: model_id=%d is invalid (should be > 0)",
+					 model_id);
 		}
 
 		pfree(DatumGetPointer(insert_values[2]));
@@ -281,22 +281,22 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	SPI_finish();
 
 	if (spec->project_name == NULL)
-		pfree((void *)project_name);
+		pfree((void *) project_name);
 
 	return model_id;
 }
 
 bool
 ml_catalog_fetch_model_payload(int32 model_id,
-	bytea **model_data_out,
-	Jsonb **parameters_out,
-	Jsonb **metrics_out)
+							  bytea **model_data_out,
+							  Jsonb **parameters_out,
+							  Jsonb **metrics_out)
 {
-	int ret;
-	StringInfoData sql;
-	bool found = false;
-	MemoryContext oldcontext;
-	MemoryContext caller_context;
+	int			ret;
+	StringInfoData	sql;
+	bool		found = false;
+	MemoryContext	oldcontext;
+	MemoryContext	caller_context;
 
 	if (model_data_out != NULL)
 		*model_data_out = NULL;
@@ -309,20 +309,19 @@ ml_catalog_fetch_model_payload(int32 model_id,
 	caller_context = CurrentMemoryContext;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR,
-			"ml_catalog_fetch_model_payload: SPI_connect failed");
+		elog(ERROR, "ml_catalog_fetch_model_payload: SPI_connect failed");
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT model_data, parameters, metrics "
-		"FROM neurondb.ml_models WHERE model_id = %d",
-		model_id);
+					 "SELECT model_data, parameters, metrics "
+					 "FROM neurondb.ml_models WHERE model_id = %d",
+					 model_id);
 
 	ret = SPI_execute(sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		Datum datum;
-		bool isnull;
+		Datum		datum;
+		bool		isnull;
 
 		found = true;
 
@@ -332,15 +331,13 @@ ml_catalog_fetch_model_payload(int32 model_id,
 		if (model_data_out != NULL)
 		{
 			datum = SPI_getbinval(SPI_tuptable->vals[0],
-				SPI_tuptable->tupdesc,
-				1,
-				&isnull);
+								  SPI_tuptable->tupdesc, 1, &isnull);
 			if (!isnull)
 			{
-				bytea *copy = DatumGetByteaP(datum);
+				bytea *copy;
 
-				copy = (bytea *)PG_DETOAST_DATUM_COPY(
-					(Datum)copy);
+				copy = DatumGetByteaP(datum);
+				copy = (bytea *) PG_DETOAST_DATUM_COPY((Datum) copy);
 				*model_data_out = copy;
 			}
 		}
@@ -348,15 +345,13 @@ ml_catalog_fetch_model_payload(int32 model_id,
 		if (parameters_out != NULL)
 		{
 			datum = SPI_getbinval(SPI_tuptable->vals[0],
-				SPI_tuptable->tupdesc,
-				2,
-				&isnull);
+								  SPI_tuptable->tupdesc, 2, &isnull);
 			if (!isnull)
 			{
-				Jsonb *jsonb_val = DatumGetJsonbP(datum);
+				Jsonb *jsonb_val;
 
-				jsonb_val = (Jsonb *)PG_DETOAST_DATUM_COPY(
-					(Datum)jsonb_val);
+				jsonb_val = DatumGetJsonbP(datum);
+				jsonb_val = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) jsonb_val);
 				*parameters_out = jsonb_val;
 			}
 		}
@@ -364,9 +359,7 @@ ml_catalog_fetch_model_payload(int32 model_id,
 		if (metrics_out != NULL)
 		{
 			datum = SPI_getbinval(SPI_tuptable->vals[0],
-				SPI_tuptable->tupdesc,
-				3,
-				&isnull);
+								  SPI_tuptable->tupdesc, 3, &isnull);
 			if (!isnull)
 			{
 				Jsonb *jsonb_val = NULL;
@@ -374,20 +367,17 @@ ml_catalog_fetch_model_payload(int32 model_id,
 				PG_TRY();
 				{
 					jsonb_val = DatumGetJsonbP(datum);
-					jsonb_val = (Jsonb *)PG_DETOAST_DATUM_COPY(
-						(Datum)jsonb_val);
+					jsonb_val = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) jsonb_val);
 					*metrics_out = jsonb_val;
 				}
 				PG_CATCH();
 				{
-					/* If jsonb is invalid, set to NULL */
 					*metrics_out = NULL;
 				}
 				PG_END_TRY();
 			}
 		}
 
-		/* Switch back to SPI context */
 		MemoryContextSwitchTo(oldcontext);
 	}
 

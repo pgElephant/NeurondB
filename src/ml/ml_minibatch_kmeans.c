@@ -51,14 +51,18 @@
  * Uses D² weighting to select initial centroids
  */
 static void
-minibatch_kmeans_pp_init(float **data, int nvec, int dim, int k, float **centroids)
+minibatch_kmeans_pp_init(float **data,
+	int nvec,
+	int dim,
+	int k,
+	float **centroids)
 {
 	bool *selected;
 	double *dist;
 	int c, i, d;
 
-	selected = (bool *) palloc0(sizeof(bool) * nvec);
-	dist = (double *) palloc(sizeof(double) * nvec);
+	selected = (bool *)palloc0(sizeof(bool) * nvec);
+	dist = (double *)palloc(sizeof(double) * nvec);
 
 	/* Select first centroid randomly */
 	{
@@ -73,7 +77,8 @@ minibatch_kmeans_pp_init(float **data, int nvec, int dim, int k, float **centroi
 		double acc = 0.0;
 		for (d = 0; d < dim; d++)
 		{
-			double diff = (double)data[i][d] - (double)centroids[0][d];
+			double diff =
+				(double)data[i][d] - (double)centroids[0][d];
 			acc += diff * diff;
 		}
 		dist[i] = acc;
@@ -132,14 +137,15 @@ minibatch_kmeans_pp_init(float **data, int nvec, int dim, int k, float **centroi
 		for (i = 0; i < nvec; i++)
 		{
 			double acc;
-			
+
 			if (selected[i])
 				continue;
 
 			acc = 0.0;
 			for (d = 0; d < dim; d++)
 			{
-				double diff = (double)data[i][d] - (double)centroids[c][d];
+				double diff = (double)data[i][d]
+					- (double)centroids[c][d];
 				acc += diff * diff;
 			}
 			if (acc < dist[i])
@@ -211,13 +217,13 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 	/* Validation */
 	if (num_clusters < 2)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("num_clusters must be at least 2")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_clusters must be at least 2")));
 
 	if (batch_size < 1)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("batch_size must be at least 1")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("batch_size must be at least 1")));
 
 	if (max_iters < 1)
 		max_iters = 100;
@@ -225,45 +231,54 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(column_name);
 
-	elog(DEBUG1, "neurondb: Mini-batch K-means on %s.%s (k=%d, batch=%d, iters=%d)",
-		 tbl_str, col_str, num_clusters, batch_size, max_iters);
+	elog(DEBUG1,
+		"neurondb: Mini-batch K-means on %s.%s (k=%d, batch=%d, "
+		"iters=%d)",
+		tbl_str,
+		col_str,
+		num_clusters,
+		batch_size,
+		max_iters);
 
 	/* Fetch training data */
 	data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
 
 	if (nvec < num_clusters)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Not enough vectors (%d) for %d clusters", nvec, num_clusters)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Not enough vectors (%d) for %d "
+				       "clusters",
+					nvec,
+					num_clusters)));
 
 	/* Adjust batch size if larger than dataset */
 	if (batch_size > nvec)
 		batch_size = nvec;
 
 	/* Initialize centroids using K-means++ */
-	centroids = (float **) palloc(sizeof(float *) * num_clusters);
+	centroids = (float **)palloc(sizeof(float *) * num_clusters);
 	for (c = 0; c < num_clusters; c++)
-		centroids[c] = (float *) palloc(sizeof(float) * dim);
+		centroids[c] = (float *)palloc(sizeof(float) * dim);
 
 	minibatch_kmeans_pp_init(data, nvec, dim, num_clusters, centroids);
 
 	/* Initialize per-centroid counters for learning rate */
-	centroid_counts = (int *) palloc0(sizeof(int) * num_clusters);
+	centroid_counts = (int *)palloc0(sizeof(int) * num_clusters);
 
 	/* Allocate batch indices array */
-	batch_indices = (int *) palloc(sizeof(int) * batch_size);
+	batch_indices = (int *)palloc(sizeof(int) * batch_size);
 
 	/* Mini-batch K-means main loop */
 	for (iter = 0; iter < max_iters; iter++)
 	{
 		int *batch_assignments;
-		
+
 		/* Sample random mini-batch without replacement */
 		for (i = 0; i < batch_size; i++)
 			batch_indices[i] = rand() % nvec;
 
 		/* Assign each point in batch to nearest centroid */
-		batch_assignments = (int *) palloc(sizeof(int) * batch_size);
+		batch_assignments = (int *)palloc(sizeof(int) * batch_size);
 		for (i = 0; i < batch_size; i++)
 		{
 			int vec_idx = batch_indices[i];
@@ -275,7 +290,8 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 				double dist = 0.0;
 				for (d = 0; d < dim; d++)
 				{
-					double diff = (double)data[vec_idx][d] - (double)centroids[c][d];
+					double diff = (double)data[vec_idx][d]
+						- (double)centroids[c][d];
 					dist += diff * diff;
 				}
 				if (dist < min_dist)
@@ -300,19 +316,25 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 			/* Update centroid: c = c + η * (x - c) = (1-η)*c + η*x */
 			for (d = 0; d < dim; d++)
 			{
-				centroids[cluster][d] = (float)((1.0 - learning_rate) * centroids[cluster][d] +
-												learning_rate * data[vec_idx][d]);
+				centroids[cluster][d] =
+					(float)((1.0 - learning_rate)
+							* centroids[cluster][d]
+						+ learning_rate
+							* data[vec_idx][d]);
 			}
 		}
 
 		pfree(batch_assignments);
 
 		if ((iter + 1) % 10 == 0)
-			elog(DEBUG2, "neurondb: Mini-batch K-means iteration %d/%d", iter + 1, max_iters);
+			elog(DEBUG2,
+				"neurondb: Mini-batch K-means iteration %d/%d",
+				iter + 1,
+				max_iters);
 	}
 
 	/* Final assignment: assign all points to nearest centroid */
-	assignments = (int *) palloc(sizeof(int) * nvec);
+	assignments = (int *)palloc(sizeof(int) * nvec);
 	for (i = 0; i < nvec; i++)
 	{
 		double min_dist = DBL_MAX;
@@ -323,7 +345,8 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 			double dist = 0.0;
 			for (d = 0; d < dim; d++)
 			{
-				double diff = (double)data[i][d] - (double)centroids[c][d];
+				double diff = (double)data[i][d]
+					- (double)centroids[c][d];
 				dist += diff * diff;
 			}
 			if (dist < min_dist)
@@ -336,12 +359,13 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result array (1-based cluster labels) */
-	result_datums = (Datum *) palloc(sizeof(Datum) * nvec);
+	result_datums = (Datum *)palloc(sizeof(Datum) * nvec);
 	for (i = 0; i < nvec; i++)
 		result_datums[i] = Int32GetDatum(assignments[i] + 1);
 
 	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
-	result = construct_array(result_datums, nvec, INT4OID, typlen, typbyval, typalign);
+	result = construct_array(
+		result_datums, nvec, INT4OID, typlen, typbyval, typalign);
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
@@ -359,4 +383,3 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
-

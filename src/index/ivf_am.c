@@ -38,46 +38,46 @@
 #include <float.h>
 
 /* IVF parameters */
-#define IVF_DEFAULT_NLISTS		100		/* Number of clusters/centroids */
-#define IVF_DEFAULT_NPROBE		10		/* Number of lists to probe */
-#define IVF_MAX_ITERATIONS		50		/* KMeans max iterations */
-#define IVF_CONVERGENCE_THRESHOLD 0.001	/* KMeans convergence */
+#define IVF_DEFAULT_NLISTS 100 /* Number of clusters/centroids */
+#define IVF_DEFAULT_NPROBE 10 /* Number of lists to probe */
+#define IVF_MAX_ITERATIONS 50 /* KMeans max iterations */
+#define IVF_CONVERGENCE_THRESHOLD 0.001 /* KMeans convergence */
 
 /*
  * IVF metadata page (block 0)
  */
 typedef struct IvfMetaPageData
 {
-	uint32		magicNumber;
-	uint32		version;
-	int			nlists;			/* Number of inverted lists */
-	int			nprobe;			/* Default nprobe */
-	int			dim;			/* Vector dimension */
-	BlockNumber centroidsBlock;	/* Block containing centroids */
-	int64		insertedVectors;
+	uint32 magicNumber;
+	uint32 version;
+	int nlists; /* Number of inverted lists */
+	int nprobe; /* Default nprobe */
+	int dim; /* Vector dimension */
+	BlockNumber centroidsBlock; /* Block containing centroids */
+	int64 insertedVectors;
 } IvfMetaPageData;
 
 typedef IvfMetaPageData *IvfMetaPage;
 
-#define IVF_MAGIC_NUMBER	0x49564646	/* "IVFF" in hex */
-#define IVF_VERSION			1
+#define IVF_MAGIC_NUMBER 0x49564646 /* "IVFF" in hex */
+#define IVF_VERSION 1
 
 /*
  * Centroid data (stored in dedicated page(s))
  */
 typedef struct IvfCentroidData
 {
-	int			listId;			/* Inverted list ID */
-	int			dim;			/* Vector dimension */
-	int64		memberCount;	/* Vectors in this list */
-	BlockNumber firstBlock;		/* First block of inverted list */
+	int listId; /* Inverted list ID */
+	int dim; /* Vector dimension */
+	int64 memberCount; /* Vectors in this list */
+	BlockNumber firstBlock; /* First block of inverted list */
 	/* Followed by float4 centroid[dim] */
 } IvfCentroidData;
 
 typedef IvfCentroidData *IvfCentroid;
 
 #define IvfGetCentroidVector(centroid) \
-	((float4 *) ((char *) (centroid) + MAXALIGN(sizeof(IvfCentroidData))))
+	((float4 *)((char *)(centroid) + MAXALIGN(sizeof(IvfCentroidData))))
 
 /*
  * Inverted list entry
@@ -85,7 +85,7 @@ typedef IvfCentroidData *IvfCentroid;
 typedef struct IvfListEntryData
 {
 	ItemPointerData heapPtr;
-	int16		dim;
+	int16 dim;
 	/* Followed by float4 vector[dim] */
 } IvfListEntryData;
 
@@ -96,52 +96,62 @@ typedef IvfListEntryData *IvfListEntry;
  */
 typedef struct KMeansState
 {
-	int			k;				/* Number of clusters */
-	int			dim;			/* Vector dimension */
-	int			maxIter;		/* Max iterations */
-	float4		threshold;		/* Convergence threshold */
-	
+	int k; /* Number of clusters */
+	int dim; /* Vector dimension */
+	int maxIter; /* Max iterations */
+	float4 threshold; /* Convergence threshold */
+
 	/* Centroids */
-	float4	  **centroids;		/* k x dim */
-	int		   *assignments;	/* Vector assignments */
-	int		   *counts;			/* Points per cluster */
-	
+	float4 **centroids; /* k x dim */
+	int *assignments; /* Vector assignments */
+	int *counts; /* Points per cluster */
+
 	/* Data */
-	float4	  **data;			/* n x dim training data */
-	int			n;				/* Number of data points */
-	
+	float4 **data; /* n x dim training data */
+	int n; /* Number of data points */
+
 	MemoryContext ctx;
 } KMeansState;
 
 /* Forward declarations */
-static IndexBuildResult *ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo);
+static IndexBuildResult *
+ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo);
 static void ivfbuildempty(Relation index);
-static bool ivfinsert(Relation index, Datum *values, bool *isnull,
-					  ItemPointer ht_ctid, Relation heapRel,
-					  IndexUniqueCheck checkUnique,
-					  bool indexUnchanged,
-					  struct IndexInfo *indexInfo);
+static bool ivfinsert(Relation index,
+	Datum *values,
+	bool *isnull,
+	ItemPointer ht_ctid,
+	Relation heapRel,
+	IndexUniqueCheck checkUnique,
+	bool indexUnchanged,
+	struct IndexInfo *indexInfo);
 static IndexBulkDeleteResult *ivfbulkdelete(IndexVacuumInfo *info,
-											IndexBulkDeleteResult *stats,
-											IndexBulkDeleteCallback callback,
-											void *callback_state);
+	IndexBulkDeleteResult *stats,
+	IndexBulkDeleteCallback callback,
+	void *callback_state);
 static IndexBulkDeleteResult *ivfvacuumcleanup(IndexVacuumInfo *info,
-											   IndexBulkDeleteResult *stats);
+	IndexBulkDeleteResult *stats);
 static void ivfcostestimate(struct PlannerInfo *root,
-							struct IndexPath *path,
-							double loop_count,
-							Cost *indexStartupCost,
-							Cost *indexTotalCost,
-							Selectivity *indexSelectivity,
-							double *indexCorrelation,
-							double *indexPages);
+	struct IndexPath *path,
+	double loop_count,
+	Cost *indexStartupCost,
+	Cost *indexTotalCost,
+	Selectivity *indexSelectivity,
+	double *indexCorrelation,
+	double *indexPages);
 static bytea *ivfoptions(Datum reloptions, bool validate);
-static bool ivfproperty(Oid index_oid, int attno,
-						IndexAMProperty prop, const char *propname,
-						bool *res, bool *isnull);
+static bool ivfproperty(Oid index_oid,
+	int attno,
+	IndexAMProperty prop,
+	const char *propname,
+	bool *res,
+	bool *isnull);
 static IndexScanDesc ivfbeginscan(Relation index, int nkeys, int norderbys);
-static void ivfrescan(IndexScanDesc scan, ScanKey keys, int nkeys,
-					  ScanKey orderbys, int norderbys);
+static void ivfrescan(IndexScanDesc scan,
+	ScanKey keys,
+	int nkeys,
+	ScanKey orderbys,
+	int norderbys);
 static bool ivfgettuple(IndexScanDesc scan, ScanDirection dir);
 static void ivfendscan(IndexScanDesc scan);
 
@@ -219,7 +229,7 @@ static IndexBuildResult *
 ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 {
 	IndexBuildResult *result;
-	
+
 	elog(NOTICE, "neurondb: Building IVF index with KMeans clustering");
 
 	/* TODO: Implement full build:
@@ -230,7 +240,7 @@ ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	 * 5. Build inverted lists
 	 */
 
-	result = (IndexBuildResult *) palloc(sizeof(IndexBuildResult));
+	result = (IndexBuildResult *)palloc(sizeof(IndexBuildResult));
 	result->heap_tuples = 0;
 	result->index_tuples = 0;
 
@@ -250,19 +260,22 @@ ivfbuildempty(Relation index)
  * Insert into IVF index
  */
 static bool
-ivfinsert(Relation index, Datum *values, bool *isnull,
-		  ItemPointer ht_ctid, Relation heapRel,
-		  IndexUniqueCheck checkUnique,
-		  bool indexUnchanged,
-		  struct IndexInfo *indexInfo)
+ivfinsert(Relation index,
+	Datum *values,
+	bool *isnull,
+	ItemPointer ht_ctid,
+	Relation heapRel,
+	IndexUniqueCheck checkUnique,
+	bool indexUnchanged,
+	struct IndexInfo *indexInfo)
 {
-	Vector	   *input_vec;
+	Vector *input_vec;
 	BlockNumber meta_blkno = 0;
-	Buffer		meta_buf;
+	Buffer meta_buf;
 	IvfMetaPageData *meta;
-	int			i, min_idx = 0, nlist;
-	float4		min_dist = FLT_MAX;
-	float4		dist;
+	int i, min_idx = 0, nlist;
+	float4 min_dist = FLT_MAX;
+	float4 dist;
 
 	if (isnull[0])
 		return false; /* don't insert NULLs */
@@ -276,13 +289,14 @@ ivfinsert(Relation index, Datum *values, bool *isnull,
 	 */
 	meta_buf = ReadBuffer(index, meta_blkno);
 	LockBuffer(meta_buf, BUFFER_LOCK_SHARE);
-	meta = (IvfMetaPageData *) PageGetContents(BufferGetPage(meta_buf));
-		nlist = meta->nlists;
+	meta = (IvfMetaPageData *)PageGetContents(BufferGetPage(meta_buf));
+	nlist = meta->nlists;
 
-		if (nlist <= 0)
+	if (nlist <= 0)
 	{
 		UnlockReleaseBuffer(meta_buf);
-		elog(WARNING, "IVF index has no centroids or dimension mismatch");
+		elog(WARNING,
+			"IVF index has no centroids or dimension mismatch");
 		return false;
 	}
 
@@ -295,7 +309,7 @@ ivfinsert(Relation index, Datum *values, bool *isnull,
 		int k;
 		/* TODO: Implement centroid access from meta page */
 		/* Skip centroid distance calculation for now */
-		accum = 1.0f;  /* Placeholder */
+		accum = 1.0f; /* Placeholder */
 		for (k = 0; k < input_vec->dim; k++)
 		{
 			/* float4 diff = input_vec->data[k] - centroid[k]; */
@@ -320,7 +334,10 @@ ivfinsert(Relation index, Datum *values, bool *isnull,
 	 * and how such an append would be performed in the full implementation, and this comment is used in place of a STUB or PSEUDO tag.
 	 */
 
-	elog(DEBUG1, "ivfinsert: assigned to centroid %d (L2=%.4f)", min_idx, min_dist);
+	elog(DEBUG1,
+		"ivfinsert: assigned to centroid %d (L2=%.4f)",
+		min_idx,
+		min_dist);
 
 	/*
 	 * Here is where you'd add ht_ctid (and optionally the vector or its encoding) to the list for min_idx.
@@ -332,11 +349,14 @@ ivfinsert(Relation index, Datum *values, bool *isnull,
 
 /* Stub implementations for other required functions */
 static IndexBulkDeleteResult *
-ivfbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
-			  IndexBulkDeleteCallback callback, void *callback_state)
+ivfbulkdelete(IndexVacuumInfo *info,
+	IndexBulkDeleteResult *stats,
+	IndexBulkDeleteCallback callback,
+	void *callback_state)
 {
 	if (stats == NULL)
-		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
+		stats = (IndexBulkDeleteResult *)palloc0(
+			sizeof(IndexBulkDeleteResult));
 	return stats;
 }
 
@@ -344,15 +364,20 @@ static IndexBulkDeleteResult *
 ivfvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 {
 	if (stats == NULL)
-		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
+		stats = (IndexBulkDeleteResult *)palloc0(
+			sizeof(IndexBulkDeleteResult));
 	return stats;
 }
 
 static void
-ivfcostestimate(struct PlannerInfo *root, struct IndexPath *path,
-				double loop_count, Cost *indexStartupCost, Cost *indexTotalCost,
-				Selectivity *indexSelectivity, double *indexCorrelation,
-				double *indexPages)
+ivfcostestimate(struct PlannerInfo *root,
+	struct IndexPath *path,
+	double loop_count,
+	Cost *indexStartupCost,
+	Cost *indexTotalCost,
+	Selectivity *indexSelectivity,
+	double *indexCorrelation,
+	double *indexPages)
 {
 	*indexStartupCost = 0;
 	*indexTotalCost = 50.0;
@@ -368,8 +393,12 @@ ivfoptions(Datum reloptions, bool validate)
 }
 
 static bool
-ivfproperty(Oid index_oid, int attno, IndexAMProperty prop,
-			const char *propname, bool *res, bool *isnull)
+ivfproperty(Oid index_oid,
+	int attno,
+	IndexAMProperty prop,
+	const char *propname,
+	bool *res,
+	bool *isnull)
 {
 	return false;
 }
@@ -381,10 +410,12 @@ ivfbeginscan(Relation index, int nkeys, int norderbys)
 }
 
 static void
-ivfrescan(IndexScanDesc scan, ScanKey keys, int nkeys,
-		  ScanKey orderbys, int norderbys)
-{
-}
+ivfrescan(IndexScanDesc scan,
+	ScanKey keys,
+	int nkeys,
+	ScanKey orderbys,
+	int norderbys)
+{ }
 
 static bool
 ivfgettuple(IndexScanDesc scan, ScanDirection dir)
@@ -394,22 +425,20 @@ ivfgettuple(IndexScanDesc scan, ScanDirection dir)
 
 static void
 ivfendscan(IndexScanDesc scan)
-{
-}
+{ }
 
 /* ==================== KMeans Implementation ==================== */
 
 /*
  * Initialize KMeans state
  */
-__attribute__((unused))
-static KMeansState *
+__attribute__((unused)) static KMeansState *
 kmeans_init(int k, int dim, float4 **data, int n)
 {
 	KMeansState *state;
-	int			i, j;
+	int i, j;
 
-	state = (KMeansState *) palloc0(sizeof(KMeansState));
+	state = (KMeansState *)palloc0(sizeof(KMeansState));
 	state->k = k;
 	state->dim = dim;
 	state->maxIter = IVF_MAX_ITERATIONS;
@@ -419,11 +448,11 @@ kmeans_init(int k, int dim, float4 **data, int n)
 	state->ctx = CurrentMemoryContext;
 
 	/* Allocate centroids */
-	state->centroids = (float4 **) palloc(k * sizeof(float4 *));
+	state->centroids = (float4 **)palloc(k * sizeof(float4 *));
 	for (i = 0; i < k; i++)
 	{
-		state->centroids[i] = (float4 *) palloc(dim * sizeof(float4));
-		
+		state->centroids[i] = (float4 *)palloc(dim * sizeof(float4));
+
 		/* Initialize with random data points (KMeans++) */
 		if (i < n)
 		{
@@ -432,8 +461,8 @@ kmeans_init(int k, int dim, float4 **data, int n)
 		}
 	}
 
-	state->assignments = (int *) palloc(n * sizeof(int));
-	state->counts = (int *) palloc0(k * sizeof(int));
+	state->assignments = (int *)palloc(n * sizeof(int));
+	state->counts = (int *)palloc0(k * sizeof(int));
 
 	return state;
 }
@@ -441,16 +470,18 @@ kmeans_init(int k, int dim, float4 **data, int n)
 /*
  * Run KMeans clustering (Lloyd's algorithm)
  */
-__attribute__((unused))
-static void
+__attribute__((unused)) static void
 kmeans_run(KMeansState *state)
 {
-	int			iter;
-	float4		prevCost = FLT_MAX;
-	float4		cost;
+	int iter;
+	float4 prevCost = FLT_MAX;
+	float4 cost;
 
-	elog(NOTICE, "neurondb: Running KMeans with k=%d, n=%d, dim=%d",
-		 state->k, state->n, state->dim);
+	elog(NOTICE,
+		"neurondb: Running KMeans with k=%d, n=%d, dim=%d",
+		state->k,
+		state->n,
+		state->dim);
 
 	for (iter = 0; iter < state->maxIter; iter++)
 	{
@@ -462,18 +493,24 @@ kmeans_run(KMeansState *state)
 
 		/* Check convergence */
 		cost = kmeans_compute_cost(state);
-		
+
 		if (fabs(prevCost - cost) < state->threshold)
 		{
-			elog(NOTICE, "neurondb: KMeans converged at iteration %d (cost=%.4f)",
-				 iter, cost);
+			elog(NOTICE,
+				"neurondb: KMeans converged at iteration %d "
+				"(cost=%.4f)",
+				iter,
+				cost);
 			break;
 		}
 
 		prevCost = cost;
-		
+
 		if (iter % 10 == 0)
-			elog(DEBUG1, "neurondb: KMeans iteration %d, cost=%.4f", iter, cost);
+			elog(DEBUG1,
+				"neurondb: KMeans iteration %d, cost=%.4f",
+				iter,
+				cost);
 	}
 }
 
@@ -483,13 +520,14 @@ kmeans_run(KMeansState *state)
 static void
 kmeans_assign(KMeansState *state)
 {
-	int			i;
+	int i;
 
 	memset(state->counts, 0, state->k * sizeof(int));
 
 	for (i = 0; i < state->n; i++)
 	{
-		state->assignments[i] = find_nearest_centroid(state, state->data[i]);
+		state->assignments[i] =
+			find_nearest_centroid(state, state->data[i]);
 		state->counts[state->assignments[i]]++;
 	}
 }
@@ -500,7 +538,7 @@ kmeans_assign(KMeansState *state)
 static void
 kmeans_update_centroids(KMeansState *state)
 {
-	int			i, j, c;
+	int i, j, c;
 
 	/* Zero centroids */
 	for (c = 0; c < state->k; c++)
@@ -534,13 +572,14 @@ kmeans_update_centroids(KMeansState *state)
 static float4
 kmeans_compute_cost(KMeansState *state)
 {
-	float4		cost = 0.0;
-	int			i, c;
+	float4 cost = 0.0;
+	int i, c;
 
 	for (i = 0; i < state->n; i++)
 	{
 		c = state->assignments[i];
-		cost += vector_distance_l2(state->data[i], state->centroids[c], state->dim);
+		cost += vector_distance_l2(
+			state->data[i], state->centroids[c], state->dim);
 	}
 
 	return cost;
@@ -549,15 +588,14 @@ kmeans_compute_cost(KMeansState *state)
 /*
  * Free KMeans state
  */
-__attribute__((unused))
-static void
+__attribute__((unused)) static void
 kmeans_free(KMeansState *state)
 {
-	int			i;
+	int i;
 
 	for (i = 0; i < state->k; i++)
 		pfree(state->centroids[i]);
-	
+
 	pfree(state->centroids);
 	pfree(state->assignments);
 	pfree(state->counts);
@@ -570,8 +608,8 @@ kmeans_free(KMeansState *state)
 static float4
 vector_distance_l2(const float4 *v1, const float4 *v2, int dim)
 {
-	float4		sum = 0.0;
-	int			i;
+	float4 sum = 0.0;
+	int i;
 
 	for (i = 0; i < dim; i++)
 	{
@@ -588,13 +626,14 @@ vector_distance_l2(const float4 *v1, const float4 *v2, int dim)
 static int
 find_nearest_centroid(KMeansState *state, const float4 *vector)
 {
-	int			best = 0;
-	float4		bestDist = FLT_MAX;
-	int			c;
+	int best = 0;
+	float4 bestDist = FLT_MAX;
+	int c;
 
 	for (c = 0; c < state->k; c++)
 	{
-		float4 dist = vector_distance_l2(vector, state->centroids[c], state->dim);
+		float4 dist = vector_distance_l2(
+			vector, state->centroids[c], state->dim);
 		if (dist < bestDist)
 		{
 			bestDist = dist;
@@ -604,4 +643,3 @@ find_nearest_centroid(KMeansState *state, const float4 *vector)
 
 	return best;
 }
-

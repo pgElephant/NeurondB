@@ -1,16 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * ml_catboost.c
- *    CatBoost Integration for NeuronDB
+ *	  CatBoost Integration for NeuronDB
  *
- *  Provides full integration of the Yandex CatBoost gradient boosting library.
- *  Supports categorical features and can use GPU acceleration if enabled.
- *  Requires CatBoost C library (libcatboostmodel.so) and headers.
+ *	Provides full integration of the Yandex CatBoost gradient boosting library.
+ *	Supports categorical features and can use GPU acceleration if enabled.
+ *	Requires CatBoost C library (libcatboostmodel.so) and headers.
  *
- *  Copyright (c) 2024-2025, pgElephant, Inc.
+ *	Copyright (c) 2024-2025, pgElephant, Inc.
  *
- *  IDENTIFICATION
- *      src/ml/ml_catboost.c
+ *	IDENTIFICATION
+ *		src/ml/ml_catboost.c
  *
  *-------------------------------------------------------------------------
  */
@@ -24,45 +24,58 @@
 #include "executor/spi.h"
 #include "storage/fd.h"
 #include "miscadmin.h"
-#include <utils/memutils.h>
+#include "utils/memutils.h"
+
 #ifdef __has_include
 #if __has_include(<catboost/c_api.h>)
 #include <catboost/c_api.h>
 #define CATBOOST_AVAILABLE
 #endif
 #endif
+
 #include <stdio.h>
 
-/* PG_MODULE_MAGIC is in neurondb.c only */
+/*
+ * PG_MODULE_MAGIC is in neurondb.c only.
+ */
 
 PG_FUNCTION_INFO_V1(train_catboost_classifier);
 PG_FUNCTION_INFO_V1(train_catboost_regressor);
 PG_FUNCTION_INFO_V1(predict_catboost);
 
 /*
- * Helper function to get column index in a query result by name.
+ * get_column_index
+ *	Helper function to get column index in a query result by name.
  */
-static int __attribute__((unused))
-get_column_index(SPITupleTable *tuptable, TupleDesc tupdesc, const char *colname)
+static int
+get_column_index(SPITupleTable *tuptable,
+				 TupleDesc tupdesc,
+				 const char *colname)
 {
-	int i;
+	int			i;
 
 	for (i = 0; i < tupdesc->natts; i++)
 	{
-                if (strcmp(NameStr(TupleDescAttr(tupdesc, i)->attname), colname) == 0)
+		if (strcmp(NameStr(TupleDescAttr(tupdesc, i)->attname), colname) == 0)
 			return i;
 	}
-	elog(ERROR, "Column \"%s\" does not exist in tuple", colname);
-	/* This line will not be reached, but included to match coding style */
+	elog(ERROR, "column \"%s\" does not exist in tuple", colname);
+
+	/* not reached */
 	return -1;
 }
 
 /*
- * Helper to write training data to CSV for CatBoost
+ * write_csv_from_spi
+ *	Helper to write training data to CSV for CatBoost.
  */
-static void __attribute__((unused))
-write_csv_from_spi(char *csv_path, SPITupleTable *tuptable, TupleDesc tupdesc,
-				   int *feature_idxs, int n_features, int label_idx)
+static void
+write_csv_from_spi(char *csv_path,
+				   SPITupleTable *tuptable,
+				   TupleDesc tupdesc,
+				   int *feature_idxs,
+				   int n_features,
+				   int label_idx)
 {
 	FILE	   *fp;
 	uint64		row;
@@ -76,14 +89,13 @@ write_csv_from_spi(char *csv_path, SPITupleTable *tuptable, TupleDesc tupdesc,
 
 	/* Write header */
 	for (i = 0; i < n_features; i++)
-	{
 		fprintf(fp, "f%d,", i);
-	}
 	fprintf(fp, "label\n");
 
 	for (row = 0; row < tuptable->numvals; row++)
 	{
 		HeapTuple	tuple = tuptable->vals[row];
+
 		for (i = 0; i < n_features; i++)
 		{
 			Datum		val;
@@ -95,9 +107,7 @@ write_csv_from_spi(char *csv_path, SPITupleTable *tuptable, TupleDesc tupdesc,
 
 			val = heap_getattr(tuple, feature_idxs[i] + 1, tupdesc, &isnull);
 			if (isnull)
-			{
 				fprintf(fp, ",");
-			}
 			else
 			{
 				typid = TupleDescAttr(tupdesc, feature_idxs[i])->atttypid;
@@ -106,19 +116,19 @@ write_csv_from_spi(char *csv_path, SPITupleTable *tuptable, TupleDesc tupdesc,
 				fprintf(fp, "%s,", valstr);
 			}
 		}
+
+		/* Output label column */
 		{
-			Datum label_val;
-			bool label_isnull;
-			Oid typid;
-			Oid typoutput;
-			bool typisvarlena;
-			char *labelstr;
+			Datum		label_val;
+			bool		label_isnull;
+			Oid			typid;
+			Oid			typoutput;
+			bool		typisvarlena;
+			char	   *labelstr;
 
 			label_val = heap_getattr(tuple, label_idx + 1, tupdesc, &label_isnull);
 			if (label_isnull)
-			{
 				fprintf(fp, "\n");
-			}
 			else
 			{
 				typid = TupleDescAttr(tupdesc, label_idx)->atttypid;
@@ -132,15 +142,17 @@ write_csv_from_spi(char *csv_path, SPITupleTable *tuptable, TupleDesc tupdesc,
 }
 
 /*
- * Helper function for error translation from CatBoost return codes.
+ * check_catboost_error
+ *	Helper function for error translation from CatBoost return codes.
  */
-static void __attribute__((unused))
+static void
 check_catboost_error(int err_code)
 {
 #ifdef CATBOOST_AVAILABLE
 	if (err_code != 0)
 	{
 		const char *err_msg = CatBoostGetErrorString();
+
 		if (err_msg == NULL)
 			err_msg = "Unknown error from CatBoost";
 		elog(ERROR, "CatBoost error: %s (code=%d)", err_msg, err_code);
@@ -153,8 +165,8 @@ check_catboost_error(int err_code)
 
 /*
  * train_catboost_classifier
- * Trains a CatBoost classifier model using the provided table, feature columns, and label column.
- * Returns integer model_id on successful training and storage.
+ *	Trains a CatBoost classifier model using the provided table, feature columns, and label column.
+ *	Returns integer model_id on successful training and storage.
  */
 Datum
 train_catboost_classifier(PG_FUNCTION_ARGS)
@@ -173,7 +185,9 @@ train_catboost_classifier(PG_FUNCTION_ARGS)
 
 	StringInfoData sql;
 	int			ret;
-	int			n_features, i, model_id;
+	int			n_features;
+	int			i;
+	int			model_id;
 
 	char	  **features = NULL;
 	char	   *token;
@@ -202,7 +216,8 @@ train_catboost_classifier(PG_FUNCTION_ARGS)
 	token = strtok(feature_col_list, ",");
 	while (token != NULL)
 	{
-		while (*token == ' ' || *token == '\t') token++;
+		while (*token == ' ' || *token == '\t')
+			token++;
 		features[i++] = pstrdup(token);
 		token = strtok(NULL, ",");
 	}
@@ -225,53 +240,67 @@ train_catboost_classifier(PG_FUNCTION_ARGS)
 	oldctx = MemoryContextSwitchTo(per_query_ctx);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		elog(ERROR, "Could not connect to SPI");
+		elog(ERROR, "could not connect to SPI");
 
 	ret = SPI_execute(sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
 		SPI_finish();
-		elog(ERROR, "Could not execute SQL for training set");
+		elog(ERROR, "could not execute SQL for training set");
 	}
 
 	/* Get feature and label indexes */
 	TupleDesc	tupdesc = SPI_tuptable->tupdesc;
 	int		   *feature_idxs = (int *) palloc0(sizeof(int) * n_features);
 	int			label_idx;
+
 	for (i = 0; i < n_features; i++)
 		feature_idxs[i] = get_column_index(SPI_tuptable, tupdesc, features[i]);
 	label_idx = get_column_index(SPI_tuptable, tupdesc, label_col);
 
 	/* Write training data to CSV */
-	char tmp_csv_path[MAXPGPATH];
-	char tmp_model_path[MAXPGPATH];
+	{
+		char		tmp_csv_path[MAXPGPATH];
+		char		tmp_model_path[MAXPGPATH];
 
-	snprintf(tmp_csv_path, sizeof(tmp_csv_path), "%s/catboost_train_%d.csv", PG_TEMP_FILES_DIR, MyProcPid);
-	snprintf(tmp_model_path, sizeof(tmp_model_path), "%s/catboost_model_%d.cbm", PG_TEMP_FILES_DIR, MyProcPid);
+		snprintf(tmp_csv_path, sizeof(tmp_csv_path),
+				 "%s/catboost_train_%d.csv", PG_TEMP_FILES_DIR, MyProcPid);
+		snprintf(tmp_model_path, sizeof(tmp_model_path),
+				 "%s/catboost_model_%d.cbm", PG_TEMP_FILES_DIR, MyProcPid);
 
-	write_csv_from_spi(tmp_csv_path, SPI_tuptable, tupdesc, feature_idxs, n_features, label_idx);
+		write_csv_from_spi(tmp_csv_path,
+						   SPI_tuptable,
+						   tupdesc,
+						   feature_idxs,
+						   n_features,
+						   label_idx);
 
-	/* Setup CatBoost C API options and train */
-	ModelCalcerHandle *model_handle = NULL;
-	CatBoostModelTrainingOptions *opts = CatBoostCreateModelTrainingOptions();
+		/* Setup CatBoost C API options and train */
+		{
+			ModelCalcerHandle *model_handle = NULL;
+			CatBoostModelTrainingOptions *opts;
 
-	check_catboost_error(CatBoostSetTrainingOptionInt(opts, "iterations", iterations));
-	check_catboost_error(CatBoostSetTrainingOptionDouble(opts, "learning_rate", learning_rate));
-	check_catboost_error(CatBoostSetTrainingOptionInt(opts, "depth", depth));
+			opts = CatBoostCreateModelTrainingOptions();
 
-	check_catboost_error(CatBoostTrainModelFromFile(opts,
-													tmp_csv_path,
-													n_features,
-													label_idx,
-													true, /* has header */
-													&model_handle));
+			check_catboost_error(CatBoostSetTrainingOptionInt(opts, "iterations", iterations));
+			check_catboost_error(CatBoostSetTrainingOptionDouble(opts, "learning_rate", learning_rate));
+			check_catboost_error(CatBoostSetTrainingOptionInt(opts, "depth", depth));
 
-	check_catboost_error(CatBoostSaveModelToFile(model_handle, tmp_model_path));
+			check_catboost_error(CatBoostTrainModelFromFile(opts,
+															tmp_csv_path,
+															n_features,
+															label_idx,
+															true,	/* has header */
+															&model_handle));
 
-	model_id = MyProcPid;
+			check_catboost_error(CatBoostSaveModelToFile(model_handle, tmp_model_path));
 
-	CatBoostDestroyModelTrainingOptions(opts);
-	CatBoostFreeModelCalcer(model_handle);
+			model_id = MyProcPid;
+
+			CatBoostDestroyModelTrainingOptions(opts);
+			CatBoostFreeModelCalcer(model_handle);
+		}
+	}
 
 	SPI_finish();
 	MemoryContextSwitchTo(oldctx);
@@ -288,8 +317,8 @@ train_catboost_classifier(PG_FUNCTION_ARGS)
 
 /*
  * train_catboost_regressor
- * Trains a CatBoost regressor model. Arguments similar to classifier.
- * Returns integer model_id on success.
+ *	Trains a CatBoost regressor model. Arguments similar to classifier.
+ *	Returns integer model_id on success.
  */
 Datum
 train_catboost_regressor(PG_FUNCTION_ARGS)
@@ -305,7 +334,9 @@ train_catboost_regressor(PG_FUNCTION_ARGS)
 
 	StringInfoData sql;
 	int			ret;
-	int			n_features, i, model_id;
+	int			n_features;
+	int			i;
+	int			model_id;
 
 	char	  **features = NULL;
 	char	   *token;
@@ -331,7 +362,8 @@ train_catboost_regressor(PG_FUNCTION_ARGS)
 	token = strtok(feature_col_list, ",");
 	while (token != NULL)
 	{
-		while (*token == ' ' || *token == '\t') token++;
+		while (*token == ' ' || *token == '\t')
+			token++;
 		features[i++] = pstrdup(token);
 		token = strtok(NULL, ",");
 	}
@@ -352,48 +384,64 @@ train_catboost_regressor(PG_FUNCTION_ARGS)
 	oldctx = MemoryContextSwitchTo(per_query_ctx);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		elog(ERROR, "Could not connect to SPI");
+		elog(ERROR, "could not connect to SPI");
 
 	ret = SPI_execute(sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
 		SPI_finish();
-		elog(ERROR, "Could not execute SQL for training set");
+		elog(ERROR, "could not execute SQL for training set");
 	}
 
-	TupleDesc tupdesc = SPI_tuptable->tupdesc;
-	int		*feature_idxs = (int *) palloc0(sizeof(int) * n_features);
-	int		target_idx;
-	for (i = 0; i < n_features; i++)
-		feature_idxs[i] = get_column_index(SPI_tuptable, tupdesc, features[i]);
-	target_idx = get_column_index(SPI_tuptable, tupdesc, target_col);
+	{
+		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		int		   *feature_idxs = (int *) palloc0(sizeof(int) * n_features);
+		int			target_idx;
 
-	char tmp_csv_path[MAXPGPATH];
-	char tmp_model_path[MAXPGPATH];
+		for (i = 0; i < n_features; i++)
+			feature_idxs[i] = get_column_index(SPI_tuptable, tupdesc, features[i]);
+		target_idx = get_column_index(SPI_tuptable, tupdesc, target_col);
 
-	snprintf(tmp_csv_path, sizeof(tmp_csv_path), "%s/catboost_train_%d.csv", PG_TEMP_FILES_DIR, MyProcPid);
-	snprintf(tmp_model_path, sizeof(tmp_model_path), "%s/catboost_model_%d.cbm", PG_TEMP_FILES_DIR, MyProcPid);
+		{
+			char		tmp_csv_path[MAXPGPATH];
+			char		tmp_model_path[MAXPGPATH];
 
-	write_csv_from_spi(tmp_csv_path, SPI_tuptable, tupdesc, feature_idxs, n_features, target_idx);
+			snprintf(tmp_csv_path, sizeof(tmp_csv_path),
+					 "%s/catboost_train_%d.csv", PG_TEMP_FILES_DIR, MyProcPid);
+			snprintf(tmp_model_path, sizeof(tmp_model_path),
+					 "%s/catboost_model_%d.cbm", PG_TEMP_FILES_DIR, MyProcPid);
 
-	ModelCalcerHandle *model_handle = NULL;
-	CatBoostModelTrainingOptions *opts = CatBoostCreateModelTrainingOptions();
-	check_catboost_error(CatBoostSetTrainingOptionInt(opts, "iterations", iterations));
-	check_catboost_error(CatBoostSetTrainingOptionInt(opts, "task_type", 0)); /* 0 for regression */
+			write_csv_from_spi(tmp_csv_path,
+							   SPI_tuptable,
+							   tupdesc,
+							   feature_idxs,
+							   n_features,
+							   target_idx);
 
-	check_catboost_error(CatBoostTrainModelFromFile(opts,
-													tmp_csv_path,
-													n_features,
-													target_idx,
-													true,
-													&model_handle));
+			{
+				ModelCalcerHandle *model_handle = NULL;
+				CatBoostModelTrainingOptions *opts;
 
-	check_catboost_error(CatBoostSaveModelToFile(model_handle, tmp_model_path));
+				opts = CatBoostCreateModelTrainingOptions();
+				check_catboost_error(CatBoostSetTrainingOptionInt(opts, "iterations", iterations));
+				check_catboost_error(CatBoostSetTrainingOptionInt(opts, "task_type", 0)); /* 0 for regression */
 
-	model_id = MyProcPid;
+				check_catboost_error(CatBoostTrainModelFromFile(opts,
+																tmp_csv_path,
+																n_features,
+																target_idx,
+																true,
+																&model_handle));
 
-	CatBoostDestroyModelTrainingOptions(opts);
-	CatBoostFreeModelCalcer(model_handle);
+				check_catboost_error(CatBoostSaveModelToFile(model_handle, tmp_model_path));
+
+				model_id = MyProcPid;
+
+				CatBoostDestroyModelTrainingOptions(opts);
+				CatBoostFreeModelCalcer(model_handle);
+			}
+		}
+	}
 
 	SPI_finish();
 	MemoryContextSwitchTo(oldctx);
@@ -410,9 +458,9 @@ train_catboost_regressor(PG_FUNCTION_ARGS)
 
 /*
  * predict_catboost
- *  Predicts using a persisted CatBoost model and a feature array.
- *  Arguments: int4 model_id, float8[] features (or text[] for categorical support).
- *  Returns float8 predicted value.
+ *	Predicts using a persisted CatBoost model and a feature array.
+ *	Arguments: int4 model_id, float8[] features (or text[] for categorical support).
+ *	Returns float8 predicted value.
  */
 Datum
 predict_catboost(PG_FUNCTION_ARGS)
@@ -424,7 +472,9 @@ predict_catboost(PG_FUNCTION_ARGS)
 	int16		typlen;
 	bool		typbyval;
 	char		typalign;
-	int			n_features, i, ndim;
+	int			n_features;
+	int			i;
+	int			ndim;
 	Datum	   *elems;
 	bool	   *nulls;
 	float64		result = 0.0;
@@ -437,23 +487,29 @@ predict_catboost(PG_FUNCTION_ARGS)
 
 	ndim = ARR_NDIM(features_array);
 	if (ndim != 1)
-		ereport(ERROR, (errmsg("features array must be one-dimensional")));
+		ereport(ERROR,
+				(errmsg("features array must be one-dimensional")));
 
 	n_features = ArrayGetNItems(ARR_NDIM(features_array), ARR_DIMS(features_array));
 	elmtype = ARR_ELEMTYPE(features_array);
 	get_typlenbyvalalign(elmtype, &typlen, &typbyval, &typalign);
 
 	deconstruct_array(features_array, elmtype, typlen, typbyval, typalign,
-					  &elems, &nulls, &n_features);
+					 &elems, &nulls, &n_features);
 
-	snprintf(model_path, sizeof(model_path), "%s/catboost_model_%d.cbm", PG_TEMP_FILES_DIR, model_id);
+	snprintf(model_path, sizeof(model_path),
+			 "%s/catboost_model_%d.cbm",
+			 PG_TEMP_FILES_DIR, model_id);
 
 	check_catboost_error(CatBoostLoadModelFromFile(model_path, &model_handle));
 
 	if (elmtype == TEXTOID)
 	{
-		/* Categorical/text features */
-		char	  **input_features = (char **) palloc(sizeof(char *) * n_features);
+		/* categorical/text features */
+		char	  **input_features;
+
+		input_features = (char **) palloc(sizeof(char *) * n_features);
+
 		for (i = 0; i < n_features; i++)
 		{
 			if (nulls[i])
@@ -463,7 +519,7 @@ predict_catboost(PG_FUNCTION_ARGS)
 		}
 
 		check_catboost_error(CatBoostModelCalcerPredictText(model_handle,
-															(const char* const *)input_features,
+															(const char * const *) input_features,
 															n_features,
 															&result,
 															1));
@@ -471,8 +527,10 @@ predict_catboost(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		/* Numeric features */
-		double *features = (double *) palloc(sizeof(double) * n_features);
+		/* numeric features */
+		double	   *features;
+
+		features = (double *) palloc(sizeof(double) * n_features);
 		for (i = 0; i < n_features; i++)
 		{
 			if (nulls[i])
@@ -488,14 +546,11 @@ predict_catboost(PG_FUNCTION_ARGS)
 			else if (elmtype == INT2OID)
 				features[i] = (double) DatumGetInt16(elems[i]);
 			else
-				elog(ERROR, "Unsupported feature element type for CatBoost: %u", elmtype);
+				elog(ERROR, "unsupported feature element type for CatBoost: %u", elmtype);
 		}
 
 		check_catboost_error(CatBoostModelCalcerPredict(model_handle,
-														features,
-														n_features,
-														&result,
-														1));
+														features, n_features, &result, 1));
 		pfree(features);
 	}
 

@@ -36,22 +36,27 @@ PG_FUNCTION_INFO_V1(hybrid_index_create);
 Datum
 hybrid_index_create(PG_FUNCTION_ARGS)
 {
-	text	   *table_name = PG_GETARG_TEXT_PP(0);
-	text	   *vector_col = PG_GETARG_TEXT_PP(1);
-	text	   *text_col = PG_GETARG_TEXT_PP(2);
-	float4		fusion_weight = PG_GETARG_FLOAT4(3);
-	char	   *tbl_str;
-	char	   *vec_str;
-	char	   *txt_str;
+	text *table_name = PG_GETARG_TEXT_PP(0);
+	text *vector_col = PG_GETARG_TEXT_PP(1);
+	text *text_col = PG_GETARG_TEXT_PP(2);
+	float4 fusion_weight = PG_GETARG_FLOAT4(3);
+	char *tbl_str;
+	char *vec_str;
+	char *txt_str;
 	StringInfoData sql;
-	int 		ret;
+	int ret;
 
 	tbl_str = text_to_cstring(table_name);
 	vec_str = text_to_cstring(vector_col);
 	txt_str = text_to_cstring(text_col);
 
-	elog(NOTICE, "neurondb: Creating hybrid index on %s (%s vector, %s text, weight=%.2f)",
-		 tbl_str, vec_str, txt_str, fusion_weight);
+	elog(NOTICE,
+		"neurondb: Creating hybrid index on %s (%s vector, %s text, "
+		"weight=%.2f)",
+		tbl_str,
+		vec_str,
+		txt_str,
+		fusion_weight);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed: %d", ret);
@@ -63,12 +68,22 @@ hybrid_index_create(PG_FUNCTION_ARGS)
 	 * In a real implementation, this would use HNSW or other ANN-aware extension.
 	 * The actual index names would preferably be deterministic and unique.
 	 */
-	appendStringInfo(&sql, "CREATE INDEX IF NOT EXISTS __hyb_ann_%s_%s ON %s USING btree ((%s))",
-		 tbl_str, vec_str, tbl_str, vec_str);
+	appendStringInfo(&sql,
+		"CREATE INDEX IF NOT EXISTS __hyb_ann_%s_%s ON %s USING btree "
+		"((%s))",
+		tbl_str,
+		vec_str,
+		tbl_str,
+		vec_str);
 
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
-		elog(ERROR, "Failed to create vector ANN index on %s.%s: SPI error %d", tbl_str, vec_str, ret);
+		elog(ERROR,
+			"Failed to create vector ANN index on %s.%s: SPI error "
+			"%d",
+			tbl_str,
+			vec_str,
+			ret);
 
 	resetStringInfo(&sql);
 
@@ -76,17 +91,29 @@ hybrid_index_create(PG_FUNCTION_ARGS)
 	 * Create a GIN index over the text column for full-text search.
 	 * In a real deployment, you'd want to use to_tsvector and a configuration.
 	 */
-	appendStringInfo(&sql, "CREATE INDEX IF NOT EXISTS __hyb_gin_%s_%s ON %s USING GIN (to_tsvector('english', %s))",
-		 tbl_str, txt_str, tbl_str, txt_str);
+	appendStringInfo(&sql,
+		"CREATE INDEX IF NOT EXISTS __hyb_gin_%s_%s ON %s USING GIN "
+		"(to_tsvector('english', %s))",
+		tbl_str,
+		txt_str,
+		tbl_str,
+		txt_str);
 
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
-		elog(ERROR, "Failed to create GIN index on %s.%s: SPI error %d", tbl_str, txt_str, ret);
+		elog(ERROR,
+			"Failed to create GIN index on %s.%s: SPI error %d",
+			tbl_str,
+			txt_str,
+			ret);
 
 	SPI_finish();
 
 	/* In production: store fusion config and columns in metadata */
-	elog(NOTICE, "neurondb: Hybrid index set up complete with fusion_weight=%.2f", fusion_weight);
+	elog(NOTICE,
+		"neurondb: Hybrid index set up complete with "
+		"fusion_weight=%.2f",
+		fusion_weight);
 
 	PG_RETURN_BOOL(true);
 }
@@ -109,35 +136,48 @@ Datum
 hybrid_index_search(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *funcctx;
-	TupleDesc		tupdesc;
-	MemoryContext	oldcontext;
+	TupleDesc tupdesc;
+	MemoryContext oldcontext;
 
 	if (SRF_IS_FIRSTCALL())
 	{
-		text	*index_name = PG_GETARG_TEXT_PP(0);
-		Vector	*query_vec = PG_GETARG_VECTOR_P(1);
-		text	*query_text = PG_GETARG_TEXT_PP(2);
-		int32	k = PG_GETARG_INT32(3);
+		text *index_name = PG_GETARG_TEXT_PP(0);
+		Vector *query_vec = PG_GETARG_VECTOR_P(1);
+		text *query_text = PG_GETARG_TEXT_PP(2);
+		int32 k = PG_GETARG_INT32(3);
 
 		/* Suppress unused parameter warning - may be used in future */
-		(void) query_vec;
+		(void)query_vec;
 
-		char	*idx_str = text_to_cstring(index_name);
-		char	*txt_query = text_to_cstring(query_text);
+		char *idx_str = text_to_cstring(index_name);
+		char *txt_query = text_to_cstring(query_text);
 		StringInfoData sql;
-		int		ret;
+		int ret;
 
 		funcctx = SRF_FIRSTCALL_INIT();
 
 		/* Return columns: id, fused_score, text_rank, vector_dist */
 		tupdesc = CreateTemplateTupleDesc(4);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "id", INT8OID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "fused_score", FLOAT4OID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 3, "text_rank", FLOAT4OID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 4, "vector_dist", FLOAT4OID, -1, 0);
+		TupleDescInitEntry(
+			tupdesc, (AttrNumber)1, "id", INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc,
+			(AttrNumber)2,
+			"fused_score",
+			FLOAT4OID,
+			-1,
+			0);
+		TupleDescInitEntry(
+			tupdesc, (AttrNumber)3, "text_rank", FLOAT4OID, -1, 0);
+		TupleDescInitEntry(tupdesc,
+			(AttrNumber)4,
+			"vector_dist",
+			FLOAT4OID,
+			-1,
+			0);
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		oldcontext =
+			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		/*
 		 * A realistic system would:
@@ -148,47 +188,66 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 		 * Assume origin table is named idx_str without prefix.
 		 */
 		char *origin_table = idx_str;
-		char *vec_col = "vector";  // In real implementation, discover from meta.
+		char *vec_col =
+			"vector"; // In real implementation, discover from meta.
 		char *txt_col = "document";
 
 		/* Compose SQL to select candidates and rank by fusion of ts_rank and L2 distance. */
 		initStringInfo(&sql);
-		appendStringInfo(
-			&sql,
+		appendStringInfo(&sql,
 			"SELECT id, "
-				"(%1$.4f * ts_rank + (1-%1$.4f) * (1 - norm_dist)) AS fused_score, "
-				"ts_rank, "
-				"vector_dist "
+			"(%1$.4f * ts_rank + (1-%1$.4f) * (1 - norm_dist)) AS "
+			"fused_score, "
+			"ts_rank, "
+			"vector_dist "
 			"FROM ( "
-				"SELECT id, "
-					"ts_rank_cd(to_tsvector('english', %2$s), plainto_tsquery('english', %3$s)) AS ts_rank, "
-					"vector_l2_dist(%4$s, '%5$s') AS vector_dist "
-				"FROM %6$s "
-				"WHERE to_tsvector('english', %2$s) @@ plainto_tsquery('english', %3$s) "
+			"SELECT id, "
+			"ts_rank_cd(to_tsvector('english', %2$s), "
+			"plainto_tsquery('english', %3$s)) AS ts_rank, "
+			"vector_l2_dist(%4$s, '%5$s') AS vector_dist "
+			"FROM %6$s "
+			"WHERE to_tsvector('english', %2$s) @@ "
+			"plainto_tsquery('english', %3$s) "
 			") candidates, "
-			"(SELECT MAX(vector_l2_dist(%4$s, '%5$s')) AS maxd, MIN(vector_l2_dist(%4$s, '%5$s')) AS mind "
-				"FROM %6$s "
-				"WHERE to_tsvector('english', %2$s) @@ plainto_tsquery('english', %3$s)) bounds "
+			"(SELECT MAX(vector_l2_dist(%4$s, '%5$s')) AS maxd, "
+			"MIN(vector_l2_dist(%4$s, '%5$s')) AS mind "
+			"FROM %6$s "
+			"WHERE to_tsvector('english', %2$s) @@ "
+			"plainto_tsquery('english', %3$s)) bounds "
 			"LEFT JOIN LATERAL ( "
-				"SELECT 1.0 AS norm_dist WHERE bounds.maxd = bounds.mind "
-				"UNION ALL "
-				"SELECT (candidates.vector_dist - bounds.mind) / NULLIF(bounds.maxd - bounds.mind,0) "
+			"SELECT 1.0 AS norm_dist WHERE bounds.maxd = "
+			"bounds.mind "
+			"UNION ALL "
+			"SELECT (candidates.vector_dist - bounds.mind) / "
+			"NULLIF(bounds.maxd - bounds.mind,0) "
 			") normtbl ON TRUE "
 			"ORDER BY fused_score DESC "
 			"LIMIT %7$d",
-			0.6 /*default fusion_weight*/, txt_col, txt_query, vec_col,
+			0.6 /*default fusion_weight*/,
+			txt_col,
+			txt_query,
+			vec_col,
 			// For demo, use vector_out_internal for serialization; needs real type-awareness
-			"vector", origin_table, k
-		);
+			"vector",
+			origin_table,
+			k);
 
 		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-			elog(ERROR, "SPI_connect failed for hybrid_index_search: %d", ret);
+			elog(ERROR,
+				"SPI_connect failed for hybrid_index_search: "
+				"%d",
+				ret);
 
 		ret = SPI_execute(sql.data, true, 0);
 		if (ret != SPI_OK_SELECT)
-			elog(ERROR, "SPI_execute failed for hybrid query: code %d, sql: %s", ret, sql.data);
+			elog(ERROR,
+				"SPI_execute failed for hybrid query: code %d, "
+				"sql: %s",
+				ret,
+				sql.data);
 
-		if (SPI_processed == 0) {
+		if (SPI_processed == 0)
+		{
 			SPI_finish();
 			funcctx->max_calls = 0;
 			SRF_RETURN_DONE(funcctx);
@@ -203,20 +262,27 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 	uint64 call_cntr = funcctx->call_cntr;
 	uint64 max_calls = funcctx->max_calls;
 
-	if (call_cntr < max_calls) {
-		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
+	if (call_cntr < max_calls)
+	{
+		SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
 		HeapTuple spi_tuple = tuptable->vals[call_cntr];
 		Datum values[4];
 		bool nulls[4];
 
 		/* id, fused_score, ts_rank, vector_dist */
-		for (int att = 0; att < 4; ++att) {
-			values[att] = SPI_getbinval(spi_tuple, tuptable->tupdesc, att+1, &nulls[att]);
+		for (int att = 0; att < 4; ++att)
+		{
+			values[att] = SPI_getbinval(spi_tuple,
+				tuptable->tupdesc,
+				att + 1,
+				&nulls[att]);
 		}
-		HeapTuple ret_tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+		HeapTuple ret_tuple =
+			heap_form_tuple(funcctx->tuple_desc, values, nulls);
 		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(ret_tuple));
-	} else {
-		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
+	} else
+	{
+		SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
 		if (tuptable)
 			SPI_freetuptable(tuptable);
 

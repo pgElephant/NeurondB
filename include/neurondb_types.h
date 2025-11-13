@@ -28,14 +28,14 @@
  */
 typedef struct VectorPacked
 {
-	int32		vl_len_;			/* varlena header */
-	uint32		fingerprint;		/* CRC32 of dimensions for validation */
-	uint16		version;			/* Schema version */
-	uint16		dim;				/* Number of dimensions */
-	uint8		endian_guard;		/* 0x01 for little, 0x10 for big */
-	uint8		flags;				/* Reserved for future use */
-	uint16		unused;				/* Alignment padding */
-	float4		data[FLEXIBLE_ARRAY_MEMBER];
+	int32 vl_len_; /* varlena header */
+	uint32 fingerprint; /* CRC32 of dimensions for validation */
+	uint16 version; /* Schema version */
+	uint16 dim; /* Number of dimensions */
+	uint8 endian_guard; /* 0x01 for little, 0x10 for big */
+	uint8 flags; /* Reserved for future use */
+	uint16 unused; /* Alignment padding */
+	float4 data[FLEXIBLE_ARRAY_MEMBER];
 } VectorPacked;
 
 /*
@@ -46,9 +46,9 @@ typedef struct VectorPacked
  */
 typedef struct VectorMap
 {
-	int32		vl_len_;
-	int32		total_dim;			/* Total dimensionality */
-	int32		nnz;				/* Number of non-zero entries */
+	int32 vl_len_;
+	int32 total_dim; /* Total dimensionality */
+	int32 nnz; /* Number of non-zero entries */
 	/* Followed by parallel arrays: int32 indices[], float4 values[] */
 } VectorMap;
 
@@ -60,11 +60,11 @@ typedef struct VectorMap
  */
 typedef struct RetrievableText
 {
-	int32		vl_len_;
-	uint32		text_len;			/* Length of text in bytes */
-	uint16		num_tokens;			/* Number of tokens */
-	uint8		lang_tag;			/* Language code (ISO 639-1) */
-	uint8		flags;				/* Encoding, case sensitivity, etc */
+	int32 vl_len_;
+	uint32 text_len; /* Length of text in bytes */
+	uint16 num_tokens; /* Number of tokens */
+	uint8 lang_tag; /* Language code (ISO 639-1) */
+	uint8 flags; /* Encoding, case sensitivity, etc */
 	/*
 	 * Layout:
 	 * - char text[text_len]
@@ -81,11 +81,11 @@ typedef struct RetrievableText
  */
 typedef struct VectorGraph
 {
-	int32		vl_len_;
-	int32		num_nodes;
-	int32		num_edges;
-	uint16		edge_types;			/* Number of edge type labels */
-	uint16		unused;
+	int32 vl_len_;
+	int32 num_nodes;
+	int32 num_edges;
+	uint16 edge_types; /* Number of edge type labels */
+	uint16 unused;
 	/*
 	 * Layout:
 	 * - int64 node_ids[num_nodes]
@@ -96,23 +96,23 @@ typedef struct VectorGraph
 
 typedef struct GraphEdge
 {
-	int32		src_idx;			/* Index into node_ids */
-	int32		dst_idx;
-	uint16		edge_type;
-	uint16		unused;
-	float4		weight;
+	int32 src_idx; /* Index into node_ids */
+	int32 dst_idx;
+	uint16 edge_type;
+	uint16 unused;
+	float4 weight;
 } GraphEdge;
 
-#define VECTORP_SIZE(dim)		(offsetof(VectorPacked, data) + sizeof(float4) * (dim))
-#define VECMAP_INDICES(vm)		((int32 *) (((char *)(vm)) + sizeof(VectorMap)))
-#define VECMAP_VALUES(vm)		((float4 *) (VECMAP_INDICES(vm) + (vm)->nnz))
+#define VECTORP_SIZE(dim) \
+	(offsetof(VectorPacked, data) + sizeof(float4) * (dim))
+#define VECMAP_INDICES(vm) ((int32 *)(((char *)(vm)) + sizeof(VectorMap)))
+#define VECMAP_VALUES(vm) ((float4 *)(VECMAP_INDICES(vm) + (vm)->nnz))
 
-#define RTEXT_DATA(rt)			((char *) (((char *)(rt)) + sizeof(RetrievableText)))
-#define RTEXT_OFFSETS(rt)		((uint32 *) (RTEXT_DATA(rt) + (rt)->text_len))
-#define RTEXT_SECTIONS(rt)		((uint16 *) (RTEXT_OFFSETS(rt) + (rt)->num_tokens))
+#define RTEXT_DATA(rt) ((char *)(((char *)(rt)) + sizeof(RetrievableText)))
+#define RTEXT_OFFSETS(rt) ((uint32 *)(RTEXT_DATA(rt) + (rt)->text_len))
+#define RTEXT_SECTIONS(rt) ((uint16 *)(RTEXT_OFFSETS(rt) + (rt)->num_tokens))
 
-#define VGRAPH_NODES(vg)		((int64 *) (((char *)(vg)) + sizeof(VectorGraph)))
-#define VGRAPH_EDGES(vg)		((GraphEdge *) (VGRAPH_NODES(vg) + (vg)->num_nodes))
+#define VGRAPH_NODES(vg) ((int64 *)(((char *)(vg)) + sizeof(VectorGraph)))
+#define VGRAPH_EDGES(vg) ((GraphEdge *)(VGRAPH_NODES(vg) + (vg)->num_nodes))
 
 #endif /* NEURONDB_TYPES_H */
-

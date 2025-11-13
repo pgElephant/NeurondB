@@ -29,4 +29,3 @@ typedef struct LinRegModel
 } LinRegModel;
 
 #endif /* ML_LINEAR_REGRESSION_INTERNAL_H */
-

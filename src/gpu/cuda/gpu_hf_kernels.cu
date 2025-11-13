@@ -44,11 +44,11 @@
  */
 __global__ static void
 ndb_cuda_hf_tokenize_simple_kernel(const char *text,
-				    int text_len,
-				    int32_t *token_ids,
-				    int32_t *attention_mask,
-				    int max_seq_len,
-				    int vocab_size)
+	int text_len,
+	int32_t *token_ids,
+	int32_t *attention_mask,
+	int max_seq_len,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int word_start = 0;
@@ -70,8 +70,10 @@ ndb_cuda_hf_tokenize_simple_kernel(const char *text,
 				int j;
 
 				for (j = word_start; j < i && j < text_len; j++)
-					hash = hash * 31 + (unsigned char) text[j];
-				token_ids[word_count + 1] = (int32_t)(hash % vocab_size);
+					hash = hash * 31
+						+ (unsigned char)text[j];
+				token_ids[word_count + 1] =
+					(int32_t)(hash % vocab_size);
 				attention_mask[word_count + 1] = 1;
 				word_count++;
 			}
@@ -85,16 +87,16 @@ ndb_cuda_hf_tokenize_simple_kernel(const char *text,
 		int j;
 
 		for (j = word_start; j < text_len; j++)
-			hash = hash * 31 + (unsigned char) text[j];
+			hash = hash * 31 + (unsigned char)text[j];
 		token_ids[word_count + 1] = (int32_t)(hash % vocab_size);
 		attention_mask[word_count + 1] = 1;
 		word_count++;
 	}
 
 	/* Add CLS token at start, SEP token at end */
-	token_ids[0] = 101;		/* [CLS] token ID for BERT */
+	token_ids[0] = 101; /* [CLS] token ID for BERT */
 	attention_mask[0] = 1;
-	token_ids[word_count + 1] = 102;	/* [SEP] token ID for BERT */
+	token_ids[word_count + 1] = 102; /* [SEP] token ID for BERT */
 	attention_mask[word_count + 1] = 1;
 
 	/* Pad remaining positions */
@@ -114,12 +116,12 @@ ndb_cuda_hf_tokenize_simple_kernel(const char *text,
  */
 __global__ static void
 ndb_cuda_hf_embedding_lookup_kernel(const float *embedding_table,
-				     const int32_t *token_ids,
-				     const int32_t *attention_mask,
-				     float *embeddings,
-				     int seq_len,
-				     int embed_dim,
-				     int vocab_size)
+	const int32_t *token_ids,
+	const int32_t *attention_mask,
+	float *embeddings,
+	int seq_len,
+	int embed_dim,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int seq_idx = tid / embed_dim;
@@ -137,7 +139,7 @@ ndb_cuda_hf_embedding_lookup_kernel(const float *embedding_table,
 		return;
 
 	embeddings[seq_idx * embed_dim + dim_idx] =
-		embedding_table[embed_offset] * (float) attention_mask[seq_idx];
+		embedding_table[embed_offset] * (float)attention_mask[seq_idx];
 }
 
 /*
@@ -146,10 +148,10 @@ ndb_cuda_hf_embedding_lookup_kernel(const float *embedding_table,
  */
 __global__ static void
 ndb_cuda_hf_single_embedding_lookup_kernel(const float *embedding_table,
-					    int32_t token_id,
-					    float *embedding,
-					    int embed_dim,
-					    int vocab_size)
+	int32_t token_id,
+	float *embedding,
+	int embed_dim,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -170,9 +172,9 @@ ndb_cuda_hf_single_embedding_lookup_kernel(const float *embedding_table,
  */
 __global__ static void
 ndb_cuda_hf_add_position_embedding_kernel(const float *token_embedding,
-					   const float *position_embedding,
-					   float *output,
-					   int embed_dim)
+	const float *position_embedding,
+	float *output,
+	int embed_dim)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -187,9 +189,9 @@ ndb_cuda_hf_add_position_embedding_kernel(const float *token_embedding,
  */
 __global__ static void
 ndb_cuda_hf_add_vectors_kernel(const float *a,
-				const float *b,
-				float *output,
-				int n)
+	const float *b,
+	float *output,
+	int n)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -204,9 +206,9 @@ ndb_cuda_hf_add_vectors_kernel(const float *a,
  */
 __global__ static void
 ndb_cuda_hf_multiply_vectors_kernel(const float *a,
-				     const float *b,
-				     float *output,
-				     int n)
+	const float *b,
+	float *output,
+	int n)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -221,10 +223,10 @@ ndb_cuda_hf_multiply_vectors_kernel(const float *a,
  */
 __global__ static void
 ndb_cuda_hf_mean_pooling_kernel(const float *embeddings,
-				 const int32_t *attention_mask,
-				 float *pooled_embedding,
-				 int seq_len,
-				 int embed_dim)
+	const int32_t *attention_mask,
+	float *pooled_embedding,
+	int seq_len,
+	int embed_dim)
 {
 	int dim_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -245,7 +247,7 @@ ndb_cuda_hf_mean_pooling_kernel(const float *embeddings,
 	}
 
 	if (count > 0)
-		pooled_embedding[dim_idx] = sum / (float) count;
+		pooled_embedding[dim_idx] = sum / (float)count;
 	else
 		pooled_embedding[dim_idx] = 0.0f;
 }
@@ -255,8 +257,8 @@ ndb_cuda_hf_mean_pooling_kernel(const float *embeddings,
  */
 __global__ static void
 ndb_cuda_hf_cls_pooling_kernel(const float *embeddings,
-				float *pooled_embedding,
-				int embed_dim)
+	float *pooled_embedding,
+	int embed_dim)
 {
 	int dim_idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -307,12 +309,7 @@ ndb_cuda_cleanup_cublas(void)
  * cuBLAS uses column-major order, so we need to handle row-major inputs
  */
 static int
-ndb_cuda_matmul(const float *A,
-		const float *B,
-		float *C,
-		int m,
-		int n,
-		int k)
+ndb_cuda_matmul(const float *A, const float *B, float *C, int m, int n, int k)
 {
 	cublasStatus_t status;
 	const float alpha = 1.0f;
@@ -327,19 +324,19 @@ ndb_cuda_matmul(const float *A,
 	 * So: C = (B^T * A^T)^T
 	 */
 	status = cublasSgemm(g_cublas_handle,
-			     CUBLAS_OP_T,	/* Transpose B (B^T) */
-			     CUBLAS_OP_T,	/* Transpose A (A^T) */
-			     n,				/* Rows of C^T (cols of C) */
-			     m,				/* Columns of C^T (rows of C) */
-			     k,				/* Common dimension */
-			     &alpha,
-			     B,				/* B^T */
-			     k,				/* Leading dimension of B */
-			     A,				/* A^T */
-			     k,				/* Leading dimension of A */
-			     &beta,
-			     C,				/* C^T */
-			     n);			/* Leading dimension of C^T */
+		CUBLAS_OP_T, /* Transpose B (B^T) */
+		CUBLAS_OP_T, /* Transpose A (A^T) */
+		n, /* Rows of C^T (cols of C) */
+		m, /* Columns of C^T (rows of C) */
+		k, /* Common dimension */
+		&alpha,
+		B, /* B^T */
+		k, /* Leading dimension of B */
+		A, /* A^T */
+		k, /* Leading dimension of A */
+		&beta,
+		C, /* C^T */
+		n); /* Leading dimension of C^T */
 
 	if (status != CUBLAS_STATUS_SUCCESS)
 		return -1;
@@ -353,11 +350,7 @@ ndb_cuda_matmul(const float *A,
  * Optimized for single vector case
  */
 static int
-ndb_cuda_matvec(const float *A,
-		const float *x,
-		float *y,
-		int m,
-		int n)
+ndb_cuda_matvec(const float *A, const float *x, float *y, int m, int n)
 {
 	cublasStatus_t status;
 	const float alpha = 1.0f;
@@ -369,17 +362,17 @@ ndb_cuda_matvec(const float *A,
 	/* cuBLAS gemv: y = alpha * A * x + beta * y */
 	/* A is column-major [m x n], x is [n], y is [m] */
 	status = cublasSgemv(g_cublas_handle,
-			     CUBLAS_OP_N,	/* No transpose */
-			     m,				/* Rows of A */
-			     n,				/* Columns of A */
-			     &alpha,
-			     A,				/* A */
-			     m,				/* Leading dimension of A */
-			     x,				/* x */
-			     1,				/* Stride of x */
-			     &beta,
-			     y,				/* y */
-			     1);			/* Stride of y */
+		CUBLAS_OP_N, /* No transpose */
+		m, /* Rows of A */
+		n, /* Columns of A */
+		&alpha,
+		A, /* A */
+		m, /* Leading dimension of A */
+		x, /* x */
+		1, /* Stride of x */
+		&beta,
+		y, /* y */
+		1); /* Stride of y */
 
 	if (status != CUBLAS_STATUS_SUCCESS)
 		return -1;
@@ -393,10 +386,10 @@ ndb_cuda_matvec(const float *A,
  */
 __global__ static void
 ndb_cuda_hf_compute_logits_kernel(const float *hidden_states,
-				  const float *lm_head_weights,
-				  float *logits,
-				  int embed_dim,
-				  int vocab_size)
+	const float *lm_head_weights,
+	float *logits,
+	int embed_dim,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -425,12 +418,12 @@ ndb_cuda_hf_compute_logits_kernel(const float *hidden_states,
  */
 __global__ static void
 ndb_cuda_hf_layer_norm_kernel(const float *input,
-			       const float *gamma,
-			       const float *beta,
-			       float *output,
-			       int seq_len,
-			       int embed_dim,
-			       float eps)
+	const float *gamma,
+	const float *beta,
+	float *output,
+	int seq_len,
+	int embed_dim,
+	float eps)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int seq_idx = tid / embed_dim;
@@ -445,7 +438,7 @@ ndb_cuda_hf_layer_norm_kernel(const float *input,
 
 	for (i = 0; i < embed_dim; i++)
 		mean += input[seq_idx * embed_dim + i];
-	mean /= (float) embed_dim;
+	mean /= (float)embed_dim;
 
 	/* Compute variance */
 	float variance = 0.0f;
@@ -454,7 +447,7 @@ ndb_cuda_hf_layer_norm_kernel(const float *input,
 		float diff = input[seq_idx * embed_dim + i] - mean;
 		variance += diff * diff;
 	}
-	variance /= (float) embed_dim;
+	variance /= (float)embed_dim;
 
 	/* Normalize */
 	float std = sqrtf(variance + eps);
@@ -469,9 +462,7 @@ ndb_cuda_hf_layer_norm_kernel(const float *input,
  * GELU activation kernel
  */
 __global__ static void
-ndb_cuda_hf_gelu_kernel(const float *input,
-			float *output,
-			int n)
+ndb_cuda_hf_gelu_kernel(const float *input, float *output, int n)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -480,7 +471,7 @@ ndb_cuda_hf_gelu_kernel(const float *input,
 
 	float x = input[tid];
 	/* GELU approximation: x * 0.5 * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3))) */
-	float c1 = 0.7978845608f;	/* sqrt(2/π) */
+	float c1 = 0.7978845608f; /* sqrt(2/π) */
 	float c2 = 0.044715f;
 	float x3 = x * x * x;
 	float tanh_arg = c1 * (x + c2 * x3);
@@ -494,9 +485,9 @@ ndb_cuda_hf_gelu_kernel(const float *input,
  */
 __global__ static void
 ndb_cuda_hf_softmax_kernel(const float *input,
-			    float *output,
-			    int seq_len,
-			    int head_dim)
+	float *output,
+	int seq_len,
+	int head_dim)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int head_idx = tid / head_dim;
@@ -546,14 +537,14 @@ ndb_cuda_hf_softmax_kernel(const float *input,
  */
 extern "C" int
 ndb_cuda_hf_embed_inference(const char *model_name,
-			     const int32_t *token_ids,
-			     const int32_t *attention_mask,
-			     int seq_len,
-			     const float *embedding_table,
-			     int vocab_size,
-			     int embed_dim,
-			     float *output_embedding,
-			     char **errstr)
+	const int32_t *token_ids,
+	const int32_t *attention_mask,
+	int seq_len,
+	const float *embedding_table,
+	int vocab_size,
+	int embed_dim,
+	float *output_embedding,
+	char **errstr)
 {
 	cudaError_t status;
 	int32_t *d_token_ids = NULL;
@@ -571,17 +562,19 @@ ndb_cuda_hf_embed_inference(const char *model_name,
 
 	if (errstr)
 		*errstr = NULL;
-	if (!model_name || !token_ids || !attention_mask || !embedding_table ||
-	    !output_embedding)
+	if (!model_name || !token_ids || !attention_mask || !embedding_table
+		|| !output_embedding)
 	{
 		if (errstr)
-			*errstr = (char *) "invalid parameters for CUDA HF embed";
+			*errstr =
+				(char *)"invalid parameters for CUDA HF embed";
 		return -1;
 	}
 	if (seq_len <= 0 || vocab_size <= 0 || embed_dim <= 0)
 	{
 		if (errstr)
-			*errstr = (char *) "invalid dimensions for CUDA HF embed";
+			*errstr =
+				(char *)"invalid dimensions for CUDA HF embed";
 		return -1;
 	}
 
@@ -609,16 +602,20 @@ ndb_cuda_hf_embed_inference(const char *model_name,
 		goto error;
 
 	/* Copy input data to device */
-	status = cudaMemcpy(d_token_ids, token_ids, token_bytes,
-			    cudaMemcpyHostToDevice);
+	status = cudaMemcpy(
+		d_token_ids, token_ids, token_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto error;
-	status = cudaMemcpy(d_attention_mask, attention_mask, mask_bytes,
-			    cudaMemcpyHostToDevice);
+	status = cudaMemcpy(d_attention_mask,
+		attention_mask,
+		mask_bytes,
+		cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto error;
-	status = cudaMemcpy(d_embedding_table, embedding_table, embed_table_bytes,
-			    cudaMemcpyHostToDevice);
+	status = cudaMemcpy(d_embedding_table,
+		embedding_table,
+		embed_table_bytes,
+		cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto error;
 
@@ -644,11 +641,7 @@ ndb_cuda_hf_embed_inference(const char *model_name,
 	threads = GET_THREADS(embed_dim);
 	blocks = GET_BLOCKS(embed_dim, threads);
 	ndb_cuda_hf_mean_pooling_kernel<<<blocks, threads>>>(
-		d_embeddings,
-		d_attention_mask,
-		d_pooled,
-		seq_len,
-		embed_dim);
+		d_embeddings, d_attention_mask, d_pooled, seq_len, embed_dim);
 	status = cudaGetLastError();
 	if (status != cudaSuccess)
 		goto error;
@@ -657,8 +650,10 @@ ndb_cuda_hf_embed_inference(const char *model_name,
 		goto error;
 
 	/* Copy result back to host */
-	status = cudaMemcpy(output_embedding, d_pooled, pooled_bytes,
-			    cudaMemcpyDeviceToHost);
+	status = cudaMemcpy(output_embedding,
+		d_pooled,
+		pooled_bytes,
+		cudaMemcpyDeviceToHost);
 	if (status != cudaSuccess)
 		goto error;
 
@@ -686,7 +681,7 @@ error:
 	{
 		const char *err_msg = cudaGetErrorString(status);
 		size_t len = strlen(err_msg) + 1;
-		char *err = (char *) malloc(len);
+		char *err = (char *)malloc(len);
 		if (err)
 		{
 			memcpy(err, err_msg, len);
@@ -707,14 +702,14 @@ error:
  */
 __global__ static void
 ndb_cuda_hf_causal_attention_kernel(const float *query,
-				    const float *key_cache,
-				    const float *value_cache,
-				    float *output,
-				    int current_pos,
-				    int cache_pos,
-				    int num_heads,
-				    int head_dim,
-				    float scale)
+	const float *key_cache,
+	const float *value_cache,
+	float *output,
+	int current_pos,
+	int cache_pos,
+	int num_heads,
+	int head_dim,
+	float scale)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int head_idx = tid / head_dim;
@@ -725,7 +720,7 @@ ndb_cuda_hf_causal_attention_kernel(const float *query,
 
 	/* Compute attention scores */
 	float max_score = -1e30f;
-	float scores[512];  /* Max cache position */
+	float scores[512]; /* Max cache position */
 	int i;
 
 	/* Find max score for numerical stability */
@@ -738,7 +733,8 @@ ndb_cuda_hf_causal_attention_kernel(const float *query,
 		for (j = 0; j < head_dim; j++)
 		{
 			int query_idx = head_idx * head_dim + j;
-			int key_idx = i * num_heads * head_dim + head_idx * head_dim + j;
+			int key_idx = i * num_heads * head_dim
+				+ head_idx * head_dim + j;
 			score += query[query_idx] * key_cache[key_idx];
 		}
 		score *= scale;
@@ -761,7 +757,8 @@ ndb_cuda_hf_causal_attention_kernel(const float *query,
 	for (i = 0; i <= cache_pos && i <= current_pos; i++)
 	{
 		float weight = scores[i] / exp_sum;
-		int value_idx = i * num_heads * head_dim + head_idx * head_dim + dim_idx;
+		int value_idx = i * num_heads * head_dim + head_idx * head_dim
+			+ dim_idx;
 		output_val += weight * value_cache[value_idx];
 	}
 
@@ -779,21 +776,22 @@ ndb_cuda_hf_causal_attention_kernel(const float *query,
  */
 static int
 ndb_cuda_hf_compute_qkv(const float *hidden_states,
-			const float *query_weights,
-			const float *key_weights,
-			const float *value_weights,
-			float *q,
-			float *k,
-			float *v,
-			int embed_dim,
-			int num_heads,
-			int head_dim)
+	const float *query_weights,
+	const float *key_weights,
+	const float *value_weights,
+	float *q,
+	float *k,
+	float *v,
+	int embed_dim,
+	int num_heads,
+	int head_dim)
 {
 	int qkv_dim = num_heads * head_dim;
 	int rc;
 
 	/* Compute Q = hidden_states * query_weights^T */
-	rc = ndb_cuda_matvec(query_weights, hidden_states, q, qkv_dim, embed_dim);
+	rc = ndb_cuda_matvec(
+		query_weights, hidden_states, q, qkv_dim, embed_dim);
 	if (rc != 0)
 		return -1;
 
@@ -803,7 +801,8 @@ ndb_cuda_hf_compute_qkv(const float *hidden_states,
 		return -1;
 
 	/* Compute V = hidden_states * value_weights^T */
-	rc = ndb_cuda_matvec(value_weights, hidden_states, v, qkv_dim, embed_dim);
+	rc = ndb_cuda_matvec(
+		value_weights, hidden_states, v, qkv_dim, embed_dim);
 	if (rc != 0)
 		return -1;
 
@@ -819,12 +818,12 @@ ndb_cuda_hf_compute_qkv(const float *hidden_states,
  */
 static int
 ndb_cuda_hf_attention_output_projection(const float *attention_output,
-					const float *output_weights,
-					float *output,
-					int embed_dim)
+	const float *output_weights,
+	float *output,
+	int embed_dim)
 {
-	return ndb_cuda_matvec(output_weights, attention_output, output,
-			       embed_dim, embed_dim);
+	return ndb_cuda_matvec(
+		output_weights, attention_output, output, embed_dim, embed_dim);
 }
 
 /*
@@ -837,12 +836,12 @@ ndb_cuda_hf_attention_output_projection(const float *attention_output,
  */
 static int
 ndb_cuda_hf_ffn_forward(const float *input,
-			const float *ffn_weights1,
-			const float *ffn_weights2,
-			float *hidden,
-			float *output,
-			int embed_dim,
-			int hidden_dim)
+	const float *ffn_weights1,
+	const float *ffn_weights2,
+	float *hidden,
+	float *output,
+	int embed_dim,
+	int hidden_dim)
 {
 	int rc;
 	float *d_gelu_input = NULL;
@@ -854,8 +853,8 @@ ndb_cuda_hf_ffn_forward(const float *input,
 		return -1;
 
 	/* First layer: input * W1^T */
-	rc = ndb_cuda_matvec(ffn_weights1, input, d_gelu_input,
-			     hidden_dim, embed_dim);
+	rc = ndb_cuda_matvec(
+		ffn_weights1, input, d_gelu_input, hidden_dim, embed_dim);
 	if (rc != 0)
 	{
 		cudaFree(d_gelu_input);
@@ -868,9 +867,7 @@ ndb_cuda_hf_ffn_forward(const float *input,
 		int blocks = GET_BLOCKS(hidden_dim, threads);
 
 		ndb_cuda_hf_gelu_kernel<<<blocks, threads>>>(
-			d_gelu_input,
-			hidden,
-			hidden_dim);
+			d_gelu_input, hidden, hidden_dim);
 		status = cudaGetLastError();
 		if (status != cudaSuccess)
 		{
@@ -886,8 +883,8 @@ ndb_cuda_hf_ffn_forward(const float *input,
 	}
 
 	/* Second layer: hidden * W2^T */
-	rc = ndb_cuda_matvec(ffn_weights2, hidden, output,
-			     embed_dim, hidden_dim);
+	rc = ndb_cuda_matvec(
+		ffn_weights2, hidden, output, embed_dim, hidden_dim);
 	if (rc != 0)
 	{
 		cudaFree(d_gelu_input);
@@ -904,11 +901,11 @@ ndb_cuda_hf_ffn_forward(const float *input,
  */
 __global__ static void
 ndb_cuda_hf_ffn_kernel(const float *input,
-		       const float *ffn_weights1,
-		       const float *ffn_weights2,
-		       float *output,
-		       int embed_dim,
-		       int hidden_dim)
+	const float *ffn_weights1,
+	const float *ffn_weights2,
+	float *output,
+	int embed_dim,
+	int hidden_dim)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -928,7 +925,7 @@ ndb_cuda_hf_ffn_kernel(const float *input,
 
 	/* Apply GELU activation */
 	float x = hidden_val;
-	float c1 = 0.7978845608f;	/* sqrt(2/π) */
+	float c1 = 0.7978845608f; /* sqrt(2/π) */
 	float c2 = 0.044715f;
 	float x3 = x * x * x;
 	float tanh_arg = c1 * (x + c2 * x3);
@@ -951,12 +948,12 @@ ndb_cuda_hf_ffn_kernel(const float *input,
  */
 __global__ static void
 ndb_cuda_hf_update_kv_cache_kernel(const float *new_key,
-				   const float *new_value,
-				   float *key_cache,
-				   float *value_cache,
-				   int cache_pos,
-				   int num_heads,
-				   int head_dim)
+	const float *new_value,
+	float *key_cache,
+	float *value_cache,
+	int cache_pos,
+	int num_heads,
+	int head_dim)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int head_idx = tid / head_dim;
@@ -966,8 +963,10 @@ ndb_cuda_hf_update_kv_cache_kernel(const float *new_key,
 		return;
 
 	/* Copy new key/value to cache at cache_pos */
-	int cache_key_idx = cache_pos * num_heads * head_dim + head_idx * head_dim + dim_idx;
-	int cache_value_idx = cache_pos * num_heads * head_dim + head_idx * head_dim + dim_idx;
+	int cache_key_idx = cache_pos * num_heads * head_dim
+		+ head_idx * head_dim + dim_idx;
+	int cache_value_idx = cache_pos * num_heads * head_dim
+		+ head_idx * head_dim + dim_idx;
 	int new_key_idx = head_idx * head_dim + dim_idx;
 	int new_value_idx = head_idx * head_dim + dim_idx;
 
@@ -980,10 +979,10 @@ ndb_cuda_hf_update_kv_cache_kernel(const float *new_key,
  */
 __global__ static void
 ndb_cuda_hf_apply_logit_bias_kernel(float *logits,
-				    const int32_t *bias_tokens,
-				    const float *bias_values,
-				    int num_biases,
-				    int vocab_size)
+	const int32_t *bias_tokens,
+	const float *bias_values,
+	int num_biases,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1006,8 +1005,8 @@ ndb_cuda_hf_apply_logit_bias_kernel(float *logits,
  */
 __global__ static void
 ndb_cuda_hf_temperature_scale_kernel(float *logits,
-				     float temperature,
-				     int vocab_size)
+	float temperature,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1025,15 +1024,15 @@ ndb_cuda_hf_temperature_scale_kernel(float *logits,
  */
 __global__ static void
 ndb_cuda_hf_find_top_k_kernel(const float *logits,
-			       int *top_k_indices,
-			       float *top_k_values,
-			       int top_k,
-			       int vocab_size)
+	int *top_k_indices,
+	float *top_k_values,
+	int top_k,
+	int vocab_size)
 {
 	/* Simple implementation: find top-k using shared memory reduction */
 	/* This is a simplified version - full implementation would use */
 	/* parallel reduction with shared memory for better performance */
-	
+
 	/* For now, use a simple approach: each thread finds its rank */
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1064,9 +1063,9 @@ ndb_cuda_hf_find_top_k_kernel(const float *logits,
  */
 __global__ static void
 ndb_cuda_hf_top_k_filter_kernel(float *logits,
-				 const int *top_k_indices,
-				 int top_k,
-				 int vocab_size)
+	const int *top_k_indices,
+	int top_k,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1097,10 +1096,10 @@ ndb_cuda_hf_top_k_filter_kernel(float *logits,
  */
 __global__ static void
 ndb_cuda_hf_top_p_filter_kernel(float *logits,
-				 const float *sorted_logits,
-				 const int *sorted_indices,
-				 float top_p,
-				 int vocab_size)
+	const float *sorted_logits,
+	const int *sorted_indices,
+	float top_p,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1149,9 +1148,9 @@ ndb_cuda_hf_top_p_filter_kernel(float *logits,
  */
 __global__ static void
 ndb_cuda_hf_sort_logits_kernel(const float *logits,
-				float *sorted_logits,
-				int *sorted_indices,
-				int vocab_size)
+	float *sorted_logits,
+	int *sorted_indices,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1160,7 +1159,7 @@ ndb_cuda_hf_sort_logits_kernel(const float *logits,
 
 	/* Copy logits and indices to shared memory if possible */
 	/* For now, use global memory */
-	
+
 	/* Initialize sorted arrays */
 	sorted_logits[tid] = logits[tid];
 	sorted_indices[tid] = tid;
@@ -1195,10 +1194,10 @@ ndb_cuda_hf_sort_logits_kernel(const float *logits,
  */
 __global__ static void
 ndb_cuda_hf_repetition_penalty_kernel(float *logits,
-				      const int32_t *generated_tokens,
-				      int num_generated,
-				      float penalty,
-				      int vocab_size)
+	const int32_t *generated_tokens,
+	int num_generated,
+	float penalty,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1233,8 +1232,8 @@ ndb_cuda_hf_repetition_penalty_kernel(float *logits,
  */
 __global__ static void
 ndb_cuda_hf_greedy_sample_kernel(const float *logits,
-				 int32_t *output_token,
-				 int vocab_size)
+	int32_t *output_token,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1264,11 +1263,11 @@ ndb_cuda_hf_greedy_sample_kernel(const float *logits,
  */
 __global__ static void
 ndb_cuda_hf_multinomial_sample_kernel(const float *logits,
-				      float *probs,
-				      float *cumsum,
-				      float random_value,
-				      int32_t *output_token,
-				      int vocab_size)
+	float *probs,
+	float *cumsum,
+	float random_value,
+	int32_t *output_token,
+	int vocab_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1327,10 +1326,10 @@ ndb_cuda_hf_multinomial_sample_kernel(const float *logits,
  */
 __global__ static void
 ndb_cuda_hf_check_stop_sequence_kernel(const int32_t *generated_tokens,
-				       int num_generated,
-				       const int32_t *stop_sequence,
-				       int stop_seq_len,
-				       bool *found_stop)
+	int num_generated,
+	const int32_t *stop_sequence,
+	int stop_seq_len,
+	bool *found_stop)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -1383,18 +1382,18 @@ ndb_cuda_hf_check_stop_sequence_kernel(const int32_t *generated_tokens,
  */
 extern "C" int
 ndb_cuda_hf_generate_inference(const char *model_name,
-			       const int32_t *input_token_ids,
-			       int input_seq_len,
-			       const float *embedding_table,
-			       const float *position_embeddings,
-			       const float *lm_head_weights,
-			       const NdbCudaHfModelWeights *weights,
-			       const NdbCudaHfModelConfig *config,
-			       const NdbCudaHfGenParams *gen_params,
-			       NdbCudaHfKVCache *kv_cache,
-			       int32_t *output_token_ids,
-			       int *output_seq_len,
-			       char **errstr)
+	const int32_t *input_token_ids,
+	int input_seq_len,
+	const float *embedding_table,
+	const float *position_embeddings,
+	const float *lm_head_weights,
+	const NdbCudaHfModelWeights *weights,
+	const NdbCudaHfModelConfig *config,
+	const NdbCudaHfGenParams *gen_params,
+	NdbCudaHfKVCache *kv_cache,
+	int32_t *output_token_ids,
+	int *output_seq_len,
+	char **errstr)
 {
 	cudaError_t status;
 	float *d_embeddings = NULL;
@@ -1424,21 +1423,26 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 
 	if (errstr)
 		*errstr = NULL;
-	if (!model_name || !input_token_ids || !embedding_table || !lm_head_weights ||
-	    !weights || !config || !gen_params || !output_token_ids || !output_seq_len)
+	if (!model_name || !input_token_ids || !embedding_table
+		|| !lm_head_weights || !weights || !config || !gen_params
+		|| !output_token_ids || !output_seq_len)
 	{
 		if (errstr)
-			*errstr = (char *) "invalid parameters for CUDA HF generate";
+			*errstr = (char *)"invalid parameters for CUDA HF "
+					  "generate";
 		return -1;
 	}
-	if (input_seq_len <= 0 || config->vocab_size <= 0 || config->embed_dim <= 0)
+	if (input_seq_len <= 0 || config->vocab_size <= 0
+		|| config->embed_dim <= 0)
 	{
 		if (errstr)
-			*errstr = (char *) "invalid dimensions for CUDA HF generate";
+			*errstr = (char *)"invalid dimensions for CUDA HF "
+					  "generate";
 		return -1;
 	}
 
-	max_gen_tokens = (gen_params->max_tokens > 0) ? gen_params->max_tokens : NDB_HF_MAX_GEN_TOKENS;
+	max_gen_tokens = (gen_params->max_tokens > 0) ? gen_params->max_tokens
+						      : NDB_HF_MAX_GEN_TOKENS;
 	if (max_gen_tokens > NDB_HF_MAX_GEN_TOKENS)
 		max_gen_tokens = NDB_HF_MAX_GEN_TOKENS;
 
@@ -1446,8 +1450,8 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 	embed_bytes = sizeof(float) * config->embed_dim;
 	logit_bytes = sizeof(float) * config->vocab_size;
 	token_bytes = sizeof(int32_t) * (input_seq_len + max_gen_tokens);
-	cache_bytes = sizeof(float) * config->num_layers * config->max_seq_len *
-		config->num_heads * (config->embed_dim / config->num_heads);
+	cache_bytes = sizeof(float) * config->num_layers * config->max_seq_len
+		* config->num_heads * (config->embed_dim / config->num_heads);
 
 	status = cudaMalloc((void **)&d_embeddings, embed_bytes);
 	if (status != cudaSuccess)
@@ -1478,9 +1482,10 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 		goto error;
 
 	/* Copy input tokens to device */
-	status = cudaMemcpy(d_input_tokens, input_token_ids,
-			    sizeof(int32_t) * input_seq_len,
-			    cudaMemcpyHostToDevice);
+	status = cudaMemcpy(d_input_tokens,
+		input_token_ids,
+		sizeof(int32_t) * input_seq_len,
+		cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto error;
 
@@ -1514,14 +1519,15 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 		{
 			/* First iteration: use last token from input */
 			if (input_seq_len > 0)
-				current_token_id = input_token_ids[input_seq_len - 1];
+				current_token_id =
+					input_token_ids[input_seq_len - 1];
 			else
-				current_token_id = 101;	/* [CLS] token */
-		}
-		else
+				current_token_id = 101; /* [CLS] token */
+		} else
 		{
 			/* Subsequent iterations: use last generated token */
-			current_token_id = output_token_ids[generated_count - 1];
+			current_token_id =
+				output_token_ids[generated_count - 1];
 		}
 
 		/* Allocate temporary buffers for transformer forward pass */
@@ -1529,11 +1535,13 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 		attn_output_bytes = sizeof(float) * config->embed_dim;
 		ffn_output_bytes = sizeof(float) * config->hidden_dim;
 
-		status = cudaMalloc((void **)&d_current_embedding, hidden_bytes);
+		status =
+			cudaMalloc((void **)&d_current_embedding, hidden_bytes);
 		if (status != cudaSuccess)
 		{
-			generated_count = i;	/* Record how many tokens were generated */
-			break;	/* Break out of loop */
+			generated_count =
+				i; /* Record how many tokens were generated */
+			break; /* Break out of loop */
 		}
 		status = cudaMalloc((void **)&d_hidden_states, hidden_bytes);
 		if (status != cudaSuccess)
@@ -1542,7 +1550,8 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 			generated_count = i;
 			break;
 		}
-		status = cudaMalloc((void **)&d_attention_output, attn_output_bytes);
+		status = cudaMalloc(
+			(void **)&d_attention_output, attn_output_bytes);
 		if (status != cudaSuccess)
 		{
 			cudaFree(d_current_embedding);
@@ -1602,7 +1611,7 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 			{
 				/* Allocate position embedding buffer */
 				status = cudaMalloc((void **)&d_pos_embedding,
-						    sizeof(float) * config->embed_dim);
+					sizeof(float) * config->embed_dim);
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_current_embedding);
@@ -1615,9 +1624,10 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 
 				/* Copy position embedding to device */
 				status = cudaMemcpy(d_pos_embedding,
-						    position_embeddings + pos * config->embed_dim,
-						    sizeof(float) * config->embed_dim,
-						    cudaMemcpyDeviceToDevice);
+					position_embeddings
+						+ pos * config->embed_dim,
+					sizeof(float) * config->embed_dim,
+					cudaMemcpyDeviceToDevice);
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_pos_embedding);
@@ -1630,8 +1640,9 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				}
 
 				/* Add position embedding to token embedding */
-				ndb_cuda_hf_add_position_embedding_kernel<<<blocks, threads>>>(
-					d_current_embedding,
+				ndb_cuda_hf_add_position_embedding_kernel<<<
+					blocks,
+					threads>>>(d_current_embedding,
 					d_pos_embedding,
 					d_hidden_states,
 					config->embed_dim);
@@ -1659,13 +1670,13 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				}
 
 				cudaFree(d_pos_embedding);
-			}
-			else
+			} else
 			{
 				/* Position out of range, just copy embedding */
-				status = cudaMemcpy(d_hidden_states, d_current_embedding,
-						    sizeof(float) * config->embed_dim,
-						    cudaMemcpyDeviceToDevice);
+				status = cudaMemcpy(d_hidden_states,
+					d_current_embedding,
+					sizeof(float) * config->embed_dim,
+					cudaMemcpyDeviceToDevice);
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_current_embedding);
@@ -1676,13 +1687,13 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 					break;
 				}
 			}
-		}
-		else
+		} else
 		{
 			/* No position embeddings, just copy embedding */
-			status = cudaMemcpy(d_hidden_states, d_current_embedding,
-					    sizeof(float) * config->embed_dim,
-					    cudaMemcpyDeviceToDevice);
+			status = cudaMemcpy(d_hidden_states,
+				d_current_embedding,
+				sizeof(float) * config->embed_dim,
+				cudaMemcpyDeviceToDevice);
 			if (status != cudaSuccess)
 			{
 				cudaFree(d_current_embedding);
@@ -1707,16 +1718,18 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 			float *d_ffn_output_temp = NULL;
 			float *d_residual = NULL;
 			int head_dim = config->embed_dim / config->num_heads;
-			float scale = 1.0f / sqrtf((float) head_dim);
+			float scale = 1.0f / sqrtf((float)head_dim);
 			int layer;
 
 			/* Allocate buffers for transformer layers */
-			size_t qkv_bytes = sizeof(float) * config->num_heads * head_dim;
+			size_t qkv_bytes =
+				sizeof(float) * config->num_heads * head_dim;
 			size_t attn_bytes = sizeof(float) * config->embed_dim;
 			size_t ffn_bytes = sizeof(float) * config->hidden_dim;
 			size_t layer_bytes = sizeof(float) * config->embed_dim;
 
-			status = cudaMalloc((void **)&d_layer_output, layer_bytes);
+			status = cudaMalloc(
+				(void **)&d_layer_output, layer_bytes);
 			if (status != cudaSuccess)
 			{
 				cudaFree(d_current_embedding);
@@ -1762,7 +1775,8 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				generated_count = i;
 				break;
 			}
-			status = cudaMalloc((void **)&d_attn_output, attn_bytes);
+			status =
+				cudaMalloc((void **)&d_attn_output, attn_bytes);
 			if (status != cudaSuccess)
 			{
 				cudaFree(d_v);
@@ -1791,7 +1805,8 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				generated_count = i;
 				break;
 			}
-			status = cudaMalloc((void **)&d_ffn_output_temp, ffn_bytes);
+			status = cudaMalloc(
+				(void **)&d_ffn_output_temp, ffn_bytes);
 			if (status != cudaSuccess)
 			{
 				cudaFree(d_ffn_input);
@@ -1833,20 +1848,23 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				int rc;
 
 				/* Store residual connection */
-				status = cudaMemcpy(d_residual, d_layer_input,
-						    sizeof(float) * config->embed_dim,
-						    cudaMemcpyDeviceToDevice);
+				status = cudaMemcpy(d_residual,
+					d_layer_input,
+					sizeof(float) * config->embed_dim,
+					cudaMemcpyDeviceToDevice);
 				if (status != cudaSuccess)
 					break;
 
 				/* Pre-attention layer norm */
 				/* Allocate layer norm buffers */
-				status = cudaMalloc((void **)&d_layer_norm_input,
-						    sizeof(float) * config->embed_dim);
+				status = cudaMalloc(
+					(void **)&d_layer_norm_input,
+					sizeof(float) * config->embed_dim);
 				if (status != cudaSuccess)
 					break;
-				status = cudaMalloc((void **)&d_layer_norm_output,
-						    sizeof(float) * config->embed_dim);
+				status = cudaMalloc(
+					(void **)&d_layer_norm_output,
+					sizeof(float) * config->embed_dim);
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_layer_norm_input);
@@ -1854,9 +1872,10 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				}
 
 				/* Copy input to layer norm buffer */
-				status = cudaMemcpy(d_layer_norm_input, d_layer_input,
-						    sizeof(float) * config->embed_dim,
-						    cudaMemcpyDeviceToDevice);
+				status = cudaMemcpy(d_layer_norm_input,
+					d_layer_input,
+					sizeof(float) * config->embed_dim,
+					cudaMemcpyDeviceToDevice);
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_layer_norm_output);
@@ -1865,20 +1884,22 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				}
 
 				/* Apply layer norm */
-				if (weights->layer_norm_gamma != NULL &&
-				    weights->layer_norm_beta != NULL)
+				if (weights->layer_norm_gamma != NULL
+					&& weights->layer_norm_beta != NULL)
 				{
-					threads = GET_THREADS(config->embed_dim);
-					blocks = GET_BLOCKS(config->embed_dim, threads);
+					threads =
+						GET_THREADS(config->embed_dim);
+					blocks = GET_BLOCKS(
+						config->embed_dim, threads);
 
-					ndb_cuda_hf_layer_norm_kernel<<<blocks, threads>>>(
-						d_layer_norm_input,
+					ndb_cuda_hf_layer_norm_kernel<<<blocks,
+						threads>>>(d_layer_norm_input,
 						weights->layer_norm_gamma,
 						weights->layer_norm_beta,
 						d_layer_norm_output,
-						1,			/* seq_len = 1 for single token */
+						1, /* seq_len = 1 for single token */
 						config->embed_dim,
-						1e-5f);		/* eps */
+						1e-5f); /* eps */
 					status = cudaGetLastError();
 					if (status != cudaSuccess)
 					{
@@ -1893,13 +1914,14 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 						cudaFree(d_layer_norm_input);
 						break;
 					}
-				}
-				else
+				} else
 				{
 					/* No layer norm weights, just copy */
-					status = cudaMemcpy(d_layer_norm_output, d_layer_norm_input,
-							    sizeof(float) * config->embed_dim,
-							    cudaMemcpyDeviceToDevice);
+					status = cudaMemcpy(d_layer_norm_output,
+						d_layer_norm_input,
+						sizeof(float)
+							* config->embed_dim,
+						cudaMemcpyDeviceToDevice);
 					if (status != cudaSuccess)
 					{
 						cudaFree(d_layer_norm_output);
@@ -1910,21 +1932,25 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 
 				/* Compute Q, K, V using cuBLAS */
 				/* Get layer weights (simplified - should use proper weight indexing) */
-				const float *layer_query_weights = weights->query_weights;
-				const float *layer_key_weights = weights->key_weights;
-				const float *layer_value_weights = weights->value_weights;
+				const float *layer_query_weights =
+					weights->query_weights;
+				const float *layer_key_weights =
+					weights->key_weights;
+				const float *layer_value_weights =
+					weights->value_weights;
 
 				/* Compute Q, K, V */
-				rc = ndb_cuda_hf_compute_qkv(d_layer_norm_output,
-							     layer_query_weights,
-							     layer_key_weights,
-							     layer_value_weights,
-							     d_q,
-							     d_k,
-							     d_v,
-							     config->embed_dim,
-							     config->num_heads,
-							     head_dim);
+				rc = ndb_cuda_hf_compute_qkv(
+					d_layer_norm_output,
+					layer_query_weights,
+					layer_key_weights,
+					layer_value_weights,
+					d_q,
+					d_k,
+					d_v,
+					config->embed_dim,
+					config->num_heads,
+					head_dim);
 				if (rc != 0)
 				{
 					cudaFree(d_layer_norm_output);
@@ -1935,25 +1961,39 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				/* Update KV cache with new K, V */
 				if (kv_cache != NULL && kv_cache->allocated)
 				{
-					int cache_offset = layer * config->max_seq_len *
-						config->num_heads * head_dim +
-						current_pos * config->num_heads * head_dim;
-					float *layer_key_cache = kv_cache->key_cache + cache_offset;
-					float *layer_value_cache = kv_cache->value_cache + cache_offset;
+					int cache_offset = layer
+							* config->max_seq_len
+							* config->num_heads
+							* head_dim
+						+ current_pos
+							* config->num_heads
+							* head_dim;
+					float *layer_key_cache =
+						kv_cache->key_cache
+						+ cache_offset;
+					float *layer_value_cache =
+						kv_cache->value_cache
+						+ cache_offset;
 
 					/* Copy K, V to cache */
-					status = cudaMemcpy(layer_key_cache, d_k,
-							    sizeof(float) * config->num_heads * head_dim,
-							    cudaMemcpyDeviceToDevice);
+					status = cudaMemcpy(layer_key_cache,
+						d_k,
+						sizeof(float)
+							* config->num_heads
+							* head_dim,
+						cudaMemcpyDeviceToDevice);
 					if (status != cudaSuccess)
 					{
 						cudaFree(d_layer_norm_output);
 						cudaFree(d_layer_norm_input);
 						break;
 					}
-					status = cudaMemcpy(layer_value_cache, d_v,
-							    sizeof(float) * config->num_heads * head_dim,
-							    cudaMemcpyDeviceToDevice);
+					status = cudaMemcpy(layer_value_cache,
+						d_v,
+						sizeof(float)
+							* config->num_heads
+							* head_dim,
+						cudaMemcpyDeviceToDevice);
 					if (status != cudaSuccess)
 					{
 						cudaFree(d_layer_norm_output);
@@ -1963,17 +2003,25 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				}
 
 				/* Compute attention with KV cache */
-				threads = GET_THREADS(config->num_heads * head_dim);
-				blocks = GET_BLOCKS(config->num_heads * head_dim, threads);
+				threads = GET_THREADS(
+					config->num_heads * head_dim);
+				blocks = GET_BLOCKS(
+					config->num_heads * head_dim, threads);
 
-				ndb_cuda_hf_causal_attention_kernel<<<blocks, threads>>>(
-					d_q,
-					(kv_cache && kv_cache->allocated) ?
-						kv_cache->key_cache + layer * config->max_seq_len *
-						config->num_heads * head_dim : d_k,
-					(kv_cache && kv_cache->allocated) ?
-						kv_cache->value_cache + layer * config->max_seq_len *
-						config->num_heads * head_dim : d_v,
+				ndb_cuda_hf_causal_attention_kernel<<<blocks,
+					threads>>>(d_q,
+					(kv_cache && kv_cache->allocated)
+						? kv_cache->key_cache
+							+ layer * config->max_seq_len
+								* config->num_heads
+								* head_dim
+						: d_k,
+					(kv_cache && kv_cache->allocated)
+						? kv_cache->value_cache
+							+ layer * config->max_seq_len
+								* config->num_heads
+								* head_dim
+						: d_v,
 					d_attn_output,
 					current_pos,
 					current_pos,
@@ -2000,8 +2048,10 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				{
 					float *d_attn_proj = NULL;
 
-					status = cudaMalloc((void **)&d_attn_proj,
-							    sizeof(float) * config->embed_dim);
+					status = cudaMalloc(
+						(void **)&d_attn_proj,
+						sizeof(float)
+							* config->embed_dim);
 					if (status != cudaSuccess)
 					{
 						cudaFree(d_layer_norm_output);
@@ -2023,9 +2073,11 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 					}
 
 					/* Copy to attention output */
-					status = cudaMemcpy(d_attn_output, d_attn_proj,
-							    sizeof(float) * config->embed_dim,
-							    cudaMemcpyDeviceToDevice);
+					status = cudaMemcpy(d_attn_output,
+						d_attn_proj,
+						sizeof(float)
+							* config->embed_dim,
+						cudaMemcpyDeviceToDevice);
 					cudaFree(d_attn_proj);
 					if (status != cudaSuccess)
 					{
@@ -2039,8 +2091,8 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				threads = GET_THREADS(config->embed_dim);
 				blocks = GET_BLOCKS(config->embed_dim, threads);
 
-				ndb_cuda_hf_add_vectors_kernel<<<blocks, threads>>>(
-					d_residual,
+				ndb_cuda_hf_add_vectors_kernel<<<blocks,
+					threads>>>(d_residual,
 					d_attn_output,
 					d_ffn_input,
 					config->embed_dim);
@@ -2061,9 +2113,10 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 
 				/* Pre-FFN layer norm */
 				/* Copy FFN input to layer norm buffer */
-				status = cudaMemcpy(d_layer_norm_input, d_ffn_input,
-						    sizeof(float) * config->embed_dim,
-						    cudaMemcpyDeviceToDevice);
+				status = cudaMemcpy(d_layer_norm_input,
+					d_ffn_input,
+					sizeof(float) * config->embed_dim,
+					cudaMemcpyDeviceToDevice);
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_layer_norm_output);
@@ -2072,17 +2125,17 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				}
 
 				/* Apply layer norm */
-				if (weights->layer_norm_gamma != NULL &&
-				    weights->layer_norm_beta != NULL)
+				if (weights->layer_norm_gamma != NULL
+					&& weights->layer_norm_beta != NULL)
 				{
-					ndb_cuda_hf_layer_norm_kernel<<<blocks, threads>>>(
-						d_layer_norm_input,
+					ndb_cuda_hf_layer_norm_kernel<<<blocks,
+						threads>>>(d_layer_norm_input,
 						weights->layer_norm_gamma,
 						weights->layer_norm_beta,
 						d_layer_norm_output,
-						1,			/* seq_len = 1 for single token */
+						1, /* seq_len = 1 for single token */
 						config->embed_dim,
-						1e-5f);		/* eps */
+						1e-5f); /* eps */
 					status = cudaGetLastError();
 					if (status != cudaSuccess)
 					{
@@ -2097,13 +2150,14 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 						cudaFree(d_layer_norm_input);
 						break;
 					}
-				}
-				else
+				} else
 				{
 					/* No layer norm weights, just copy */
-					status = cudaMemcpy(d_layer_norm_output, d_layer_norm_input,
-							    sizeof(float) * config->embed_dim,
-							    cudaMemcpyDeviceToDevice);
+					status = cudaMemcpy(d_layer_norm_output,
+						d_layer_norm_input,
+						sizeof(float)
+							* config->embed_dim,
+						cudaMemcpyDeviceToDevice);
 					if (status != cudaSuccess)
 					{
 						cudaFree(d_layer_norm_output);
@@ -2113,16 +2167,19 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				}
 
 				/* Feed-forward network using cuBLAS */
-				const float *layer_ffn_weights1 = weights->ffn_weights1;
-				const float *layer_ffn_weights2 = weights->ffn_weights2;
+				const float *layer_ffn_weights1 =
+					weights->ffn_weights1;
+				const float *layer_ffn_weights2 =
+					weights->ffn_weights2;
 
-				rc = ndb_cuda_hf_ffn_forward(d_layer_norm_output,
-							     layer_ffn_weights1,
-							     layer_ffn_weights2,
-							     d_ffn_output_temp,
-							     d_layer_output,
-							     config->embed_dim,
-							     config->hidden_dim);
+				rc = ndb_cuda_hf_ffn_forward(
+					d_layer_norm_output,
+					layer_ffn_weights1,
+					layer_ffn_weights2,
+					d_ffn_output_temp,
+					d_layer_output,
+					config->embed_dim,
+					config->hidden_dim);
 				if (rc != 0)
 				{
 					cudaFree(d_layer_norm_output);
@@ -2131,8 +2188,8 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				}
 
 				/* Add residual connection */
-				ndb_cuda_hf_add_vectors_kernel<<<blocks, threads>>>(
-					d_ffn_input,
+				ndb_cuda_hf_add_vectors_kernel<<<blocks,
+					threads>>>(d_ffn_input,
 					d_layer_output,
 					d_layer_output,
 					config->embed_dim);
@@ -2167,9 +2224,10 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 			/* Copy final layer output to hidden_states */
 			if (d_layer_input != d_hidden_states)
 			{
-				status = cudaMemcpy(d_hidden_states, d_layer_input,
-						    sizeof(float) * config->embed_dim,
-						    cudaMemcpyDeviceToDevice);
+				status = cudaMemcpy(d_hidden_states,
+					d_layer_input,
+					sizeof(float) * config->embed_dim,
+					cudaMemcpyDeviceToDevice);
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_residual);
@@ -2245,8 +2303,7 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				generated_count = i;
 				break;
 			}
-		}
-		else
+		} else
 		{
 			/* No LM head weights, use dummy logits */
 			threads = GET_THREADS(config->vocab_size);
@@ -2256,7 +2313,7 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 			float *h_dummy_logits = NULL;
 			int j;
 
-			h_dummy_logits = (float *) malloc(logit_bytes);
+			h_dummy_logits = (float *)malloc(logit_bytes);
 			if (!h_dummy_logits)
 			{
 				cudaFree(d_current_embedding);
@@ -2271,15 +2328,18 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 			for (j = 0; j < config->vocab_size; j++)
 			{
 				/* Dummy logit: higher probability for tokens similar to current */
-				float similarity = (j == current_token_id) ? 1.0f :
-					(float)(rand() % 100) / 100.0f - 0.5f;
-				h_dummy_logits[j] = similarity * 10.0f;  /* Scale for softmax */
+				float similarity = (j == current_token_id)
+					? 1.0f
+					: (float)(rand() % 100) / 100.0f - 0.5f;
+				h_dummy_logits[j] = similarity
+					* 10.0f; /* Scale for softmax */
 			}
 
 			/* Copy to device */
-			status = cudaMemcpy(d_logits, h_dummy_logits,
-					    logit_bytes,
-					    cudaMemcpyHostToDevice);
+			status = cudaMemcpy(d_logits,
+				h_dummy_logits,
+				logit_bytes,
+				cudaMemcpyHostToDevice);
 			free(h_dummy_logits);
 			if (status != cudaSuccess)
 			{
@@ -2311,64 +2371,80 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 		{
 			int32_t *d_bias_tokens = NULL;
 			float *d_bias_values = NULL;
-			size_t bias_tokens_bytes = sizeof(int32_t) * gen_params->num_logit_bias;
-			size_t bias_values_bytes = sizeof(float) * gen_params->num_logit_bias;
+			size_t bias_tokens_bytes =
+				sizeof(int32_t) * gen_params->num_logit_bias;
+			size_t bias_values_bytes =
+				sizeof(float) * gen_params->num_logit_bias;
 
-			status = cudaMalloc((void **)&d_bias_tokens, bias_tokens_bytes);
+			status = cudaMalloc(
+				(void **)&d_bias_tokens, bias_tokens_bytes);
 			if (status == cudaSuccess)
 			{
-				status = cudaMalloc((void **)&d_bias_values, bias_values_bytes);
+				status = cudaMalloc((void **)&d_bias_values,
+					bias_values_bytes);
 				if (status == cudaSuccess)
 				{
 					/* Copy bias tokens and values to device */
 					status = cudaMemcpy(d_bias_tokens,
-							    gen_params->logit_bias_tokens,
-							    bias_tokens_bytes,
-							    cudaMemcpyHostToDevice);
+						gen_params->logit_bias_tokens,
+						bias_tokens_bytes,
+						cudaMemcpyHostToDevice);
 					if (status == cudaSuccess)
 					{
-						status = cudaMemcpy(d_bias_values,
-								    gen_params->logit_bias_values,
-								    bias_values_bytes,
-								    cudaMemcpyHostToDevice);
+						status = cudaMemcpy(
+							d_bias_values,
+							gen_params
+								->logit_bias_values,
+							bias_values_bytes,
+							cudaMemcpyHostToDevice);
 						if (status == cudaSuccess)
 						{
 							/* Apply logit bias */
-							ndb_cuda_hf_apply_logit_bias_kernel<<<blocks, threads>>>(
+							ndb_cuda_hf_apply_logit_bias_kernel<<<
+								blocks,
+								threads>>>(
 								d_logits,
 								d_bias_tokens,
 								d_bias_values,
-								gen_params->num_logit_bias,
+								gen_params
+									->num_logit_bias,
 								config->vocab_size);
-							status = cudaGetLastError();
-							if (status == cudaSuccess)
+							status =
+								cudaGetLastError();
+							if (status
+								== cudaSuccess)
 							{
-								status = cudaDeviceSynchronize();
-								if (status != cudaSuccess)
+								status =
+									cudaDeviceSynchronize();
+								if (status
+									!= cudaSuccess)
 								{
-									cudaFree(d_bias_tokens);
-									cudaFree(d_bias_values);
-									generated_count = i;
+									cudaFree(
+										d_bias_tokens);
+									cudaFree(
+										d_bias_values);
+									generated_count =
+										i;
 									break;
 								}
-							}
-							else
+							} else
 							{
-								cudaFree(d_bias_tokens);
-								cudaFree(d_bias_values);
-								generated_count = i;
+								cudaFree(
+									d_bias_tokens);
+								cudaFree(
+									d_bias_values);
+								generated_count =
+									i;
 								break;
 							}
-						}
-						else
+						} else
 						{
 							cudaFree(d_bias_tokens);
 							cudaFree(d_bias_values);
 							generated_count = i;
 							break;
 						}
-					}
-					else
+					} else
 					{
 						cudaFree(d_bias_tokens);
 						cudaFree(d_bias_values);
@@ -2377,15 +2453,13 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 					}
 					cudaFree(d_bias_tokens);
 					cudaFree(d_bias_values);
-				}
-				else
+				} else
 				{
 					cudaFree(d_bias_tokens);
 					generated_count = i;
 					break;
 				}
-			}
-			else
+			} else
 			{
 				generated_count = i;
 				break;
@@ -2393,10 +2467,11 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 		}
 
 		/* Apply temperature scaling */
-		if (gen_params->temperature > 0.0f && gen_params->temperature != 1.0f)
+		if (gen_params->temperature > 0.0f
+			&& gen_params->temperature != 1.0f)
 		{
-			ndb_cuda_hf_temperature_scale_kernel<<<blocks, threads>>>(
-				d_logits,
+			ndb_cuda_hf_temperature_scale_kernel<<<blocks,
+				threads>>>(d_logits,
 				gen_params->temperature,
 				config->vocab_size);
 			status = cudaGetLastError();
@@ -2414,23 +2489,28 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 		}
 
 		/* Apply top-k filtering */
-		if (gen_params->top_k > 0 && gen_params->top_k < config->vocab_size)
+		if (gen_params->top_k > 0
+			&& gen_params->top_k < config->vocab_size)
 		{
 			int *d_top_k_indices = NULL;
 			float *d_top_k_values = NULL;
-			size_t top_k_indices_bytes = sizeof(int) * gen_params->top_k;
-			size_t top_k_values_bytes = sizeof(float) * gen_params->top_k;
+			size_t top_k_indices_bytes =
+				sizeof(int) * gen_params->top_k;
+			size_t top_k_values_bytes =
+				sizeof(float) * gen_params->top_k;
 
 			/* Allocate device memory for top-k indices and values */
-			status = cudaMalloc((void **)&d_top_k_indices, top_k_indices_bytes);
+			status = cudaMalloc(
+				(void **)&d_top_k_indices, top_k_indices_bytes);
 			if (status == cudaSuccess)
 			{
-				status = cudaMalloc((void **)&d_top_k_values, top_k_values_bytes);
+				status = cudaMalloc((void **)&d_top_k_values,
+					top_k_values_bytes);
 				if (status == cudaSuccess)
 				{
 					/* Find top-k indices */
-					ndb_cuda_hf_find_top_k_kernel<<<blocks, threads>>>(
-						d_logits,
+					ndb_cuda_hf_find_top_k_kernel<<<blocks,
+						threads>>>(d_logits,
 						d_top_k_indices,
 						d_top_k_values,
 						gen_params->top_k,
@@ -2438,44 +2518,57 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 					status = cudaGetLastError();
 					if (status == cudaSuccess)
 					{
-						status = cudaDeviceSynchronize();
+						status =
+							cudaDeviceSynchronize();
 						if (status == cudaSuccess)
 						{
 							/* Filter logits outside top-k */
-							ndb_cuda_hf_top_k_filter_kernel<<<blocks, threads>>>(
+							ndb_cuda_hf_top_k_filter_kernel<<<
+								blocks,
+								threads>>>(
 								d_logits,
 								d_top_k_indices,
-								gen_params->top_k,
+								gen_params
+									->top_k,
 								config->vocab_size);
-							status = cudaGetLastError();
-							if (status == cudaSuccess)
+							status =
+								cudaGetLastError();
+							if (status
+								== cudaSuccess)
 							{
-								status = cudaDeviceSynchronize();
-								if (status != cudaSuccess)
+								status =
+									cudaDeviceSynchronize();
+								if (status
+									!= cudaSuccess)
 								{
-									cudaFree(d_top_k_values);
-									cudaFree(d_top_k_indices);
-									generated_count = i;
+									cudaFree(
+										d_top_k_values);
+									cudaFree(
+										d_top_k_indices);
+									generated_count =
+										i;
 									break;
 								}
-							}
-							else
+							} else
 							{
-								cudaFree(d_top_k_values);
-								cudaFree(d_top_k_indices);
-								generated_count = i;
+								cudaFree(
+									d_top_k_values);
+								cudaFree(
+									d_top_k_indices);
+								generated_count =
+									i;
 								break;
 							}
-						}
-						else
+						} else
 						{
-							cudaFree(d_top_k_values);
-							cudaFree(d_top_k_indices);
+							cudaFree(
+								d_top_k_values);
+							cudaFree(
+								d_top_k_indices);
 							generated_count = i;
 							break;
 						}
-					}
-					else
+					} else
 					{
 						cudaFree(d_top_k_values);
 						cudaFree(d_top_k_indices);
@@ -2484,15 +2577,13 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 					}
 					cudaFree(d_top_k_values);
 					cudaFree(d_top_k_indices);
-				}
-				else
+				} else
 				{
 					cudaFree(d_top_k_indices);
 					generated_count = i;
 					break;
 				}
-			}
-			else
+			} else
 			{
 				generated_count = i;
 				break;
@@ -2504,64 +2595,81 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 		{
 			float *d_sorted_logits = NULL;
 			int *d_sorted_indices = NULL;
-			size_t sorted_bytes = sizeof(float) * config->vocab_size;
-			size_t sorted_indices_bytes = sizeof(int) * config->vocab_size;
+			size_t sorted_bytes =
+				sizeof(float) * config->vocab_size;
+			size_t sorted_indices_bytes =
+				sizeof(int) * config->vocab_size;
 
 			/* Allocate device memory for sorted logits and indices */
-			status = cudaMalloc((void **)&d_sorted_logits, sorted_bytes);
+			status = cudaMalloc(
+				(void **)&d_sorted_logits, sorted_bytes);
 			if (status == cudaSuccess)
 			{
-				status = cudaMalloc((void **)&d_sorted_indices, sorted_indices_bytes);
+				status = cudaMalloc((void **)&d_sorted_indices,
+					sorted_indices_bytes);
 				if (status == cudaSuccess)
 				{
 					/* Sort logits in descending order */
-					ndb_cuda_hf_sort_logits_kernel<<<blocks, threads>>>(
-						d_logits,
+					ndb_cuda_hf_sort_logits_kernel<<<blocks,
+						threads>>>(d_logits,
 						d_sorted_logits,
 						d_sorted_indices,
 						config->vocab_size);
 					status = cudaGetLastError();
 					if (status == cudaSuccess)
 					{
-						status = cudaDeviceSynchronize();
+						status =
+							cudaDeviceSynchronize();
 						if (status == cudaSuccess)
 						{
 							/* Filter logits outside top-p */
-							ndb_cuda_hf_top_p_filter_kernel<<<blocks, threads>>>(
+							ndb_cuda_hf_top_p_filter_kernel<<<
+								blocks,
+								threads>>>(
 								d_logits,
 								d_sorted_logits,
 								d_sorted_indices,
-								gen_params->top_p,
+								gen_params
+									->top_p,
 								config->vocab_size);
-							status = cudaGetLastError();
-							if (status == cudaSuccess)
+							status =
+								cudaGetLastError();
+							if (status
+								== cudaSuccess)
 							{
-								status = cudaDeviceSynchronize();
-								if (status != cudaSuccess)
+								status =
+									cudaDeviceSynchronize();
+								if (status
+									!= cudaSuccess)
 								{
-									cudaFree(d_sorted_indices);
-									cudaFree(d_sorted_logits);
-									generated_count = i;
+									cudaFree(
+										d_sorted_indices);
+									cudaFree(
+										d_sorted_logits);
+									generated_count =
+										i;
 									break;
 								}
-							}
-							else
+							} else
 							{
-								cudaFree(d_sorted_indices);
-								cudaFree(d_sorted_logits);
-								generated_count = i;
+								cudaFree(
+									d_sorted_indices);
+								cudaFree(
+									d_sorted_logits);
+								generated_count =
+									i;
 								break;
 							}
-						}
-						else
+						} else
 						{
-							cudaFree(d_sorted_indices);
-							cudaFree(d_sorted_logits);
+							cudaFree(
+								d_sorted_indices);
+							cudaFree(
+								d_sorted_logits);
 							generated_count = i;
 							break;
 						}
-					}
-					else
+					} else
 					{
 						cudaFree(d_sorted_indices);
 						cudaFree(d_sorted_logits);
@@ -2570,15 +2678,13 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 					}
 					cudaFree(d_sorted_indices);
 					cudaFree(d_sorted_logits);
-				}
-				else
+				} else
 				{
 					cudaFree(d_sorted_logits);
 					generated_count = i;
 					break;
 				}
-			}
-			else
+			} else
 			{
 				generated_count = i;
 				break;
@@ -2586,10 +2692,11 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 		}
 
 		/* Apply repetition penalty */
-		if (gen_params->repetition_penalty > 1.0f && generated_count > 0)
+		if (gen_params->repetition_penalty > 1.0f
+			&& generated_count > 0)
 		{
-			ndb_cuda_hf_repetition_penalty_kernel<<<blocks, threads>>>(
-				d_logits,
+			ndb_cuda_hf_repetition_penalty_kernel<<<blocks,
+				threads>>>(d_logits,
 				d_output_tokens,
 				generated_count,
 				gen_params->repetition_penalty,
@@ -2618,22 +2725,21 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 			if (gen_params->seed > 0)
 				srand(gen_params->seed + generated_count);
 			else
-				srand((unsigned int) time(NULL) + generated_count);
-			random_value = (float) rand() / (float) RAND_MAX;
+				srand((unsigned int)time(NULL)
+					+ generated_count);
+			random_value = (float)rand() / (float)RAND_MAX;
 
-			ndb_cuda_hf_multinomial_sample_kernel<<<blocks, threads>>>(
-				d_logits,
+			ndb_cuda_hf_multinomial_sample_kernel<<<blocks,
+				threads>>>(d_logits,
 				d_probs,
 				d_cumsum,
 				random_value,
 				d_output_tokens + generated_count,
 				config->vocab_size);
-		}
-		else
+		} else
 		{
 			/* Greedy sampling */
-			ndb_cuda_hf_greedy_sample_kernel<<<1, 1>>>(
-				d_logits,
+			ndb_cuda_hf_greedy_sample_kernel<<<1, 1>>>(d_logits,
 				d_output_tokens + generated_count,
 				config->vocab_size);
 		}
@@ -2653,9 +2759,9 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 
 		/* Copy next token to host */
 		status = cudaMemcpy(&h_next_token,
-				    d_output_tokens + generated_count,
-				    sizeof(int32_t),
-				    cudaMemcpyDeviceToHost);
+			d_output_tokens + generated_count,
+			sizeof(int32_t),
+			cudaMemcpyDeviceToHost);
 		if (status != cudaSuccess)
 		{
 			generated_count = i;
@@ -2674,7 +2780,8 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 			kv_cache->current_pos = current_pos;
 
 		/* Check for stop sequences */
-		if (gen_params->num_stop_sequences > 0 && generated_count >= gen_params->min_tokens)
+		if (gen_params->num_stop_sequences > 0
+			&& generated_count >= gen_params->min_tokens)
 		{
 			int j;
 
@@ -2683,27 +2790,28 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				int stop_len = gen_params->stop_seq_lens[j];
 				int32_t *d_stop_seq = NULL;
 
-				if (stop_len <= 0 || stop_len > NDB_HF_MAX_STOP_SEQ_LEN)
+				if (stop_len <= 0
+					|| stop_len > NDB_HF_MAX_STOP_SEQ_LEN)
 					continue;
 
 				/* Allocate and copy stop sequence to device */
 				status = cudaMalloc((void **)&d_stop_seq,
-						    sizeof(int32_t) * stop_len);
+					sizeof(int32_t) * stop_len);
 				if (status != cudaSuccess)
-					continue;	/* Skip this stop sequence */
+					continue; /* Skip this stop sequence */
 				status = cudaMemcpy(d_stop_seq,
-						    gen_params->stop_sequences[j],
-						    sizeof(int32_t) * stop_len,
-						    cudaMemcpyHostToDevice);
+					gen_params->stop_sequences[j],
+					sizeof(int32_t) * stop_len,
+					cudaMemcpyHostToDevice);
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_stop_seq);
-					continue;	/* Skip this stop sequence */
+					continue; /* Skip this stop sequence */
 				}
 
 				/* Check if stop sequence found */
-				ndb_cuda_hf_check_stop_sequence_kernel<<<1, 1>>>(
-					d_output_tokens,
+				ndb_cuda_hf_check_stop_sequence_kernel<<<1,
+					1>>>(d_output_tokens,
 					generated_count,
 					d_stop_seq,
 					stop_len,
@@ -2712,24 +2820,24 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_stop_seq);
-					continue;	/* Skip this stop sequence */
+					continue; /* Skip this stop sequence */
 				}
 				status = cudaDeviceSynchronize();
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_stop_seq);
-					continue;	/* Skip this stop sequence */
+					continue; /* Skip this stop sequence */
 				}
 
 				/* Copy result to host */
 				status = cudaMemcpy(&stop_found,
-						    d_found_stop,
-						    sizeof(bool),
-						    cudaMemcpyDeviceToHost);
+					d_found_stop,
+					sizeof(bool),
+					cudaMemcpyDeviceToHost);
 				if (status != cudaSuccess)
 				{
 					cudaFree(d_stop_seq);
-					continue;	/* Skip this stop sequence */
+					continue; /* Skip this stop sequence */
 				}
 
 				cudaFree(d_stop_seq);
@@ -2753,9 +2861,9 @@ ndb_cuda_hf_generate_inference(const char *model_name,
 	if (generated_count > 0)
 	{
 		status = cudaMemcpy(output_token_ids,
-				    d_output_tokens,
-				    sizeof(int32_t) * generated_count,
-				    cudaMemcpyDeviceToHost);
+			d_output_tokens,
+			sizeof(int32_t) * generated_count,
+			cudaMemcpyDeviceToHost);
 		if (status != cudaSuccess)
 			goto error;
 	}
@@ -2804,7 +2912,7 @@ error:
 	{
 		const char *err_msg = cudaGetErrorString(status);
 		size_t len = strlen(err_msg) + 1;
-		char *err = (char *) malloc(len);
+		char *err = (char *)malloc(len);
 		if (err)
 		{
 			memcpy(err, err_msg, len);
@@ -2813,4 +2921,3 @@ error:
 	}
 	return -1;
 }
-

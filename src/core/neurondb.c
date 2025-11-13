@@ -35,21 +35,22 @@ PG_MODULE_MAGIC;
 Vector *
 new_vector(int dim)
 {
-	Vector  *result;
-	int		size;
+	Vector *result;
+	int size;
 
 	if (dim < 1)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("vector dimension must be at least 1")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("vector dimension must be at least 1")));
 
 	if (dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("vector dimension cannot exceed %d", VECTOR_MAX_DIM)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("vector dimension cannot exceed %d",
+					VECTOR_MAX_DIM)));
 
 	size = VECTOR_SIZE(dim);
-	result = (Vector *) palloc0(size);
+	result = (Vector *)palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = dim;
 
@@ -59,10 +60,10 @@ new_vector(int dim)
 Vector *
 copy_vector(Vector *vector)
 {
-	Vector  *result;
-	int		size = VARSIZE_ANY(vector);
+	Vector *result;
+	int size = VARSIZE_ANY(vector);
 
-	result = (Vector *) palloc(size);
+	result = (Vector *)palloc(size);
 	memcpy(result, vector, size);
 	return result;
 }
@@ -74,15 +75,15 @@ copy_vector(Vector *vector)
 Vector *
 vector_in_internal(char *str, int *out_dim, bool check)
 {
-	char	   *ptr = str;
-	float4	   *data;
-	int			dim = 0;
-	int			capacity = 16;
-	Vector	   *result;
-	char	   *endptr;
+	char *ptr = str;
+	float4 *data;
+	int dim = 0;
+	int capacity = 16;
+	Vector *result;
+	char *endptr;
 
 	/* Skip whitespace */
-	while (isspace((unsigned char) *ptr))
+	while (isspace((unsigned char)*ptr))
 		ptr++;
 
 	/* Check for opening bracket */
@@ -90,13 +91,13 @@ vector_in_internal(char *str, int *out_dim, bool check)
 		ptr++;
 
 	/* Allocate initial buffer */
-	data = (float4 *) palloc(sizeof(float4) * capacity);
+	data = (float4 *)palloc(sizeof(float4) * capacity);
 
 	/* Parse numbers */
 	while (*ptr && *ptr != ']' && *ptr != '}')
 	{
 		/* Skip whitespace and commas */
-		while (isspace((unsigned char) *ptr) || *ptr == ',')
+		while (isspace((unsigned char)*ptr) || *ptr == ',')
 			ptr++;
 
 		if (*ptr == ']' || *ptr == '}' || *ptr == '\0')
@@ -106,20 +107,24 @@ vector_in_internal(char *str, int *out_dim, bool check)
 		if (dim >= capacity)
 		{
 			capacity *= 2;
-			data = (float4 *) repalloc(data, sizeof(float4) * capacity);
+			data = (float4 *)repalloc(
+				data, sizeof(float4) * capacity);
 		}
 
 		/* Parse float */
 		data[dim] = strtof(ptr, &endptr);
 		if (ptr == endptr)
 			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					 errmsg("invalid input syntax for type vector: \"%s\"", str)));
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					errmsg("invalid input syntax for type "
+					       "vector: \"%s\"",
+						str)));
 
 		if (check && (isinf(data[dim]) || isnan(data[dim])))
 			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					 errmsg("vector values cannot be NaN or Infinity")));
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					errmsg("vector values cannot be NaN or "
+					       "Infinity")));
 
 		ptr = endptr;
 		dim++;
@@ -127,8 +132,9 @@ vector_in_internal(char *str, int *out_dim, bool check)
 
 	if (dim == 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("vector must have at least 1 dimension")));
+			(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				errmsg("vector must have at least 1 "
+				       "dimension")));
 
 	/* Create result */
 	result = new_vector(dim);
@@ -145,7 +151,7 @@ char *
 vector_out_internal(Vector *vector)
 {
 	StringInfoData buf;
-	int			i;
+	int i;
 
 	initStringInfo(&buf);
 	appendStringInfoChar(&buf, '[');
@@ -169,19 +175,21 @@ PG_FUNCTION_INFO_V1(vector_in);
 Datum
 vector_in(PG_FUNCTION_ARGS)
 {
-	char   *str = PG_GETARG_CSTRING(0);
-    Vector *result = vector_in_internal(str, NULL, true);
+	char *str = PG_GETARG_CSTRING(0);
+	Vector *result = vector_in_internal(str, NULL, true);
 
-    /* Enforce typmod dimension if provided: third arg is typmod */
-    if (PG_NARGS() >= 3)
-    {
-        int32 typmod = PG_GETARG_INT32(2);
-        if (typmod >= 0 && result->dim != typmod)
-            ereport(ERROR,
-                    (errcode(ERRCODE_DATA_EXCEPTION),
-                     errmsg("vector dimension %d does not match type modifier %d",
-                            result->dim, typmod)));
-    }
+	/* Enforce typmod dimension if provided: third arg is typmod */
+	if (PG_NARGS() >= 3)
+	{
+		int32 typmod = PG_GETARG_INT32(2);
+		if (typmod >= 0 && result->dim != typmod)
+			ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+					errmsg("vector dimension %d does not "
+					       "match type modifier %d",
+						result->dim,
+						typmod)));
+	}
 
 	PG_RETURN_VECTOR_P(result);
 }
@@ -191,7 +199,7 @@ Datum
 vector_out(PG_FUNCTION_ARGS)
 {
 	Vector *vector = PG_GETARG_VECTOR_P(0);
-	char   *result = vector_out_internal(vector);
+	char *result = vector_out_internal(vector);
 
 	PG_RETURN_CSTRING(result);
 }
@@ -200,38 +208,40 @@ PG_FUNCTION_INFO_V1(vector_recv);
 Datum
 vector_recv(PG_FUNCTION_ARGS)
 {
-	StringInfo	buf = (StringInfo) PG_GETARG_POINTER(0);
-	Vector	   *result;
-	int16		dim;
-	int			i;
+	StringInfo buf = (StringInfo)PG_GETARG_POINTER(0);
+	Vector *result;
+	int16 dim;
+	int i;
 
 	dim = pq_getmsgint(buf, sizeof(int16));
 	result = new_vector(dim);
 
-    for (i = 0; i < dim; i++)
-        result->data[i] = pq_getmsgfloat4(buf);
+	for (i = 0; i < dim; i++)
+		result->data[i] = pq_getmsgfloat4(buf);
 
-    /* Enforce typmod from third arg if present */
-    if (PG_NARGS() >= 3)
-    {
-        int32 typmod = PG_GETARG_INT32(2);
-        if (typmod >= 0 && result->dim != typmod)
-            ereport(ERROR,
-                    (errcode(ERRCODE_DATA_EXCEPTION),
-                     errmsg("vector dimension %d does not match type modifier %d",
-                            result->dim, typmod)));
-    }
+	/* Enforce typmod from third arg if present */
+	if (PG_NARGS() >= 3)
+	{
+		int32 typmod = PG_GETARG_INT32(2);
+		if (typmod >= 0 && result->dim != typmod)
+			ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+					errmsg("vector dimension %d does not "
+					       "match type modifier %d",
+						result->dim,
+						typmod)));
+	}
 
-    PG_RETURN_VECTOR_P(result);
+	PG_RETURN_VECTOR_P(result);
 }
 
 PG_FUNCTION_INFO_V1(vector_send);
 Datum
 vector_send(PG_FUNCTION_ARGS)
 {
-	Vector		   *vec = PG_GETARG_VECTOR_P(0);
-	StringInfoData	buf;
-	int				i;
+	Vector *vec = PG_GETARG_VECTOR_P(0);
+	StringInfoData buf;
+	int i;
 
 	pq_begintypsend(&buf);
 	pq_sendint(&buf, vec->dim, sizeof(int16));
@@ -258,11 +268,11 @@ Datum
 vector_norm(PG_FUNCTION_ARGS)
 {
 	Vector *vector = PG_GETARG_VECTOR_P(0);
-	double	sum = 0.0;
-	int		i;
+	double sum = 0.0;
+	int i;
 
 	for (i = 0; i < vector->dim; i++)
-		sum += (double) vector->data[i] * (double) vector->data[i];
+		sum += (double)vector->data[i] * (double)vector->data[i];
 
 	PG_RETURN_FLOAT8(sqrt(sum));
 }
@@ -271,11 +281,11 @@ vector_norm(PG_FUNCTION_ARGS)
 void
 normalize_vector(Vector *v)
 {
-	double	norm = 0.0;
-	int		i;
+	double norm = 0.0;
+	int i;
 
 	for (i = 0; i < v->dim; i++)
-		norm += (double) v->data[i] * (double) v->data[i];
+		norm += (double)v->data[i] * (double)v->data[i];
 
 	if (norm > 0.0)
 	{
@@ -312,7 +322,7 @@ vector_concat(PG_FUNCTION_ARGS)
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	Vector *result;
-	int		new_dim = a->dim + b->dim;
+	int new_dim = a->dim + b->dim;
 
 	result = new_vector(new_dim);
 	memcpy(result->data, a->data, sizeof(float4) * a->dim);
@@ -329,12 +339,12 @@ vector_add(PG_FUNCTION_ARGS)
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	Vector *result;
-	int		i;
+	int i;
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("vector dimensions must match")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("vector dimensions must match")));
 
 	result = new_vector(a->dim);
 	for (i = 0; i < a->dim; i++)
@@ -351,12 +361,12 @@ vector_sub(PG_FUNCTION_ARGS)
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	Vector *result;
-	int		i;
+	int i;
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("vector dimensions must match")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("vector dimensions must match")));
 
 	result = new_vector(a->dim);
 	for (i = 0; i < a->dim; i++)
@@ -371,9 +381,9 @@ Datum
 vector_mul(PG_FUNCTION_ARGS)
 {
 	Vector *v = PG_GETARG_VECTOR_P(0);
-	float8	scalar = PG_GETARG_FLOAT8(1);
+	float8 scalar = PG_GETARG_FLOAT8(1);
 	Vector *result;
-	int		i;
+	int i;
 
 	result = new_vector(v->dim);
 	for (i = 0; i < v->dim; i++)
@@ -387,25 +397,31 @@ PG_FUNCTION_INFO_V1(array_to_vector);
 Datum
 array_to_vector(PG_FUNCTION_ARGS)
 {
-	ArrayType  *array = PG_GETARG_ARRAYTYPE_P(0);
-	Vector	   *result;
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
-	Datum	   *elems;
-	bool	   *nulls;
-	int			nelems;
-	int			i;
+	ArrayType *array = PG_GETARG_ARRAYTYPE_P(0);
+	Vector *result;
+	int16 typlen;
+	bool typbyval;
+	char typalign;
+	Datum *elems;
+	bool *nulls;
+	int nelems;
+	int i;
 
 	if (ARR_NDIM(array) != 1)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("array must be one-dimensional")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("array must be one-dimensional")));
 
-	get_typlenbyvalalign(ARR_ELEMTYPE(array), &typlen, &typbyval, &typalign);
-	deconstruct_array(array, ARR_ELEMTYPE(array),
-					  typlen, typbyval, typalign,
-					  &elems, &nulls, &nelems);
+	get_typlenbyvalalign(
+		ARR_ELEMTYPE(array), &typlen, &typbyval, &typalign);
+	deconstruct_array(array,
+		ARR_ELEMTYPE(array),
+		typlen,
+		typbyval,
+		typalign,
+		&elems,
+		&nulls,
+		&nelems);
 
 	result = new_vector(nelems);
 
@@ -413,8 +429,9 @@ array_to_vector(PG_FUNCTION_ARGS)
 	{
 		if (nulls[i])
 			ereport(ERROR,
-					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-					 errmsg("array must not contain nulls")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					errmsg("array must not contain "
+					       "nulls")));
 
 		result->data[i] = DatumGetFloat4(elems[i]);
 	}
@@ -432,64 +449,71 @@ PG_FUNCTION_INFO_V1(vector_typmod_in);
 Datum
 vector_typmod_in(PG_FUNCTION_ARGS)
 {
-    ArrayType  *ta = (ArrayType *) PG_GETARG_POINTER(0);
-    Datum      *elem_values;
-    int         nelems;
-    int16       typlen;
-    bool        typbyval;
-    char        typalign;
-    char       *s;
-    long        dim;
+	ArrayType *ta = (ArrayType *)PG_GETARG_POINTER(0);
+	Datum *elem_values;
+	int nelems;
+	int16 typlen;
+	bool typbyval;
+	char typalign;
+	char *s;
+	long dim;
 
-    get_typlenbyvalalign(CSTRINGOID, &typlen, &typbyval, &typalign);
-    deconstruct_array(ta, CSTRINGOID, typlen, typbyval, typalign,
-                      &elem_values, NULL, &nelems);
+	get_typlenbyvalalign(CSTRINGOID, &typlen, &typbyval, &typalign);
+	deconstruct_array(ta,
+		CSTRINGOID,
+		typlen,
+		typbyval,
+		typalign,
+		&elem_values,
+		NULL,
+		&nelems);
 
-    if (nelems != 1)
-        ereport(ERROR,
-                (errcode(ERRCODE_SYNTAX_ERROR),
-                 errmsg("vector typmod requires a single dimension argument")));
+	if (nelems != 1)
+		ereport(ERROR,
+			(errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("vector typmod requires a single "
+				       "dimension argument")));
 
-    /* Parse integer dimension */
-    s = DatumGetCString(elem_values[0]);
-    dim = strtol(s, NULL, 10);
-    if (dim <= 0 || dim > VECTOR_MAX_DIM)
-        ereport(ERROR,
-                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                 errmsg("invalid vector dimension %ld", dim)));
+	/* Parse integer dimension */
+	s = DatumGetCString(elem_values[0]);
+	dim = strtol(s, NULL, 10);
+	if (dim <= 0 || dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid vector dimension %ld", dim)));
 
-    PG_RETURN_INT32((int32) dim);
+	PG_RETURN_INT32((int32)dim);
 }
 
 PG_FUNCTION_INFO_V1(vector_typmod_out);
 Datum
 vector_typmod_out(PG_FUNCTION_ARGS)
 {
-    int32 typmod = PG_GETARG_INT32(0);
-    StringInfoData buf;
+	int32 typmod = PG_GETARG_INT32(0);
+	StringInfoData buf;
 
-    if (typmod < 0)
-        PG_RETURN_CSTRING(pstrdup(""));
+	if (typmod < 0)
+		PG_RETURN_CSTRING(pstrdup(""));
 
-    initStringInfo(&buf);
-    appendStringInfo(&buf, "(%d)", typmod);
-    PG_RETURN_CSTRING(buf.data);
+	initStringInfo(&buf);
+	appendStringInfo(&buf, "(%d)", typmod);
+	PG_RETURN_CSTRING(buf.data);
 }
 Datum
 vector_to_array(PG_FUNCTION_ARGS)
 {
-	Vector	   *vec = PG_GETARG_VECTOR_P(0);
-	Datum	   *elems;
-	ArrayType  *result;
-	int			i;
+	Vector *vec = PG_GETARG_VECTOR_P(0);
+	Datum *elems;
+	ArrayType *result;
+	int i;
 
-	elems = (Datum *) palloc(sizeof(Datum) * vec->dim);
+	elems = (Datum *)palloc(sizeof(Datum) * vec->dim);
 
 	for (i = 0; i < vec->dim; i++)
 		elems[i] = Float4GetDatum(vec->data[i]);
 
-	result = construct_array(elems, vec->dim, FLOAT4OID,
-							sizeof(float4), true, 'i');
+	result = construct_array(
+		elems, vec->dim, FLOAT4OID, sizeof(float4), true, 'i');
 
 	pfree(elems);
 

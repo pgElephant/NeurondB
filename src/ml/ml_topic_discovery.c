@@ -102,8 +102,9 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 
 	if (num_topics < 2 || num_topics > 100)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("num_topics must be between 2 and 100")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_topics must be between 2 and "
+				       "100")));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_column);
@@ -115,21 +116,24 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 
 	if (nvec < num_topics)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Not enough documents (%d) for %d topics", nvec, num_topics)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Not enough documents (%d) for %d "
+				       "topics",
+					nvec,
+					num_topics)));
 
 	/* Initialize centroids with random data points */
-	centroids = (double **) palloc(sizeof(double *) * num_topics);
+	centroids = (double **)palloc(sizeof(double *) * num_topics);
 	for (k = 0; k < num_topics; k++)
 	{
 		int idx = rand() % nvec;
-		centroids[k] = (double *) palloc(sizeof(double) * dim);
+		centroids[k] = (double *)palloc(sizeof(double) * dim);
 		for (d = 0; d < dim; d++)
 			centroids[k][d] = (double)data[idx][d];
 	}
 
-	assignments = (int *) palloc(sizeof(int) * nvec);
-	cluster_sizes = (int *) palloc(sizeof(int) * num_topics);
+	assignments = (int *)palloc(sizeof(int) * nvec);
+	cluster_sizes = (int *)palloc(sizeof(int) * num_topics);
 
 	/* K-means iterations */
 	for (iter = 0; iter < max_iters; iter++)
@@ -148,7 +152,8 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 				double dist = 0.0;
 				for (d = 0; d < dim; d++)
 				{
-					double diff = (double)data[i][d] - centroids[k_iter][d];
+					double diff = (double)data[i][d]
+						- centroids[k_iter][d];
 					dist += diff * diff;
 				}
 
@@ -168,7 +173,10 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 
 		if (!changed)
 		{
-			elog(DEBUG1, "neurondb: Topic discovery converged at iteration %d", iter + 1);
+			elog(DEBUG1,
+				"neurondb: Topic discovery converged at "
+				"iteration %d",
+				iter + 1);
 			break;
 		}
 
@@ -199,12 +207,13 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result array (1-based topic IDs) */
-	result_datums = (Datum *) palloc(sizeof(Datum) * nvec);
+	result_datums = (Datum *)palloc(sizeof(Datum) * nvec);
 	for (i = 0; i < nvec; i++)
 		result_datums[i] = Int32GetDatum(assignments[i] + 1);
 
 	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
-	result = construct_array(result_datums, nvec, INT4OID, typlen, typbyval, typalign);
+	result = construct_array(
+		result_datums, nvec, INT4OID, typlen, typbyval, typalign);
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
@@ -221,4 +230,3 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
-

@@ -44,8 +44,6 @@ WarningsAsErrors: '*'
 
 HeaderFilterRegex: '(src|include)/.*'
 
-AnalyzeTemporaryDtors: false
-
 FormatStyle: file
 
 CheckOptions:

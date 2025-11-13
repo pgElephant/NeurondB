@@ -39,29 +39,28 @@
 
 typedef struct TimeSeriesModel
 {
-	int32		p;
-	int32		d;
-	int32		q;
-	float	   *ar_coeffs;
-	float	   *ma_coeffs;
-	float		intercept;
-	int32		n_obs;
-	float	   *residuals;
+	int32 p;
+	int32 d;
+	int32 q;
+	float *ar_coeffs;
+	float *ma_coeffs;
+	float intercept;
+	int32 n_obs;
+	float *residuals;
 } TimeSeriesModel;
-
 
 // Fix for SPI_getbinval 'isnull' argument: always use a local 'bool' variable, not 'int'
 // throughout this file, especially within the ARIMA forecast and model loading code.
 
-
 static void
 compute_moving_average(const float *data, int n, int window, float *result)
 {
-	int		i, j;
-	float	sum;
+	int i, j;
+	float sum;
 
 	if (window <= 0)
-		elog(ERROR, "window length for moving average must be positive");
+		elog(ERROR,
+			"window length for moving average must be positive");
 
 	for (i = 0; i < n; i++)
 	{
@@ -72,7 +71,7 @@ compute_moving_average(const float *data, int n, int window, float *result)
 			sum = 0.0f;
 			for (j = 0; j < window; j++)
 				sum += data[i - j];
-			result[i] = sum / (float) window;
+			result[i] = sum / (float)window;
 		}
 	}
 }
@@ -104,14 +103,14 @@ compute_differences(const float *data, int n, int order, int *out_n)
 
 	if (order == 0)
 	{
-		diff = (float *) palloc(sizeof(float) * n);
+		diff = (float *)palloc(sizeof(float) * n);
 		memcpy(diff, data, sizeof(float) * n);
 		*out_n = n;
 		return diff;
 	}
 
 	curr_n = n;
-	diff = (float *) palloc(sizeof(float) * curr_n);
+	diff = (float *)palloc(sizeof(float) * curr_n);
 	memcpy(diff, data, sizeof(float) * curr_n);
 
 	for (d = 0; d < order; d++)
@@ -120,8 +119,10 @@ compute_differences(const float *data, int n, int order, int *out_n)
 		float *new_diff;
 
 		if (new_n <= 0)
-			elog(ERROR, "cannot difference data sequence below length 1");
-		new_diff = (float *) palloc(sizeof(float) * new_n);
+			elog(ERROR,
+				"cannot difference data sequence below length "
+				"1");
+		new_diff = (float *)palloc(sizeof(float) * new_n);
 		for (i = 0; i < new_n; i++)
 			new_diff[i] = diff[i + 1] - diff[i];
 		pfree(diff);
@@ -145,11 +146,12 @@ compute_mean(const float *data, int n)
 	for (i = 0; i < n; i++)
 		sum += data[i];
 
-	return sum / (float) n;
+	return sum / (float)n;
 }
 
-static float pg_attribute_unused()
-compute_sample_variance(const float *data, int n, float mean)
+static float
+pg_attribute_unused()
+	compute_sample_variance(const float *data, int n, float mean)
 {
 	int i;
 	float var = 0.0f;
@@ -163,7 +165,7 @@ compute_sample_variance(const float *data, int n, float mean)
 		var += d * d;
 	}
 
-	return var / (float) (n - 1);
+	return var / (float)(n - 1);
 }
 
 /*
@@ -174,12 +176,13 @@ static TimeSeriesModel *
 fit_arima(const float *data, int n, int p, int d, int q)
 {
 	TimeSeriesModel *model;
-	float			*diff_data = NULL;
-	int				diff_n, i, j;
-	float			mean;
+	float *diff_data = NULL;
+	int diff_n, i, j;
+	float mean;
 
 	if (n <= 0)
-		elog(ERROR, "number of observations for ARIMA must be positive");
+		elog(ERROR,
+			"number of observations for ARIMA must be positive");
 	if (p < 0 || p > MAX_ARIMA_ORDER_P)
 		elog(ERROR, "arima p out of bounds");
 	if (d < 0 || d > MAX_ARIMA_ORDER_D)
@@ -187,7 +190,7 @@ fit_arima(const float *data, int n, int p, int d, int q)
 	if (q < 0 || q > MAX_ARIMA_ORDER_Q)
 		elog(ERROR, "arima q out of bounds");
 
-	model = (TimeSeriesModel *) palloc0(sizeof(TimeSeriesModel));
+	model = (TimeSeriesModel *)palloc0(sizeof(TimeSeriesModel));
 	model->p = p;
 	model->d = d;
 	model->q = q;
@@ -200,10 +203,10 @@ fit_arima(const float *data, int n, int p, int d, int q)
 
 	if (p > 0)
 	{
-		float	*autocorr = (float *) palloc0(sizeof(float) * (p + 1));
-		float **R = (float **) palloc(sizeof(float *) * p);
-		float	*a;
-		float	*right = (float *) palloc0(sizeof(float) * p);
+		float *autocorr = (float *)palloc0(sizeof(float) * (p + 1));
+		float **R = (float **)palloc(sizeof(float *) * p);
+		float *a;
+		float *right = (float *)palloc0(sizeof(float) * p);
 
 		for (i = 0; i <= p; i++)
 		{
@@ -214,17 +217,17 @@ fit_arima(const float *data, int n, int p, int d, int q)
 		}
 		for (i = 0; i < p; i++)
 		{
-			R[i] = (float *) palloc0(sizeof(float) * p);
+			R[i] = (float *)palloc0(sizeof(float) * p);
 			for (j = 0; j < p; j++)
 				R[i][j] = autocorr[abs(i - j)];
 			right[i] = autocorr[i + 1];
 		}
 
-		a = (float *) palloc0(sizeof(float) * p);
+		a = (float *)palloc0(sizeof(float) * p);
 		{
-			float **L = (float **) palloc0(sizeof(float *) * p);
+			float **L = (float **)palloc0(sizeof(float *) * p);
 			for (i = 0; i < p; i++)
-				L[i] = (float *) palloc0(sizeof(float) * p);
+				L[i] = (float *)palloc0(sizeof(float) * p);
 			for (i = 0; i < p; i++)
 			{
 				for (j = 0; j <= i; j++)
@@ -236,14 +239,19 @@ fit_arima(const float *data, int n, int p, int d, int q)
 					if (i == j)
 					{
 						if (sum <= 0)
-							elog(ERROR, "Failed to decompose autocorrelation matrix: non-positive definite");
+							elog(ERROR,
+								"Failed to "
+								"decompose "
+								"autocorrelatio"
+								"n matrix: "
+								"non-positive "
+								"definite");
 						L[i][j] = sqrtf(sum);
-					}
-					else
+					} else
 						L[i][j] = sum / L[j][j];
 				}
 			}
-			float *y = (float *) palloc0(sizeof(float) * p);
+			float *y = (float *)palloc0(sizeof(float) * p);
 			for (i = 0; i < p; i++)
 			{
 				float sum = right[i];
@@ -263,7 +271,7 @@ fit_arima(const float *data, int n, int p, int d, int q)
 			pfree(L);
 			pfree(y);
 		}
-		model->ar_coeffs = (float *) palloc(sizeof(float) * p);
+		model->ar_coeffs = (float *)palloc(sizeof(float) * p);
 		for (i = 0; i < p; i++)
 			model->ar_coeffs[i] = a[i];
 
@@ -273,15 +281,13 @@ fit_arima(const float *data, int n, int p, int d, int q)
 		pfree(a);
 		pfree(right);
 		pfree(autocorr);
-	}
-	else
+	} else
 		model->ar_coeffs = NULL;
 
 	if (q > 0)
 	{
-		model->ma_coeffs = (float *) palloc0(sizeof(float) * q);
-	}
-	else
+		model->ma_coeffs = (float *)palloc0(sizeof(float) * q);
+	} else
 	{
 		model->ma_coeffs = NULL;
 	}
@@ -289,20 +295,20 @@ fit_arima(const float *data, int n, int p, int d, int q)
 	mean = compute_mean(diff_data, diff_n);
 	model->intercept = mean;
 
-	model->residuals = (float *) palloc(sizeof(float) * diff_n);
+	model->residuals = (float *)palloc(sizeof(float) * diff_n);
 	if (p > 0)
 	{
 		for (i = p; i < diff_n; i++)
 		{
 			float pred = model->intercept;
 			for (j = 0; j < p; j++)
-				pred += model->ar_coeffs[j] * diff_data[i - (j + 1)];
+				pred += model->ar_coeffs[j]
+					* diff_data[i - (j + 1)];
 			model->residuals[i] = diff_data[i] - pred;
 		}
 		for (i = 0; i < p && i < diff_n; i++)
 			model->residuals[i] = 0.0f;
-	}
-	else
+	} else
 	{
 		for (i = 0; i < diff_n; i++)
 			model->residuals[i] = diff_data[i] - model->intercept;
@@ -314,7 +320,11 @@ fit_arima(const float *data, int n, int p, int d, int q)
 }
 
 static void
-arima_forecast(const TimeSeriesModel *model, const float *last_values, int n_last, int n_ahead, float *forecast)
+arima_forecast(const TimeSeriesModel *model,
+	const float *last_values,
+	int n_last,
+	int n_ahead,
+	float *forecast)
 {
 	int i, j;
 	int p, d;
@@ -329,7 +339,7 @@ arima_forecast(const TimeSeriesModel *model, const float *last_values, int n_las
 
 	p = model->p;
 	d = model->d;
-	history = (float *) palloc0(sizeof(float) * (n_last + n_ahead));
+	history = (float *)palloc0(sizeof(float) * (n_last + n_ahead));
 
 	memcpy(history, last_values, sizeof(float) * n_last);
 
@@ -341,9 +351,9 @@ arima_forecast(const TimeSeriesModel *model, const float *last_values, int n_las
 		{
 			val = model->intercept;
 			for (j = 0; j < p && idx - (j + 1) >= 0; j++)
-				val += model->ar_coeffs[j] * history[idx - (j + 1)];
-		}
-		else
+				val += model->ar_coeffs[j]
+					* history[idx - (j + 1)];
+		} else
 			val = model->intercept;
 
 		history[idx] = val;
@@ -387,15 +397,18 @@ train_arima(PG_FUNCTION_ARGS)
 	if (p < 0 || p > MAX_ARIMA_ORDER_P)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("p must be between 0 and %d", MAX_ARIMA_ORDER_P)));
+				errmsg("p must be between 0 and %d",
+					MAX_ARIMA_ORDER_P)));
 	if (d < 0 || d > MAX_ARIMA_ORDER_D)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("d must be between 0 and %d", MAX_ARIMA_ORDER_D)));
+				errmsg("d must be between 0 and %d",
+					MAX_ARIMA_ORDER_D)));
 	if (q < 0 || q > MAX_ARIMA_ORDER_Q)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("q must be between 0 and %d", MAX_ARIMA_ORDER_Q)));
+				errmsg("q must be between 0 and %d",
+					MAX_ARIMA_ORDER_Q)));
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -411,7 +424,7 @@ train_arima(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("failed to execute time series query")));
+				errmsg("failed to execute time series query")));
 
 	tuptable = SPI_tuptable;
 	tupdesc = tuptable->tupdesc;
@@ -428,10 +441,12 @@ train_arima(PG_FUNCTION_ARGS)
 			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("at least %d observations are required for ARIMA", MIN_ARIMA_OBSERVATIONS)));
+				errmsg("at least %d observations are required "
+				       "for ARIMA",
+					MIN_ARIMA_OBSERVATIONS)));
 	}
 
-	values = (float *) palloc(sizeof(float) * n_samples);
+	values = (float *)palloc(sizeof(float) * n_samples);
 
 	for (i = 0; i < n_samples; i++)
 	{
@@ -444,30 +459,41 @@ train_arima(PG_FUNCTION_ARGS)
 			if (values)
 				pfree(values);
 			SPI_finish();
-			if (table_name_str) pfree(table_name_str);
-			if (time_col_str) pfree(time_col_str);
-			if (value_col_str) pfree(value_col_str);
+			if (table_name_str)
+				pfree(table_name_str);
+			if (time_col_str)
+				pfree(time_col_str);
+			if (value_col_str)
+				pfree(value_col_str);
 			ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				 errmsg("time series cannot contain NULL values")));
+					errmsg("time series cannot contain "
+					       "NULL values")));
 		}
-		values[i] = (float) DatumGetFloat8(value_datum);
+		values[i] = (float)DatumGetFloat8(value_datum);
 	}
 
 	model = fit_arima(values, n_samples, p, d, q);
 
 	SPI_finish();
 
-	if (values) pfree(values);
-	if (table_name_str) pfree(table_name_str);
-	if (time_col_str) pfree(time_col_str);
-	if (value_col_str) pfree(value_col_str);
+	if (values)
+		pfree(values);
+	if (table_name_str)
+		pfree(table_name_str);
+	if (time_col_str)
+		pfree(time_col_str);
+	if (value_col_str)
+		pfree(value_col_str);
 
 	if (model)
 	{
-		if (model->ar_coeffs) pfree(model->ar_coeffs);
-		if (model->ma_coeffs) pfree(model->ma_coeffs);
-		if (model->residuals) pfree(model->residuals);
+		if (model->ar_coeffs)
+			pfree(model->ar_coeffs);
+		if (model->ma_coeffs)
+			pfree(model->ma_coeffs);
+		if (model->residuals)
+			pfree(model->residuals);
 		pfree(model);
 	}
 
@@ -483,32 +509,34 @@ forecast_arima(PG_FUNCTION_ARGS)
 
 	StringInfoData sql;
 	TimeSeriesModel model;
-	ArrayType  *ar_coeffs_arr = NULL;
-	ArrayType  *ma_coeffs_arr = NULL;
-	ArrayType  *last_values_arr = NULL;
-	int			ret;
-	int		   *dims, ndims, i;
-	Oid			arr_elem_type;
-	int			p = 0, d = 0, q = 0, n_last = 0;
-	float8		intercept = 0;
-	float	   *ar_coeffs = NULL;
-	float	   *ma_coeffs = NULL;
-	float	   *last_values = NULL;
-	float	   *forecast = NULL;
-	Datum	   *outdatums = NULL;
-	ArrayType  *arr = NULL;
+	ArrayType *ar_coeffs_arr = NULL;
+	ArrayType *ma_coeffs_arr = NULL;
+	ArrayType *last_values_arr = NULL;
+	int ret;
+	int *dims, ndims, i;
+	Oid arr_elem_type;
+	int p = 0, d = 0, q = 0, n_last = 0;
+	float8 intercept = 0;
+	float *ar_coeffs = NULL;
+	float *ma_coeffs = NULL;
+	float *last_values = NULL;
+	float *forecast = NULL;
+	Datum *outdatums = NULL;
+	ArrayType *arr = NULL;
 
 	if (n_ahead < 1 || n_ahead > MAX_FORECAST_AHEAD)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("n_ahead must be between 1 and %d", MAX_FORECAST_AHEAD)));
+				errmsg("n_ahead must be between 1 and %d",
+					MAX_FORECAST_AHEAD)));
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT p, d, q, intercept, ar_coeffs, ma_coeffs FROM neurondb_arima_models WHERE model_id = %d",
+		"SELECT p, d, q, intercept, ar_coeffs, ma_coeffs FROM "
+		"neurondb_arima_models WHERE model_id = %d",
 		model_id);
 
 	ret = SPI_execute(sql.data, true, 1);
@@ -517,110 +545,130 @@ forecast_arima(PG_FUNCTION_ARGS)
 		SPI_finish();
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_OBJECT),
-			 errmsg("model_id %d not found in neurondb_arima_models", model_id)));
+				errmsg("model_id %d not found in "
+				       "neurondb_arima_models",
+					model_id)));
 	}
 	HeapTuple modeltuple = SPI_tuptable->vals[0];
 	TupleDesc modeldesc = SPI_tuptable->tupdesc;
 
 	{
 		bool isnull;
-		p = DatumGetInt32(SPI_getbinval(modeltuple, modeldesc, 1, &isnull));
-		d = DatumGetInt32(SPI_getbinval(modeltuple, modeldesc, 2, &isnull));
-		q = DatumGetInt32(SPI_getbinval(modeltuple, modeldesc, 3, &isnull));
-		intercept = DatumGetFloat8(SPI_getbinval(modeltuple, modeldesc, 4, &isnull));
-		ar_coeffs_arr = DatumGetArrayTypeP(SPI_getbinval(modeltuple, modeldesc, 5, &isnull));
-		ma_coeffs_arr = DatumGetArrayTypeP(SPI_getbinval(modeltuple, modeldesc, 6, &isnull));
+		p = DatumGetInt32(
+			SPI_getbinval(modeltuple, modeldesc, 1, &isnull));
+		d = DatumGetInt32(
+			SPI_getbinval(modeltuple, modeldesc, 2, &isnull));
+		q = DatumGetInt32(
+			SPI_getbinval(modeltuple, modeldesc, 3, &isnull));
+		intercept = DatumGetFloat8(
+			SPI_getbinval(modeltuple, modeldesc, 4, &isnull));
+		ar_coeffs_arr = DatumGetArrayTypeP(
+			SPI_getbinval(modeltuple, modeldesc, 5, &isnull));
+		ma_coeffs_arr = DatumGetArrayTypeP(
+			SPI_getbinval(modeltuple, modeldesc, 6, &isnull));
 	}
 
 	arr_elem_type = ARR_ELEMTYPE(ar_coeffs_arr);
-	(void) arr_elem_type;  /* Suppress unused variable warning */
+	(void)arr_elem_type; /* Suppress unused variable warning */
 	ndims = ARR_NDIM(ar_coeffs_arr);
 	Assert(ndims == 1);
-	(void) ndims;  /* Used in Assert only */
+	(void)ndims; /* Used in Assert only */
 	dims = ARR_DIMS(ar_coeffs_arr);
 	Assert(dims[0] == p);
-	ar_coeffs = (float *) palloc(sizeof(float) * p);
+	ar_coeffs = (float *)palloc(sizeof(float) * p);
 	for (i = 0; i < p; i++)
 	{
 		float8 val;
-		memcpy(&val, (char *) ARR_DATA_PTR(ar_coeffs_arr) + i * sizeof(float8), sizeof(float8));
-		ar_coeffs[i] = (float) val;
+		memcpy(&val,
+			(char *)ARR_DATA_PTR(ar_coeffs_arr)
+				+ i * sizeof(float8),
+			sizeof(float8));
+		ar_coeffs[i] = (float)val;
 	}
 
 	arr_elem_type = ARR_ELEMTYPE(ma_coeffs_arr);
 	ndims = ARR_NDIM(ma_coeffs_arr);
-	(void) ndims;  /* Used in Assert only */
+	(void)ndims; /* Used in Assert only */
 	dims = ARR_DIMS(ma_coeffs_arr);
 	if (q > 0 && dims[0] == q)
 	{
-		ma_coeffs = (float *) palloc(sizeof(float) * q);
+		ma_coeffs = (float *)palloc(sizeof(float) * q);
 		for (i = 0; i < q; i++)
 		{
 			float8 val;
-			memcpy(&val, (char *) ARR_DATA_PTR(ma_coeffs_arr) + i * sizeof(float8), sizeof(float8));
-			ma_coeffs[i] = (float) val;
+			memcpy(&val,
+				(char *)ARR_DATA_PTR(ma_coeffs_arr)
+					+ i * sizeof(float8),
+				sizeof(float8));
+			ma_coeffs[i] = (float)val;
 		}
-	}
-	else if (q > 0)
+	} else if (q > 0)
 	{
-		ma_coeffs = (float *) palloc0(sizeof(float) * q);
-	}
-	else
+		ma_coeffs = (float *)palloc0(sizeof(float) * q);
+	} else
 	{
 		ma_coeffs = NULL;
 	}
 
 	resetStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT observed FROM neurondb_arima_history WHERE model_id = %d ORDER BY observed_id DESC LIMIT 1",
+		"SELECT observed FROM neurondb_arima_history WHERE model_id = "
+		"%d ORDER BY observed_id DESC LIMIT 1",
 		model_id);
 
 	ret = SPI_execute(sql.data, true, 1);
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
-		if (ar_coeffs) pfree(ar_coeffs);
-		if (ma_coeffs) pfree(ma_coeffs);
+		if (ar_coeffs)
+			pfree(ar_coeffs);
+		if (ma_coeffs)
+			pfree(ma_coeffs);
 		SPI_finish();
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_OBJECT),
-			 errmsg("recent observed values for model_id %d not found", model_id)));
+				errmsg("recent observed values for model_id %d "
+				       "not found",
+					model_id)));
 	}
 
 	{
 		bool isnull;
 		HeapTuple observedtuple = SPI_tuptable->vals[0];
 		TupleDesc observeddesc = SPI_tuptable->tupdesc;
-		last_values_arr = DatumGetArrayTypeP(SPI_getbinval(observedtuple, observeddesc, 1, &isnull));
+		last_values_arr = DatumGetArrayTypeP(
+			SPI_getbinval(observedtuple, observeddesc, 1, &isnull));
 	}
 	ndims = ARR_NDIM(last_values_arr);
 	dims = ARR_DIMS(last_values_arr);
 	n_last = dims[0];
-	last_values = (float *) palloc(sizeof(float) * n_last);
+	last_values = (float *)palloc(sizeof(float) * n_last);
 	for (i = 0; i < n_last; i++)
 	{
 		float8 val;
-		memcpy(&val, (char *) ARR_DATA_PTR(last_values_arr) + i * sizeof(float8), sizeof(float8));
-		last_values[i] = (float) val;
+		memcpy(&val,
+			(char *)ARR_DATA_PTR(last_values_arr)
+				+ i * sizeof(float8),
+			sizeof(float8));
+		last_values[i] = (float)val;
 	}
 
 	model.p = p;
 	model.d = d;
 	model.q = q;
-	model.intercept = (float) intercept;
+	model.intercept = (float)intercept;
 	model.n_obs = n_last;
 	model.ar_coeffs = ar_coeffs;
 	model.ma_coeffs = ma_coeffs;
 	model.residuals = NULL;
 
-	forecast = (float *) palloc(sizeof(float) * n_ahead);
+	forecast = (float *)palloc(sizeof(float) * n_ahead);
 	arima_forecast(&model, last_values, n_last, n_ahead, forecast);
 
-	outdatums = (Datum *) palloc(sizeof(Datum) * n_ahead);
+	outdatums = (Datum *)palloc(sizeof(Datum) * n_ahead);
 	for (i = 0; i < n_ahead; i++)
-		outdatums[i] = Float8GetDatum((float8) forecast[i]);
+		outdatums[i] = Float8GetDatum((float8)forecast[i]);
 
-	arr = construct_array(
-		outdatums,
+	arr = construct_array(outdatums,
 		n_ahead,
 		FLOAT8OID,
 		sizeof(float8),
@@ -631,11 +679,16 @@ forecast_arima(PG_FUNCTION_ARGS)
 #endif
 		TYPALIGN_DOUBLE);
 
-	if (ar_coeffs) pfree(ar_coeffs);
-	if (ma_coeffs) pfree(ma_coeffs);
-	if (last_values) pfree(last_values);
-	if (forecast) pfree(forecast);
-	if (outdatums) pfree(outdatums);
+	if (ar_coeffs)
+		pfree(ar_coeffs);
+	if (ma_coeffs)
+		pfree(ma_coeffs);
+	if (last_values)
+		pfree(last_values);
+	if (forecast)
+		pfree(forecast);
+	if (outdatums)
+		pfree(outdatums);
 
 	SPI_finish();
 
@@ -679,12 +732,16 @@ detect_anomalies(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_SELECT)
 	{
 		SPI_finish();
-		if (table_name_str) pfree(table_name_str);
-		if (time_col_str) pfree(time_col_str);
-		if (value_col_str) pfree(value_col_str);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (time_col_str)
+			pfree(time_col_str);
+		if (value_col_str)
+			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("failed to execute anomaly detection query")));
+				errmsg("failed to execute anomaly detection "
+				       "query")));
 	}
 
 	tuptable = SPI_tuptable;
@@ -694,13 +751,16 @@ detect_anomalies(PG_FUNCTION_ARGS)
 	if (n_samples < 2)
 	{
 		SPI_finish();
-		if (table_name_str) pfree(table_name_str);
-		if (time_col_str) pfree(time_col_str);
-		if (value_col_str) pfree(value_col_str);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (time_col_str)
+			pfree(time_col_str);
+		if (value_col_str)
+			pfree(value_col_str);
 		PG_RETURN_INT32(0);
 	}
 
-	values = (float *) palloc(sizeof(float) * n_samples);
+	values = (float *)palloc(sizeof(float) * n_samples);
 
 	for (i = 0; i < n_samples; i++)
 	{
@@ -711,7 +771,7 @@ detect_anomalies(PG_FUNCTION_ARGS)
 		if (isnull)
 			values[i] = 0.0f;
 		else
-			values[i] = (float) DatumGetFloat8(val);
+			values[i] = (float)DatumGetFloat8(val);
 		sum += values[i];
 		sum_sq += values[i] * values[i];
 	}
@@ -721,28 +781,34 @@ detect_anomalies(PG_FUNCTION_ARGS)
 	if (stddev <= 0.0f)
 		stddev = 1.0f;
 
-	ma_values = (float *) palloc(sizeof(float) * n_samples);
+	ma_values = (float *)palloc(sizeof(float) * n_samples);
 	compute_moving_average(values, n_samples, 5, ma_values);
 
-	smoothed = (float *) palloc(sizeof(float) * n_samples);
+	smoothed = (float *)palloc(sizeof(float) * n_samples);
 	exponential_smoothing(ma_values, n_samples, 0.3f, smoothed);
 
 	for (i = 0; i < n_samples; i++)
 	{
 		float residual = values[i] - smoothed[i];
 		float z_score = fabsf(residual / stddev);
-		if (z_score > (float) threshold)
+		if (z_score > (float)threshold)
 			n_anomalies++;
 	}
 
 	SPI_finish();
 
-	if (values) pfree(values);
-	if (ma_values) pfree(ma_values);
-	if (smoothed) pfree(smoothed);
-	if (table_name_str) pfree(table_name_str);
-	if (time_col_str) pfree(time_col_str);
-	if (value_col_str) pfree(value_col_str);
+	if (values)
+		pfree(values);
+	if (ma_values)
+		pfree(ma_values);
+	if (smoothed)
+		pfree(smoothed);
+	if (table_name_str)
+		pfree(table_name_str);
+	if (time_col_str)
+		pfree(time_col_str);
+	if (value_col_str)
+		pfree(value_col_str);
 
 	PG_RETURN_INT32(n_anomalies);
 }
@@ -776,21 +842,27 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 	HeapTuple result_tuple;
 	TupleDesc tupdesc_out;
 	Datum result_values[3];
-	bool result_nulls[3] = {false, false, false};
+	bool result_nulls[3] = { false, false, false };
 
 	if (period < MIN_SEASONAL_PERIOD || period > MAX_SEASONAL_PERIOD)
 	{
-		if (table_name_str) pfree(table_name_str);
-		if (value_col_str) pfree(value_col_str);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (value_col_str)
+			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("period must be between %d and %d", MIN_SEASONAL_PERIOD, MAX_SEASONAL_PERIOD)));
+				errmsg("period must be between %d and %d",
+					MIN_SEASONAL_PERIOD,
+					MAX_SEASONAL_PERIOD)));
 	}
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 	{
-		if (table_name_str) pfree(table_name_str);
-		if (value_col_str) pfree(value_col_str);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (value_col_str)
+			pfree(value_col_str);
 		elog(ERROR, "SPI_connect failed");
 	}
 
@@ -804,11 +876,14 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_SELECT)
 	{
 		SPI_finish();
-		if (table_name_str) pfree(table_name_str);
-		if (value_col_str) pfree(value_col_str);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (value_col_str)
+			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("failed to execute seasonal decomposition query")));
+				errmsg("failed to execute seasonal "
+				       "decomposition query")));
 	}
 
 	tuptable = SPI_tuptable;
@@ -818,14 +893,17 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 	if (n < 2)
 	{
 		SPI_finish();
-		if (table_name_str) pfree(table_name_str);
-		if (value_col_str) pfree(value_col_str);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (value_col_str)
+			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("at least 2 values required for seasonal decomposition")));
+				errmsg("at least 2 values required for "
+				       "seasonal decomposition")));
 	}
 
-	values = (float *) palloc(sizeof(float) * n);
+	values = (float *)palloc(sizeof(float) * n);
 	for (i = 0; i < n; i++)
 	{
 		HeapTuple tup = tuptable->vals[i];
@@ -835,10 +913,10 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 		if (isnull)
 			values[i] = 0.0f;
 		else
-			values[i] = (float) DatumGetFloat8(val);
+			values[i] = (float)DatumGetFloat8(val);
 	}
 
-	trend = (float *) palloc(sizeof(float) * n);
+	trend = (float *)palloc(sizeof(float) * n);
 	{
 		int window = (period % 2 == 1) ? period : period + 1;
 		int half_w = window / 2;
@@ -860,8 +938,8 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 		}
 	}
 
-	seasonal_pattern = (float *) palloc0(sizeof(float) * period);
-	seasonal_counts = (int *) palloc0(sizeof(int) * period);
+	seasonal_pattern = (float *)palloc0(sizeof(float) * period);
+	seasonal_counts = (int *)palloc0(sizeof(int) * period);
 	for (i = 0; i < n; i++)
 	{
 		int s = i % period;
@@ -872,66 +950,107 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 	for (i = 0; i < period; i++)
 	{
 		if (seasonal_counts[i] > 0)
-			seasonal_pattern[i] /= (float) seasonal_counts[i];
+			seasonal_pattern[i] /= (float)seasonal_counts[i];
 		else
 			seasonal_pattern[i] = 0.0f;
 	}
 
-	seasonal = (float *) palloc(sizeof(float) * n);
+	seasonal = (float *)palloc(sizeof(float) * n);
 	for (i = 0; i < n; i++)
 		seasonal[i] = seasonal_pattern[i % period];
 
-	residual = (float *) palloc(sizeof(float) * n);
+	residual = (float *)palloc(sizeof(float) * n);
 	for (i = 0; i < n; i++)
 		residual[i] = values[i] - trend[i] - seasonal[i];
 
-	trend_datums = (Datum *) palloc(sizeof(Datum) * n);
-	seasonal_datums = (Datum *) palloc(sizeof(Datum) * n);
-	residual_datums = (Datum *) palloc(sizeof(Datum) * n);
+	trend_datums = (Datum *)palloc(sizeof(Datum) * n);
+	seasonal_datums = (Datum *)palloc(sizeof(Datum) * n);
+	residual_datums = (Datum *)palloc(sizeof(Datum) * n);
 	for (i = 0; i < n; i++)
 	{
-		trend_datums[i] = Float8GetDatum((float8) trend[i]);
-		seasonal_datums[i] = Float8GetDatum((float8) seasonal[i]);
-		residual_datums[i] = Float8GetDatum((float8) residual[i]);
+		trend_datums[i] = Float8GetDatum((float8)trend[i]);
+		seasonal_datums[i] = Float8GetDatum((float8)seasonal[i]);
+		residual_datums[i] = Float8GetDatum((float8)residual[i]);
 	}
-	trend_arr = construct_array(trend_datums, n, FLOAT8OID, sizeof(float8), true, TYPALIGN_DOUBLE);
-	seasonal_arr = construct_array(seasonal_datums, n, FLOAT8OID, sizeof(float8), true, TYPALIGN_DOUBLE);
-	residual_arr = construct_array(residual_datums, n, FLOAT8OID, sizeof(float8), true, TYPALIGN_DOUBLE);
+	trend_arr = construct_array(trend_datums,
+		n,
+		FLOAT8OID,
+		sizeof(float8),
+		true,
+		TYPALIGN_DOUBLE);
+	seasonal_arr = construct_array(seasonal_datums,
+		n,
+		FLOAT8OID,
+		sizeof(float8),
+		true,
+		TYPALIGN_DOUBLE);
+	residual_arr = construct_array(residual_datums,
+		n,
+		FLOAT8OID,
+		sizeof(float8),
+		true,
+		TYPALIGN_DOUBLE);
 
-	if (get_call_result_type(fcinfo, NULL, &tupdesc_out) != TYPEFUNC_COMPOSITE)
+	if (get_call_result_type(fcinfo, NULL, &tupdesc_out)
+		!= TYPEFUNC_COMPOSITE)
 	{
-		if (trend) pfree(trend);
-		if (seasonal) pfree(seasonal);
-		if (residual) pfree(residual);
-		if (seasonal_pattern) pfree(seasonal_pattern);
-		if (seasonal_counts) pfree(seasonal_counts);
-		if (values) pfree(values);
-		if (trend_datums) pfree(trend_datums);
-		if (seasonal_datums) pfree(seasonal_datums);
-		if (residual_datums) pfree(residual_datums);
-		if (table_name_str) pfree(table_name_str);
-		if (value_col_str) pfree(value_col_str);
+		if (trend)
+			pfree(trend);
+		if (seasonal)
+			pfree(seasonal);
+		if (residual)
+			pfree(residual);
+		if (seasonal_pattern)
+			pfree(seasonal_pattern);
+		if (seasonal_counts)
+			pfree(seasonal_counts);
+		if (values)
+			pfree(values);
+		if (trend_datums)
+			pfree(trend_datums);
+		if (seasonal_datums)
+			pfree(seasonal_datums);
+		if (residual_datums)
+			pfree(residual_datums);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (value_col_str)
+			pfree(value_col_str);
 		SPI_finish();
-		elog(ERROR, "return type must be composite (trend float8[], seasonal float8[], residual float8[])");
+		elog(ERROR,
+			"return type must be composite (trend float8[], "
+			"seasonal float8[], residual float8[])");
 	}
 
 	result_values[0] = PointerGetDatum(trend_arr);
 	result_values[1] = PointerGetDatum(seasonal_arr);
 	result_values[2] = PointerGetDatum(residual_arr);
 
-	result_tuple = heap_form_tuple(tupdesc_out, result_values, result_nulls);
+	result_tuple =
+		heap_form_tuple(tupdesc_out, result_values, result_nulls);
 
-	if (trend) pfree(trend);
-	if (seasonal) pfree(seasonal);
-	if (residual) pfree(residual);
-	if (seasonal_pattern) pfree(seasonal_pattern);
-	if (seasonal_counts) pfree(seasonal_counts);
-	if (values) pfree(values);
-	if (trend_datums) pfree(trend_datums);
-	if (seasonal_datums) pfree(seasonal_datums);
-	if (residual_datums) pfree(residual_datums);
-	if (table_name_str) pfree(table_name_str);
-	if (value_col_str) pfree(value_col_str);
+	if (trend)
+		pfree(trend);
+	if (seasonal)
+		pfree(seasonal);
+	if (residual)
+		pfree(residual);
+	if (seasonal_pattern)
+		pfree(seasonal_pattern);
+	if (seasonal_counts)
+		pfree(seasonal_counts);
+	if (values)
+		pfree(values);
+	if (trend_datums)
+		pfree(trend_datums);
+	if (seasonal_datums)
+		pfree(seasonal_datums);
+	if (residual_datums)
+		pfree(residual_datums);
+	if (table_name_str)
+		pfree(table_name_str);
+	if (value_col_str)
+		pfree(value_col_str);
 
 	SPI_finish();
 

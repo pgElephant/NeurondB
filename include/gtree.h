@@ -16,7 +16,8 @@
 #define GTREE_MAX_NODES (1 << 24)
 #define GTREE_MAX_DEPTH 64
 
-typedef struct GTreeNode {
+typedef struct GTreeNode
+{
 	int feature_idx;
 	double threshold;
 	int left;
@@ -25,7 +26,8 @@ typedef struct GTreeNode {
 	double value;
 } GTreeNode;
 
-typedef struct GTree {
+typedef struct GTree
+{
 	MemoryContext ctx;
 	GTreeNode *nodes;
 	int count;

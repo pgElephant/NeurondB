@@ -30,24 +30,26 @@
 float
 neurondb_gpu_l2_distance(const float *vec1, const float *vec2, int dim)
 {
-    const ndb_gpu_backend *backend;
-    float result = -1.0f;
+	const ndb_gpu_backend *backend;
+	float result = -1.0f;
 
-    if (!neurondb_gpu_is_available())
-        return -1.0f;
+	if (!neurondb_gpu_is_available())
+		return -1.0f;
 
-    backend = ndb_gpu_get_active_backend();
-    if (!backend || !backend->launch_l2_distance)
-    {
-        elog(DEBUG1, "neurondb: GPU l2 distance not implemented for backend %s; using CPU fallback",
-             backend && backend->name ? backend->name : "unknown");
-        return -1.0f;
-    }
+	backend = ndb_gpu_get_active_backend();
+	if (!backend || !backend->launch_l2_distance)
+	{
+		elog(DEBUG1,
+			"neurondb: GPU l2 distance not implemented for backend "
+			"%s; using CPU fallback",
+			backend && backend->name ? backend->name : "unknown");
+		return -1.0f;
+	}
 
-    if (backend->launch_l2_distance(vec1, vec2, &result, 1, dim, NULL) != 0)
-        return -1.0f;
+	if (backend->launch_l2_distance(vec1, vec2, &result, 1, dim, NULL) != 0)
+		return -1.0f;
 
-    return result;
+	return result;
 }
 
 /*
@@ -56,24 +58,26 @@ neurondb_gpu_l2_distance(const float *vec1, const float *vec2, int dim)
 float
 neurondb_gpu_cosine_distance(const float *vec1, const float *vec2, int dim)
 {
-    const ndb_gpu_backend *backend;
-    float result = -1.0f;
+	const ndb_gpu_backend *backend;
+	float result = -1.0f;
 
-    if (!neurondb_gpu_is_available())
-        return -1.0f;
+	if (!neurondb_gpu_is_available())
+		return -1.0f;
 
-    backend = ndb_gpu_get_active_backend();
-    if (!backend || !backend->launch_cosine)
-    {
-        elog(DEBUG1, "neurondb: GPU cosine distance not implemented for backend %s; using CPU fallback",
-             backend && backend->name ? backend->name : "unknown");
-        return -1.0f;
-    }
+	backend = ndb_gpu_get_active_backend();
+	if (!backend || !backend->launch_cosine)
+	{
+		elog(DEBUG1,
+			"neurondb: GPU cosine distance not implemented for "
+			"backend %s; using CPU fallback",
+			backend && backend->name ? backend->name : "unknown");
+		return -1.0f;
+	}
 
-    if (backend->launch_cosine(vec1, vec2, &result, 1, dim, NULL) != 0)
-        return -1.0f;
+	if (backend->launch_cosine(vec1, vec2, &result, 1, dim, NULL) != 0)
+		return -1.0f;
 
-    return result;
+	return result;
 }
 
 /*
@@ -82,9 +86,9 @@ neurondb_gpu_cosine_distance(const float *vec1, const float *vec2, int dim)
 float
 neurondb_gpu_inner_product(const float *vec1, const float *vec2, int dim)
 {
-    (void) vec1;
-    (void) vec2;
-    (void) dim;
+	(void)vec1;
+	(void)vec2;
+	(void)dim;
 
-    return -1.0f;
+	return -1.0f;
 }

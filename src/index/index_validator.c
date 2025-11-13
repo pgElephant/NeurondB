@@ -39,9 +39,9 @@
  */
 typedef struct ValidateResult
 {
-	bool		valid;
-	int			errors;
-	int			warnings;
+	bool valid;
+	int errors;
+	int warnings;
 	StringInfoData messages;
 } ValidateResult;
 
@@ -50,15 +50,15 @@ typedef struct ValidateResult
  */
 typedef struct DiagResult
 {
-	char	   *index_name;
-	char	   *index_type;
-	int64		total_tuples;
-	int64		dead_tuples;
-	int64		orphan_nodes;
-	float4		avg_connectivity;
-	float4		fragmentation;
-	int64		size_bytes;
-	char	   *health_status;
+	char *index_name;
+	char *index_type;
+	int64 total_tuples;
+	int64 dead_tuples;
+	int64 orphan_nodes;
+	float4 avg_connectivity;
+	float4 fragmentation;
+	int64 size_bytes;
+	char *health_status;
 	StringInfoData recommendations;
 } DiagResult;
 
@@ -80,14 +80,14 @@ PG_FUNCTION_INFO_V1(neurondb_validate);
 Datum
 neurondb_validate(PG_FUNCTION_ARGS)
 {
-	Oid			indexOid;
-	Relation	indexRel;
+	Oid indexOid;
+	Relation indexRel;
 	ValidateResult *result;
-	TupleDesc	tupdesc;
-	Datum		values[5];
-	bool		nulls[5];
-	HeapTuple	tuple;
-	
+	TupleDesc tupdesc;
+	Datum values[5];
+	bool nulls[5];
+	HeapTuple tuple;
+
 	/* Get index OID */
 	indexOid = PG_GETARG_OID(0);
 
@@ -97,8 +97,8 @@ neurondb_validate(PG_FUNCTION_ARGS)
 	/* Check if it's a NeurondB index */
 	if (!RelationIsValid(indexRel))
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb: invalid index OID")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: invalid index OID")));
 
 	/* Determine index type and validate */
 	/* For now, assume HNSW - would need to check relam */
@@ -107,8 +107,10 @@ neurondb_validate(PG_FUNCTION_ARGS)
 	/* Build result tuple */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("function returning record called in context that cannot accept type record")));
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("function returning record called in "
+				       "context that cannot accept type "
+				       "record")));
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
@@ -137,28 +139,30 @@ PG_FUNCTION_INFO_V1(neurondb_diag);
 Datum
 neurondb_diag(PG_FUNCTION_ARGS)
 {
-	Oid			indexOid;
-	Relation	indexRel;
+	Oid indexOid;
+	Relation indexRel;
 	DiagResult *diag;
-	TupleDesc	tupdesc;
-	Datum		values[9];
-	bool		nulls[9];
-	HeapTuple	tuple;
+	TupleDesc tupdesc;
+	Datum values[9];
+	bool nulls[9];
+	HeapTuple tuple;
 
 	indexOid = PG_GETARG_OID(0);
 	indexRel = index_open(indexOid, AccessShareLock);
 
 	if (!RelationIsValid(indexRel))
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb: invalid index OID")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: invalid index OID")));
 
 	diag = diagnose_index(indexRel);
 
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("function returning record called in context that cannot accept type record")));
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("function returning record called in "
+				       "context that cannot accept type "
+				       "record")));
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
@@ -189,13 +193,15 @@ validate_hnsw_index(Relation index)
 {
 	ValidateResult *result;
 
-	result = (ValidateResult *) palloc0(sizeof(ValidateResult));
+	result = (ValidateResult *)palloc0(sizeof(ValidateResult));
 	initStringInfo(&result->messages);
 	result->valid = true;
 	result->errors = 0;
 	result->warnings = 0;
 
-	elog(NOTICE, "neurondb: Validating HNSW index %s", RelationGetRelationName(index));
+	elog(NOTICE,
+		"neurondb: Validating HNSW index %s",
+		RelationGetRelationName(index));
 
 	/* Check metadata page */
 	appendStringInfo(&result->messages, "Checking metadata page... ");
@@ -217,11 +223,12 @@ validate_hnsw_index(Relation index)
 	if (result->errors == 0 && result->warnings == 0)
 	{
 		appendStringInfo(&result->messages, "\nIndex is HEALTHY\n");
-	}
-	else
+	} else
 	{
-		appendStringInfo(&result->messages, "\nFound %d errors, %d warnings\n",
-						 result->errors, result->warnings);
+		appendStringInfo(&result->messages,
+			"\nFound %d errors, %d warnings\n",
+			result->errors,
+			result->warnings);
 		result->valid = false;
 	}
 
@@ -231,19 +238,20 @@ validate_hnsw_index(Relation index)
 /*
  * Validate IVF index
  */
-__attribute__((unused))
-static ValidateResult *
+__attribute__((unused)) static ValidateResult *
 validate_ivf_index(Relation index)
 {
 	ValidateResult *result;
 
-	result = (ValidateResult *) palloc0(sizeof(ValidateResult));
+	result = (ValidateResult *)palloc0(sizeof(ValidateResult));
 	initStringInfo(&result->messages);
 	result->valid = true;
 	result->errors = 0;
 	result->warnings = 0;
 
-	elog(NOTICE, "neurondb: Validating IVF index %s", RelationGetRelationName(index));
+	elog(NOTICE,
+		"neurondb: Validating IVF index %s",
+		RelationGetRelationName(index));
 
 	appendStringInfo(&result->messages, "Checking centroids... ");
 	/* TODO: Validate centroids exist and are well-distributed */
@@ -267,8 +275,8 @@ validate_ivf_index(Relation index)
 static void
 check_hnsw_connectivity(Relation index, ValidateResult *result)
 {
-	int			orphanCount = 0;
-	int			totalNodes = 0;
+	int orphanCount = 0;
+	int totalNodes = 0;
 
 	appendStringInfo(&result->messages, "Checking graph connectivity... ");
 
@@ -284,12 +292,15 @@ check_hnsw_connectivity(Relation index, ValidateResult *result)
 
 	if (orphanCount > 0)
 	{
-		appendStringInfo(&result->messages, "WARN: Found %d orphan nodes\n", orphanCount);
+		appendStringInfo(&result->messages,
+			"WARN: Found %d orphan nodes\n",
+			orphanCount);
 		result->warnings++;
-	}
-	else
+	} else
 	{
-		appendStringInfo(&result->messages, "OK (checked %d nodes)\n", totalNodes);
+		appendStringInfo(&result->messages,
+			"OK (checked %d nodes)\n",
+			totalNodes);
 	}
 }
 
@@ -299,7 +310,7 @@ check_hnsw_connectivity(Relation index, ValidateResult *result)
 static void
 check_dead_tuples(Relation index, ValidateResult *result)
 {
-	int			deadCount = 0;
+	int deadCount = 0;
 
 	appendStringInfo(&result->messages, "Checking for dead tuples... ");
 
@@ -311,10 +322,11 @@ check_dead_tuples(Relation index, ValidateResult *result)
 
 	if (deadCount > 0)
 	{
-		appendStringInfo(&result->messages, "WARN: Found %d dead tuples (consider VACUUM)\n", deadCount);
+		appendStringInfo(&result->messages,
+			"WARN: Found %d dead tuples (consider VACUUM)\n",
+			deadCount);
 		result->warnings++;
-	}
-	else
+	} else
 	{
 		appendStringInfo(&result->messages, "OK\n");
 	}
@@ -328,7 +340,7 @@ diagnose_index(Relation index)
 {
 	DiagResult *diag;
 
-	diag = (DiagResult *) palloc0(sizeof(DiagResult));
+	diag = (DiagResult *)palloc0(sizeof(DiagResult));
 	initStringInfo(&diag->recommendations);
 
 	diag->index_name = pstrdup(RelationGetRelationName(index));
@@ -344,19 +356,19 @@ diagnose_index(Relation index)
 	if (diag->dead_tuples > diag->total_tuples * 0.2)
 	{
 		diag->health_status = pstrdup("NEEDS_VACUUM");
-		appendStringInfo(&diag->recommendations, "Run VACUUM to clean dead tuples. ");
-	}
-	else if (diag->fragmentation > 0.3)
+		appendStringInfo(&diag->recommendations,
+			"Run VACUUM to clean dead tuples. ");
+	} else if (diag->fragmentation > 0.3)
 	{
 		diag->health_status = pstrdup("FRAGMENTED");
-		appendStringInfo(&diag->recommendations, "Consider REINDEX to reduce fragmentation. ");
-	}
-	else if (diag->orphan_nodes > 0)
+		appendStringInfo(&diag->recommendations,
+			"Consider REINDEX to reduce fragmentation. ");
+	} else if (diag->orphan_nodes > 0)
 	{
 		diag->health_status = pstrdup("DEGRADED");
-		appendStringInfo(&diag->recommendations, "Orphan nodes detected, rebuild recommended. ");
-	}
-	else
+		appendStringInfo(&diag->recommendations,
+			"Orphan nodes detected, rebuild recommended. ");
+	} else
 	{
 		diag->health_status = pstrdup("HEALTHY");
 		appendStringInfo(&diag->recommendations, "No issues detected.");
@@ -373,7 +385,7 @@ compute_fragmentation(Relation index)
 {
 	BlockNumber totalBlocks;
 	BlockNumber usedBlocks;
-	float4		fragmentation;
+	float4 fragmentation;
 
 	totalBlocks = RelationGetNumberOfBlocks(index);
 	usedBlocks = totalBlocks; /* TODO: Count actually used blocks */
@@ -381,7 +393,7 @@ compute_fragmentation(Relation index)
 	if (totalBlocks == 0)
 		return 0.0;
 
-	fragmentation = 1.0 - ((float4) usedBlocks / totalBlocks);
+	fragmentation = 1.0 - ((float4)usedBlocks / totalBlocks);
 
 	return fragmentation;
 }
@@ -396,13 +408,15 @@ PG_FUNCTION_INFO_V1(neurondb_rebuild_index);
 Datum
 neurondb_rebuild_index(PG_FUNCTION_ARGS)
 {
-	Oid			indexOid;
-	Relation	indexRel;
+	Oid indexOid;
+	Relation indexRel;
 
 	indexOid = PG_GETARG_OID(0);
 	indexRel = index_open(indexOid, AccessExclusiveLock);
 
-	elog(NOTICE, "neurondb: Rebuilding index %s", RelationGetRelationName(indexRel));
+	elog(NOTICE,
+		"neurondb: Rebuilding index %s",
+		RelationGetRelationName(indexRel));
 
 	/* TODO: Implement rebuild logic:
 	 * 1. Create new index file
@@ -415,4 +429,3 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 
 	PG_RETURN_VOID();
 }
-

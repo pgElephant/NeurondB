@@ -46,18 +46,17 @@ ndb_cuda_linreg_predict_kernel(const float *input,
 	float *prediction)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	
+
 	if (idx == 0)
 	{
 		float result = intercept;
 		int i;
-		
+
 		for (i = 0; i < feature_dim; i++)
 			result += coefficients[i] * input[i];
-		
+
 		*prediction = result;
 	}
 }
 
 #endif /* NDB_GPU_CUDA */
-

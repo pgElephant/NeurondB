@@ -37,30 +37,30 @@
 #include "neurondb_bgworkers.h"
 
 /* GUC variables */
-static int neuranmon_naptime = 60000;		/* 1 minute */
-static int neuranmon_sample_size = 1000;	/* queries to sample */
-static double neuranmon_target_latency = 100.0;		/* ms */
+static int neuranmon_naptime = 60000; /* 1 minute */
+static int neuranmon_sample_size = 1000; /* queries to sample */
+static double neuranmon_target_latency = 100.0; /* ms */
 static double neuranmon_target_recall = 0.95;
 static bool neuranmon_enabled = true;
 
 /* Shared memory structure */
 typedef struct NeuranmonSharedState
 {
-	LWLock	   *lock;
-	int64		queries_sampled;
-	int64		adjustments_made;
-	double		avg_latency_ms;
-	double		avg_recall;
-	int			current_ef_search;
-	double		current_hybrid_weight;
-	TimestampTz	last_heartbeat;
-	pid_t		worker_pid;
+	LWLock *lock;
+	int64 queries_sampled;
+	int64 adjustments_made;
+	double avg_latency_ms;
+	double avg_recall;
+	int current_ef_search;
+	double current_hybrid_weight;
+	TimestampTz last_heartbeat;
+	pid_t worker_pid;
 } NeuranmonSharedState;
 
 static NeuranmonSharedState *neuranmon_state = NULL;
 
 /* Forward declarations */
-PGDLLEXPORT void neuranmon_main(Datum main_arg); 
+PGDLLEXPORT void neuranmon_main(Datum main_arg);
 static void neuranmon_sigterm(SIGNAL_ARGS);
 static void neuranmon_sighup(SIGNAL_ARGS);
 static void sample_and_tune(void);
@@ -77,8 +77,8 @@ static volatile sig_atomic_t got_sighup = false;
 static void
 neuranmon_sigterm(SIGNAL_ARGS)
 {
-	int			save_errno = errno;
-	(void) postgres_signal_arg;  /* Unused */
+	int save_errno = errno;
+	(void)postgres_signal_arg; /* Unused */
 
 	got_sigterm = true;
 	SetLatch(MyLatch);
@@ -89,8 +89,8 @@ neuranmon_sigterm(SIGNAL_ARGS)
 static void
 neuranmon_sighup(SIGNAL_ARGS)
 {
-	int			save_errno = errno;
-	(void) postgres_signal_arg;  /* Unused */
+	int save_errno = errno;
+	(void)postgres_signal_arg; /* Unused */
 
 	got_sighup = true;
 	SetLatch(MyLatch);
@@ -105,49 +105,67 @@ void
 neuranmon_init_guc(void)
 {
 	DefineCustomIntVariable("neurondb.neuranmon_naptime",
-							"Duration between tuning cycles (ms)",
-							NULL,
-							&neuranmon_naptime,
-							60000, 10000, 600000,
-							PGC_SIGHUP,
-							0,
-							NULL, NULL, NULL);
+		"Duration between tuning cycles (ms)",
+		NULL,
+		&neuranmon_naptime,
+		60000,
+		10000,
+		600000,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomIntVariable("neurondb.neuranmon_sample_size",
-							"Number of queries to sample",
-							NULL,
-							&neuranmon_sample_size,
-							1000, 100, 100000,
-							PGC_SIGHUP,
-							0,
-							NULL, NULL, NULL);
+		"Number of queries to sample",
+		NULL,
+		&neuranmon_sample_size,
+		1000,
+		100,
+		100000,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomRealVariable("neurondb.neuranmon_target_latency",
-							 "Target query latency (ms)",
-							 NULL,
-							 &neuranmon_target_latency,
-							 100.0, 1.0, 10000.0,
-							 PGC_SIGHUP,
-							 0,
-							 NULL, NULL, NULL);
+		"Target query latency (ms)",
+		NULL,
+		&neuranmon_target_latency,
+		100.0,
+		1.0,
+		10000.0,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomRealVariable("neurondb.neuranmon_target_recall",
-							 "Target recall@k threshold",
-							 NULL,
-							 &neuranmon_target_recall,
-							 0.95, 0.5, 1.0,
-							 PGC_SIGHUP,
-							 0,
-							 NULL, NULL, NULL);
+		"Target recall@k threshold",
+		NULL,
+		&neuranmon_target_recall,
+		0.95,
+		0.5,
+		1.0,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	DefineCustomBoolVariable("neurondb.neuranmon_enabled",
-							 "Enable tuner worker",
-							 NULL,
-							 &neuranmon_enabled,
-							 true,
-							 PGC_SIGHUP,
-							 0,
-							 NULL, NULL, NULL);
+		"Enable tuner worker",
+		NULL,
+		&neuranmon_enabled,
+		true,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		NULL,
+		NULL);
 }
 
 /*
@@ -165,23 +183,23 @@ neuranmon_shmem_size(void)
 void
 neuranmon_shmem_init(void)
 {
-	bool		found;
+	bool found;
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
-	neuranmon_state = ShmemInitStruct("NeuronDB Tuner Worker State",
-									  neuranmon_shmem_size(),
-									  &found);
+	neuranmon_state = ShmemInitStruct(
+		"NeuronDB Tuner Worker State", neuranmon_shmem_size(), &found);
 
 	if (!found)
 	{
-		neuranmon_state->lock = &(GetNamedLWLockTranche("neurondb_tuner"))->lock;
+		neuranmon_state->lock =
+			&(GetNamedLWLockTranche("neurondb_tuner"))->lock;
 		neuranmon_state->queries_sampled = 0;
 		neuranmon_state->adjustments_made = 0;
 		neuranmon_state->avg_latency_ms = 0.0;
 		neuranmon_state->avg_recall = 0.0;
-		neuranmon_state->current_ef_search = 64;		/* default */
-		neuranmon_state->current_hybrid_weight = 0.7;	/* default */
+		neuranmon_state->current_ef_search = 64; /* default */
+		neuranmon_state->current_hybrid_weight = 0.7; /* default */
 		neuranmon_state->last_heartbeat = GetCurrentTimestamp();
 		neuranmon_state->worker_pid = 0;
 	}
@@ -195,7 +213,7 @@ neuranmon_shmem_init(void)
 PGDLLEXPORT void
 neuranmon_main(Datum main_arg)
 {
-	(void) main_arg;  /* Unused */
+	(void)main_arg; /* Unused */
 
 	/* Establish signal handlers */
 	pqsignal(SIGTERM, neuranmon_sigterm);
@@ -217,7 +235,7 @@ neuranmon_main(Datum main_arg)
 	/* Main loop */
 	while (!got_sigterm)
 	{
-		int		rc;
+		int rc;
 
 		if (got_sighup)
 		{
@@ -256,18 +274,20 @@ neuranmon_main(Datum main_arg)
 			/* Clean up on error */
 			if (IsTransactionState())
 				AbortCurrentTransaction();
-			
+
 			EmitErrorReport();
 			FlushErrorState();
-			elog(LOG, "neurondb: tuner worker caught exception, all cleaned up. Restarting loop.");
+			elog(LOG,
+				"neurondb: tuner worker caught exception, all "
+				"cleaned up. Restarting loop.");
 		}
 		PG_END_TRY();
 
 		/* Wait for next cycle */
 		rc = WaitLatch(MyLatch,
-					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   neuranmon_naptime,
-					   0);
+			WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+			neuranmon_naptime,
+			0);
 		ResetLatch(MyLatch);
 
 		if (rc & WL_POSTMASTER_DEATH)
@@ -284,24 +304,28 @@ neuranmon_main(Datum main_arg)
 static void
 sample_and_tune(void)
 {
-	StringInfoData	sql;
-	int				ret;
-	double			avg_latency = 0.0;
-	double			avg_recall = 0.0;
-	int				new_ef_search;
-	double			new_hybrid_weight;
-	bool			needs_adjustment = false;
+	StringInfoData sql;
+	int ret;
+	double avg_latency = 0.0;
+	double avg_recall = 0.0;
+	int new_ef_search;
+	double new_hybrid_weight;
+	bool needs_adjustment = false;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "neurondb: SPI_connect failed in neuranmon");
 
 	/* Check if table exists (before CREATE EXTENSION, this is expected) */
-	ret = SPI_execute("SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' AND tablename = 'neurondb_query_metrics'", true, 0);
+	ret = SPI_execute("SELECT 1 FROM pg_tables WHERE schemaname = "
+			  "'neurondb' AND tablename = 'neurondb_query_metrics'",
+		true,
+		0);
 	if (ret != SPI_OK_SELECT || SPI_processed == 0)
 	{
 		/* Table doesn't exist yet - extension not created. This is normal at startup. */
 		SPI_finish();
-		elog(DEBUG1, "neurondb: tuner waiting for extension to be created");
+		elog(DEBUG1,
+			"neurondb: tuner waiting for extension to be created");
 		return;
 	}
 
@@ -318,16 +342,20 @@ sample_and_tune(void)
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool	isnull;
-		Datum	latency_datum, recall_datum;
+		bool isnull;
+		Datum latency_datum, recall_datum;
 
 		latency_datum = SPI_getbinval(SPI_tuptable->vals[0],
-									   SPI_tuptable->tupdesc, 1, &isnull);
+			SPI_tuptable->tupdesc,
+			1,
+			&isnull);
 		if (!isnull)
 			avg_latency = DatumGetFloat8(latency_datum);
 
 		recall_datum = SPI_getbinval(SPI_tuptable->vals[0],
-									  SPI_tuptable->tupdesc, 2, &isnull);
+			SPI_tuptable->tupdesc,
+			2,
+			&isnull);
 		if (!isnull)
 			avg_recall = DatumGetFloat8(recall_datum);
 	}
@@ -335,15 +363,16 @@ sample_and_tune(void)
 	/* Adjust ef_search based on latency/recall trade-off */
 	new_ef_search = neuranmon_state->current_ef_search;
 
-	if (avg_recall < neuranmon_target_recall && avg_latency < neuranmon_target_latency)
+	if (avg_recall < neuranmon_target_recall
+		&& avg_latency < neuranmon_target_latency)
 	{
 		/* Recall too low, latency acceptable -> increase ef_search */
 		new_ef_search = (int)(new_ef_search * 1.2);
 		if (new_ef_search > 512)
 			new_ef_search = 512;
 		needs_adjustment = true;
-	}
-	else if (avg_recall >= neuranmon_target_recall && avg_latency > neuranmon_target_latency)
+	} else if (avg_recall >= neuranmon_target_recall
+		&& avg_latency > neuranmon_target_latency)
 	{
 		/* Recall good, latency too high -> decrease ef_search */
 		new_ef_search = (int)(new_ef_search * 0.8);
@@ -366,13 +395,18 @@ sample_and_tune(void)
 		neuranmon_state->avg_recall = avg_recall;
 		LWLockRelease(neuranmon_state->lock);
 
-		elog(LOG, "neurondb: tuned ef_search=%d (latency=%.2fms, recall=%.3f)",
-			 new_ef_search, avg_latency, avg_recall);
+		elog(LOG,
+			"neurondb: tuned ef_search=%d (latency=%.2fms, "
+			"recall=%.3f)",
+			new_ef_search,
+			avg_latency,
+			avg_recall);
 
 		/* Update runtime configuration */
 		resetStringInfo(&sql);
 		appendStringInfo(&sql,
-			"SELECT set_config('neurondb.default_ef_search', '%d', false)",
+			"SELECT set_config('neurondb.default_ef_search', '%d', "
+			"false)",
 			new_ef_search);
 		SPI_execute(sql.data, false, 0);
 	}
@@ -392,8 +426,8 @@ sample_and_tune(void)
 static void
 rotate_caches(void)
 {
-	StringInfoData	sql;
-	int				ret;
+	StringInfoData sql;
+	int ret;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		return;
@@ -401,7 +435,11 @@ rotate_caches(void)
 	PG_TRY();
 	{
 		/* Check if table exists first */
-		ret = SPI_execute("SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' AND tablename = 'neurondb_embedding_cache'", true, 0);
+		ret = SPI_execute(
+			"SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' "
+			"AND tablename = 'neurondb_embedding_cache'",
+			true,
+			0);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		{
 			/* Table doesn't exist, skip cache rotation */
@@ -418,7 +456,10 @@ rotate_caches(void)
 
 		SPI_execute(sql.data, false, 0);
 
-		elog(DEBUG1, "neurondb: rotated cache (removed " NDB_UINT64_FMT " entries)", NDB_UINT64_CAST(SPI_processed));
+		elog(DEBUG1,
+			"neurondb: rotated cache (removed " NDB_UINT64_FMT
+			" entries)",
+			NDB_UINT64_CAST(SPI_processed));
 
 		pfree(sql.data);
 	}
@@ -439,8 +480,8 @@ rotate_caches(void)
 static void
 record_metrics(void)
 {
-	StringInfoData	sql;
-	int				ret;
+	StringInfoData sql;
+	int ret;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		return;
@@ -448,7 +489,11 @@ record_metrics(void)
 	PG_TRY();
 	{
 		/* Check if tables exist first */
-		ret = SPI_execute("SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' AND tablename = 'neurondb_histograms'", true, 0);
+		ret = SPI_execute(
+			"SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' "
+			"AND tablename = 'neurondb_histograms'",
+			true,
+			0);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		{
 			/* Tables don't exist, skip metrics recording */
@@ -459,7 +504,8 @@ record_metrics(void)
 		/* Record latency histogram */
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
-			"INSERT INTO neurondb.neurondb_histograms (metric_name, bucket_start, bucket_end, count) "
+			"INSERT INTO neurondb.neurondb_histograms "
+			"(metric_name, bucket_start, bucket_end, count) "
 			"SELECT 'latency_ms', "
 			"       floor(latency_ms / 10) * 10, "
 			"       floor(latency_ms / 10) * 10 + 10, "
@@ -489,9 +535,9 @@ record_metrics(void)
 static void
 export_prometheus_metrics(void)
 {
-	StringInfoData	sql;
-	StringInfoData	metrics;
-	int				ret;
+	StringInfoData sql;
+	StringInfoData metrics;
+	int ret;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		return;
@@ -499,7 +545,11 @@ export_prometheus_metrics(void)
 	PG_TRY();
 	{
 		/* Check if table exists first */
-		ret = SPI_execute("SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' AND tablename = 'neurondb_prometheus_metrics'", true, 0);
+		ret = SPI_execute(
+			"SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' "
+			"AND tablename = 'neurondb_prometheus_metrics'",
+			true,
+			0);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		{
 			/* Table doesn't exist, skip metrics export */
@@ -512,10 +562,13 @@ export_prometheus_metrics(void)
 
 		/* Export key metrics to Prometheus metrics table */
 		appendStringInfo(&sql,
-			"INSERT INTO neurondb.neurondb_prometheus_metrics (metric_name, metric_value) "
+			"INSERT INTO neurondb.neurondb_prometheus_metrics "
+			"(metric_name, metric_value) "
 			"VALUES "
-			"  ('neurondb_queries_sampled_total', " NDB_INT64_FMT "), "
-			"  ('neurondb_adjustments_made_total', " NDB_INT64_FMT "), "
+			"  ('neurondb_queries_sampled_total', " NDB_INT64_FMT
+			"), "
+			"  ('neurondb_adjustments_made_total', " NDB_INT64_FMT
+			"), "
 			"  ('neurondb_avg_latency_ms', %.2f), "
 			"  ('neurondb_avg_recall', %.3f), "
 			"  ('neurondb_current_ef_search', %d) "
@@ -539,7 +592,9 @@ export_prometheus_metrics(void)
 	{
 		EmitErrorReport();
 		FlushErrorState();
-		elog(LOG, "neurondb: Prometheus metrics export failed, continuing");
+		elog(LOG,
+			"neurondb: Prometheus metrics export failed, "
+			"continuing");
 	}
 	PG_END_TRY();
 
@@ -553,7 +608,7 @@ PG_FUNCTION_INFO_V1(neuranmon_sample);
 Datum
 neuranmon_sample(PG_FUNCTION_ARGS)
 {
-	(void) fcinfo;  /* Unused */
+	(void)fcinfo; /* Unused */
 	elog(NOTICE, "neurondb: manually triggering neuranmon sampling");
 
 	/* Function is called from user session, already in transaction */
@@ -561,4 +616,3 @@ neuranmon_sample(PG_FUNCTION_ARGS)
 
 	PG_RETURN_BOOL(true);
 }
-

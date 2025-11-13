@@ -112,8 +112,8 @@ ndb_cuda_lasso_pack_model(const LassoModel *model,
 			model->mse,
 			model->mae);
 
-		metrics_json = DatumGetJsonbP(
-			DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+			jsonb_in, CStringGetDatum(buf.data)));
 		pfree(buf.data);
 		*metrics = metrics_json;
 	}
@@ -132,8 +132,8 @@ ndb_cuda_lasso_train(const float *features,
 	Jsonb **metrics,
 	char **errstr)
 {
-	double lambda = 0.01;  /* Default regularization */
-	int max_iters = 1000;  /* Default iterations */
+	double lambda = 0.01; /* Default regularization */
+	int max_iters = 1000; /* Default iterations */
 	double *weights = NULL;
 	double *weights_old = NULL;
 	double *residuals = NULL;
@@ -147,18 +147,20 @@ ndb_cuda_lasso_train(const float *features,
 	if (errstr)
 		*errstr = NULL;
 
-	if (features == NULL || targets == NULL || n_samples <= 0 || feature_dim <= 0)
+	if (features == NULL || targets == NULL || n_samples <= 0
+		|| feature_dim <= 0)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid input parameters for CUDA Lasso train");
+			*errstr = pstrdup("invalid input parameters for CUDA "
+					  "Lasso train");
 		return -1;
 	}
 
 	/* Extract hyperparameters from JSON */
 	if (hyperparams != NULL)
 	{
-		char *hyperparams_text = DatumGetCString(
-			DirectFunctionCall1(jsonb_out, JsonbPGetDatum(hyperparams)));
+		char *hyperparams_text = DatumGetCString(DirectFunctionCall1(
+			jsonb_out, JsonbPGetDatum(hyperparams)));
 		/* Simple extraction - can be enhanced with proper JSON parsing */
 		/* For now, use defaults */
 		pfree(hyperparams_text);
@@ -196,14 +198,16 @@ ndb_cuda_lasso_train(const float *features,
 			/* Compute rho = X_j^T * residuals */
 			for (i = 0; i < n_samples; i++)
 			{
-				feature_col_j = features + (i * feature_dim + j);
+				feature_col_j =
+					features + (i * feature_dim + j);
 				rho += (*feature_col_j) * residuals[i];
 			}
 
 			/* Compute z = X_j^T * X_j */
 			for (i = 0; i < n_samples; i++)
 			{
-				feature_col_j = features + (i * feature_dim + j);
+				feature_col_j =
+					features + (i * feature_dim + j);
 				z += (*feature_col_j) * (*feature_col_j);
 			}
 
@@ -220,8 +224,10 @@ ndb_cuda_lasso_train(const float *features,
 				double weight_diff = weights[j] - old_weight;
 				for (i = 0; i < n_samples; i++)
 				{
-					feature_col_j = features + (i * feature_dim + j);
-					residuals[i] -= (*feature_col_j) * weight_diff;
+					feature_col_j = features
+						+ (i * feature_dim + j);
+					residuals[i] -=
+						(*feature_col_j) * weight_diff;
 				}
 			}
 		}
@@ -251,7 +257,8 @@ ndb_cuda_lasso_train(const float *features,
 		model.intercept = y_mean;
 		model.lambda = lambda;
 		model.max_iters = max_iters;
-		model.coefficients = (double *)palloc(sizeof(double) * feature_dim);
+		model.coefficients =
+			(double *)palloc(sizeof(double) * feature_dim);
 		for (i = 0; i < feature_dim; i++)
 			model.coefficients[i] = weights[i];
 
@@ -275,12 +282,14 @@ ndb_cuda_lasso_train(const float *features,
 
 		mse /= n_samples;
 		mae /= n_samples;
-		model.r_squared = (ss_tot > 0.0) ? (1.0 - (ss_res / ss_tot)) : 0.0;
+		model.r_squared =
+			(ss_tot > 0.0) ? (1.0 - (ss_res / ss_tot)) : 0.0;
 		model.mse = mse;
 		model.mae = mae;
 
 		/* Pack model */
-		rc = ndb_cuda_lasso_pack_model(&model, &payload, &metrics_json, errstr);
+		rc = ndb_cuda_lasso_pack_model(
+			&model, &payload, &metrics_json, errstr);
 
 		pfree(model.coefficients);
 	}
@@ -324,23 +333,29 @@ ndb_cuda_lasso_predict(const bytea *model_data,
 	if (model_data == NULL || input == NULL || prediction_out == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid parameters for CUDA Lasso predict");
+			*errstr = pstrdup(
+				"invalid parameters for CUDA Lasso predict");
 		return -1;
 	}
 
 	/* Detoast the bytea to ensure we have the full data */
-	detoasted = (const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+	detoasted =
+		(const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
 
 	/* Validate bytea size */
 	{
-		size_t expected_size = sizeof(NdbCudaLassoModelHeader) + sizeof(float) * (size_t)feature_dim;
+		size_t expected_size = sizeof(NdbCudaLassoModelHeader)
+			+ sizeof(float) * (size_t)feature_dim;
 		size_t actual_size = VARSIZE(detoasted) - VARHDRSZ;
 
 		if (actual_size < expected_size)
 		{
 			if (errstr)
-				*errstr = psprintf("model data too small: expected %zu bytes, got %zu",
-					expected_size, actual_size);
+				*errstr =
+					psprintf("model data too small: "
+						 "expected %zu bytes, got %zu",
+						expected_size,
+						actual_size);
 			return -1;
 		}
 	}
@@ -349,12 +364,15 @@ ndb_cuda_lasso_predict(const bytea *model_data,
 	if (hdr->feature_dim != feature_dim)
 	{
 		if (errstr)
-			*errstr = psprintf("feature dimension mismatch: model has %d, input has %d",
-				hdr->feature_dim, feature_dim);
+			*errstr = psprintf("feature dimension mismatch: model "
+					   "has %d, input has %d",
+				hdr->feature_dim,
+				feature_dim);
 		return -1;
 	}
 
-	coefficients = (const float *)((const char *)hdr + sizeof(NdbCudaLassoModelHeader));
+	coefficients = (const float *)((const char *)hdr
+		+ sizeof(NdbCudaLassoModelHeader));
 
 	prediction = hdr->intercept;
 	for (i = 0; i < feature_dim; i++)
@@ -365,4 +383,3 @@ ndb_cuda_lasso_predict(const bytea *model_data,
 }
 
 #endif /* NDB_GPU_CUDA */
-

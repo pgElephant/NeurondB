@@ -19,10 +19,10 @@ typedef void *ndb_stream_t;
  */
 typedef enum NDBGpuBackendKind
 {
-    NDB_GPU_BACKEND_NONE = 0,
-    NDB_GPU_BACKEND_CUDA,
-    NDB_GPU_BACKEND_ROCM,
-    NDB_GPU_BACKEND_METAL
+	NDB_GPU_BACKEND_NONE = 0,
+	NDB_GPU_BACKEND_CUDA,
+	NDB_GPU_BACKEND_ROCM,
+	NDB_GPU_BACKEND_METAL
 } NDBGpuBackendKind;
 
 /*
@@ -32,10 +32,10 @@ typedef enum NDBGpuBackendKind
  */
 typedef enum NDBGpuBackendFeature
 {
-    NDB_GPU_FEATURE_DISTANCE   = (1U << 0),
-    NDB_GPU_FEATURE_QUANTIZE   = (1U << 1),
-    NDB_GPU_FEATURE_CLUSTERING = (1U << 2),
-    NDB_GPU_FEATURE_INFERENCE  = (1U << 3)
+	NDB_GPU_FEATURE_DISTANCE = (1U << 0),
+	NDB_GPU_FEATURE_QUANTIZE = (1U << 1),
+	NDB_GPU_FEATURE_CLUSTERING = (1U << 2),
+	NDB_GPU_FEATURE_INFERENCE = (1U << 3)
 } NDBGpuBackendFeature;
 
 /*
@@ -44,15 +44,13 @@ typedef enum NDBGpuBackendFeature
  */
 typedef struct NDBGpuDeviceInfo
 {
-    int     device_id;
-    char    name[256];
-    size_t  total_memory_bytes;
-    size_t  free_memory_bytes;
-    int     compute_major;
-    int     compute_minor;
-    bool    is_available;
+	int device_id;
+	char name[256];
+	size_t total_memory_bytes;
+	size_t free_memory_bytes;
+	int compute_major;
+	int compute_minor;
+	bool is_available;
 } NDBGpuDeviceInfo;
 
 #endif /* NEURONDB_GPU_TYPES_H */
-
-

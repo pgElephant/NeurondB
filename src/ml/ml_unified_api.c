@@ -296,7 +296,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 							numeric_int4,
 							NumericGetDatum(
 								v.val.numeric)));
-					else if (strcmp(key, "learning_rate") == 0
+					else if (strcmp(key, "learning_rate")
+							== 0
 						&& v.type == jbvNumeric)
 						learning_rate = DatumGetFloat8(
 							DirectFunctionCall1(
@@ -305,17 +306,17 @@ neurondb_train(PG_FUNCTION_ARGS)
 									v.val.numeric)));
 					else if (strcmp(key, "lambda") == 0
 						&& v.type == jbvNumeric)
-						lambda = DatumGetFloat8(
-							DirectFunctionCall1(
-								numeric_float8,
-								NumericGetDatum(
-									v.val.numeric)));
+						lambda = DatumGetFloat8(DirectFunctionCall1(
+							numeric_float8,
+							NumericGetDatum(
+								v.val.numeric)));
 					pfree(key);
 				}
 			}
 		}
 		appendStringInfo(&sql,
-			"SELECT train_logistic_regression(%s, %s, %s, %d, %.6f, %.6f)",
+			"SELECT train_logistic_regression(%s, %s, %s, %d, "
+			"%.6f, %.6f)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
 			neurondb_quote_literal_cstr(target_column),
@@ -629,7 +630,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 			neurondb_cleanup(oldcontext, callcontext, true);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("%s training did not return a model id",
+					errmsg("%s training did not return a "
+					       "model id",
 						algorithm)));
 		}
 		model_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
@@ -641,7 +643,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 			neurondb_cleanup(oldcontext, callcontext, true);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("%s training returned NULL model id",
+					errmsg("%s training returned NULL "
+					       "model id",
 						algorithm)));
 		}
 	}

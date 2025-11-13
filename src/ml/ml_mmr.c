@@ -71,25 +71,25 @@ PG_FUNCTION_INFO_V1(mmr_rerank);
 Datum
 mmr_rerank(PG_FUNCTION_ARGS)
 {
-	ArrayType	*query_array;
-	ArrayType	*candidates_array;
-	float		lambda;
-	int			top_k;
-	float		*query;
-	int			query_dim;
-	float		**candidates;
-	int			n_candidates;
-	int			dim;
-	bool		*selected;
-	int			*result_indices;
-	double		*query_scores;
-	ArrayType	*result;
-	Datum		*result_datums;
-	int			selected_count;
-	int			i, j;
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
+	ArrayType *query_array;
+	ArrayType *candidates_array;
+	float lambda;
+	int top_k;
+	float *query;
+	int query_dim;
+	float **candidates;
+	int n_candidates;
+	int dim;
+	bool *selected;
+	int *result_indices;
+	double *query_scores;
+	ArrayType *result;
+	Datum *result_datums;
+	int selected_count;
+	int i, j;
+	int16 typlen;
+	bool typbyval;
+	char typalign;
 
 	/* Parse arguments */
 	query_array = PG_GETARG_ARRAYTYPE_P(0);
@@ -99,27 +99,30 @@ mmr_rerank(PG_FUNCTION_ARGS)
 
 	if (lambda < 0.0 || lambda > 1.0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("lambda must be between 0.0 and 1.0")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("lambda must be between 0.0 and 1.0")));
 
 	/* Extract query vector */
 	query_dim = ARR_DIMS(query_array)[0];
-	query = (float *) ARR_DATA_PTR(query_array);
+	query = (float *)ARR_DATA_PTR(query_array);
 
 	/* Extract candidate vectors */
 	if (ARR_NDIM(candidates_array) != 2)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("candidates must be 2-dimensional array")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("candidates must be 2-dimensional "
+				       "array")));
 
 	n_candidates = ARR_DIMS(candidates_array)[0];
 	dim = ARR_DIMS(candidates_array)[1];
 
 	if (dim != query_dim)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Query dimension %d != candidate dimension %d",
-						query_dim, dim)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Query dimension %d != candidate "
+				       "dimension %d",
+					query_dim,
+					dim)));
 
 	if (top_k < 1)
 		top_k = n_candidates;
@@ -127,21 +130,21 @@ mmr_rerank(PG_FUNCTION_ARGS)
 		top_k = n_candidates;
 
 	/* Parse candidate vectors */
-	candidates = (float **) palloc(sizeof(float *) * n_candidates);
+	candidates = (float **)palloc(sizeof(float *) * n_candidates);
 	{
-		float *data = (float *) ARR_DATA_PTR(candidates_array);
+		float *data = (float *)ARR_DATA_PTR(candidates_array);
 		for (i = 0; i < n_candidates; i++)
 			candidates[i] = &data[i * dim];
 	}
 
 	/* Compute query-candidate similarities */
-	query_scores = (double *) palloc(sizeof(double) * n_candidates);
+	query_scores = (double *)palloc(sizeof(double) * n_candidates);
 	for (i = 0; i < n_candidates; i++)
 		query_scores[i] = cosine_similarity(query, candidates[i], dim);
 
 	/* MMR algorithm */
-	selected = (bool *) palloc0(sizeof(bool) * n_candidates);
-	result_indices = (int *) palloc(sizeof(int) * top_k);
+	selected = (bool *)palloc0(sizeof(bool) * n_candidates);
+	result_indices = (int *)palloc(sizeof(int) * top_k);
 	selected_count = 0;
 
 	while (selected_count < top_k)
@@ -163,15 +166,16 @@ mmr_rerank(PG_FUNCTION_ARGS)
 			for (j = 0; j < selected_count; j++)
 			{
 				int selected_idx = result_indices[j];
-				double sim = cosine_similarity(candidates[i], 
-											   candidates[selected_idx], dim);
+				double sim = cosine_similarity(candidates[i],
+					candidates[selected_idx],
+					dim);
 				if (sim > max_sim_to_selected)
 					max_sim_to_selected = sim;
 			}
 
 			/* MMR = λ × Sim(D_i, Q) - (1-λ) × max Sim(D_i, S) */
-			mmr_score = lambda * query_scores[i] - 
-						(1.0 - lambda) * max_sim_to_selected;
+			mmr_score = lambda * query_scores[i]
+				- (1.0 - lambda) * max_sim_to_selected;
 
 			if (mmr_score > max_mmr)
 			{
@@ -189,13 +193,17 @@ mmr_rerank(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result array (1-based indices) */
-	result_datums = (Datum *) palloc(sizeof(Datum) * selected_count);
+	result_datums = (Datum *)palloc(sizeof(Datum) * selected_count);
 	for (i = 0; i < selected_count; i++)
 		result_datums[i] = Int32GetDatum(result_indices[i] + 1);
 
 	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
-	result = construct_array(result_datums, selected_count, INT4OID,
-							 typlen, typbyval, typalign);
+	result = construct_array(result_datums,
+		selected_count,
+		INT4OID,
+		typlen,
+		typbyval,
+		typalign);
 
 	/* Cleanup */
 	pfree(candidates);
@@ -218,23 +226,23 @@ PG_FUNCTION_INFO_V1(mmr_rerank_with_scores);
 Datum
 mmr_rerank_with_scores(PG_FUNCTION_ARGS)
 {
-	ArrayType	*query_array;
-	ArrayType	*candidates_array;
-	float		lambda;
-	int			top_k;
-	float		*query;
-	int			query_dim;
-	float		**candidates;
-	int			n_candidates;
-	int			dim;
-	bool		*selected;
-	int			*result_indices;
-	double		*result_scores;
-	double		*query_scores;
-	ArrayType	*result;
-	Datum		*result_datums;
-	int			selected_count;
-	int			i, j;
+	ArrayType *query_array;
+	ArrayType *candidates_array;
+	float lambda;
+	int top_k;
+	float *query;
+	int query_dim;
+	float **candidates;
+	int n_candidates;
+	int dim;
+	bool *selected;
+	int *result_indices;
+	double *result_scores;
+	double *query_scores;
+	ArrayType *result;
+	Datum *result_datums;
+	int selected_count;
+	int i, j;
 
 	/* Parse arguments (same as mmr_rerank) */
 	query_array = PG_GETARG_ARRAYTYPE_P(0);
@@ -244,42 +252,43 @@ mmr_rerank_with_scores(PG_FUNCTION_ARGS)
 
 	if (lambda < 0.0 || lambda > 1.0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("lambda must be between 0.0 and 1.0")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("lambda must be between 0.0 and 1.0")));
 
 	query_dim = ARR_DIMS(query_array)[0];
-	query = (float *) ARR_DATA_PTR(query_array);
+	query = (float *)ARR_DATA_PTR(query_array);
 
 	if (ARR_NDIM(candidates_array) != 2)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("candidates must be 2-dimensional array")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("candidates must be 2-dimensional "
+				       "array")));
 
 	n_candidates = ARR_DIMS(candidates_array)[0];
 	dim = ARR_DIMS(candidates_array)[1];
 
 	if (dim != query_dim)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Dimension mismatch")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Dimension mismatch")));
 
 	if (top_k < 1 || top_k > n_candidates)
 		top_k = n_candidates;
 
-	candidates = (float **) palloc(sizeof(float *) * n_candidates);
+	candidates = (float **)palloc(sizeof(float *) * n_candidates);
 	{
-		float *data = (float *) ARR_DATA_PTR(candidates_array);
+		float *data = (float *)ARR_DATA_PTR(candidates_array);
 		for (i = 0; i < n_candidates; i++)
 			candidates[i] = &data[i * dim];
 	}
 
-	query_scores = (double *) palloc(sizeof(double) * n_candidates);
+	query_scores = (double *)palloc(sizeof(double) * n_candidates);
 	for (i = 0; i < n_candidates; i++)
 		query_scores[i] = cosine_similarity(query, candidates[i], dim);
 
-	selected = (bool *) palloc0(sizeof(bool) * n_candidates);
-	result_indices = (int *) palloc(sizeof(int) * top_k);
-	result_scores = (double *) palloc(sizeof(double) * top_k);
+	selected = (bool *)palloc0(sizeof(bool) * n_candidates);
+	result_indices = (int *)palloc(sizeof(int) * top_k);
+	result_scores = (double *)palloc(sizeof(double) * top_k);
 	selected_count = 0;
 
 	/* MMR algorithm with score tracking */
@@ -300,14 +309,15 @@ mmr_rerank_with_scores(PG_FUNCTION_ARGS)
 			for (j = 0; j < selected_count; j++)
 			{
 				int selected_idx = result_indices[j];
-				double sim = cosine_similarity(candidates[i], 
-											   candidates[selected_idx], dim);
+				double sim = cosine_similarity(candidates[i],
+					candidates[selected_idx],
+					dim);
 				if (sim > max_sim_to_selected)
 					max_sim_to_selected = sim;
 			}
 
-			mmr_score = lambda * query_scores[i] - 
-						(1.0 - lambda) * max_sim_to_selected;
+			mmr_score = lambda * query_scores[i]
+				- (1.0 - lambda) * max_sim_to_selected;
 
 			if (mmr_score > max_mmr)
 			{
@@ -326,15 +336,20 @@ mmr_rerank_with_scores(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result array: flat array [idx1, score1, idx2, score2, ...] */
-	result_datums = (Datum *) palloc(sizeof(Datum) * selected_count * 2);
+	result_datums = (Datum *)palloc(sizeof(Datum) * selected_count * 2);
 	for (i = 0; i < selected_count; i++)
 	{
 		result_datums[i * 2] = Int32GetDatum(result_indices[i] + 1);
-		result_datums[i * 2 + 1] = Float4GetDatum((float)result_scores[i]);
+		result_datums[i * 2 + 1] =
+			Float4GetDatum((float)result_scores[i]);
 	}
 
-	result = construct_array(result_datums, selected_count * 2, FLOAT4OID,
-							 sizeof(float4), true, 'i');
+	result = construct_array(result_datums,
+		selected_count * 2,
+		FLOAT4OID,
+		sizeof(float4),
+		true,
+		'i');
 
 	/* Cleanup */
 	pfree(candidates);
@@ -346,4 +361,3 @@ mmr_rerank_with_scores(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
-

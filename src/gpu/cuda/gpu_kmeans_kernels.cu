@@ -52,14 +52,14 @@
  */
 CUDA_KERNEL void
 kmeans_assign_kernel(const float *vectors,
-                     const float *centroids,
-                     int32_t *assignments,
-                     int nvec,
-                     int k,
-                     int dim)
+	const float *centroids,
+	int32_t *assignments,
+	int nvec,
+	int k,
+	int dim)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	
+
 	if (idx >= nvec)
 		return;
 
@@ -107,12 +107,12 @@ kmeans_assign_kernel(const float *vectors,
  */
 CUDA_KERNEL void
 kmeans_update_kernel(const float *vectors,
-                     const int32_t *assignments,
-                     float *centroids,
-                     int32_t *counts,
-                     int nvec,
-                     int k,
-                     int dim)
+	const int32_t *assignments,
+	float *centroids,
+	int32_t *counts,
+	int nvec,
+	int k,
+	int dim)
 {
 	/* Each block processes one cluster */
 	int cluster = blockIdx.x;
@@ -123,7 +123,7 @@ kmeans_update_kernel(const float *vectors,
 
 	/* Shared memory for reduction */
 	extern __shared__ float shared_sum[];
-	
+
 	/* Initialize shared memory */
 	for (int d = tid; d < dim; d += blockDim.x)
 		shared_sum[d] = 0.0f;
@@ -152,7 +152,8 @@ kmeans_update_kernel(const float *vectors,
 	{
 		for (int d = tid; d < dim; d += blockDim.x)
 		{
-			centroids[cluster * dim + d] = shared_sum[d] / total_count;
+			centroids[cluster * dim + d] =
+				shared_sum[d] / total_count;
 		}
 	}
 }
@@ -162,11 +163,11 @@ kmeans_update_kernel(const float *vectors,
  */
 extern "C" int
 gpu_kmeans_assign(const float *h_vectors,
-                  const float *h_centroids,
-                  int32_t *h_assignments,
-                  int nvec,
-                  int k,
-                  int dim)
+	const float *h_centroids,
+	int32_t *h_assignments,
+	int nvec,
+	int k,
+	int dim)
 {
 	float *d_vectors = NULL;
 	float *d_centroids = NULL;
@@ -178,16 +179,26 @@ gpu_kmeans_assign(const float *h_vectors,
 	cudaMalloc(&d_assignments, nvec * sizeof(int32_t));
 
 	/* Copy data to device */
-	cudaMemcpy(d_vectors, h_vectors, nvec * dim * sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_centroids, h_centroids, k * dim * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_vectors,
+		h_vectors,
+		nvec * dim * sizeof(float),
+		cudaMemcpyHostToDevice);
+	cudaMemcpy(d_centroids,
+		h_centroids,
+		k * dim * sizeof(float),
+		cudaMemcpyHostToDevice);
 
 	/* Launch kernel */
 	int threads = 256;
 	int blocks = (nvec + threads - 1) / threads;
-	kmeans_assign_kernel<<<blocks, threads>>>(d_vectors, d_centroids, d_assignments, nvec, k, dim);
+	kmeans_assign_kernel<<<blocks, threads>>>(
+		d_vectors, d_centroids, d_assignments, nvec, k, dim);
 
 	/* Copy results back */
-	cudaMemcpy(h_assignments, d_assignments, nvec * sizeof(int32_t), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_assignments,
+		d_assignments,
+		nvec * sizeof(int32_t),
+		cudaMemcpyDeviceToHost);
 
 	/* Cleanup */
 	cudaFree(d_vectors);
@@ -202,12 +213,12 @@ gpu_kmeans_assign(const float *h_vectors,
  */
 extern "C" int
 gpu_kmeans_update(const float *h_vectors,
-                  const int32_t *h_assignments,
-                  float *h_centroids,
-                  int32_t *h_counts,
-                  int nvec,
-                  int k,
-                  int dim)
+	const int32_t *h_assignments,
+	float *h_centroids,
+	int32_t *h_counts,
+	int nvec,
+	int k,
+	int dim)
 {
 	float *d_vectors = NULL;
 	int32_t *d_assignments = NULL;
@@ -221,18 +232,34 @@ gpu_kmeans_update(const float *h_vectors,
 	cudaMalloc(&d_counts, k * sizeof(int32_t));
 
 	/* Copy data to device */
-	cudaMemcpy(d_vectors, h_vectors, nvec * dim * sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_assignments, h_assignments, nvec * sizeof(int32_t), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_counts, h_counts, k * sizeof(int32_t), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_vectors,
+		h_vectors,
+		nvec * dim * sizeof(float),
+		cudaMemcpyHostToDevice);
+	cudaMemcpy(d_assignments,
+		h_assignments,
+		nvec * sizeof(int32_t),
+		cudaMemcpyHostToDevice);
+	cudaMemcpy(d_counts,
+		h_counts,
+		k * sizeof(int32_t),
+		cudaMemcpyHostToDevice);
 
 	/* Launch kernel */
 	int threads = 256;
 	int shared_mem = dim * sizeof(float);
-	kmeans_update_kernel<<<k, threads, shared_mem>>>(d_vectors, d_assignments, d_centroids, d_counts, nvec, k, dim);
+	kmeans_update_kernel<<<k, threads, shared_mem>>>(
+		d_vectors, d_assignments, d_centroids, d_counts, nvec, k, dim);
 
 	/* Copy results back */
-	cudaMemcpy(h_centroids, d_centroids, k * dim * sizeof(float), cudaMemcpyDeviceToHost);
-	cudaMemcpy(h_counts, d_counts, k * sizeof(int32_t), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_centroids,
+		d_centroids,
+		k * dim * sizeof(float),
+		cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_counts,
+		d_counts,
+		k * sizeof(int32_t),
+		cudaMemcpyDeviceToHost);
 
 	/* Cleanup */
 	cudaFree(d_vectors);
@@ -242,4 +269,3 @@ gpu_kmeans_update(const float *h_vectors,
 
 	return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
-

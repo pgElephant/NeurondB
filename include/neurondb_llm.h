@@ -10,114 +10,114 @@
 #include "fmgr.h"
 
 /* GUCs */
-extern char *neurondb_llm_provider;      /* "huggingface" or "local" */
-extern char *neurondb_llm_model;         /* default model id */
-extern char *neurondb_llm_endpoint;      /* base URL */
-extern char *neurondb_llm_api_key;       /* token (via ALTER SYSTEM/env) */
-extern int   neurondb_llm_timeout_ms;    /* HTTP timeout */
-extern int   neurondb_llm_cache_ttl;     /* cache TTL seconds */
-extern int   neurondb_llm_rate_limiter_qps; /* QPS */
-extern bool  neurondb_llm_fail_open;     /* fail-open policy */
+extern char *neurondb_llm_provider; /* "huggingface" or "local" */
+extern char *neurondb_llm_model; /* default model id */
+extern char *neurondb_llm_endpoint; /* base URL */
+extern char *neurondb_llm_api_key; /* token (via ALTER SYSTEM/env) */
+extern int neurondb_llm_timeout_ms; /* HTTP timeout */
+extern int neurondb_llm_cache_ttl; /* cache TTL seconds */
+extern int neurondb_llm_rate_limiter_qps; /* QPS */
+extern bool neurondb_llm_fail_open; /* fail-open policy */
 
 typedef struct NdbLLMConfig
 {
-    const char *provider;
-    const char *endpoint;
-    const char *model;
-    const char *api_key;
-    int timeout_ms;
-    bool prefer_gpu;
-    bool require_gpu;
+	const char *provider;
+	const char *endpoint;
+	const char *model;
+	const char *api_key;
+	int timeout_ms;
+	bool prefer_gpu;
+	bool require_gpu;
 } NdbLLMConfig;
 
 typedef struct NdbLLMResp
 {
-    char *text;        /* generation */
-    char *json;        /* raw */
-    int tokens_in;
-    int tokens_out;
-    int http_status;
+	char *text; /* generation */
+	char *json; /* raw */
+	int tokens_in;
+	int tokens_out;
+	int http_status;
 } NdbLLMResp;
 
 typedef struct NdbLLMCallOptions
 {
-    const char *task;        /* "complete", "embed", "rerank" */
-    bool prefer_gpu;         /* caller would like GPU */
-    bool require_gpu;        /* hard fail if GPU not available */
-    bool fail_open;          /* mirror neurondb_llm_fail_open */
+	const char *task; /* "complete", "embed", "rerank" */
+	bool prefer_gpu; /* caller would like GPU */
+	bool require_gpu; /* hard fail if GPU not available */
+	bool fail_open; /* mirror neurondb_llm_fail_open */
 } NdbLLMCallOptions;
 
 typedef enum NdbLLMRouteStatus
 {
-    NDB_LLM_ROUTE_SUCCESS = 0,
-    NDB_LLM_ROUTE_ERROR = -1,
-    NDB_LLM_ROUTE_BACKEND_UNAVAILABLE = 1
+	NDB_LLM_ROUTE_SUCCESS = 0,
+	NDB_LLM_ROUTE_ERROR = -1,
+	NDB_LLM_ROUTE_BACKEND_UNAVAILABLE = 1
 } NdbLLMRouteStatus;
 
 /* Provider calls */
 int ndb_hf_complete(const NdbLLMConfig *cfg,
-                    const char *prompt,
-                    const char *params_json,
-                    NdbLLMResp *out);
+	const char *prompt,
+	const char *params_json,
+	NdbLLMResp *out);
 
 int ndb_hf_embed(const NdbLLMConfig *cfg,
-                 const char *text,
-                 float **vec_out,
-                 int *dim_out);
+	const char *text,
+	float **vec_out,
+	int *dim_out);
 
 int ndb_hf_rerank(const NdbLLMConfig *cfg,
-                  const char *query,
-                  const char **docs,
-                  int ndocs,
-                  float **scores_out);
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out);
 
 /* Batch operations */
 typedef struct NdbLLMBatchResp
 {
-	char **texts;			/* Generated texts */
-	int *tokens_in;			/* Input tokens per item */
-	int *tokens_out;		/* Output tokens per item */
-	int *http_status;		/* HTTP status per item */
-	int num_items;			/* Number of items */
-	int num_success;		/* Number of successful items */
+	char **texts; /* Generated texts */
+	int *tokens_in; /* Input tokens per item */
+	int *tokens_out; /* Output tokens per item */
+	int *http_status; /* HTTP status per item */
+	int num_items; /* Number of items */
+	int num_success; /* Number of successful items */
 } NdbLLMBatchResp;
 
 /* Provider router */
 int ndb_llm_route_complete(const NdbLLMConfig *cfg,
-                           const NdbLLMCallOptions *opts,
-                           const char *prompt,
-                           const char *params_json,
-                           NdbLLMResp *out);
+	const NdbLLMCallOptions *opts,
+	const char *prompt,
+	const char *params_json,
+	NdbLLMResp *out);
 
 int ndb_llm_route_embed(const NdbLLMConfig *cfg,
-                        const NdbLLMCallOptions *opts,
-                        const char *text,
-                        float **vec_out,
-                        int *dim_out);
+	const NdbLLMCallOptions *opts,
+	const char *text,
+	float **vec_out,
+	int *dim_out);
 
 int ndb_llm_route_rerank(const NdbLLMConfig *cfg,
-                         const NdbLLMCallOptions *opts,
-                         const char *query,
-                         const char **docs,
-                         int ndocs,
-                         float **scores_out);
+	const NdbLLMCallOptions *opts,
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out);
 
 /* Batch router */
 int ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
-				 const NdbLLMCallOptions *opts,
-				 const char **prompts,
-				 int num_prompts,
-				 const char *params_json,
-				 NdbLLMBatchResp *out);
+	const NdbLLMCallOptions *opts,
+	const char **prompts,
+	int num_prompts,
+	const char *params_json,
+	NdbLLMBatchResp *out);
 
 int ndb_llm_route_rerank_batch(const NdbLLMConfig *cfg,
-			       const NdbLLMCallOptions *opts,
-			       const char **queries,
-			       const char ***docs_array,
-			       int *ndocs_array,
-			       int num_queries,
-			       float ***scores_out,
-			       int **nscores_out);
+	const NdbLLMCallOptions *opts,
+	const char **queries,
+	const char ***docs_array,
+	int *ndocs_array,
+	int num_queries,
+	float ***scores_out,
+	int **nscores_out);
 
 /* SQL-callable */
 extern Datum ndb_llm_complete(PG_FUNCTION_ARGS);
@@ -133,18 +133,20 @@ Size neurondb_llm_shmem_size(void);
 void neurondb_llm_shmem_init(void);
 
 /* Cache functions (from llm_cache.c) */
-bool ndb_llm_cache_lookup(const char *key, int max_age_seconds, char **out_text);
+bool
+ndb_llm_cache_lookup(const char *key, int max_age_seconds, char **out_text);
 void ndb_llm_cache_store(const char *key, const char *text);
 
 /* Job functions (from llm_jobs.c) */
-int  ndb_llm_job_enqueue(const char *job_type, const char *payload);
+int ndb_llm_job_enqueue(const char *job_type, const char *payload);
 bool ndb_llm_job_acquire(int *job_id, char **job_type, char **payload);
-bool ndb_llm_job_update(int job_id, const char *status, const char *result, const char *error);
-int  ndb_llm_job_prune(int max_age_days);
-int  ndb_llm_job_count_status(const char *status);
-int  ndb_llm_job_retry_failed(int max_retries);
+bool ndb_llm_job_update(int job_id,
+	const char *status,
+	const char *result,
+	const char *error);
+int ndb_llm_job_prune(int max_age_days);
+int ndb_llm_job_count_status(const char *status);
+int ndb_llm_job_retry_failed(int max_retries);
 void ndb_llm_job_clear(void);
 
 #endif /* NEURONDB_LLM_H */
-
-

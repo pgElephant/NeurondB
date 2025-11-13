@@ -26,9 +26,9 @@
  */
 typedef struct VectorAggState
 {
-    int32   dim;
-    int64   count;
-    double *sum;        /* Running sum for each dimension */
+	int32 dim;
+	int64 count;
+	double *sum; /* Running sum for each dimension */
 } VectorAggState;
 
 /*
@@ -38,47 +38,48 @@ PG_FUNCTION_INFO_V1(vector_avg_transfn);
 Datum
 vector_avg_transfn(PG_FUNCTION_ARGS)
 {
-    MemoryContext   aggcontext;
-    VectorAggState *state;
-    Vector         *vec;
-    int             i;
+	MemoryContext aggcontext;
+	VectorAggState *state;
+	Vector *vec;
+	int i;
 
-    if (!AggCheckCallContext(fcinfo, &aggcontext))
-        ereport(ERROR,
-                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                 errmsg("vector_avg_transfn called in non-aggregate context")));
+	if (!AggCheckCallContext(fcinfo, &aggcontext))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("vector_avg_transfn called in "
+				       "non-aggregate context")));
 
-    vec = PG_GETARG_VECTOR_P(1);
+	vec = PG_GETARG_VECTOR_P(1);
 
-    if (PG_ARGISNULL(0))
-    {
-        /* First call - initialize state */
-        MemoryContext oldcontext = MemoryContextSwitchTo(aggcontext);
-        
-        state = (VectorAggState *) palloc0(sizeof(VectorAggState));
-        state->dim = vec->dim;
-        state->count = 0;
-        state->sum = (double *) palloc0(sizeof(double) * vec->dim);
-        
-        MemoryContextSwitchTo(oldcontext);
-    }
-    else
-    {
-        state = (VectorAggState *) PG_GETARG_POINTER(0);
-        
-        if (state->dim != vec->dim)
-            ereport(ERROR,
-                    (errcode(ERRCODE_DATA_EXCEPTION),
-                     errmsg("vector dimensions must be consistent")));
-    }
+	if (PG_ARGISNULL(0))
+	{
+		/* First call - initialize state */
+		MemoryContext oldcontext = MemoryContextSwitchTo(aggcontext);
 
-    /* Accumulate */
-    for (i = 0; i < vec->dim; i++)
-        state->sum[i] += vec->data[i];
-    
-    state->count++;
+		state = (VectorAggState *)palloc0(sizeof(VectorAggState));
+		state->dim = vec->dim;
+		state->count = 0;
+		state->sum = (double *)palloc0(sizeof(double) * vec->dim);
 
-    PG_RETURN_POINTER(state);
+		MemoryContextSwitchTo(oldcontext);
+	} else
+	{
+		state = (VectorAggState *)PG_GETARG_POINTER(0);
+
+		if (state->dim != vec->dim)
+			ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+					errmsg("vector dimensions must be "
+					       "consistent")));
+	}
+
+	/* Accumulate */
+	for (i = 0; i < vec->dim; i++)
+		state->sum[i] += vec->data[i];
+
+	state->count++;
+
+	PG_RETURN_POINTER(state);
 }
 
 /*
@@ -88,24 +89,24 @@ PG_FUNCTION_INFO_V1(vector_avg_finalfn);
 Datum
 vector_avg_finalfn(PG_FUNCTION_ARGS)
 {
-    VectorAggState *state;
-    Vector         *result;
-    int             i;
+	VectorAggState *state;
+	Vector *result;
+	int i;
 
-    if (PG_ARGISNULL(0))
-        PG_RETURN_NULL();
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
 
-    state = (VectorAggState *) PG_GETARG_POINTER(0);
+	state = (VectorAggState *)PG_GETARG_POINTER(0);
 
-    if (state->count == 0)
-        PG_RETURN_NULL();
+	if (state->count == 0)
+		PG_RETURN_NULL();
 
-    result = new_vector(state->dim);
-    
-    for (i = 0; i < state->dim; i++)
-        result->data[i] = state->sum[i] / state->count;
+	result = new_vector(state->dim);
 
-    PG_RETURN_VECTOR_P(result);
+	for (i = 0; i < state->dim; i++)
+		result->data[i] = state->sum[i] / state->count;
+
+	PG_RETURN_VECTOR_P(result);
 }
 
 /*
@@ -115,24 +116,24 @@ PG_FUNCTION_INFO_V1(vector_sum_finalfn);
 Datum
 vector_sum_finalfn(PG_FUNCTION_ARGS)
 {
-    VectorAggState *state;
-    Vector         *result;
-    int             i;
+	VectorAggState *state;
+	Vector *result;
+	int i;
 
-    if (PG_ARGISNULL(0))
-        PG_RETURN_NULL();
+	if (PG_ARGISNULL(0))
+		PG_RETURN_NULL();
 
-    state = (VectorAggState *) PG_GETARG_POINTER(0);
+	state = (VectorAggState *)PG_GETARG_POINTER(0);
 
-    if (state->count == 0)
-        PG_RETURN_NULL();
+	if (state->count == 0)
+		PG_RETURN_NULL();
 
-    result = new_vector(state->dim);
-    
-    for (i = 0; i < state->dim; i++)
-        result->data[i] = state->sum[i];
+	result = new_vector(state->dim);
 
-    PG_RETURN_VECTOR_P(result);
+	for (i = 0; i < state->dim; i++)
+		result->data[i] = state->sum[i];
+
+	PG_RETURN_VECTOR_P(result);
 }
 
 /*
@@ -142,6 +143,5 @@ PG_FUNCTION_INFO_V1(vector_centroid);
 Datum
 vector_centroid(PG_FUNCTION_ARGS)
 {
-    return vector_avg_finalfn(fcinfo);
+	return vector_avg_finalfn(fcinfo);
 }
-

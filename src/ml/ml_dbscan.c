@@ -26,13 +26,13 @@
 /* DBSCAN state */
 typedef struct
 {
-	float	  **data;
-	int			nvec;
-	int			dim;
-	double		eps;
-	int			min_pts;
-	int		   *labels;
-	int			next_cluster;
+	float **data;
+	int nvec;
+	int dim;
+	double eps;
+	int min_pts;
+	int *labels;
+	int next_cluster;
 } DBSCANState;
 
 /*
@@ -41,26 +41,28 @@ typedef struct
 static int *
 dbscan_region_query(const DBSCANState *state, int idx, int *neighbor_count)
 {
-	int		   *neighbors;
-	int			capacity;
-	int			count;
-	int			i;
+	int *neighbors;
+	int capacity;
+	int count;
+	int i;
 
 	capacity = 16;
-	neighbors = (int *) palloc(sizeof(int) * capacity);
+	neighbors = (int *)palloc(sizeof(int) * capacity);
 	count = 0;
 
 	for (i = 0; i < state->nvec; i++)
 	{
-		double		dist_sq;
+		double dist_sq;
 
-		dist_sq = neurondb_l2_distance_squared(state->data[idx], state->data[i], state->dim);
+		dist_sq = neurondb_l2_distance_squared(
+			state->data[idx], state->data[i], state->dim);
 		if (sqrt(dist_sq) <= state->eps)
 		{
 			if (count >= capacity)
 			{
 				capacity *= 2;
-				neighbors = (int *) repalloc(neighbors, sizeof(int) * capacity);
+				neighbors = (int *)repalloc(
+					neighbors, sizeof(int) * capacity);
 			}
 			neighbors[count++] = i;
 		}
@@ -74,17 +76,21 @@ dbscan_region_query(const DBSCANState *state, int idx, int *neighbor_count)
  * Helper: expand cluster
  */
 static void
-dbscan_expand_cluster(DBSCANState *state, int point_idx, int *neighbors, int neighbor_count, int cluster_id)
+dbscan_expand_cluster(DBSCANState *state,
+	int point_idx,
+	int *neighbors,
+	int neighbor_count,
+	int cluster_id)
 {
-	int		   *seeds;
-	int			seed_count;
-	int			seed_idx;
+	int *seeds;
+	int seed_count;
+	int seed_idx;
 
 	/* Assign cluster */
 	state->labels[point_idx] = cluster_id;
 
 	/* Copy neighbors to seed list */
-	seeds = (int *) palloc(sizeof(int) * neighbor_count);
+	seeds = (int *)palloc(sizeof(int) * neighbor_count);
 	memcpy(seeds, neighbors, sizeof(int) * neighbor_count);
 	seed_count = neighbor_count;
 	seed_idx = 0;
@@ -92,10 +98,10 @@ dbscan_expand_cluster(DBSCANState *state, int point_idx, int *neighbors, int nei
 	/* Process seeds */
 	while (seed_idx < seed_count)
 	{
-		int			current;
-		int		   *current_neighbors;
-		int			current_neighbor_count;
-		int			j;
+		int current;
+		int *current_neighbors;
+		int current_neighbor_count;
+		int j;
 
 		current = seeds[seed_idx];
 		seed_idx++;
@@ -115,20 +121,22 @@ dbscan_expand_cluster(DBSCANState *state, int point_idx, int *neighbors, int nei
 		state->labels[current] = cluster_id;
 
 		/* Find neighbors of current */
-		current_neighbors = dbscan_region_query(state, current, &current_neighbor_count);
+		current_neighbors = dbscan_region_query(
+			state, current, &current_neighbor_count);
 
 		/* If core point, add its neighbors to seeds */
 		if (current_neighbor_count >= state->min_pts)
 		{
 			for (j = 0; j < current_neighbor_count; j++)
 			{
-				int			neighbor;
+				int neighbor;
 
 				neighbor = current_neighbors[j];
 				if (state->labels[neighbor] == DBSCAN_UNDEFINED)
 				{
 					/* Add to seeds */
-					seeds = (int *) repalloc(seeds, sizeof(int) * (seed_count + 1));
+					seeds = (int *)repalloc(seeds,
+						sizeof(int) * (seed_count + 1));
 					seeds[seed_count++] = neighbor;
 				}
 			}
@@ -145,19 +153,19 @@ PG_FUNCTION_INFO_V1(cluster_dbscan);
 Datum
 cluster_dbscan(PG_FUNCTION_ARGS)
 {
-	text		*table_name;
-	text		*column_name;
-	double		eps;
-	int			min_pts;
-	char		*tbl_str;
-	char		*col_str;
-	DBSCANState	state;
-	int			i;
-	ArrayType	*out_array;
-	Datum		*out_datums;
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
+	text *table_name;
+	text *column_name;
+	double eps;
+	int min_pts;
+	char *tbl_str;
+	char *col_str;
+	DBSCANState state;
+	int i;
+	ArrayType *out_array;
+	Datum *out_datums;
+	int16 typlen;
+	bool typbyval;
+	char typalign;
 
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
@@ -166,37 +174,42 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 	if (PG_NARGS() >= 4)
 		min_pts = PG_GETARG_INT32(3);
 	else
-		min_pts = 5;  /* Default: 5 */
+		min_pts = 5; /* Default: 5 */
 
 	if (eps <= 0.0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("eps must be positive")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("eps must be positive")));
 
 	if (min_pts < 1)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("min_pts must be at least 1")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("min_pts must be at least 1")));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(column_name);
 
-	elog(DEBUG1, "neurondb: DBSCAN clustering on %s.%s (eps=%.4f, min_pts=%d)",
-		 tbl_str, col_str, eps, min_pts);
+	elog(DEBUG1,
+		"neurondb: DBSCAN clustering on %s.%s (eps=%.4f, min_pts=%d)",
+		tbl_str,
+		col_str,
+		eps,
+		min_pts);
 
 	/* Fetch vectors from table */
-	state.data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &state.nvec, &state.dim);
+	state.data = neurondb_fetch_vectors_from_table(
+		tbl_str, col_str, &state.nvec, &state.dim);
 	if (state.nvec == 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("No vectors found in table")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("No vectors found in table")));
 
 	state.eps = eps;
 	state.min_pts = min_pts;
 	state.next_cluster = 0;
 
 	/* Initialize all labels as undefined */
-	state.labels = (int *) palloc0(sizeof(int) * state.nvec);
+	state.labels = (int *)palloc0(sizeof(int) * state.nvec);
 	for (i = 0; i < state.nvec; i++)
 		state.labels[i] = DBSCAN_UNDEFINED;
 
@@ -218,28 +231,33 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 		{
 			/* Mark as noise */
 			state.labels[i] = DBSCAN_NOISE;
-		}
-		else
+		} else
 		{
 			/* Start new cluster */
-			dbscan_expand_cluster(&state, i, neighbors, neighbor_count, state.next_cluster);
+			dbscan_expand_cluster(&state,
+				i,
+				neighbors,
+				neighbor_count,
+				state.next_cluster);
 			state.next_cluster++;
 		}
 
 		pfree(neighbors);
 	}
 
-	elog(DEBUG1, "neurondb: DBSCAN found %d clusters (%d noise points)",
-		 state.next_cluster, state.nvec);
+	elog(DEBUG1,
+		"neurondb: DBSCAN found %d clusters (%d noise points)",
+		state.next_cluster,
+		state.nvec);
 
 	/* Build result array */
-	out_datums = (Datum *) palloc(sizeof(Datum) * state.nvec);
+	out_datums = (Datum *)palloc(sizeof(Datum) * state.nvec);
 	for (i = 0; i < state.nvec; i++)
 		out_datums[i] = Int32GetDatum(state.labels[i]);
 
 	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
-	out_array = construct_array(out_datums, state.nvec, INT4OID,
-								typlen, typbyval, typalign);
+	out_array = construct_array(
+		out_datums, state.nvec, INT4OID, typlen, typbyval, typalign);
 
 	/* Cleanup */
 	for (i = 0; i < state.nvec; i++)
@@ -252,4 +270,3 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(out_array);
 }
-

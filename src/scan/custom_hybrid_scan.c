@@ -42,29 +42,29 @@
  */
 typedef struct HybridScanState
 {
-	CustomScanState css;		/* Must be first */
-	
+	CustomScanState css; /* Must be first */
+
 	/* Query parameters */
-	Vector	   *queryVector;	/* Vector query */
-	char	   *ftsQuery;		/* FTS query string */
-	List	   *filters;		/* Metadata filters */
-	float4		vectorWeight;	/* Hybrid weight: 0..1 */
-	float4		ftsWeight;		/* 1 - vectorWeight */
-	int			k;				/* Target results */
-	
+	Vector *queryVector; /* Vector query */
+	char *ftsQuery; /* FTS query string */
+	List *filters; /* Metadata filters */
+	float4 vectorWeight; /* Hybrid weight: 0..1 */
+	float4 ftsWeight; /* 1 - vectorWeight */
+	int k; /* Target results */
+
 	/* Candidate management */
 	TupleTableSlot **candidates;
-	float4	   *scores;			/* Hybrid scores */
-	int			candidateCount;
-	int			currentPos;
-	
+	float4 *scores; /* Hybrid scores */
+	int candidateCount;
+	int currentPos;
+
 	/* Sub-scans */
 	IndexScanDesc vectorScan;
 	IndexScanDesc ftsScan;
 	TableScanDesc heapScan;
-	
-	bool		vectorDone;
-	bool		ftsDone;
+
+	bool vectorDone;
+	bool ftsDone;
 } HybridScanState;
 
 /*
@@ -72,14 +72,14 @@ typedef struct HybridScanState
  */
 typedef struct HybridScanPlan
 {
-	CustomScan	cscan;			/* Must be first */
-	
-	Oid			vectorIndexOid;
-	Oid			ftsIndexOid;
-	Oid			relationOid;
-	
-	float4		vectorWeight;
-	int			k;
+	CustomScan cscan; /* Must be first */
+
+	Oid vectorIndexOid;
+	Oid ftsIndexOid;
+	Oid relationOid;
+
+	float4 vectorWeight;
+	int k;
 } HybridScanPlan;
 
 /* CustomScan method declarations */
@@ -88,23 +88,22 @@ static void hybrid_begin(CustomScanState *node, EState *estate, int eflags);
 static TupleTableSlot *hybrid_exec(CustomScanState *node);
 static void hybrid_end(CustomScanState *node);
 static void hybrid_rescan(CustomScanState *node);
-static void hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es);
+static void
+hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es);
 
 /* Helper functions */
-static float4 compute_hybrid_score(float4 vectorDist, float4 ftsScore,
-								   float4 vectorWeight);
+static float4
+compute_hybrid_score(float4 vectorDist, float4 ftsScore, float4 vectorWeight);
 static void merge_candidates(HybridScanState *state);
 static int score_comparator(const void *a, const void *b);
 
 /* CustomScan methods table */
-static CustomExecMethods hybrid_exec_methods = {
-	.CustomName = "HybridScan",
+static CustomExecMethods hybrid_exec_methods = { .CustomName = "HybridScan",
 	.BeginCustomScan = hybrid_begin,
 	.ExecCustomScan = hybrid_exec,
 	.EndCustomScan = hybrid_end,
 	.ReScanCustomScan = hybrid_rescan,
-	.ExplainCustomScan = hybrid_explain
-};
+	.ExplainCustomScan = hybrid_explain };
 
 /*
  * Create a hybrid scan custom path
@@ -118,9 +117,9 @@ create_hybrid_scan_path(PG_FUNCTION_ARGS)
 {
 	/* This is called during planning to add hybrid path */
 	elog(NOTICE, "neurondb: Creating hybrid scan path");
-	
+
 	/* TODO: Integrate with planner hooks to add CustomPath */
-	
+
 	PG_RETURN_VOID();
 }
 
@@ -130,20 +129,20 @@ create_hybrid_scan_path(PG_FUNCTION_ARGS)
  * Note: this is only used for node factory registration and should not generate
  * an unused-function warning.
  */
-__attribute__((unused))
-static Node *
+__attribute__((unused)) static Node *
 hybrid_create_scan_state(CustomScan *cscan)
 {
 	HybridScanState *state;
 
-	state = (HybridScanState *) newNode(sizeof(HybridScanState), T_CustomScanState);
+	state = (HybridScanState *)newNode(
+		sizeof(HybridScanState), T_CustomScanState);
 	state->css.methods = &hybrid_exec_methods;
 	state->vectorDone = false;
 	state->ftsDone = false;
 	state->currentPos = 0;
 	state->candidateCount = 0;
 
-	return (Node *) state;
+	return (Node *)state;
 }
 
 /*
@@ -152,8 +151,8 @@ hybrid_create_scan_state(CustomScan *cscan)
 static void
 hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 {
-	HybridScanState *state = (HybridScanState *) node;
-	
+	HybridScanState *state = (HybridScanState *)node;
+
 	elog(DEBUG1, "neurondb: Beginning hybrid scan execution");
 
 	/* Extract parameters from plan */
@@ -164,8 +163,9 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 	state->k = 100;
 
 	/* Allocate candidate arrays */
-	state->candidates = (TupleTableSlot **) palloc(state->k * sizeof(TupleTableSlot *));
-	state->scores = (float4 *) palloc(state->k * sizeof(float4));
+	state->candidates =
+		(TupleTableSlot **)palloc(state->k * sizeof(TupleTableSlot *));
+	state->scores = (float4 *)palloc(state->k * sizeof(float4));
 
 	/* TODO: Open vector and FTS indexes */
 	/* state->vectorScan = index_beginscan(...); */
@@ -178,7 +178,7 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 static TupleTableSlot *
 hybrid_exec(CustomScanState *node)
 {
-	HybridScanState *state = (HybridScanState *) node;
+	HybridScanState *state = (HybridScanState *)node;
 	TupleTableSlot *slot = node->ss.ss_ScanTupleSlot;
 
 	/* On first call, gather all candidates */
@@ -224,7 +224,7 @@ hybrid_exec(CustomScanState *node)
 static void
 hybrid_end(CustomScanState *node)
 {
-	HybridScanState *state = (HybridScanState *) node;
+	HybridScanState *state = (HybridScanState *)node;
 
 	elog(DEBUG1, "neurondb: Ending hybrid scan");
 
@@ -245,7 +245,7 @@ hybrid_end(CustomScanState *node)
 static void
 hybrid_rescan(CustomScanState *node)
 {
-	HybridScanState *state = (HybridScanState *) node;
+	HybridScanState *state = (HybridScanState *)node;
 
 	state->currentPos = 0;
 	state->candidateCount = 0;
@@ -263,7 +263,7 @@ hybrid_rescan(CustomScanState *node)
 static void
 hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 {
-	HybridScanState *state = (HybridScanState *) node;
+	HybridScanState *state = (HybridScanState *)node;
 
 #if PG_VERSION_NUM >= 180000
 	/* PG18 removed ExplainProperty* functions - use appendStringInfo instead */
@@ -272,9 +272,11 @@ hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 		appendStringInfoSpaces(es->str, es->indent * 2);
 		appendStringInfo(es->str, "Hybrid Scan Type: Vector+FTS\n");
 		appendStringInfoSpaces(es->str, es->indent * 2);
-		appendStringInfo(es->str, "Vector Weight: %.2f\n", state->vectorWeight);
+		appendStringInfo(
+			es->str, "Vector Weight: %.2f\n", state->vectorWeight);
 		appendStringInfoSpaces(es->str, es->indent * 2);
-		appendStringInfo(es->str, "FTS Weight: %.2f\n", state->ftsWeight);
+		appendStringInfo(
+			es->str, "FTS Weight: %.2f\n", state->ftsWeight);
 		appendStringInfoSpaces(es->str, es->indent * 2);
 		appendStringInfo(es->str, "Target Results: %d\n", state->k);
 	}
@@ -291,19 +293,18 @@ hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es)
  *
  * Mark as maybe unused so no warning if only used in template or ahead-of-time.
  */
-__attribute__((unused))
-static float4
-compute_hybrid_score(float4 vectorDist, float4 ftsScore,
-						   float4 vectorWeight)
+__attribute__((unused)) static float4
+compute_hybrid_score(float4 vectorDist, float4 ftsScore, float4 vectorWeight)
 {
-	float4		vectorScore;
-	float4		hybridScore;
+	float4 vectorScore;
+	float4 hybridScore;
 
 	/* Normalize vector distance to score (0..1, higher is better) */
 	vectorScore = 1.0 / (1.0 + vectorDist);
 
 	/* Weighted combination */
-	hybridScore = vectorWeight * vectorScore + (1.0 - vectorWeight) * ftsScore;
+	hybridScore =
+		vectorWeight * vectorScore + (1.0 - vectorWeight) * ftsScore;
 
 	return hybridScore;
 }
@@ -313,16 +314,15 @@ compute_hybrid_score(float4 vectorDist, float4 ftsScore,
  *
  * Mark as maybe unused to suppress warning.
  */
-__attribute__((unused))
-static void
+__attribute__((unused)) static void
 merge_candidates(HybridScanState *state)
 {
 	/* Remove duplicates */
 	/* Recompute scores with hybrid formula */
 	/* Sort by final score */
-	
+
 	/* TODO: Implement deduplication and sorting */
-	
+
 	elog(DEBUG1, "neurondb: Merged %d candidates", state->candidateCount);
 }
 
@@ -331,12 +331,11 @@ merge_candidates(HybridScanState *state)
  *
  * Mark as maybe unused to suppress warning.
  */
-__attribute__((unused))
-static int
+__attribute__((unused)) static int
 score_comparator(const void *a, const void *b)
 {
-	float4 score_a = *((float4 *) a);
-	float4 score_b = *((float4 *) b);
+	float4 score_a = *((float4 *)a);
+	float4 score_b = *((float4 *)b);
 
 	if (score_a > score_b)
 		return -1;

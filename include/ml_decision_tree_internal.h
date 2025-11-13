@@ -19,12 +19,12 @@
 /* Tree node structure */
 typedef struct DTNode
 {
-	bool		is_leaf;
-	double		leaf_value;			/* For leaves: class (classification) or value (regression) */
-	int			feature_idx;		/* For internal nodes: feature to split on */
-	float		threshold;			/* For internal nodes: split threshold */
-	struct DTNode *left;			/* Samples <= threshold */
-	struct DTNode *right;			/* Samples > threshold */
+	bool is_leaf;
+	double leaf_value; /* For leaves: class (classification) or value (regression) */
+	int feature_idx; /* For internal nodes: feature to split on */
+	float threshold; /* For internal nodes: split threshold */
+	struct DTNode *left; /* Samples <= threshold */
+	struct DTNode *right; /* Samples > threshold */
 } DTNode;
 
 /* Decision Tree model structure */
@@ -39,5 +39,3 @@ typedef struct DTModel
 } DTModel;
 
 #endif /* ML_DECISION_TREE_INTERNAL_H */
-
-

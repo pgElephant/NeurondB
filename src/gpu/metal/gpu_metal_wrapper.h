@@ -27,18 +27,24 @@ extern const char *metal_backend_device_name(void);
 
 /* Metal GPU distance operations - ACTUAL GPU ACCELERATION */
 extern float metal_backend_l2_distance(const float *a, const float *b, int dim);
-extern float metal_backend_cosine_distance(const float *a, const float *b, int dim);
-extern float metal_backend_inner_product(const float *a, const float *b, int dim);
+extern float
+metal_backend_cosine_distance(const float *a, const float *b, int dim);
+extern float
+metal_backend_inner_product(const float *a, const float *b, int dim);
 
 /* Metal GPU batch operations - PARALLEL GPU EXECUTION */
-extern void metal_backend_batch_l2(const float *queries, const float *targets,
-								   int num_queries, int num_targets, int dim,
-								   float *distances);
+extern void metal_backend_batch_l2(const float *queries,
+	const float *targets,
+	int num_queries,
+	int num_targets,
+	int dim,
+	float *distances);
 
 /* Metal device information */
-extern void metal_backend_device_info(char *name, size_t name_len,
-									  uint64_t *total_memory,
-									  uint64_t *free_memory);
+extern void metal_backend_device_info(char *name,
+	size_t name_len,
+	uint64_t *total_memory,
+	uint64_t *free_memory);
 
 /* Metal GPU statistics */
 extern uint64_t metal_backend_get_operations_count(void);

@@ -40,34 +40,39 @@ FROM hf_rerank_test,
 		ARRAY[document],
 		'all-MiniLM-L6-v2',
 		5
-	) AS t(idx integer, score real)
+	) AS t
 ORDER BY score DESC;
 
 -- Test batch reranking
 \echo ''
 \echo 'Test 2: Batch reranking with multiple queries'
+WITH all_docs AS (
+	SELECT array_agg(document ORDER BY doc_id) AS doc_array
+	FROM hf_rerank_test
+),
+query_list AS (
+	SELECT ARRAY[
+		'database systems',
+		'machine learning',
+		'vector storage'
+	] AS queries
+)
 SELECT 
-	query,
-	doc_id,
-	LEFT(document, 50) AS doc_preview,
+	query_idx + 1 AS query_num,
+	doc_idx + 1 AS doc_num,
 	ROUND(score::numeric, 4) AS relevance_score
-FROM (
-	VALUES 
-		('database systems'),
-		('machine learning'),
-		('vector storage')
-) AS queries(query),
-	LATERAL (
-		SELECT doc_id, document
-		FROM hf_rerank_test
-	) AS docs,
+FROM query_list,
 	LATERAL ndb_llm_rerank_batch(
-		ARRAY[query],
-		ARRAY[ARRAY[document]],
+		queries,
+		ARRAY[
+			(SELECT doc_array FROM all_docs),
+			(SELECT doc_array FROM all_docs),
+			(SELECT doc_array FROM all_docs)
+		],
 		'all-MiniLM-L6-v2',
 		3
-	) AS t(idx integer, score real)
-ORDER BY query, score DESC;
+	) AS t
+ORDER BY query_idx, score DESC;
 
 -- Test top-k retrieval
 \echo ''
@@ -83,7 +88,7 @@ WITH ranked AS (
 			ARRAY[document],
 			'all-MiniLM-L6-v2',
 			3
-		) AS t(idx integer, score real)
+		) AS t
 	ORDER BY score DESC
 	LIMIT 3
 )

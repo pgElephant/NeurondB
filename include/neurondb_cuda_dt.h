@@ -28,12 +28,12 @@ struct DTModel;
 /* CUDA-specific Decision Tree node structure */
 typedef struct NdbCudaDtNode
 {
-	int		feature_idx;
-	float	threshold;
-	int		left_child;
-	int		right_child;
-	float	value;
-	bool	is_leaf;
+	int feature_idx;
+	float threshold;
+	int left_child;
+	int right_child;
+	float value;
+	bool is_leaf;
 } NdbCudaDtNode;
 
 /* CUDA-specific Decision Tree model header */
@@ -75,4 +75,3 @@ extern int ndb_cuda_dt_predict(const bytea *model_data,
 #endif
 
 #endif /* NEURONDB_CUDA_DT_H */
-

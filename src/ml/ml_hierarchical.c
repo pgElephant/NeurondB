@@ -53,10 +53,10 @@
  */
 typedef struct ClusterNode
 {
-	int		id;				/* Cluster ID */
-	int		*members;		/* Point indices in this cluster */
-	int		size;			/* Number of points */
-	double	*centroid;		/* Cluster centroid */
+	int id; /* Cluster ID */
+	int *members; /* Point indices in this cluster */
+	int size; /* Number of points */
+	double *centroid; /* Cluster centroid */
 } ClusterNode;
 
 /*
@@ -80,7 +80,11 @@ euclidean_dist(const float *a, const float *b, int dim)
  * Compute centroid of a cluster
  */
 static void
-compute_centroid(float **data, int *members, int size, int dim, double *centroid)
+compute_centroid(float **data,
+	int *members,
+	int size,
+	int dim,
+	double *centroid)
 {
 	int i, d;
 
@@ -99,14 +103,19 @@ compute_centroid(float **data, int *members, int size, int dim, double *centroid
  * Compute distance between two clusters (average linkage)
  */
 static double
-cluster_distance_average(float **data, ClusterNode *c1, ClusterNode *c2, int dim)
+cluster_distance_average(float **data,
+	ClusterNode *c1,
+	ClusterNode *c2,
+	int dim)
 {
 	double sum = 0.0;
 	int i, j;
 
 	for (i = 0; i < c1->size; i++)
 		for (j = 0; j < c2->size; j++)
-			sum += euclidean_dist(data[c1->members[i]], data[c2->members[j]], dim);
+			sum += euclidean_dist(data[c1->members[i]],
+				data[c2->members[j]],
+				dim);
 
 	return sum / (c1->size * c2->size);
 }
@@ -115,7 +124,10 @@ cluster_distance_average(float **data, ClusterNode *c1, ClusterNode *c2, int dim
  * Compute distance between two clusters (complete linkage)
  */
 static double
-cluster_distance_complete(float **data, ClusterNode *c1, ClusterNode *c2, int dim)
+cluster_distance_complete(float **data,
+	ClusterNode *c1,
+	ClusterNode *c2,
+	int dim)
 {
 	double max_dist = 0.0;
 	int i, j;
@@ -124,8 +136,9 @@ cluster_distance_complete(float **data, ClusterNode *c1, ClusterNode *c2, int di
 	{
 		for (j = 0; j < c2->size; j++)
 		{
-			double dist = euclidean_dist(data[c1->members[i]], 
-										data[c2->members[j]], dim);
+			double dist = euclidean_dist(data[c1->members[i]],
+				data[c2->members[j]],
+				dim);
 			if (dist > max_dist)
 				max_dist = dist;
 		}
@@ -147,8 +160,9 @@ cluster_distance_single(float **data, ClusterNode *c1, ClusterNode *c2, int dim)
 	{
 		for (j = 0; j < c2->size; j++)
 		{
-			double dist = euclidean_dist(data[c1->members[i]], 
-										data[c2->members[j]], dim);
+			double dist = euclidean_dist(data[c1->members[i]],
+				data[c2->members[j]],
+				dim);
 			if (dist < min_dist)
 				min_dist = dist;
 		}
@@ -226,49 +240,58 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
 	num_clusters = PG_GETARG_INT32(2);
-	linkage_text = PG_ARGISNULL(3) ? cstring_to_text("average") : PG_GETARG_TEXT_PP(3);
+	linkage_text = PG_ARGISNULL(3) ? cstring_to_text("average")
+				       : PG_GETARG_TEXT_PP(3);
 
 	if (num_clusters < 1)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("num_clusters must be at least 1")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_clusters must be at least 1")));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_column);
 	linkage = text_to_cstring(linkage_text);
 
 	/* Validate linkage method */
-	if (strcmp(linkage, "average") != 0 && 
-		strcmp(linkage, "complete") != 0 && 
-		strcmp(linkage, "single") != 0)
+	if (strcmp(linkage, "average") != 0 && strcmp(linkage, "complete") != 0
+		&& strcmp(linkage, "single") != 0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Linkage must be 'average', 'complete', or 'single'")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Linkage must be 'average', 'complete', "
+				       "or 'single'")));
 
-	elog(DEBUG1, "neurondb: Hierarchical clustering (k=%d, linkage=%s)", 
-		 num_clusters, linkage);
+	elog(DEBUG1,
+		"neurondb: Hierarchical clustering (k=%d, linkage=%s)",
+		num_clusters,
+		linkage);
 
 	/* Fetch data */
 	data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
 
 	if (nvec < num_clusters)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Not enough vectors (%d) for %d clusters", nvec, num_clusters)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Not enough vectors (%d) for %d "
+				       "clusters",
+					nvec,
+					num_clusters)));
 
 	if (nvec > 5000)
-		elog(WARNING, "Hierarchical clustering on %d points may be slow. Consider K-means.", nvec);
+		elog(WARNING,
+			"Hierarchical clustering on %d points may be slow. "
+			"Consider K-means.",
+			nvec);
 
 	/* Initialize: each point is its own cluster */
-	clusters = (ClusterNode *) palloc(sizeof(ClusterNode) * nvec);
+	clusters = (ClusterNode *)palloc(sizeof(ClusterNode) * nvec);
 	for (i = 0; i < nvec; i++)
 	{
 		clusters[i].id = i;
 		clusters[i].size = 1;
-		clusters[i].members = (int *) palloc(sizeof(int));
+		clusters[i].members = (int *)palloc(sizeof(int));
 		clusters[i].members[0] = i;
-		clusters[i].centroid = (double *) palloc(sizeof(double) * dim);
-		
+		clusters[i].centroid = (double *)palloc(sizeof(double) * dim);
+
 		for (d = 0; d < dim; d++)
 			clusters[i].centroid[d] = (double)data[i][d];
 	}
@@ -285,7 +308,7 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 		for (i = 0; i < nvec; i++)
 		{
 			double dist;
-			
+
 			if (clusters[i].size == 0)
 				continue;
 
@@ -296,11 +319,20 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 
 				/* Compute distance based on linkage */
 				if (strcmp(linkage, "average") == 0)
-					dist = cluster_distance_average(data, &clusters[i], &clusters[j], dim);
+					dist = cluster_distance_average(data,
+						&clusters[i],
+						&clusters[j],
+						dim);
 				else if (strcmp(linkage, "complete") == 0)
-					dist = cluster_distance_complete(data, &clusters[i], &clusters[j], dim);
+					dist = cluster_distance_complete(data,
+						&clusters[i],
+						&clusters[j],
+						dim);
 				else /* single */
-					dist = cluster_distance_single(data, &clusters[i], &clusters[j], dim);
+					dist = cluster_distance_single(data,
+						&clusters[i],
+						&clusters[j],
+						dim);
 
 				if (dist < min_dist)
 				{
@@ -316,23 +348,28 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 
 		/* Merge clusters j into i */
 		{
-			int new_size = clusters[merge_i].size + clusters[merge_j].size;
-			int *new_members = (int *) palloc(sizeof(int) * new_size);
+			int new_size =
+				clusters[merge_i].size + clusters[merge_j].size;
+			int *new_members =
+				(int *)palloc(sizeof(int) * new_size);
 
 			/* Copy members from both clusters */
 			for (k = 0; k < clusters[merge_i].size; k++)
 				new_members[k] = clusters[merge_i].members[k];
 			for (k = 0; k < clusters[merge_j].size; k++)
-				new_members[clusters[merge_i].size + k] = clusters[merge_j].members[k];
+				new_members[clusters[merge_i].size + k] =
+					clusters[merge_j].members[k];
 
 			pfree(clusters[merge_i].members);
 			clusters[merge_i].members = new_members;
 			clusters[merge_i].size = new_size;
 
 			/* Recompute centroid */
-			compute_centroid(data, clusters[merge_i].members, 
-							clusters[merge_i].size, dim, 
-							clusters[merge_i].centroid);
+			compute_centroid(data,
+				clusters[merge_i].members,
+				clusters[merge_i].size,
+				dim,
+				clusters[merge_i].centroid);
 
 			/* Mark j as inactive */
 			pfree(clusters[merge_j].members);
@@ -345,12 +382,15 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 		}
 
 		if ((iter + 1) % 100 == 0)
-			elog(DEBUG2, "neurondb: Hierarchical merge iteration %d (%d clusters remain)", 
-				 iter + 1, n_active_clusters);
+			elog(DEBUG2,
+				"neurondb: Hierarchical merge iteration %d (%d "
+				"clusters remain)",
+				iter + 1,
+				n_active_clusters);
 	}
 
 	/* Assign final cluster labels */
-	cluster_assignments = (int *) palloc(sizeof(int) * nvec);
+	cluster_assignments = (int *)palloc(sizeof(int) * nvec);
 	{
 		int cluster_id = 1;
 		for (i = 0; i < nvec; i++)
@@ -358,19 +398,22 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 			if (clusters[i].size > 0)
 			{
 				for (k = 0; k < clusters[i].size; k++)
-					cluster_assignments[clusters[i].members[k]] = cluster_id;
+					cluster_assignments
+						[clusters[i].members[k]] =
+							cluster_id;
 				cluster_id++;
 			}
 		}
 	}
 
 	/* Build result array */
-	result_datums = (Datum *) palloc(sizeof(Datum) * nvec);
+	result_datums = (Datum *)palloc(sizeof(Datum) * nvec);
 	for (i = 0; i < nvec; i++)
 		result_datums[i] = Int32GetDatum(cluster_assignments[i]);
 
 	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
-	result = construct_array(result_datums, nvec, INT4OID, typlen, typbyval, typalign);
+	result = construct_array(
+		result_datums, nvec, INT4OID, typlen, typbyval, typalign);
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
@@ -392,4 +435,3 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
-

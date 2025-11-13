@@ -46,4 +46,3 @@ extern int ndb_gpu_svm_pack_model(const struct SVMModel *model,
 	char **errstr);
 
 #endif /* NEURONDB_ML_GPU_SVM_H */
-

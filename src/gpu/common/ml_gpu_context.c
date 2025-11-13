@@ -35,8 +35,11 @@ ml_gpu_context_acquire(const char *tag)
 	const char *tagname;
 
 	parent = CurrentMemoryContext;
-	tagname = (tag != NULL && tag[0] != '\0') ? tag : ml_gpu_context_default_tag();
-	local = AllocSetContextCreate(parent, "ML GPU context", ALLOCSET_SMALL_SIZES);
+	tagname = (tag != NULL && tag[0] != '\0')
+		? tag
+		: ml_gpu_context_default_tag();
+	local = AllocSetContextCreate(
+		parent, "ML GPU context", ALLOCSET_SMALL_SIZES);
 
 	ctx = NULL;
 
@@ -46,7 +49,7 @@ ml_gpu_context_acquire(const char *tag)
 
 		oldcx = MemoryContextSwitchTo(local);
 
-		ctx = (MLGpuContext *) palloc0(sizeof(MLGpuContext));
+		ctx = (MLGpuContext *)palloc0(sizeof(MLGpuContext));
 		ctx->memcxt = local;
 		ctx->backend = GPU_BACKEND_NONE;
 		ctx->device_id = -1;
@@ -125,5 +128,3 @@ ml_gpu_context_tag(const MLGpuContext *ctx)
 		return ml_gpu_context_default_tag();
 	return ctx->tag;
 }
-
-

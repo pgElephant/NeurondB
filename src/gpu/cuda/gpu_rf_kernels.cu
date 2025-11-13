@@ -92,8 +92,8 @@ ndb_cuda_rf_histogram(const int *labels,
 	int threads = 256;
 	int blocks;
 
-	if (labels == NULL || counts_out == NULL
-		|| n_samples <= 0 || class_count <= 0)
+	if (labels == NULL || counts_out == NULL || n_samples <= 0
+		|| class_count <= 0)
 		return -1;
 
 	label_bytes = sizeof(int) * n_samples;
@@ -106,10 +106,8 @@ ndb_cuda_rf_histogram(const int *labels,
 	if (status != cudaSuccess)
 		goto error;
 
-	status = cudaMemcpy(d_labels,
-			labels,
-			label_bytes,
-			cudaMemcpyHostToDevice);
+	status = cudaMemcpy(
+		d_labels, labels, label_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto error;
 	status = cudaMemset(d_counts, 0, count_bytes);
@@ -129,10 +127,8 @@ ndb_cuda_rf_histogram(const int *labels,
 	if (status != cudaSuccess)
 		goto error;
 
-	status = cudaMemcpy(counts_out,
-			d_counts,
-			count_bytes,
-			cudaMemcpyDeviceToHost);
+	status = cudaMemcpy(
+		counts_out, d_counts, count_bytes, cudaMemcpyDeviceToHost);
 	if (status != cudaSuccess)
 		goto error;
 
@@ -209,8 +205,8 @@ ndb_cuda_rf_launch_feature_stats(const float *features,
 	cudaError_t status;
 
 	if (features == NULL || sum_dev == NULL || sumsq_dev == NULL
-		|| n_samples <= 0 || feature_dim <= 0
-		|| feature_idx < 0 || feature_idx >= feature_dim)
+		|| n_samples <= 0 || feature_dim <= 0 || feature_idx < 0
+		|| feature_idx >= feature_dim)
 		return -1;
 
 	status = cudaMemset(sum_dev, 0, sizeof(double));
@@ -258,8 +254,8 @@ ndb_cuda_rf_launch_split_counts(const float *features,
 
 	if (features == NULL || labels == NULL || left_counts_dev == NULL
 		|| right_counts_dev == NULL || n_samples <= 0
-		|| feature_dim <= 0 || class_count <= 0
-		|| feature_idx < 0 || feature_idx >= feature_dim)
+		|| feature_dim <= 0 || class_count <= 0 || feature_idx < 0
+		|| feature_idx >= feature_dim)
 		return -1;
 
 	status = cudaMemset(left_counts_dev, 0, sizeof(int) * class_count);
@@ -319,12 +315,12 @@ ndb_cuda_rf_infer(const NdbCudaRfNode *nodes,
 	for (i = 0; i < tree_count; i++)
 		total_nodes += trees[i].node_count;
 
-	status = cudaMalloc((void **)&d_nodes,
-			sizeof(NdbCudaRfNode) * total_nodes);
+	status = cudaMalloc(
+		(void **)&d_nodes, sizeof(NdbCudaRfNode) * total_nodes);
 	if (status != cudaSuccess)
 		goto error;
-	status = cudaMalloc((void **)&d_trees,
-			sizeof(NdbCudaRfTreeHeader) * tree_count);
+	status = cudaMalloc(
+		(void **)&d_trees, sizeof(NdbCudaRfTreeHeader) * tree_count);
 	if (status != cudaSuccess)
 		goto error;
 	status = cudaMalloc((void **)&d_input, sizeof(float) * feature_dim);
@@ -335,21 +331,21 @@ ndb_cuda_rf_infer(const NdbCudaRfNode *nodes,
 		goto error;
 
 	status = cudaMemcpy(d_nodes,
-			nodes,
-			sizeof(NdbCudaRfNode) * total_nodes,
-			cudaMemcpyHostToDevice);
+		nodes,
+		sizeof(NdbCudaRfNode) * total_nodes,
+		cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto error;
 	status = cudaMemcpy(d_trees,
-			trees,
-			sizeof(NdbCudaRfTreeHeader) * tree_count,
-			cudaMemcpyHostToDevice);
+		trees,
+		sizeof(NdbCudaRfTreeHeader) * tree_count,
+		cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto error;
 	status = cudaMemcpy(d_input,
-			input,
-			sizeof(float) * feature_dim,
-			cudaMemcpyHostToDevice);
+		input,
+		sizeof(float) * feature_dim,
+		cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 		goto error;
 	status = cudaMemset(d_votes, 0, sizeof(int) * class_count);
@@ -375,9 +371,9 @@ ndb_cuda_rf_infer(const NdbCudaRfNode *nodes,
 		goto error;
 
 	status = cudaMemcpy(votes,
-			d_votes,
-			sizeof(int) * class_count,
-			cudaMemcpyDeviceToHost);
+		d_votes,
+		sizeof(int) * class_count,
+		cudaMemcpyDeviceToHost);
 	if (status != cudaSuccess)
 		goto error;
 
@@ -398,4 +394,3 @@ error:
 		cudaFree(d_votes);
 	return -1;
 }
-

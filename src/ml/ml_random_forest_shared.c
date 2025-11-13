@@ -126,7 +126,7 @@ rf_split_gini(const int *left_counts,
 			purity += p * p;
 		}
 		gini += ((double)left_total
-			    / (double)(left_total + right_total))
+				/ (double)(left_total + right_total))
 			* (1.0 - purity);
 	}
 
@@ -143,7 +143,7 @@ rf_split_gini(const int *left_counts,
 			purity += p * p;
 		}
 		gini += ((double)right_total
-			    / (double)(left_total + right_total))
+				/ (double)(left_total + right_total))
 			* (1.0 - purity);
 	}
 
@@ -160,9 +160,7 @@ rf_split_gini(const int *left_counts,
 }
 
 void
-rf_tree_iterate_nodes(const GTree *tree,
-	rf_node_iter_fn iter,
-	void *arg)
+rf_tree_iterate_nodes(const GTree *tree, rf_node_iter_fn iter, void *arg)
 {
 	const GTreeNode *nodes;
 	int i;
@@ -193,9 +191,7 @@ rf_build_metrics_json(const RFMetricsSpec *spec)
 
 	if (spec->storage != NULL)
 	{
-		appendStringInfo(&buf,
-			"\"storage\":\"%s\"",
-			spec->storage);
+		appendStringInfo(&buf, "\"storage\":\"%s\"", spec->storage);
 		first = false;
 	}
 
@@ -237,10 +233,8 @@ rf_build_metrics_json(const RFMetricsSpec *spec)
 
 	if (spec->gini >= 0.0)
 	{
-		appendStringInfo(&buf,
-			"%s\"gini\":%.6f",
-			first ? "" : ",",
-			spec->gini);
+		appendStringInfo(
+			&buf, "%s\"gini\":%.6f", first ? "" : ",", spec->gini);
 		first = false;
 	}
 
@@ -261,5 +255,3 @@ rf_build_metrics_json(const RFMetricsSpec *spec)
 
 	return result;
 }
-
-

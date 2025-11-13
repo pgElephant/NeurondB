@@ -72,9 +72,11 @@ double_compare(const void *a, const void *b)
 {
 	double da = *(const double *)a;
 	double db = *(const double *)b;
-	
-	if (da < db) return -1;
-	if (da > db) return 1;
+
+	if (da < db)
+		return -1;
+	if (da > db)
+		return 1;
 	return 0;
 }
 
@@ -144,43 +146,51 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
 	threshold = PG_ARGISNULL(2) ? 3.0 : PG_GETARG_FLOAT8(2);
-	method_text = PG_ARGISNULL(3) ? cstring_to_text("zscore") : PG_GETARG_TEXT_PP(3);
+	method_text = PG_ARGISNULL(3) ? cstring_to_text("zscore")
+				      : PG_GETARG_TEXT_PP(3);
 
 	if (threshold < 0.0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("threshold must be non-negative")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("threshold must be non-negative")));
 
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
 	method = text_to_cstring(method_text);
 
-	elog(DEBUG1, "neurondb: Outlier detection on %s.%s (method=%s, threshold=%.2f)",
-		 tbl_str, vec_col_str, method, threshold);
+	elog(DEBUG1,
+		"neurondb: Outlier detection on %s.%s (method=%s, "
+		"threshold=%.2f)",
+		tbl_str,
+		vec_col_str,
+		method,
+		threshold);
 
 	/* Fetch vectors */
-	vectors = neurondb_fetch_vectors_from_table(tbl_str, vec_col_str, &nvec, &dim);
+	vectors = neurondb_fetch_vectors_from_table(
+		tbl_str, vec_col_str, &nvec, &dim);
 	if (nvec < 2)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Need at least 2 vectors for outlier detection")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("Need at least 2 vectors for outlier "
+				       "detection")));
 
 	/* Compute centroid (mean vector) */
-	mean = (double *) palloc0(sizeof(double) * dim);
+	mean = (double *)palloc0(sizeof(double) * dim);
 	for (i = 0; i < nvec; i++)
 		for (d = 0; d < dim; d++)
 			mean[d] += (double)vectors[i][d];
-	
+
 	for (d = 0; d < dim; d++)
 		mean[d] /= nvec;
 
 	/* Compute distances from mean */
-	distances = (double *) palloc(sizeof(double) * nvec);
+	distances = (double *)palloc(sizeof(double) * nvec);
 	for (i = 0; i < nvec; i++)
 		distances[i] = distance_from_mean(vectors[i], mean, dim);
 
 	/* Allocate outlier flags */
-	outliers = (bool *) palloc0(sizeof(bool) * nvec);
+	outliers = (bool *)palloc0(sizeof(bool) * nvec);
 
 	/* Apply detection method */
 	if (strcmp(method, "zscore") == 0)
@@ -205,68 +215,79 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 		if (std_dist < 1e-10)
 		{
 			/* All points identical - no outliers */
-			elog(DEBUG1, "neurondb: All vectors identical, no outliers detected");
-		}
-		else
+			elog(DEBUG1,
+				"neurondb: All vectors identical, no outliers "
+				"detected");
+		} else
 		{
 			/* Flag outliers: distance > mean + threshold * std */
-			double outlier_threshold = mean_dist + threshold * std_dist;
-			
+			double outlier_threshold =
+				mean_dist + threshold * std_dist;
+
 			for (i = 0; i < nvec; i++)
-				outliers[i] = (distances[i] > outlier_threshold);
+				outliers[i] =
+					(distances[i] > outlier_threshold);
 		}
-	}
-	else if (strcmp(method, "modified_zscore") == 0 || strcmp(method, "robust") == 0)
+	} else if (strcmp(method, "modified_zscore") == 0
+		|| strcmp(method, "robust") == 0)
 	{
 		/* Modified Z-score using median and MAD (more robust) */
 		double median_dist;
-		double mad;  /* Median Absolute Deviation */
+		double mad; /* Median Absolute Deviation */
 		double *sorted_distances;
 		double *abs_deviations;
 		int num_outliers;
 
 		/* Compute median distance */
-		sorted_distances = (double *) palloc(sizeof(double) * nvec);
+		sorted_distances = (double *)palloc(sizeof(double) * nvec);
 		memcpy(sorted_distances, distances, sizeof(double) * nvec);
 		qsort(sorted_distances, nvec, sizeof(double), double_compare);
-		
-		median_dist = (nvec % 2 == 0) ?
-			(sorted_distances[nvec/2 - 1] + sorted_distances[nvec/2]) / 2.0 :
-			sorted_distances[nvec/2];
+
+		median_dist = (nvec % 2 == 0)
+			? (sorted_distances[nvec / 2 - 1]
+				  + sorted_distances[nvec / 2])
+				/ 2.0
+			: sorted_distances[nvec / 2];
 
 		/* Compute MAD */
-		abs_deviations = (double *) palloc(sizeof(double) * nvec);
+		abs_deviations = (double *)palloc(sizeof(double) * nvec);
 		for (i = 0; i < nvec; i++)
 			abs_deviations[i] = fabs(distances[i] - median_dist);
-		
+
 		qsort(abs_deviations, nvec, sizeof(double), double_compare);
-		mad = (nvec % 2 == 0) ?
-			(abs_deviations[nvec/2 - 1] + abs_deviations[nvec/2]) / 2.0 :
-			abs_deviations[nvec/2];
+		mad = (nvec % 2 == 0) ? (abs_deviations[nvec / 2 - 1]
+						+ abs_deviations[nvec / 2])
+				/ 2.0
+				      : abs_deviations[nvec / 2];
 
 		if (mad < 1e-10)
 		{
-			elog(DEBUG1, "neurondb: MAD near zero, using fallback threshold");
-			mad = 1.0;  /* Fallback to avoid division by zero */
+			elog(DEBUG1,
+				"neurondb: MAD near zero, using fallback "
+				"threshold");
+			mad = 1.0; /* Fallback to avoid division by zero */
 		}
 
 		/* Modified Z-score: M_i = 0.6745 * (x_i - median) / MAD */
 		num_outliers = 0;
 		for (i = 0; i < nvec; i++)
 		{
-			double modified_z = 0.6745 * fabs(distances[i] - median_dist) / mad;
+			double modified_z =
+				0.6745 * fabs(distances[i] - median_dist) / mad;
 			outliers[i] = (modified_z > threshold);
 			if (outliers[i])
 				num_outliers++;
 		}
 
-		elog(DEBUG1, "neurondb: Modified Z-score detected %d outliers (%.1f%%)",
-			 num_outliers, 100.0 * num_outliers / nvec);
+		elog(DEBUG1,
+			"neurondb: Modified Z-score detected %d outliers "
+			"(%.1f%%)",
+			num_outliers,
+			100.0 * num_outliers / nvec);
 
 		pfree(sorted_distances);
 		pfree(abs_deviations);
-	}
-	else if (strcmp(method, "iqr") == 0)
+	} else if (strcmp(method, "iqr") == 0)
 	{
 		/* IQR (Interquartile Range) method */
 		double q1, q3, iqr;
@@ -275,7 +296,7 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 		int q1_idx, q3_idx;
 		int num_outliers;
 
-		sorted_distances = (double *) palloc(sizeof(double) * nvec);
+		sorted_distances = (double *)palloc(sizeof(double) * nvec);
 		memcpy(sorted_distances, distances, sizeof(double) * nvec);
 		qsort(sorted_distances, nvec, sizeof(double), double_compare);
 
@@ -293,30 +314,35 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 		num_outliers = 0;
 		for (i = 0; i < nvec; i++)
 		{
-			outliers[i] = (distances[i] < lower_bound || distances[i] > upper_bound);
+			outliers[i] = (distances[i] < lower_bound
+				|| distances[i] > upper_bound);
 			if (outliers[i])
 				num_outliers++;
 		}
 
-		elog(DEBUG1, "neurondb: IQR method detected %d outliers (%.1f%%)",
-			 num_outliers, 100.0 * num_outliers / nvec);
+		elog(DEBUG1,
+			"neurondb: IQR method detected %d outliers (%.1f%%)",
+			num_outliers,
+			100.0 * num_outliers / nvec);
 
 		pfree(sorted_distances);
-	}
-	else
+	} else
 	{
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Unknown method '%s'. Use 'zscore', 'modified_zscore', or 'iqr'", method)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Unknown method '%s'. Use 'zscore', "
+				       "'modified_zscore', or 'iqr'",
+					method)));
 	}
 
 	/* Build result array */
-	result_datums = (Datum *) palloc(sizeof(Datum) * nvec);
+	result_datums = (Datum *)palloc(sizeof(Datum) * nvec);
 	for (i = 0; i < nvec; i++)
 		result_datums[i] = BoolGetDatum(outliers[i]);
 
 	get_typlenbyvalalign(BOOLOID, &typlen, &typbyval, &typalign);
-	result = construct_array(result_datums, nvec, BOOLOID, typlen, typbyval, typalign);
+	result = construct_array(
+		result_datums, nvec, BOOLOID, typlen, typbyval, typalign);
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
@@ -370,21 +396,23 @@ compute_outlier_scores(PG_FUNCTION_ARGS)
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
-	method_text = PG_ARGISNULL(2) ? cstring_to_text("zscore") : PG_GETARG_TEXT_PP(2);
+	method_text = PG_ARGISNULL(2) ? cstring_to_text("zscore")
+				      : PG_GETARG_TEXT_PP(2);
 
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
 	method = text_to_cstring(method_text);
 
 	/* Fetch vectors */
-	vectors = neurondb_fetch_vectors_from_table(tbl_str, vec_col_str, &nvec, &dim);
+	vectors = neurondb_fetch_vectors_from_table(
+		tbl_str, vec_col_str, &nvec, &dim);
 	if (nvec < 2)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Need at least 2 vectors")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("Need at least 2 vectors")));
 
 	/* Compute mean */
-	mean = (double *) palloc0(sizeof(double) * dim);
+	mean = (double *)palloc0(sizeof(double) * dim);
 	for (i = 0; i < nvec; i++)
 		for (d = 0; d < dim; d++)
 			mean[d] += (double)vectors[i][d];
@@ -392,12 +420,12 @@ compute_outlier_scores(PG_FUNCTION_ARGS)
 		mean[d] /= nvec;
 
 	/* Compute distances */
-	distances = (double *) palloc(sizeof(double) * nvec);
+	distances = (double *)palloc(sizeof(double) * nvec);
 	for (i = 0; i < nvec; i++)
 		distances[i] = distance_from_mean(vectors[i], mean, dim);
 
 	/* Compute scores */
-	scores = (double *) palloc(sizeof(double) * nvec);
+	scores = (double *)palloc(sizeof(double) * nvec);
 
 	if (strcmp(method, "zscore") == 0)
 	{
@@ -419,60 +447,66 @@ compute_outlier_scores(PG_FUNCTION_ARGS)
 		{
 			for (i = 0; i < nvec; i++)
 				scores[i] = 0.0;
-		}
-		else
+		} else
 		{
 			for (i = 0; i < nvec; i++)
-				scores[i] = (distances[i] - mean_dist) / std_dist;
+				scores[i] =
+					(distances[i] - mean_dist) / std_dist;
 		}
-	}
-	else if (strcmp(method, "modified_zscore") == 0)
+	} else if (strcmp(method, "modified_zscore") == 0)
 	{
 		double median_dist;
 		double mad;
 		double *sorted_distances;
 		double *abs_deviations;
 
-		sorted_distances = (double *) palloc(sizeof(double) * nvec);
+		sorted_distances = (double *)palloc(sizeof(double) * nvec);
 		memcpy(sorted_distances, distances, sizeof(double) * nvec);
 		qsort(sorted_distances, nvec, sizeof(double), double_compare);
-		
-		median_dist = (nvec % 2 == 0) ?
-			(sorted_distances[nvec/2 - 1] + sorted_distances[nvec/2]) / 2.0 :
-			sorted_distances[nvec/2];
 
-		abs_deviations = (double *) palloc(sizeof(double) * nvec);
+		median_dist = (nvec % 2 == 0)
+			? (sorted_distances[nvec / 2 - 1]
+				  + sorted_distances[nvec / 2])
+				/ 2.0
+			: sorted_distances[nvec / 2];
+
+		abs_deviations = (double *)palloc(sizeof(double) * nvec);
 		for (i = 0; i < nvec; i++)
 			abs_deviations[i] = fabs(distances[i] - median_dist);
-		
+
 		qsort(abs_deviations, nvec, sizeof(double), double_compare);
-		mad = (nvec % 2 == 0) ?
-			(abs_deviations[nvec/2 - 1] + abs_deviations[nvec/2]) / 2.0 :
-			abs_deviations[nvec/2];
+		mad = (nvec % 2 == 0) ? (abs_deviations[nvec / 2 - 1]
+						+ abs_deviations[nvec / 2])
+				/ 2.0
+				      : abs_deviations[nvec / 2];
 
 		if (mad < 1e-10)
 			mad = 1.0;
 
 		for (i = 0; i < nvec; i++)
-			scores[i] = 0.6745 * fabs(distances[i] - median_dist) / mad;
+			scores[i] =
+				0.6745 * fabs(distances[i] - median_dist) / mad;
 
 		pfree(sorted_distances);
 		pfree(abs_deviations);
-	}
-	else
+	} else
 	{
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Unknown method '%s'", method)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Unknown method '%s'", method)));
 	}
 
 	/* Build result */
-	result_datums = (Datum *) palloc(sizeof(Datum) * nvec);
+	result_datums = (Datum *)palloc(sizeof(Datum) * nvec);
 	for (i = 0; i < nvec; i++)
 		result_datums[i] = Float8GetDatum(scores[i]);
 
-	result = construct_array(result_datums, nvec, FLOAT8OID,
-							 sizeof(float8), FLOAT8PASSBYVAL, 'd');
+	result = construct_array(result_datums,
+		nvec,
+		FLOAT8OID,
+		sizeof(float8),
+		FLOAT8PASSBYVAL,
+		'd');
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
@@ -488,4 +522,3 @@ compute_outlier_scores(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
-

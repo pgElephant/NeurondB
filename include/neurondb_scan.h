@@ -28,26 +28,39 @@ extern bool ndb_rls_check_tuple(RLSFilterState *state, TupleTableSlot *slot);
 extern bool ndb_rls_check_item(RLSFilterState *state, ItemPointer tid);
 extern void ndb_rls_end(RLSFilterState *state);
 extern bool ndb_index_scan_rls_filter(IndexScanDesc scan, ItemPointer tid);
-extern int ndb_rls_filter_results(Relation rel, ItemPointer *items, int count,
-								   ItemPointer **filtered, int *filteredCount);
+extern int ndb_rls_filter_results(Relation rel,
+	ItemPointer *items,
+	int count,
+	ItemPointer **filtered,
+	int *filteredCount);
 
 /* Quota functions */
 extern void ndb_quota_init_guc(void);
-extern bool ndb_quota_check(const char *tenantId, Oid indexOid, 
-							int64 additionalVectors, int64 additionalBytes);
-extern void ndb_quota_enforce_insert(Relation index, const char *tenantId,
-									 int64 vectorCount, int64 estimatedBytes);
-extern void ndb_quota_update_usage(const char *tenantId, Oid indexOid,
-								   int64 vectorsDelta, int64 bytesDelta);
+extern bool ndb_quota_check(const char *tenantId,
+	Oid indexOid,
+	int64 additionalVectors,
+	int64 additionalBytes);
+extern void ndb_quota_enforce_insert(Relation index,
+	const char *tenantId,
+	int64 vectorCount,
+	int64 estimatedBytes);
+extern void ndb_quota_update_usage(const char *tenantId,
+	Oid indexOid,
+	int64 vectorsDelta,
+	int64 bytesDelta);
 
 /* Entrypoint cache functions */
 extern void entrypoint_cache_init_guc(void);
 extern Size entrypoint_cache_shmem_size(void);
 extern void entrypoint_cache_shmem_init(void);
-extern bool entrypoint_cache_lookup(Oid indexOid, BlockNumber *entryPoint, 
-									int *entryLevel, int *maxLevel);
-extern void entrypoint_cache_store(Oid indexOid, BlockNumber entryPoint, 
-								   int entryLevel, int maxLevel);
+extern bool entrypoint_cache_lookup(Oid indexOid,
+	BlockNumber *entryPoint,
+	int *entryLevel,
+	int *maxLevel);
+extern void entrypoint_cache_store(Oid indexOid,
+	BlockNumber entryPoint,
+	int entryLevel,
+	int maxLevel);
 extern void entrypoint_cache_invalidate(Oid indexOid);
 
 /* Custom scan provider */
@@ -61,4 +74,3 @@ extern void prometheus_record_cache_hit(void);
 extern void prometheus_record_cache_miss(void);
 
 #endif /* NEURONDB_SCAN_H */
-

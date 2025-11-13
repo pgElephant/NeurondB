@@ -46,9 +46,9 @@
  */
 typedef struct PQCodebook
 {
-	int   m;        /* Number of subspaces/subquantizers */
-	int   ksub;     /* Number of centroids for each subspace */
-	int   dsub;     /* Subspace dimension (must be d/m) */
+	int m; /* Number of subspaces/subquantizers */
+	int ksub; /* Number of centroids for each subspace */
+	int dsub; /* Subspace dimension (must be d/m) */
 	float ***centroids; /* Shape: [m][ksub][dsub] */
 } PQCodebook;
 
@@ -69,16 +69,21 @@ typedef struct PQCodebook
  *   void (centroids array is modified in-place)
  */
 static void
-train_subspace_kmeans(float **subspace_data, int nvec, int dsub, int k, 
-					  float **centroids, int max_iters)
+train_subspace_kmeans(float **subspace_data,
+	int nvec,
+	int dsub,
+	int k,
+	float **centroids,
+	int max_iters)
 {
-	int *assignments = NULL;  /* Assignment for each vector (index of centroid) */
-	int *counts = NULL;       /* Number of points assigned to each centroid */
+	int *assignments =
+		NULL; /* Assignment for each vector (index of centroid) */
+	int *counts = NULL; /* Number of points assigned to each centroid */
 	bool changed = true;
 	int iter, i, c, d;
 
 	/* Allocate assignment array, initialize to zeros (or later random if desired) */
-	assignments = (int *) palloc0(sizeof(int) * nvec);
+	assignments = (int *)palloc0(sizeof(int) * nvec);
 
 	/* Random initialization of centroids from dataset */
 	for (c = 0; c < k; c++)
@@ -104,7 +109,9 @@ train_subspace_kmeans(float **subspace_data, int nvec, int dsub, int k,
 				/* Compute squared L2 distance */
 				for (d = 0; d < dsub; d++)
 				{
-					double diff = (double)subspace_data[i][d] - (double)centroids[c][d];
+					double diff =
+						(double)subspace_data[i][d]
+						- (double)centroids[c][d];
 					dist += diff * diff;
 				}
 				if (dist < min_dist)
@@ -125,7 +132,7 @@ train_subspace_kmeans(float **subspace_data, int nvec, int dsub, int k,
 			break; /* Converged */
 
 		/* Update step: recompute centroids as mean of assigned points */
-		counts = (int *) palloc0(sizeof(int) * k);
+		counts = (int *)palloc0(sizeof(int) * k);
 		for (c = 0; c < k; c++)
 			memset(centroids[c], 0, sizeof(float) * dsub);
 
@@ -184,7 +191,7 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 	text *column_name;
 	int m, ksub;
 	char *tbl_str, *col_str;
-	float **data = NULL;      /* Training data array [nvec][dim] */
+	float **data = NULL; /* Training data array [nvec][dim] */
 	int nvec = 0, dim = 0;
 	PQCodebook codebook;
 	int sub, i;
@@ -201,17 +208,24 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 	if (m < 1 || m > 128)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("m (number of subspaces) must be between 1 and 128")));
+				errmsg("m (number of subspaces) must be "
+				       "between 1 and 128")));
 	if (ksub < 2 || ksub > 65536)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("ksub (centroids per subspace) must be between 2 and 65536")));
+				errmsg("ksub (centroids per subspace) must be "
+				       "between 2 and 65536")));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(column_name);
 
-	elog(DEBUG1, "neurondb: Starting PQ training for table = %s.%s, m=%d, ksub=%d",
-	     tbl_str, col_str, m, ksub);
+	elog(DEBUG1,
+		"neurondb: Starting PQ training for table = %s.%s, m=%d, "
+		"ksub=%d",
+		tbl_str,
+		col_str,
+		m,
+		ksub);
 
 	/* Pull training vectors from the table: neurondb_fetch_vectors_from_table 
 	   is expected to allocate a 2D array [nvec][dim] and fill nvec, dim */
@@ -220,12 +234,18 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 	if (nvec <= 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_DATA_EXCEPTION),
-			 errmsg("No training vectors found in table '%s' column '%s'", tbl_str, col_str)));
+				errmsg("No training vectors found in table "
+				       "'%s' column '%s'",
+					tbl_str,
+					col_str)));
 
 	if (dim % m != 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("Vector dimension %d must be divisible by number of subspaces m=%d", dim, m)));
+				errmsg("Vector dimension %d must be divisible "
+				       "by number of subspaces m=%d",
+					dim,
+					m)));
 
 	/* Prepare codebook structure */
 	codebook.m = m;
@@ -233,12 +253,14 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 	codebook.dsub = dim / m;
 
 	/* Allocate centroids 3D array: [m][ksub][dsub], each float* properly allocated */
-	codebook.centroids = (float ***) palloc(sizeof(float **) * m);
+	codebook.centroids = (float ***)palloc(sizeof(float **) * m);
 	for (sub = 0; sub < m; sub++)
 	{
-		codebook.centroids[sub] = (float **) palloc(sizeof(float *) * ksub);
+		codebook.centroids[sub] =
+			(float **)palloc(sizeof(float *) * ksub);
 		for (i = 0; i < ksub; i++)
-			codebook.centroids[sub][i] = (float *) palloc(sizeof(float) * codebook.dsub);
+			codebook.centroids[sub][i] =
+				(float *)palloc(sizeof(float) * codebook.dsub);
 	}
 
 	/* Begin PQ codebook training: fit a k-means on each subspace independently */
@@ -247,20 +269,31 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 		float **subspace_data = NULL;
 		int start_dim = sub * codebook.dsub;
 
-		elog(DEBUG1, "neurondb: Training PQ subspace %d of %d (dims %d-%d)",
-		     sub + 1, m, start_dim, start_dim + codebook.dsub - 1);
+		elog(DEBUG1,
+			"neurondb: Training PQ subspace %d of %d (dims %d-%d)",
+			sub + 1,
+			m,
+			start_dim,
+			start_dim + codebook.dsub - 1);
 
 		/* Extract subspace vectors from data (copy block of contiguous floats) */
-		subspace_data = (float **) palloc(sizeof(float *) * nvec);
+		subspace_data = (float **)palloc(sizeof(float *) * nvec);
 		for (i = 0; i < nvec; i++)
 		{
-			subspace_data[i] = (float *) palloc(sizeof(float) * codebook.dsub);
-			memcpy(subspace_data[i], &data[i][start_dim], sizeof(float) * codebook.dsub);
+			subspace_data[i] =
+				(float *)palloc(sizeof(float) * codebook.dsub);
+			memcpy(subspace_data[i],
+				&data[i][start_dim],
+				sizeof(float) * codebook.dsub);
 		}
 
 		/* Train k-means for this subspace. 100 iterations is typical. */
-		train_subspace_kmeans(subspace_data, nvec, codebook.dsub, ksub,
-		                      codebook.centroids[sub], 100);
+		train_subspace_kmeans(subspace_data,
+			nvec,
+			codebook.dsub,
+			ksub,
+			codebook.centroids[sub],
+			100);
 
 		/* Release subspace data for this subspace */
 		for (i = 0; i < nvec; i++)
@@ -269,10 +302,10 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 	}
 
 	/* Serialization step: compute total serialized length for bytea */
-	result_size = sizeof(int) * 3 +      /* header: m, ksub, dsub */
-	              m * ksub * codebook.dsub * sizeof(float); /* centroids */
+	result_size = sizeof(int) * 3 + /* header: m, ksub, dsub */
+		m * ksub * codebook.dsub * sizeof(float); /* centroids */
 
-	result = (bytea *) palloc(VARHDRSZ + result_size);
+	result = (bytea *)palloc(VARHDRSZ + result_size);
 	SET_VARSIZE(result, VARHDRSZ + result_size);
 	result_ptr = VARDATA(result);
 
@@ -288,8 +321,9 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 	for (sub = 0; sub < m; sub++)
 		for (i = 0; i < ksub; i++)
 		{
-			memcpy(result_ptr, codebook.centroids[sub][i],
-			       sizeof(float) * codebook.dsub);
+			memcpy(result_ptr,
+				codebook.centroids[sub][i],
+				sizeof(float) * codebook.dsub);
 			result_ptr += sizeof(float) * codebook.dsub;
 		}
 
@@ -348,8 +382,9 @@ pq_encode_vector(PG_FUNCTION_ARGS)
 	vec_array = PG_GETARG_ARRAYTYPE_P(0);
 	codebook_bytea = PG_GETARG_BYTEA_PP(1);
 
-	dim = ARR_DIMS(vec_array)[0]; /* Expect one-dimensional packed float4[] */
-	vec_data = (float4 *) ARR_DATA_PTR(vec_array);
+	dim = ARR_DIMS(
+		vec_array)[0]; /* Expect one-dimensional packed float4[] */
+	vec_data = (float4 *)ARR_DATA_PTR(vec_array);
 
 	/* ----- Deserialize Codebook ----- */
 	cb_ptr = VARDATA(codebook_bytea);
@@ -363,24 +398,28 @@ pq_encode_vector(PG_FUNCTION_ARGS)
 	if (dim != m * dsub)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("Vector dimension (%d) does not match codebook definition (m=%d * dsub=%d).",
-					dim, m, dsub)));
+				errmsg("Vector dimension (%d) does not match "
+				       "codebook definition (m=%d * dsub=%d).",
+					dim,
+					m,
+					dsub)));
 
 	/* ----- Reconstruct centroids 3D array from codebook bytea ----- */
-	centroids = (float ***) palloc(sizeof(float **) * m);
+	centroids = (float ***)palloc(sizeof(float **) * m);
 	for (sub = 0; sub < m; sub++)
 	{
-		centroids[sub] = (float **) palloc(sizeof(float *) * ksub);
+		centroids[sub] = (float **)palloc(sizeof(float *) * ksub);
 		for (c = 0; c < ksub; c++)
 		{
-			centroids[sub][c] = (float *) palloc(sizeof(float) * dsub);
+			centroids[sub][c] =
+				(float *)palloc(sizeof(float) * dsub);
 			memcpy(centroids[sub][c], cb_ptr, sizeof(float) * dsub);
 			cb_ptr += sizeof(float) * dsub;
 		}
 	}
 
 	/* ----- Compute PQ codes for each subspace ----- */
-	codes = (int16 *) palloc(sizeof(int16) * m);
+	codes = (int16 *)palloc(sizeof(int16) * m);
 	for (sub = 0; sub < m; sub++)
 	{
 		int start_dim = sub * dsub;
@@ -392,7 +431,8 @@ pq_encode_vector(PG_FUNCTION_ARGS)
 			double dist = 0.0;
 			for (d = 0; d < dsub; d++)
 			{
-				double diff = (double)vec_data[start_dim + d] - (double)centroids[sub][c][d];
+				double diff = (double)vec_data[start_dim + d]
+					- (double)centroids[sub][c][d];
 				dist += diff * diff;
 			}
 			if (dist < min_dist)
@@ -401,16 +441,17 @@ pq_encode_vector(PG_FUNCTION_ARGS)
 				best = c;
 			}
 		}
-		codes[sub] = (int16) best;
+		codes[sub] = (int16)best;
 	}
 
 	/* ----- Build int2[] result array ----- */
-	result_datums = (Datum *) palloc(sizeof(Datum) * m);
+	result_datums = (Datum *)palloc(sizeof(Datum) * m);
 	for (sub = 0; sub < m; sub++)
 		result_datums[sub] = Int16GetDatum(codes[sub]);
 
 	get_typlenbyvalalign(INT2OID, &typlen, &typbyval, &typalign);
-	result = construct_array(result_datums, m, INT2OID, typlen, typbyval, typalign);
+	result = construct_array(
+		result_datums, m, INT2OID, typlen, typbyval, typalign);
 
 	/* ----- Clean up c-allocated memory ----- */
 	for (sub = 0; sub < m; sub++)
@@ -464,8 +505,8 @@ pq_asymmetric_distance(PG_FUNCTION_ARGS)
 	codebook_bytea = PG_GETARG_BYTEA_PP(2);
 
 	dim = ARR_DIMS(query_array)[0];
-	query_data = (float4 *) ARR_DATA_PTR(query_array);
-	codes = (int16 *) ARR_DATA_PTR(codes_array);
+	query_data = (float4 *)ARR_DATA_PTR(query_array);
+	codes = (int16 *)ARR_DATA_PTR(codes_array);
 
 	/* ----- Deserialize codebook header and centroids ----- */
 	cb_ptr = VARDATA(codebook_bytea);
@@ -479,15 +520,20 @@ pq_asymmetric_distance(PG_FUNCTION_ARGS)
 	if (dim != m * dsub)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("Query vector dimension (%d) does not match codebook (m=%d * dsub=%d)", dim, m, dsub)));
+				errmsg("Query vector dimension (%d) does not "
+				       "match codebook (m=%d * dsub=%d)",
+					dim,
+					m,
+					dsub)));
 
-	centroids = (float ***) palloc(sizeof(float **) * m);
+	centroids = (float ***)palloc(sizeof(float **) * m);
 	for (sub = 0; sub < m; sub++)
 	{
-		centroids[sub] = (float **) palloc(sizeof(float *) * ksub);
+		centroids[sub] = (float **)palloc(sizeof(float *) * ksub);
 		for (int c = 0; c < ksub; c++)
 		{
-			centroids[sub][c] = (float *) palloc(sizeof(float) * dsub);
+			centroids[sub][c] =
+				(float *)palloc(sizeof(float) * dsub);
 			memcpy(centroids[sub][c], cb_ptr, sizeof(float) * dsub);
 			cb_ptr += sizeof(float) * dsub;
 		}
@@ -503,11 +549,16 @@ pq_asymmetric_distance(PG_FUNCTION_ARGS)
 		if (code < 0 || code >= ksub)
 			ereport(ERROR,
 				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Invalid PQ code %d at subspace %d (valid: 0-%d)", code, sub, ksub-1)));
+					errmsg("Invalid PQ code %d at subspace "
+					       "%d (valid: 0-%d)",
+						code,
+						sub,
+						ksub - 1)));
 
 		for (d = 0; d < dsub; d++)
 		{
-			double diff = (double)query_data[start_dim + d] - (double)centroids[sub][code][d];
+			double diff = (double)query_data[start_dim + d]
+				- (double)centroids[sub][code][d];
 			total_dist += diff * diff;
 		}
 	}
@@ -523,4 +574,3 @@ pq_asymmetric_distance(PG_FUNCTION_ARGS)
 
 	PG_RETURN_FLOAT4((float4)sqrt(total_dist));
 }
-

@@ -48,20 +48,23 @@
 #include <string.h>
 #include <float.h>
 
-#define WHITENING_EPSILON 1e-5  /* Regularization to avoid division by zero */
+#define WHITENING_EPSILON 1e-5 /* Regularization to avoid division by zero */
 
 /*
  * Power iteration for computing dominant eigenvalue/eigenvector
  * (same as PCA implementation in analytics.c)
  */
 static double
-power_iteration_whitening(double **matrix, int dim, double *eigenvector, int max_iter)
+power_iteration_whitening(double **matrix,
+	int dim,
+	double *eigenvector,
+	int max_iter)
 {
 	double *v_new;
 	double eigenvalue;
 	int iter, i, j;
 
-	v_new = (double *) palloc(sizeof(double) * dim);
+	v_new = (double *)palloc(sizeof(double) * dim);
 
 	/* Initialize with random vector */
 	for (i = 0; i < dim; i++)
@@ -121,13 +124,17 @@ power_iteration_whitening(double **matrix, int dim, double *eigenvector, int max
  * Matrix deflation: remove contribution of eigenvector
  */
 static void
-deflate_matrix(double **matrix, int dim, const double *eigenvector, double eigenvalue)
+deflate_matrix(double **matrix,
+	int dim,
+	const double *eigenvector,
+	double eigenvalue)
 {
 	int i, j;
 
 	for (i = 0; i < dim; i++)
 		for (j = 0; j < dim; j++)
-			matrix[i][j] -= eigenvalue * eigenvector[i] * eigenvector[j];
+			matrix[i][j] -=
+				eigenvalue * eigenvector[i] * eigenvector[j];
 }
 
 /*
@@ -196,27 +203,35 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 
 	if (epsilon < 0.0 || epsilon > 1.0)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("epsilon must be in [0, 1]")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("epsilon must be in [0, 1]")));
 
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
 
-	elog(DEBUG1, "neurondb: PCA whitening on %s.%s (epsilon=%.2e)", tbl_str, vec_col_str, epsilon);
+	elog(DEBUG1,
+		"neurondb: PCA whitening on %s.%s (epsilon=%.2e)",
+		tbl_str,
+		vec_col_str,
+		epsilon);
 
 	/* Fetch vectors */
-	vectors = neurondb_fetch_vectors_from_table(tbl_str, vec_col_str, &nvec, &dim);
+	vectors = neurondb_fetch_vectors_from_table(
+		tbl_str, vec_col_str, &nvec, &dim);
 	if (nvec < dim)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Need at least d=%d vectors for %d-dimensional whitening", dim, dim)));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("Need at least d=%d vectors for "
+				       "%d-dimensional whitening",
+					dim,
+					dim)));
 
 	/* Step 1: Center data (compute mean and subtract) */
-	mean = (double *) palloc0(sizeof(double) * dim);
+	mean = (double *)palloc0(sizeof(double) * dim);
 	for (i = 0; i < nvec; i++)
 		for (j = 0; j < dim; j++)
 			mean[j] += (double)vectors[i][j];
-	
+
 	for (j = 0; j < dim; j++)
 		mean[j] /= nvec;
 
@@ -226,9 +241,9 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 			vectors[i][j] -= (float)mean[j];
 
 	/* Step 2: Compute covariance matrix Σ = XᵀX / n */
-	covariance = (double **) palloc(sizeof(double *) * dim);
+	covariance = (double **)palloc(sizeof(double *) * dim);
 	for (i = 0; i < dim; i++)
-		covariance[i] = (double *) palloc0(sizeof(double) * dim);
+		covariance[i] = (double *)palloc0(sizeof(double) * dim);
 
 	for (i = 0; i < dim; i++)
 	{
@@ -236,79 +251,97 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 		{
 			double sum = 0.0;
 			for (k = 0; k < nvec; k++)
-				sum += (double)vectors[k][i] * (double)vectors[k][j];
-			
+				sum += (double)vectors[k][i]
+					* (double)vectors[k][j];
+
 			covariance[i][j] = sum / nvec;
-			covariance[j][i] = covariance[i][j];  /* Symmetric */
+			covariance[j][i] = covariance[i][j]; /* Symmetric */
 		}
 	}
 
 	/* Step 3: Eigen decomposition using power iteration */
-	eigenvectors = (double **) palloc(sizeof(double *) * dim);
-	eigenvalues = (double *) palloc(sizeof(double) * dim);
-	
+	eigenvectors = (double **)palloc(sizeof(double *) * dim);
+	eigenvalues = (double *)palloc(sizeof(double) * dim);
+
 	for (c = 0; c < dim; c++)
-		eigenvectors[c] = (double *) palloc(sizeof(double) * dim);
+		eigenvectors[c] = (double *)palloc(sizeof(double) * dim);
 
 	/* Compute all eigenvectors/eigenvalues */
 	for (c = 0; c < dim; c++)
 	{
-		eigenvalues[c] = power_iteration_whitening(covariance, dim, eigenvectors[c], 100);
-		
+		eigenvalues[c] = power_iteration_whitening(
+			covariance, dim, eigenvectors[c], 100);
+
 		if (eigenvalues[c] < 0.0)
-			eigenvalues[c] = 0.0;  /* Numerical stability */
+			eigenvalues[c] = 0.0; /* Numerical stability */
 
 		/* Deflate matrix for next eigenvector */
 		if (c < dim - 1)
-			deflate_matrix(covariance, dim, eigenvectors[c], eigenvalues[c]);
+			deflate_matrix(covariance,
+				dim,
+				eigenvectors[c],
+				eigenvalues[c]);
 
-		elog(DEBUG2, "neurondb: Eigenvalue %d = %.6f", c + 1, eigenvalues[c]);
+		elog(DEBUG2,
+			"neurondb: Eigenvalue %d = %.6f",
+			c + 1,
+			eigenvalues[c]);
 	}
 
 	/* Step 4: Compute whitening matrix W = UΛ^(-1/2)Uᵀ */
-	whitening_matrix = (double **) palloc(sizeof(double *) * dim);
+	whitening_matrix = (double **)palloc(sizeof(double *) * dim);
 	for (i = 0; i < dim; i++)
-		whitening_matrix[i] = (double *) palloc0(sizeof(double) * dim);
+		whitening_matrix[i] = (double *)palloc0(sizeof(double) * dim);
 
 	/* W = Σ_c eigenvector_c * eigenvector_cᵀ / sqrt(eigenvalue_c + epsilon) */
 	for (c = 0; c < dim; c++)
 	{
 		double scale = 1.0 / sqrt(eigenvalues[c] + epsilon);
-		
+
 		for (i = 0; i < dim; i++)
 			for (j = 0; j < dim; j++)
-				whitening_matrix[i][j] += eigenvectors[c][i] * eigenvectors[c][j] * scale;
+				whitening_matrix[i][j] += eigenvectors[c][i]
+					* eigenvectors[c][j] * scale;
 	}
 
 	/* Step 5: Apply whitening transform */
-	whitened_vectors = (float **) palloc(sizeof(float *) * nvec);
+	whitened_vectors = (float **)palloc(sizeof(float *) * nvec);
 	for (i = 0; i < nvec; i++)
 	{
-		whitened_vectors[i] = (float *) palloc(sizeof(float) * dim);
-		
+		whitened_vectors[i] = (float *)palloc(sizeof(float) * dim);
+
 		for (j = 0; j < dim; j++)
 		{
 			double sum = 0.0;
 			for (k = 0; k < dim; k++)
-				sum += (double)vectors[i][k] * whitening_matrix[k][j];
-			
+				sum += (double)vectors[i][k]
+					* whitening_matrix[k][j];
+
 			whitened_vectors[i][j] = (float)sum;
 		}
 	}
 
 	/* Build 2D result array */
-	result_datums = (Datum *) palloc(sizeof(Datum) * nvec * dim);
+	result_datums = (Datum *)palloc(sizeof(Datum) * nvec * dim);
 	for (i = 0; i < nvec; i++)
 		for (j = 0; j < dim; j++)
-			result_datums[i * dim + j] = Float4GetDatum(whitened_vectors[i][j]);
+			result_datums[i * dim + j] =
+				Float4GetDatum(whitened_vectors[i][j]);
 
 	dims[0] = nvec;
 	dims[1] = dim;
 	lbs[0] = 1;
 	lbs[1] = 1;
 
-	result = construct_md_array(result_datums, NULL, 2, dims, lbs,
-								FLOAT4OID, sizeof(float4), true, 'i');
+	result = construct_md_array(result_datums,
+		NULL,
+		2,
+		dims,
+		lbs,
+		FLOAT4OID,
+		sizeof(float4),
+		true,
+		'i');
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
@@ -319,7 +352,7 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 	pfree(vectors);
 	pfree(whitened_vectors);
 	pfree(mean);
-	
+
 	for (i = 0; i < dim; i++)
 	{
 		pfree(covariance[i]);
@@ -336,4 +369,3 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
-
