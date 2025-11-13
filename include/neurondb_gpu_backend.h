@@ -11,6 +11,9 @@ struct SVMModel;
 struct DTModel;
 struct RidgeModel;
 struct LassoModel;
+struct GaussianNBModel;
+struct GMMModel;
+struct KNNModel;
 
 #define NDB_GPU_MAX_BACKENDS 8
 
@@ -227,6 +230,68 @@ typedef struct ndb_gpu_backend
 		double *prediction_out,
 		char **errstr);
 	int (*lasso_pack)(const struct LassoModel *model,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+
+	/* Naive Bayes */
+	int (*nb_train)(const float *features,
+		const double *labels,
+		int n_samples,
+		int feature_dim,
+		int class_count,
+		const Jsonb *hyperparams,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+	int (*nb_predict)(const bytea *model_data,
+		const float *input,
+		int feature_dim,
+		int *class_out,
+		double *probability_out,
+		char **errstr);
+	int (*nb_pack)(const struct GaussianNBModel *model,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+
+	/* Gaussian Mixture Model */
+	int (*gmm_train)(const float *features,
+		int n_samples,
+		int feature_dim,
+		int n_components,
+		const Jsonb *hyperparams,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+	int (*gmm_predict)(const bytea *model_data,
+		const float *input,
+		int feature_dim,
+		int *cluster_out,
+		double *probability_out,
+		char **errstr);
+	int (*gmm_pack)(const struct GMMModel *model,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+
+	/* K-Nearest Neighbors */
+	int (*knn_train)(const float *features,
+		const double *labels,
+		int n_samples,
+		int feature_dim,
+		int k,
+		int task_type,
+		const Jsonb *hyperparams,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+	int (*knn_predict)(const bytea *model_data,
+		const float *input,
+		int feature_dim,
+		double *prediction_out,
+		char **errstr);
+	int (*knn_pack)(const struct KNNModel *model,
 		bytea **model_data,
 		Jsonb **metrics,
 		char **errstr);

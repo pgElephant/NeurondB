@@ -70,6 +70,42 @@ extern int ndb_cuda_dt_predict(const bytea *model_data,
 	double *prediction_out,
 	char **errstr);
 
+/* CUDA kernel launchers */
+extern int ndb_cuda_dt_launch_feature_stats(const float *features,
+	const int *indices,
+	int n_samples,
+	int feature_dim,
+	int feature_idx,
+	float *min_val,
+	float *max_val,
+	double *sum,
+	double *sumsq);
+
+extern int ndb_cuda_dt_launch_split_counts_classification(const float *features,
+	const int *labels,
+	const int *indices,
+	int n_samples,
+	int feature_dim,
+	int feature_idx,
+	float threshold,
+	int class_count,
+	int *left_counts,
+	int *right_counts);
+
+extern int ndb_cuda_dt_launch_split_stats_regression(const float *features,
+	const double *labels,
+	const int *indices,
+	int n_samples,
+	int feature_dim,
+	int feature_idx,
+	float threshold,
+	double *left_sum,
+	double *left_sumsq,
+	int *left_count,
+	double *right_sum,
+	double *right_sumsq,
+	int *right_count);
+
 #ifdef __cplusplus
 }
 #endif

@@ -27,6 +27,15 @@
 #include "ml_linear_regression_internal.h"
 #include "neurondb_cuda_linreg.h"
 
+/* Forward declaration for kernel */
+extern void ndb_cuda_linreg_compute_xtx_kernel(const float *features,
+	const double *targets,
+	int n_samples,
+	int feature_dim,
+	int dim_with_intercept,
+	double *XtX,
+	double *Xty);
+
 int
 ndb_cuda_linreg_pack_model(const LinRegModel *model,
 	bytea **model_data,
@@ -156,28 +165,140 @@ ndb_cuda_linreg_train(const float *features,
 	h_XtX_inv = (double *)palloc(XtX_bytes);
 	h_beta = (double *)palloc(beta_bytes);
 
-	/* Compute X'X and X'y on CPU (can be moved to GPU later) */
-	for (i = 0; i < n_samples; i++)
+	/* Compute X'X and X'y on GPU */
 	{
-		const float *row = features + (i * feature_dim);
-		double *xi = (double *)palloc(sizeof(double) * dim_with_intercept);
-		
-		xi[0] = 1.0; /* intercept */
-		for (k = 1; k < dim_with_intercept; k++)
-			xi[k] = row[k-1];
-		
-		/* X'X accumulation */
-		for (j = 0; j < dim_with_intercept; j++)
+		float *d_features = NULL;
+		double *d_targets = NULL;
+		double *d_XtX = NULL;
+		double *d_Xty = NULL;
+		int threads_per_block = 256;
+		int blocks = (n_samples + threads_per_block - 1) / threads_per_block;
+		cudaError_t err;
+
+		/* Allocate device memory */
+		feature_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
+		target_bytes = sizeof(double) * (size_t)n_samples;
+		XtX_bytes = sizeof(double) * (size_t)dim_with_intercept * (size_t)dim_with_intercept;
+		Xty_bytes = sizeof(double) * (size_t)dim_with_intercept;
+
+		err = cudaMalloc((void **)&d_features, feature_bytes);
+		if (err != cudaSuccess)
 		{
-			for (k = 0; k < dim_with_intercept; k++)
-				h_XtX[j * dim_with_intercept + k] += xi[j] * xi[k];
-			
-			/* X'y accumulation */
-			h_Xty[j] += xi[j] * targets[i];
+			if (errstr)
+				*errstr = pstrdup("CUDA LinReg train: failed to allocate device memory for features");
+			goto cpu_fallback;
 		}
-		
-		pfree(xi);
+
+		err = cudaMalloc((void **)&d_targets, target_bytes);
+		if (err != cudaSuccess)
+		{
+			cudaFree(d_features);
+			if (errstr)
+				*errstr = pstrdup("CUDA LinReg train: failed to allocate device memory for targets");
+			goto cpu_fallback;
+		}
+
+		err = cudaMalloc((void **)&d_XtX, XtX_bytes);
+		if (err != cudaSuccess)
+		{
+			cudaFree(d_features);
+			cudaFree(d_targets);
+			if (errstr)
+				*errstr = pstrdup("CUDA LinReg train: failed to allocate device memory for XtX");
+			goto cpu_fallback;
+		}
+
+		err = cudaMalloc((void **)&d_Xty, Xty_bytes);
+		if (err != cudaSuccess)
+		{
+			cudaFree(d_features);
+			cudaFree(d_targets);
+			cudaFree(d_XtX);
+			if (errstr)
+				*errstr = pstrdup("CUDA LinReg train: failed to allocate device memory for Xty");
+			goto cpu_fallback;
+		}
+
+		/* Initialize XtX and Xty to zero */
+		err = cudaMemset(d_XtX, 0, XtX_bytes);
+		if (err != cudaSuccess)
+			goto gpu_cleanup;
+		err = cudaMemset(d_Xty, 0, Xty_bytes);
+		if (err != cudaSuccess)
+			goto gpu_cleanup;
+
+		/* Copy data to device */
+		err = cudaMemcpy(d_features, features, feature_bytes, cudaMemcpyHostToDevice);
+		if (err != cudaSuccess)
+			goto gpu_cleanup;
+		err = cudaMemcpy(d_targets, targets, target_bytes, cudaMemcpyHostToDevice);
+		if (err != cudaSuccess)
+			goto gpu_cleanup;
+
+		/* Launch kernel */
+		ndb_cuda_linreg_compute_xtx_kernel<<<blocks, threads_per_block>>>(
+			d_features, d_targets, n_samples, feature_dim, dim_with_intercept,
+			d_XtX, d_Xty);
+
+		err = cudaGetLastError();
+		if (err != cudaSuccess)
+			goto gpu_cleanup;
+
+		/* Wait for kernel to complete */
+		err = cudaDeviceSynchronize();
+		if (err != cudaSuccess)
+			goto gpu_cleanup;
+
+		/* Copy results back to host */
+		err = cudaMemcpy(h_XtX, d_XtX, XtX_bytes, cudaMemcpyDeviceToHost);
+		if (err != cudaSuccess)
+			goto gpu_cleanup;
+		err = cudaMemcpy(h_Xty, d_Xty, Xty_bytes, cudaMemcpyDeviceToHost);
+		if (err != cudaSuccess)
+			goto gpu_cleanup;
+
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_XtX);
+		cudaFree(d_Xty);
+		goto after_xtx;
+
+gpu_cleanup:
+		if (d_features)
+			cudaFree(d_features);
+		if (d_targets)
+			cudaFree(d_targets);
+		if (d_XtX)
+			cudaFree(d_XtX);
+		if (d_Xty)
+			cudaFree(d_Xty);
+
+cpu_fallback:
+		/* Fallback to CPU computation */
+		for (i = 0; i < n_samples; i++)
+		{
+			const float *row = features + (i * feature_dim);
+			double *xi = (double *)palloc(sizeof(double) * dim_with_intercept);
+			
+			xi[0] = 1.0; /* intercept */
+			for (k = 1; k < dim_with_intercept; k++)
+				xi[k] = row[k-1];
+			
+			/* X'X accumulation */
+			for (j = 0; j < dim_with_intercept; j++)
+			{
+				for (k = 0; k < dim_with_intercept; k++)
+					h_XtX[j * dim_with_intercept + k] += xi[j] * xi[k];
+				
+				/* X'y accumulation */
+				h_Xty[j] += xi[j] * targets[i];
+			}
+			
+			pfree(xi);
+		}
 	}
+
+after_xtx:
 
 	/* Invert X'X using Gauss-Jordan elimination */
 	{

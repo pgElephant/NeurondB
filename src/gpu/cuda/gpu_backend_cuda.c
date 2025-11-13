@@ -26,6 +26,9 @@
 #include "neurondb_cuda_dt.h"
 #include "neurondb_cuda_ridge.h"
 #include "neurondb_cuda_lasso.h"
+#include "neurondb_cuda_nb.h"
+#include "neurondb_cuda_gmm.h"
+#include "neurondb_cuda_knn.h"
 
 #include <stdint.h>
 
@@ -643,7 +646,19 @@ static const ndb_gpu_backend ndb_cuda_backend = {
 
 	.lasso_train = ndb_cuda_lasso_train,
 	.lasso_predict = ndb_cuda_lasso_predict,
-	.lasso_pack = ndb_cuda_lasso_pack_model,
+	.lasso_pack = ndb_cuda_lasso_pack,
+
+	.nb_train = ndb_cuda_nb_train,
+	.nb_predict = ndb_cuda_nb_predict,
+	.nb_pack = ndb_cuda_nb_pack,
+
+	.gmm_train = ndb_cuda_gmm_train,
+	.gmm_predict = ndb_cuda_gmm_predict,
+	.gmm_pack = ndb_cuda_gmm_pack,
+
+	.knn_train = ndb_cuda_knn_train,
+	.knn_predict = ndb_cuda_knn_predict,
+	.knn_pack = ndb_cuda_knn_pack,
 
 	.stream_create = ndb_cuda_stream_create,
 	.stream_destroy = ndb_cuda_stream_destroy,

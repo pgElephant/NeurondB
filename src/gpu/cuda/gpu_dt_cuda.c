@@ -28,6 +28,22 @@
 #include "neurondb_cuda_dt.h"
 
 /*
+ * Helper: Free tree recursively
+ */
+static void
+dt_free_tree(DTNode *node)
+{
+	if (node == NULL)
+		return;
+	if (!node->is_leaf)
+	{
+		dt_free_tree(node->left);
+		dt_free_tree(node->right);
+	}
+	pfree(node);
+}
+
+/*
  * Helper function to serialize tree nodes recursively
  */
 static int
@@ -177,6 +193,397 @@ ndb_cuda_dt_pack_model(const DTModel *model,
 	return 0;
 }
 
+/*
+ * Helper: Compute Gini impurity from class counts
+ */
+static double
+dt_compute_gini(const int *class_counts, int class_count, int total)
+{
+	double gini = 1.0;
+	int i;
+
+	if (total <= 0)
+		return 0.0;
+
+	for (i = 0; i < class_count; i++)
+	{
+		double p = (double)class_counts[i] / (double)total;
+		gini -= p * p;
+	}
+
+	return gini;
+}
+
+/*
+ * Helper: Compute variance from sum and sum of squares
+ */
+static double
+dt_compute_variance(double sum, double sumsq, int count)
+{
+	if (count <= 0)
+		return 0.0;
+
+	double mean = sum / (double)count;
+	double variance = (sumsq / (double)count) - (mean * mean);
+
+	return (variance > 0.0) ? variance : 0.0;
+}
+
+/*
+ * Helper: Build tree node recursively with GPU-accelerated split finding
+ */
+static DTNode *
+dt_build_tree_gpu(const float *features,
+	const double *labels,
+	const int *indices,
+	int n_samples,
+	int feature_dim,
+	int max_depth,
+	int min_samples_split,
+	bool is_classification,
+	int class_count,
+	char **errstr)
+{
+	DTNode *node;
+	int i;
+	int best_feature = -1;
+	float best_threshold = 0.0f;
+	double best_gain = -DBL_MAX;
+	int *left_indices = NULL;
+	int *right_indices = NULL;
+	int left_count = 0;
+	int right_count = 0;
+	int *label_ints = NULL;
+	int *left_counts = NULL;
+	int *right_counts = NULL;
+	double left_sum = 0.0;
+	double left_sumsq = 0.0;
+	int left_count_reg = 0;
+	double right_sum = 0.0;
+	double right_sumsq = 0.0;
+	int right_count_reg = 0;
+
+	if (errstr)
+		*errstr = NULL;
+
+	/* Allocate node */
+	node = (DTNode *)palloc0(sizeof(DTNode));
+	if (node == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA DT train: failed to allocate node");
+		return NULL;
+	}
+
+	/* Stopping criteria */
+	if (max_depth <= 0 || n_samples < min_samples_split)
+	{
+		node->is_leaf = true;
+		if (is_classification)
+		{
+			/* Count classes for majority vote */
+			int *class_counts = (int *)palloc0(sizeof(int) * class_count);
+			for (i = 0; i < n_samples; i++)
+			{
+				int label = (int)labels[indices[i]];
+				if (label >= 0 && label < class_count)
+					class_counts[label]++;
+			}
+			int majority = 0;
+			for (i = 1; i < class_count; i++)
+			{
+				if (class_counts[i] > class_counts[majority])
+					majority = i;
+			}
+			node->leaf_value = (double)majority;
+			pfree(class_counts);
+		}
+		else
+		{
+			/* Compute mean for regression */
+			double sum = 0.0;
+			for (i = 0; i < n_samples; i++)
+				sum += labels[indices[i]];
+			node->leaf_value = (n_samples > 0) ? (sum / (double)n_samples) : 0.0;
+		}
+		return node;
+	}
+
+	/* Allocate working arrays */
+	left_indices = (int *)palloc(sizeof(int) * n_samples);
+	right_indices = (int *)palloc(sizeof(int) * n_samples);
+	if (left_indices == NULL || right_indices == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA DT train: failed to allocate index arrays");
+		if (left_indices)
+			pfree(left_indices);
+		if (right_indices)
+			pfree(right_indices);
+		pfree(node);
+		return NULL;
+	}
+
+	if (is_classification)
+	{
+		label_ints = (int *)palloc(sizeof(int) * n_samples);
+		left_counts = (int *)palloc0(sizeof(int) * class_count);
+		right_counts = (int *)palloc0(sizeof(int) * class_count);
+		if (label_ints == NULL || left_counts == NULL || right_counts == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("CUDA DT train: failed to allocate classification arrays");
+			if (label_ints)
+				pfree(label_ints);
+			if (left_counts)
+				pfree(left_counts);
+			if (right_counts)
+				pfree(right_counts);
+			pfree(left_indices);
+			pfree(right_indices);
+			pfree(node);
+			return NULL;
+		}
+
+		/* Convert labels to integers */
+		for (i = 0; i < n_samples; i++)
+		{
+			int label = (int)labels[indices[i]];
+			if (label < 0 || label >= class_count)
+				label = 0;
+			label_ints[i] = label;
+		}
+	}
+
+	/* Find best split using GPU-accelerated kernels */
+	for (int feat = 0; feat < feature_dim; feat++)
+	{
+		float min_val = FLT_MAX;
+		float max_val = -FLT_MAX;
+		double sum = 0.0;
+		double sumsq = 0.0;
+
+		/* Compute feature statistics using GPU */
+		if (ndb_cuda_dt_launch_feature_stats(features, (int *)indices, n_samples,
+			feature_dim, feat, &min_val, &max_val, &sum, &sumsq) != 0)
+			continue;
+
+		if (min_val == max_val || !isfinite(min_val) || !isfinite(max_val))
+			continue;
+
+		/* Try candidate thresholds (10 uniformly spaced) */
+		for (int thresh_idx = 1; thresh_idx < 10; thresh_idx++)
+		{
+			float threshold = min_val + (max_val - min_val) * (float)thresh_idx / 10.0f;
+			double gain = 0.0;
+			double left_imp = 0.0;
+			double right_imp = 0.0;
+			int left_total = 0;
+			int right_total = 0;
+
+			if (is_classification)
+			{
+				/* Use GPU kernel for classification */
+				memset(left_counts, 0, sizeof(int) * class_count);
+				memset(right_counts, 0, sizeof(int) * class_count);
+
+				if (ndb_cuda_dt_launch_split_counts_classification(features, label_ints,
+					(int *)indices, n_samples, feature_dim, feat, threshold,
+					class_count, left_counts, right_counts) != 0)
+					continue;
+
+				/* Compute totals */
+				left_total = 0;
+				right_total = 0;
+				for (i = 0; i < class_count; i++)
+				{
+					left_total += left_counts[i];
+					right_total += right_counts[i];
+				}
+
+				if (left_total <= 0 || right_total <= 0)
+					continue;
+
+				/* Compute parent impurity from all samples in current node */
+				int *parent_counts = (int *)palloc0(sizeof(int) * class_count);
+				for (i = 0; i < n_samples; i++)
+				{
+					int label = label_ints[i];
+					if (label >= 0 && label < class_count)
+						parent_counts[label]++;
+				}
+				double parent_imp = dt_compute_gini(parent_counts, class_count, n_samples);
+				pfree(parent_counts);
+
+				/* Compute Gini impurity */
+				left_imp = dt_compute_gini(left_counts, class_count, left_total);
+				right_imp = dt_compute_gini(right_counts, class_count, right_total);
+
+				/* Information gain */
+				gain = parent_imp - (((double)left_total / (double)n_samples) * left_imp +
+					((double)right_total / (double)n_samples) * right_imp);
+			}
+			else
+			{
+				/* Use GPU kernel for regression */
+				left_sum = 0.0;
+				left_sumsq = 0.0;
+				left_count_reg = 0;
+				right_sum = 0.0;
+				right_sumsq = 0.0;
+				right_count_reg = 0;
+
+				if (ndb_cuda_dt_launch_split_stats_regression(features, labels,
+					(int *)indices, n_samples, feature_dim, feat, threshold,
+					&left_sum, &left_sumsq, &left_count_reg,
+					&right_sum, &right_sumsq, &right_count_reg) != 0)
+					continue;
+
+				if (left_count_reg <= 0 || right_count_reg <= 0)
+					continue;
+
+				/* Compute variance */
+				double left_var = dt_compute_variance(left_sum, left_sumsq, left_count_reg);
+				double right_var = dt_compute_variance(right_sum, right_sumsq, right_count_reg);
+
+				/* Variance reduction */
+				double parent_var = dt_compute_variance(left_sum + right_sum,
+					left_sumsq + right_sumsq, left_count_reg + right_count_reg);
+				gain = parent_var - (((double)left_count_reg / (double)n_samples) * left_var +
+					((double)right_count_reg / (double)n_samples) * right_var);
+				left_total = left_count_reg;
+				right_total = right_count_reg;
+			}
+
+			/* Update best split if this is better */
+			if (gain > best_gain && isfinite(gain))
+			{
+				best_gain = gain;
+				best_feature = feat;
+				best_threshold = threshold;
+			}
+		}
+	}
+
+	/* Clean up working arrays */
+	if (label_ints)
+		pfree(label_ints);
+	if (left_counts)
+		pfree(left_counts);
+	if (right_counts)
+		pfree(right_counts);
+
+	/* If no good split found, make leaf */
+	if (best_feature < 0 || best_gain <= 0.0)
+	{
+		node->is_leaf = true;
+		if (is_classification)
+		{
+			int *class_counts = (int *)palloc0(sizeof(int) * class_count);
+			for (i = 0; i < n_samples; i++)
+			{
+				int label = (int)labels[indices[i]];
+				if (label >= 0 && label < class_count)
+					class_counts[label]++;
+			}
+			int majority = 0;
+			for (i = 1; i < class_count; i++)
+			{
+				if (class_counts[i] > class_counts[majority])
+					majority = i;
+			}
+			node->leaf_value = (double)majority;
+			pfree(class_counts);
+		}
+		else
+		{
+			double sum = 0.0;
+			for (i = 0; i < n_samples; i++)
+				sum += labels[indices[i]];
+			node->leaf_value = (n_samples > 0) ? (sum / (double)n_samples) : 0.0;
+		}
+		pfree(left_indices);
+		pfree(right_indices);
+		return node;
+	}
+
+	/* Partition indices based on best split */
+	for (i = 0; i < n_samples; i++)
+	{
+		float val = features[indices[i] * feature_dim + best_feature];
+		if (isfinite(val) && val <= best_threshold)
+			left_indices[left_count++] = indices[i];
+		else
+			right_indices[right_count++] = indices[i];
+	}
+
+	/* Validate split */
+	if (left_count <= 0 || right_count <= 0)
+	{
+		node->is_leaf = true;
+		if (is_classification)
+		{
+			int *class_counts = (int *)palloc0(sizeof(int) * class_count);
+			for (i = 0; i < n_samples; i++)
+			{
+				int label = (int)labels[indices[i]];
+				if (label >= 0 && label < class_count)
+					class_counts[label]++;
+			}
+			int majority = 0;
+			for (i = 1; i < class_count; i++)
+			{
+				if (class_counts[i] > class_counts[majority])
+					majority = i;
+			}
+			node->leaf_value = (double)majority;
+			pfree(class_counts);
+		}
+		else
+		{
+			double sum = 0.0;
+			for (i = 0; i < n_samples; i++)
+				sum += labels[indices[i]];
+			node->leaf_value = (n_samples > 0) ? (sum / (double)n_samples) : 0.0;
+		}
+		pfree(left_indices);
+		pfree(right_indices);
+		return node;
+	}
+
+	/* Build left and right subtrees recursively */
+	node->is_leaf = false;
+	node->feature_idx = best_feature;
+	node->threshold = best_threshold;
+
+	node->left = dt_build_tree_gpu(features, labels, left_indices, left_count,
+		feature_dim, max_depth - 1, min_samples_split, is_classification,
+		class_count, errstr);
+	if (node->left == NULL)
+	{
+		pfree(left_indices);
+		pfree(right_indices);
+		pfree(node);
+		return NULL;
+	}
+
+	node->right = dt_build_tree_gpu(features, labels, right_indices, right_count,
+		feature_dim, max_depth - 1, min_samples_split, is_classification,
+		class_count, errstr);
+	if (node->right == NULL)
+	{
+		dt_free_tree(node->left);
+		pfree(left_indices);
+		pfree(right_indices);
+		pfree(node);
+		return NULL;
+	}
+
+	pfree(left_indices);
+	pfree(right_indices);
+	return node;
+}
+
 int
 ndb_cuda_dt_train(const float *features,
 	const double *labels,
@@ -187,11 +594,210 @@ ndb_cuda_dt_train(const float *features,
 	Jsonb **metrics,
 	char **errstr)
 {
-	/* Decision Tree training on GPU is complex - for now, fall back to CPU */
-	/* This can be enhanced later with GPU-accelerated split finding */
+	int max_depth = 10;
+	int min_samples_split = 2;
+	bool is_classification = true;
+	int class_count = 2;
+	DTModel *model = NULL;
+	DTNode *root = NULL;
+	int *indices = NULL;
+	int i;
+	int rc = -1;
+
 	if (errstr)
-		*errstr = pstrdup("Decision Tree GPU training not yet implemented, use CPU training");
-	return -1;
+		*errstr = NULL;
+
+	/* Comprehensive input validation */
+	if (features == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA DT train: features array is NULL");
+		return -1;
+	}
+	if (labels == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA DT train: labels array is NULL");
+		return -1;
+	}
+	if (model_data == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA DT train: model_data output pointer is NULL");
+		return -1;
+	}
+	if (n_samples <= 0 || n_samples > 100000000)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA DT train: n_samples must be between 1 and 100000000");
+		return -1;
+	}
+	if (feature_dim <= 0 || feature_dim > 1000000)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA DT train: feature_dim must be between 1 and 1000000");
+		return -1;
+	}
+
+	/* Extract hyperparameters */
+	if (hyperparams != NULL)
+	{
+		Datum max_depth_datum;
+		Datum min_samples_split_datum;
+		Datum is_classification_datum;
+		Datum class_count_datum;
+		Datum numeric_datum;
+		Numeric num;
+
+		max_depth_datum = DirectFunctionCall2(
+			jsonb_object_field,
+			JsonbPGetDatum(hyperparams),
+			CStringGetTextDatum("max_depth"));
+		if (DatumGetPointer(max_depth_datum) != NULL)
+		{
+			numeric_datum = DirectFunctionCall1(
+				jsonb_numeric, max_depth_datum);
+			if (DatumGetPointer(numeric_datum) != NULL)
+			{
+				num = DatumGetNumeric(numeric_datum);
+				max_depth = DatumGetInt32(
+					DirectFunctionCall1(numeric_int4,
+						NumericGetDatum(num)));
+				if (max_depth <= 0)
+					max_depth = 10;
+				if (max_depth > 100)
+					max_depth = 100;
+			}
+		}
+
+		min_samples_split_datum = DirectFunctionCall2(
+			jsonb_object_field,
+			JsonbPGetDatum(hyperparams),
+			CStringGetTextDatum("min_samples_split"));
+		if (DatumGetPointer(min_samples_split_datum) != NULL)
+		{
+			numeric_datum = DirectFunctionCall1(
+				jsonb_numeric, min_samples_split_datum);
+			if (DatumGetPointer(numeric_datum) != NULL)
+			{
+				num = DatumGetNumeric(numeric_datum);
+				min_samples_split = DatumGetInt32(
+					DirectFunctionCall1(numeric_int4,
+						NumericGetDatum(num)));
+				if (min_samples_split < 2)
+					min_samples_split = 2;
+			}
+		}
+
+		is_classification_datum = DirectFunctionCall2(
+			jsonb_object_field,
+			JsonbPGetDatum(hyperparams),
+			CStringGetTextDatum("is_classification"));
+		if (DatumGetPointer(is_classification_datum) != NULL)
+		{
+			bool val = DatumGetBool(
+				DirectFunctionCall1(jsonb_bool, is_classification_datum));
+			is_classification = val;
+		}
+
+		class_count_datum = DirectFunctionCall2(
+			jsonb_object_field,
+			JsonbPGetDatum(hyperparams),
+			CStringGetTextDatum("class_count"));
+		if (DatumGetPointer(class_count_datum) != NULL)
+		{
+			numeric_datum = DirectFunctionCall1(
+				jsonb_numeric, class_count_datum);
+			if (DatumGetPointer(numeric_datum) != NULL)
+			{
+				num = DatumGetNumeric(numeric_datum);
+				class_count = DatumGetInt32(
+					DirectFunctionCall1(numeric_int4,
+						NumericGetDatum(num)));
+				if (class_count < 2)
+					class_count = 2;
+				if (class_count > 1000)
+					class_count = 1000;
+			}
+		}
+	}
+
+	/* Validate input data for NaN/Inf */
+	for (i = 0; i < n_samples; i++)
+	{
+		if (!isfinite(labels[i]))
+		{
+			if (errstr)
+				*errstr = pstrdup("CUDA DT train: non-finite value in labels array");
+			return -1;
+		}
+		for (int j = 0; j < feature_dim; j++)
+		{
+			if (!isfinite(features[i * feature_dim + j]))
+			{
+				if (errstr)
+					*errstr = pstrdup("CUDA DT train: non-finite value in features array");
+				return -1;
+			}
+		}
+	}
+
+	/* Create index array */
+	indices = (int *)palloc(sizeof(int) * n_samples);
+	if (indices == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA DT train: failed to allocate indices array");
+		return -1;
+	}
+	for (i = 0; i < n_samples; i++)
+		indices[i] = i;
+
+	/* Build tree using GPU-accelerated split finding */
+	root = dt_build_tree_gpu(features, labels, indices, n_samples, feature_dim,
+		max_depth, min_samples_split, is_classification, class_count, errstr);
+	if (root == NULL)
+	{
+		if (errstr && *errstr == NULL)
+			*errstr = pstrdup("CUDA DT train: failed to build tree");
+		pfree(indices);
+		return -1;
+	}
+
+	/* Create model structure */
+	model = (DTModel *)palloc0(sizeof(DTModel));
+	if (model == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA DT train: failed to allocate model");
+		dt_free_tree(root);
+		pfree(indices);
+		return -1;
+	}
+
+	model->model_id = 0;  /* Will be set by catalog */
+	model->n_features = feature_dim;
+	model->n_samples = n_samples;
+	model->max_depth = max_depth;
+	model->min_samples_split = min_samples_split;
+	model->root = root;
+
+	/* Pack model */
+	if (ndb_cuda_dt_pack_model(model, model_data, metrics, errstr) != 0)
+	{
+		if (errstr && *errstr == NULL)
+			*errstr = pstrdup("CUDA DT train: model packing failed");
+		dt_free_tree(root);
+		pfree(model);
+		pfree(indices);
+		return -1;
+	}
+
+	pfree(indices);
+	pfree(model);  /* Note: root is now owned by packed model */
+
+	rc = 0;
+	return rc;
 }
 
 int

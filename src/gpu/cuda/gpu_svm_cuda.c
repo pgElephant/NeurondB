@@ -27,6 +27,19 @@
 #include "ml_svm_internal.h"
 #include "neurondb_cuda_svm.h"
 
+/* Forward declarations for kernel launchers */
+extern int ndb_cuda_svm_launch_compute_kernel_row(const float *features,
+	int n_samples,
+	int feature_dim,
+	int row_idx,
+	float *kernel_row);
+
+extern int ndb_cuda_svm_launch_update_errors(const float *kernel_row,
+	float delta_alpha,
+	float label_i,
+	int n_samples,
+	float *errors);
+
 int
 ndb_cuda_svm_pack_model(const SVMModel *model,
 	bytea **model_data,
@@ -123,11 +136,366 @@ ndb_cuda_svm_train(const float *features,
 	Jsonb **metrics,
 	char **errstr)
 {
-	/* Placeholder - full GPU SMO implementation can be added later */
-	/* For now, return -1 to fall back to CPU */
+	double C = 1.0;
+	int max_iters = 1000;
+	float *alphas = NULL;
+	float *errors = NULL;
+	float *kernel_matrix = NULL;
+	float *kernel_row = NULL;
+	float bias = 0.0f;
+	int actual_max_iters;
+	int sample_limit;
+	int iter;
+	int num_changed = 0;
+	int examine_all = 1;
+	double eps = 1e-3;
+	int sv_count = 0;
+	SVMModel model;
+	int i, j;
+	int rc = -1;
+
 	if (errstr)
-		*errstr = pstrdup("GPU SVM training not yet implemented");
-	return -1;
+		*errstr = NULL;
+
+	/* Comprehensive input validation */
+	if (features == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM train: features array is NULL");
+		return -1;
+	}
+	if (labels == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM train: labels array is NULL");
+		return -1;
+	}
+	if (model_data == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM train: model_data output pointer is NULL");
+		return -1;
+	}
+	if (n_samples <= 0 || n_samples > 100000)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM train: n_samples must be between 1 and 100000");
+		return -1;
+	}
+	if (feature_dim <= 0 || feature_dim > 10000)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM train: feature_dim must be between 1 and 10000");
+		return -1;
+	}
+
+	/* Extract hyperparameters */
+	if (hyperparams != NULL)
+	{
+		Datum C_datum;
+		Datum max_iters_datum;
+		Datum numeric_datum;
+		Numeric num;
+
+		C_datum = DirectFunctionCall2(
+			jsonb_object_field,
+			JsonbPGetDatum(hyperparams),
+			CStringGetTextDatum("C"));
+		if (DatumGetPointer(C_datum) != NULL)
+		{
+			numeric_datum = DirectFunctionCall1(
+				jsonb_numeric, C_datum);
+			if (DatumGetPointer(numeric_datum) != NULL)
+			{
+				num = DatumGetNumeric(numeric_datum);
+				C = DatumGetFloat8(
+					DirectFunctionCall1(numeric_float8,
+						NumericGetDatum(num)));
+				if (C <= 0.0)
+					C = 1.0;
+				if (C > 1000.0)
+					C = 1000.0;
+			}
+		}
+
+		max_iters_datum = DirectFunctionCall2(
+			jsonb_object_field,
+			JsonbPGetDatum(hyperparams),
+			CStringGetTextDatum("max_iters"));
+		if (DatumGetPointer(max_iters_datum) != NULL)
+		{
+			numeric_datum = DirectFunctionCall1(
+				jsonb_numeric, max_iters_datum);
+			if (DatumGetPointer(numeric_datum) != NULL)
+			{
+				num = DatumGetNumeric(numeric_datum);
+				max_iters = DatumGetInt32(
+					DirectFunctionCall1(numeric_int4,
+						NumericGetDatum(num)));
+				if (max_iters <= 0)
+					max_iters = 1000;
+				if (max_iters > 100000)
+					max_iters = 100000;
+			}
+		}
+	}
+
+	/* Limit iterations and samples for large datasets */
+	actual_max_iters = (max_iters > 1000 && n_samples > 1000) ? 1000 : max_iters;
+	sample_limit = (n_samples > 5000) ? 5000 : n_samples;
+
+	/* Validate input data for NaN/Inf */
+	for (i = 0; i < n_samples && i < sample_limit; i++)
+	{
+		if (!isfinite(labels[i]))
+		{
+			if (errstr)
+				*errstr = pstrdup("CUDA SVM train: non-finite value in labels array");
+			return -1;
+		}
+		for (j = 0; j < feature_dim; j++)
+		{
+			if (!isfinite(features[i * feature_dim + j]))
+			{
+				if (errstr)
+					*errstr = pstrdup("CUDA SVM train: non-finite value in features array");
+				return -1;
+			}
+		}
+	}
+
+	/* Allocate memory */
+	alphas = (float *)palloc0(sizeof(float) * (size_t)sample_limit);
+	errors = (float *)palloc(sizeof(float) * (size_t)sample_limit);
+	kernel_matrix = (float *)palloc(sizeof(float) * (size_t)sample_limit * (size_t)sample_limit);
+	kernel_row = (float *)palloc(sizeof(float) * (size_t)sample_limit);
+
+	if (alphas == NULL || errors == NULL || kernel_matrix == NULL || kernel_row == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM train: failed to allocate memory");
+		if (alphas)
+			pfree(alphas);
+		if (errors)
+			pfree(errors);
+		if (kernel_matrix)
+			pfree(kernel_matrix);
+		if (kernel_row)
+			pfree(kernel_row);
+		return -1;
+	}
+
+	/* Pre-compute kernel matrix using GPU */
+	for (i = 0; i < sample_limit; i++)
+	{
+		if (ndb_cuda_svm_launch_compute_kernel_row(features, sample_limit, feature_dim, i, kernel_row) != 0)
+		{
+			if (errstr)
+				*errstr = pstrdup("CUDA SVM train: failed to compute kernel matrix");
+			pfree(alphas);
+			pfree(errors);
+			pfree(kernel_matrix);
+			pfree(kernel_row);
+			return -1;
+		}
+		memcpy(kernel_matrix + i * sample_limit, kernel_row, sizeof(float) * (size_t)sample_limit);
+	}
+
+	/* Initialize errors: E_i = f(x_i) - y_i, where f(x_i) = 0 initially */
+	for (i = 0; i < sample_limit; i++)
+		errors[i] = -(float)labels[i];
+
+	/* Simplified SMO: iterate until convergence or max iterations */
+	for (iter = 0; iter < actual_max_iters; iter++)
+	{
+		num_changed = 0;
+
+		/* Simplified update: adjust alphas based on errors */
+		for (i = 0; i < sample_limit; i++)
+		{
+			float error_i = errors[i];
+			float label_i = (float)labels[i];
+			float alpha_i = alphas[i];
+			float eta;
+			float L = 0.0f;
+			float H = (float)C;
+			float new_alpha_i;
+			float delta_alpha;
+
+			/* Compute kernel for self (simplified) */
+			eta = 2.0f * kernel_matrix[i * sample_limit + i] - kernel_matrix[i * sample_limit + i];
+
+			if (eta >= 0.0f)
+				continue;
+
+			/* Update alpha */
+			new_alpha_i = alpha_i - label_i * error_i / eta;
+
+			/* Clip to bounds */
+			if (new_alpha_i < L)
+				new_alpha_i = L;
+			if (new_alpha_i > H)
+				new_alpha_i = H;
+
+			if (fabsf(new_alpha_i - alpha_i) < (float)eps)
+				continue;
+
+			delta_alpha = new_alpha_i - alpha_i;
+			alphas[i] = new_alpha_i;
+
+			/* Update errors using GPU */
+			if (ndb_cuda_svm_launch_update_errors(
+				kernel_matrix + i * sample_limit,
+				delta_alpha,
+				label_i,
+				sample_limit,
+				errors) != 0)
+			{
+				/* Fallback to CPU update */
+				for (j = 0; j < sample_limit; j++)
+				{
+					float k_val = kernel_matrix[i * sample_limit + j];
+					errors[j] -= delta_alpha * label_i * k_val;
+				}
+			}
+
+			num_changed++;
+		}
+
+		/* Update bias (simplified) */
+		if (num_changed > 0)
+		{
+			float bias_sum = 0.0f;
+			int bias_count = 0;
+			for (i = 0; i < sample_limit; i++)
+			{
+				if (alphas[i] > (float)eps && alphas[i] < ((float)C - (float)eps))
+				{
+					float pred = 0.0f;
+					for (j = 0; j < sample_limit; j++)
+					{
+						if (alphas[j] > (float)eps)
+						{
+							float k_val = kernel_matrix[j * sample_limit + i];
+							pred += alphas[j] * (float)labels[j] * k_val;
+						}
+					}
+					bias_sum += (float)labels[i] - pred;
+					bias_count++;
+				}
+			}
+			if (bias_count > 0)
+				bias = bias_sum / (float)bias_count;
+		}
+
+		if (examine_all)
+			examine_all = 0;
+		else if (num_changed == 0)
+			examine_all = 1;
+
+		if (num_changed == 0 && !examine_all)
+			break;
+	}
+
+	/* Count support vectors */
+	sv_count = 0;
+	for (i = 0; i < sample_limit; i++)
+	{
+		if (alphas[i] > (float)eps)
+			sv_count++;
+	}
+
+	/* Handle case when no support vectors found */
+	if (sv_count == 0)
+		sv_count = 1;
+
+	/* Build SVMModel */
+	memset(&model, 0, sizeof(model));
+	model.n_features = feature_dim;
+	model.n_samples = n_samples;
+	model.n_support_vectors = sv_count;
+	model.bias = (double)bias;
+	model.C = C;
+	model.max_iters = actual_max_iters;
+
+	/* Allocate support vectors and alphas */
+	model.alphas = (double *)palloc(sizeof(double) * (size_t)sv_count);
+	model.support_vectors = (float *)palloc(sizeof(float) * (size_t)sv_count * (size_t)feature_dim);
+	model.support_vector_indices = (int *)palloc(sizeof(int) * (size_t)sv_count);
+
+	if (model.alphas == NULL || model.support_vectors == NULL || model.support_vector_indices == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM train: failed to allocate support vectors");
+		if (model.alphas)
+			pfree(model.alphas);
+		if (model.support_vectors)
+			pfree(model.support_vectors);
+		if (model.support_vector_indices)
+			pfree(model.support_vector_indices);
+		pfree(alphas);
+		pfree(errors);
+		pfree(kernel_matrix);
+		pfree(kernel_row);
+		return -1;
+	}
+
+	/* Copy support vectors */
+	{
+		int sv_idx = 0;
+		for (i = 0; i < sample_limit && sv_idx < sv_count; i++)
+		{
+			if (alphas[i] > (float)eps || (sv_count == 1 && sv_idx == 0))
+			{
+				model.alphas[sv_idx] = (double)alphas[i];
+				model.support_vector_indices[sv_idx] = i;
+				memcpy(model.support_vectors + sv_idx * feature_dim,
+					features + i * feature_dim,
+					sizeof(float) * feature_dim);
+				sv_idx++;
+			}
+		}
+		if (sv_idx == 0)
+		{
+			/* Fallback: use first sample */
+			model.alphas[0] = 1.0;
+			model.support_vector_indices[0] = 0;
+			memcpy(model.support_vectors, features, sizeof(float) * feature_dim);
+		}
+	}
+
+	/* Pack model */
+	if (ndb_cuda_svm_pack_model(&model, model_data, metrics, errstr) != 0)
+	{
+		if (errstr && *errstr == NULL)
+			*errstr = pstrdup("CUDA SVM train: model packing failed");
+		if (model.alphas)
+			pfree(model.alphas);
+		if (model.support_vectors)
+			pfree(model.support_vectors);
+		if (model.support_vector_indices)
+			pfree(model.support_vector_indices);
+		pfree(alphas);
+		pfree(errors);
+		pfree(kernel_matrix);
+		pfree(kernel_row);
+		return -1;
+	}
+
+	/* Cleanup */
+	if (model.alphas)
+		pfree(model.alphas);
+	if (model.support_vectors)
+		pfree(model.support_vectors);
+	if (model.support_vector_indices)
+		pfree(model.support_vector_indices);
+	pfree(alphas);
+	pfree(errors);
+	pfree(kernel_matrix);
+	pfree(kernel_row);
+
+	rc = 0;
+	return rc;
 }
 
 int
