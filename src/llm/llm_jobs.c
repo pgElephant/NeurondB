@@ -221,20 +221,21 @@ ndb_llm_job_update(int job_id,
 						   : (Datum)0;
 	values[3] = (error && strlen(error) > 0) ? CStringGetTextDatum(error)
 						 : (Datum)0;
-
-	/* NULLs for result and error */
-	char nulls[4] = { ' ', ' ', ' ', ' ' };
-	if (!result || strlen(result) == 0)
-		nulls[2] = 'n';
-	if (!error || strlen(error) == 0)
-		nulls[3] = 'n';
-
-	if (SPI_execute_with_args(
-		    query.data, 4, argtypes, values, nulls, false, 0)
-		== SPI_OK_UPDATE)
 	{
-		if (SPI_processed > 0)
-			ok = true;
+		/* NULLs for result and error */
+		char nulls[4] = { ' ', ' ', ' ', ' ' };
+		if (!result || strlen(result) == 0)
+			nulls[2] = 'n';
+		if (!error || strlen(error) == 0)
+			nulls[3] = 'n';
+
+		if (SPI_execute_with_args(
+			    query.data, 4, argtypes, values, nulls, false, 0)
+			== SPI_OK_UPDATE)
+		{
+			if (SPI_processed > 0)
+				ok = true;
+		}
 	}
 	SPI_finish();
 	return ok;

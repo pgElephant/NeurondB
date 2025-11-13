@@ -14,6 +14,7 @@
 #include "utils/timestamp.h"
 #include "lib/stringinfo.h"
 #include "catalog/pg_type.h"
+#include "utils/lsyscache.h"
 #include "openssl/sha.h"
 #include "neurondb.h"
 #include "neurondb_llm.h"
@@ -282,11 +283,14 @@ cache_lookup_text(const char *key, char **text_out)
 static void
 cache_store_text(const char *key, const char *text)
 {
-	if (SPI_connect() != SPI_OK_CONNECT)
-		return;
-	Oid argtypes[2] = { TEXTOID, JSONBOID };
+	Oid argtypes[2];
 	Datum values[2];
 	StringInfoData val;
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		return;
+	argtypes[0] = TEXTOID;
+	argtypes[1] = JSONBOID;
 	initStringInfo(&val);
 	appendStringInfo(&val, "{\"text\":%s}", quote_literal_cstr(text));
 	values[0] = CStringGetTextDatum(key);
@@ -1353,14 +1357,14 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 			state->batch_resp->num_success = batch_resp.num_success;
 			if (batch_resp.texts && batch_resp.num_items > 0)
 			{
-				int i;
+				int j;
 				state->batch_resp->texts = (char **)palloc0(
 					batch_resp.num_items * sizeof(char *));
-				for (i = 0; i < batch_resp.num_items; i++)
+				for (j = 0; j < batch_resp.num_items; j++)
 				{
-					if (batch_resp.texts[i])
-						state->batch_resp->texts[i] =
-							pstrdup(batch_resp.texts[i]);
+					if (batch_resp.texts[j])
+						state->batch_resp->texts[j] =
+							pstrdup(batch_resp.texts[j]);
 				}
 			}
 			if (batch_resp.tokens_in && batch_resp.num_items > 0)
@@ -1402,7 +1406,7 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 	{
 		BatchCompleteState *state =
 			(BatchCompleteState *)funcctx->user_fctx;
-		TupleDesc tupdesc;
+		TupleDesc tupdesc_local;
 
 		elog(NOTICE, "neurondb: llm_runtime SRF_PERCALL_SETUP: state=%p", (void *)state);
 		if (!state || !state->batch_resp || !state->tupdesc)
@@ -1410,7 +1414,7 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 			elog(ERROR, "neurondb: batch completion state is invalid");
 			SRF_RETURN_DONE(funcctx);
 		}
-		tupdesc = state->tupdesc;
+		tupdesc_local = state->tupdesc;
 
 		elog(NOTICE, "neurondb: llm_runtime SRF: current_idx=%d, num_items=%d", state->current_idx, state->batch_resp->num_items);
 		if (state->current_idx < state->batch_resp->num_items)
@@ -1465,45 +1469,45 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 				nulls[4] = false;
 			}
 
-			tuple = heap_form_tuple(tupdesc, values, nulls);
+			tuple = heap_form_tuple(tupdesc_local, values, nulls);
 			elog(NOTICE, "neurondb: llm_runtime SRF tuple created for idx=%d, returning next", idx);
 			state->current_idx++;
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 		} else
 		{
 			/* Clean up */
-			BatchCompleteState *state =
+			BatchCompleteState *cleanup_state =
 				(BatchCompleteState *)funcctx->user_fctx;
 			int i;
 
-			if (state->batch_resp)
+			if (cleanup_state->batch_resp)
 			{
-				if (state->batch_resp->texts)
+				if (cleanup_state->batch_resp->texts)
 				{
 					for (i = 0; i
-						< state->batch_resp->num_items;
+						< cleanup_state->batch_resp->num_items;
 						i++)
-						if (state->batch_resp->texts[i])
-							pfree(state->batch_resp->texts
+						if (cleanup_state->batch_resp->texts[i])
+							pfree(cleanup_state->batch_resp->texts
 									[i]);
-					pfree(state->batch_resp->texts);
+					pfree(cleanup_state->batch_resp->texts);
 				}
-				if (state->batch_resp->tokens_in)
-					pfree(state->batch_resp->tokens_in);
-				if (state->batch_resp->tokens_out)
-					pfree(state->batch_resp->tokens_out);
-				if (state->batch_resp->http_status)
-					pfree(state->batch_resp->http_status);
-				pfree(state->batch_resp);
+				if (cleanup_state->batch_resp->tokens_in)
+					pfree(cleanup_state->batch_resp->tokens_in);
+				if (cleanup_state->batch_resp->tokens_out)
+					pfree(cleanup_state->batch_resp->tokens_out);
+				if (cleanup_state->batch_resp->http_status)
+					pfree(cleanup_state->batch_resp->http_status);
+				pfree(cleanup_state->batch_resp);
 			}
-			if (state->prompts)
+			if (cleanup_state->prompts)
 			{
-				for (i = 0; i < state->num_prompts; i++)
-					if (state->prompts[i])
-						pfree(state->prompts[i]);
-				pfree(state->prompts);
+				for (i = 0; i < cleanup_state->num_prompts; i++)
+					if (cleanup_state->prompts[i])
+						pfree(cleanup_state->prompts[i]);
+				pfree(cleanup_state->prompts);
 			}
-			pfree(state);
+			pfree(cleanup_state);
 			SRF_RETURN_DONE(funcctx);
 		}
 	}
@@ -1906,6 +1910,12 @@ handle_as_1d:
 		{
 			BatchRerankState *state = (BatchRerankState *)palloc0(
 				sizeof(BatchRerankState));
+			if (!state)
+			{
+				ereport(ERROR,
+					(errcode(ERRCODE_OUT_OF_MEMORY),
+						errmsg("neurondb: failed to allocate batch rerank state")));
+			}
 			state->num_queries = num_queries;
 			state->current_query_idx = 0;
 			state->current_doc_idx = 0;
@@ -1941,6 +1951,14 @@ handle_as_1d:
 	{
 		BatchRerankState *state =
 			(BatchRerankState *)funcctx->user_fctx;
+		
+		if (!state)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: batch rerank state is NULL")));
+			SRF_RETURN_DONE(funcctx);
+		}
 
 		/* Find next query-document pair */
 		while (state->current_query_idx < state->num_queries)
@@ -1950,13 +1968,40 @@ handle_as_1d:
 
 			if (doc_idx < state->ndocs_array[query_idx])
 			{
-				if (state->scores && state->scores[query_idx])
+				/* Validate state and array bounds */
+				if (!state || !state->scores || !state->ndocs_array)
+				{
+					ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+							errmsg("neurondb: batch rerank state is invalid")));
+					SRF_RETURN_DONE(funcctx);
+				}
+				if (query_idx < 0 || query_idx >= state->num_queries)
+				{
+					ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+							errmsg("neurondb: query index %d out of bounds (0-%d)",
+								query_idx,
+								state->num_queries - 1)));
+					SRF_RETURN_DONE(funcctx);
+				}
+				if (doc_idx < 0 || doc_idx >= state->ndocs_array[query_idx])
+				{
+					ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+							errmsg("neurondb: document index %d out of bounds (0-%d) for query %d",
+								doc_idx,
+								state->ndocs_array[query_idx] - 1,
+								query_idx)));
+					SRF_RETURN_DONE(funcctx);
+				}
+				
+				if (state->scores && state->scores[query_idx] && doc_idx < state->nscores[query_idx])
 				{
 					values[0] = Int32GetDatum(query_idx);
 					values[1] = Int32GetDatum(doc_idx);
 					values[2] = Float4GetDatum(
-						state->scores[query_idx]
-							     [doc_idx]);
+						state->scores[query_idx][doc_idx]);
 					nulls[0] = false;
 					nulls[1] = false;
 					nulls[2] = false;

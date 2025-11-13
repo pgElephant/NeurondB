@@ -128,7 +128,6 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 	int iter;
 	int i;
 	int j;
-	MemoryContext oldcontext;
 	LRDataset dataset;
 	const char *quoted_tbl;
 	const char *quoted_feat;
@@ -152,8 +151,6 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
 	targ_str = text_to_cstring(target_col);
-
-	oldcontext = CurrentMemoryContext;
 
 	lr_dataset_init(&dataset);
 	initStringInfo(&query);
@@ -208,9 +205,11 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 			    &gpu_err)
 			&& gpu_result.spec.model_data != NULL)
 		{
+			MLCatalogModelSpec spec;
+
 			elog(NOTICE,
 				"logistic_regression: GPU training succeeded");
-			MLCatalogModelSpec spec = gpu_result.spec;
+			spec = gpu_result.spec;
 
 			if (spec.training_table == NULL)
 				spec.training_table = tbl_str;
@@ -346,7 +345,6 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 		MLCatalogModelSpec spec;
 		Jsonb *params_jsonb;
 		Jsonb *metrics_jsonb;
-		StringInfoData hyperbuf;
 		StringInfoData metricsbuf;
 		double final_loss;
 		double *preds;

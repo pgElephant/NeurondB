@@ -177,19 +177,21 @@ analyze_sentiment_advanced(PG_FUNCTION_ARGS)
 	lower_text[text_len] = '\0';
 
 	/* Simple keyword-based sentiment (production would use ML model) */
-	const char *positive_words_list[] = {
-		"good", "great", "excellent", "love", "best"
-	};
-	const char *negative_words_list[] = {
-		"bad", "terrible", "hate", "worst", "poor"
-	};
-
-	for (i = 0; i < 5; i++)
 	{
-		if (strstr(lower_text, positive_words_list[i]) != NULL)
-			positive_words++;
-		if (strstr(lower_text, negative_words_list[i]) != NULL)
-			negative_words++;
+		const char *positive_words_list[] = {
+			"good", "great", "excellent", "love", "best"
+		};
+		const char *negative_words_list[] = {
+			"bad", "terrible", "hate", "worst", "poor"
+		};
+
+		for (i = 0; i < 5; i++)
+		{
+			if (strstr(lower_text, positive_words_list[i]) != NULL)
+				positive_words++;
+			if (strstr(lower_text, negative_words_list[i]) != NULL)
+				negative_words++;
+		}
 	}
 
 	sentiment_score = (float)(positive_words - negative_words)

@@ -130,6 +130,11 @@ ndb_cuda_hf_load_model_weights(const char *model_name,
 	NdbCudaHfModelWeights *weights,
 	char **errstr)
 {
+	size_t embed_table_size;
+	size_t position_embed_size;
+	size_t lm_head_size;
+	int i;
+
 	/* Placeholder: In a full implementation, this would:
 	 * 1. Load model weights from file (e.g., safetensors, pickle)
 	 * 2. Allocate GPU memory for weights
@@ -160,12 +165,12 @@ ndb_cuda_hf_load_model_weights(const char *model_name,
 	config->use_gpu = true;
 
 	/* Allocate dummy embedding table on host */
-	size_t embed_table_size =
+	embed_table_size =
 		config->vocab_size * config->embed_dim * sizeof(float);
 	weights->embedding_table = (float *)palloc(embed_table_size);
 
 	/* Initialize with random values (in real implementation, load from file) */
-	for (int i = 0; i < config->vocab_size * config->embed_dim; i++)
+	for (i = 0; i < config->vocab_size * config->embed_dim; i++)
 	{
 		weights->embedding_table[i] =
 			(float)(rand() % 1000) / 1000.0f - 0.5f;
@@ -173,20 +178,20 @@ ndb_cuda_hf_load_model_weights(const char *model_name,
 
 	/* Allocate position embeddings and LM head weights for generation models */
 	/* These will be used if model type is changed to GENERATION later */
-	size_t position_embed_size =
+	position_embed_size =
 		config->max_seq_len * config->embed_dim * sizeof(float);
-	size_t lm_head_size =
+	lm_head_size =
 		config->vocab_size * config->embed_dim * sizeof(float);
 	weights->position_embeddings = (float *)palloc(position_embed_size);
 	weights->lm_head_weights = (float *)palloc(lm_head_size);
 
 	/* Initialize with random values */
-	for (int i = 0; i < config->max_seq_len * config->embed_dim; i++)
+	for (i = 0; i < config->max_seq_len * config->embed_dim; i++)
 	{
 		weights->position_embeddings[i] =
 			(float)(rand() % 1000) / 1000.0f - 0.5f;
 	}
-	for (int i = 0; i < config->vocab_size * config->embed_dim; i++)
+	for (i = 0; i < config->vocab_size * config->embed_dim; i++)
 	{
 		weights->lm_head_weights[i] =
 			(float)(rand() % 1000) / 1000.0f - 0.5f;
@@ -1110,6 +1115,11 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 			|| strcmp(key, "stop") == 0)
 		{
 			/* Parse stop sequences - supports both string and array format */
+#ifdef HAVE_ONNX_RUNTIME
+			int32_t *stop_token_ids = NULL;
+			int32_t stop_token_len = 0;
+#endif
+
 			if (*p == '"')
 			{
 				/* Single string format: "stop" */
@@ -1130,8 +1140,6 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 
 					/* Tokenize stop sequence using proper tokenizer */
 #ifdef HAVE_ONNX_RUNTIME
-					int32_t *stop_token_ids = NULL;
-					int32_t stop_token_len = 0;
 
 					PG_TRY();
 					{
@@ -1246,11 +1254,8 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 
 							/* Tokenize stop sequence using proper tokenizer */
 #ifdef HAVE_ONNX_RUNTIME
-							int32_t *
-								stop_token_ids =
-									NULL;
-							int32_t stop_token_len =
-								0;
+							stop_token_ids = NULL;
+							stop_token_len = 0;
 
 							PG_TRY();
 							{
@@ -1316,16 +1321,17 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 									pfree(stop_token_ids);
 								} else
 								{
+									const char *ptr;
+									int word_count;
+									int in_word;
+
 									/* Fallback: use word count estimation */
 									if (stop_token_ids)
 										pfree(stop_token_ids);
 
-									const char *ptr =
-										value;
-									int word_count =
-										0;
-									int in_word =
-										0;
+									ptr = value;
+									word_count = 0;
+									in_word = 0;
 
 									while (*ptr)
 									{
@@ -1433,10 +1439,9 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 					p++; /* Skip closing quote */
 
 					/* Tokenize stop sequence using proper tokenizer */
-					int32_t *stop_token_ids = NULL;
-					int32_t stop_token_len = 0;
-
 #ifdef HAVE_ONNX_RUNTIME
+					stop_token_ids = NULL;
+					stop_token_len = 0;
 					PG_TRY();
 					{
 						stop_token_ids =

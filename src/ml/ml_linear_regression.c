@@ -610,9 +610,11 @@ train_linear_regression(PG_FUNCTION_ARGS)
 			    &gpu_err)
 			&& gpu_result.spec.model_data != NULL)
 		{
+			MLCatalogModelSpec spec;
+
 			elog(NOTICE,
 				"linear_regression: GPU training succeeded");
-			MLCatalogModelSpec spec = gpu_result.spec;
+			spec = gpu_result.spec;
 
 			if (spec.training_table == NULL)
 				spec.training_table = tbl_str;
@@ -792,14 +794,16 @@ train_linear_regression(PG_FUNCTION_ARGS)
 
 			for (i = 0; i < nvec; i++)
 			{
-				float *row = dataset.features + (i * dim);
-				double y_pred = model->intercept;
+				float *row;
+				double y_pred;
 				double error;
-				int j;
+				int j_local;
 
-				for (j = 0; j < dim; j++)
+				row = dataset.features + (i * dim);
+				y_pred = model->intercept;
+				for (j_local = 0; j_local < dim; j_local++)
 					y_pred +=
-						model->coefficients[j] * row[j];
+						model->coefficients[j_local] * row[j_local];
 
 				error = dataset.targets[i] - y_pred;
 				mse += error * error;
@@ -962,10 +966,33 @@ predict_linear_regression_model_id(PG_FUNCTION_ARGS)
 
 	/* Load model from catalog */
 	if (!linreg_load_model_from_catalog(model_id, &model))
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("linear_regression: model %d not found",
-					model_id)));
+	{
+		/* Check if model is GPU-only */
+		bytea *payload = NULL;
+		Jsonb *metrics = NULL;
+		bool is_gpu = false;
+		
+		if (ml_catalog_fetch_model_payload(model_id, &payload, NULL, &metrics))
+		{
+			is_gpu = linreg_metadata_is_gpu(metrics);
+			if (payload)
+				pfree(payload);
+			if (metrics)
+				pfree(metrics);
+		}
+		
+		if (is_gpu)
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("linear_regression: model %d is GPU-only and GPU prediction failed. "
+					       "Please ensure GPU is available and properly configured.",
+						model_id)));
+		else
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("linear_regression: model %d not found",
+						model_id)));
+	}
 
 	/* Validate feature dimension */
 	if (model->n_features > 0 && features->dim != model->n_features)

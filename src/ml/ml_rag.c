@@ -314,10 +314,14 @@ levenshtein(const char *s1, const char *s2)
 		}
 		memcpy(v0, v1, sizeof(int) * (len2 + 1));
 	}
-	int result = v1[len2];
-	pfree(v0);
-	pfree(v1);
-	return result;
+	{
+		int result;
+
+		result = v1[len2];
+		pfree(v0);
+		pfree(v1);
+		return result;
+	}
 }
 
 static float
@@ -328,11 +332,15 @@ simple_edit_distance(const char *query, const char *doc)
 	 * similarity = 1.0 - (edit_distance / max(len1, len2))
 	 */
 	int lenq = strlen(query);
-	int lend = strlen(doc);
-	int maxl = (lenq > lend) ? lenq : lend;
+	int lend;
+	int maxl;
+	int edit;
+
+	lend = strlen(doc);
+	maxl = (lenq > lend) ? lenq : lend;
 	if (maxl == 0)
 		return 1.0f;
-	int edit = levenshtein(query, doc);
+	edit = levenshtein(query, doc);
 	return 1.0f - ((float)edit / (float)maxl);
 }
 

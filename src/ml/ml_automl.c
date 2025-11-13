@@ -4,7 +4,7 @@
  *	  Automated Machine Learning (AutoML) for NeuronDB
  *
  * Implements automated model selection, hyperparameter tuning,
- * and ensemble methods.
+ * and ensemble methods with GPU acceleration support.
  *
  * IDENTIFICATION
  *	  src/ml/ml_automl.c
@@ -22,29 +22,89 @@
 #include "catalog/pg_type.h"
 #include "access/htup_details.h"
 #include "utils/memutils.h"
+#include "utils/jsonb.h"
+#include "utils/guc.h"
 #include "neurondb_pgcompat.h"
+#include "neurondb_automl.h"
+#include "neurondb_gpu.h"
 
 #include <math.h>
 #include <string.h>
+
+/* GUC variable for AutoML GPU usage */
+bool neurondb_automl_use_gpu = false;
 
 /* Model evaluation result */
 typedef struct ModelScore
 {
 	char *algorithm;
 	float score;
+	int32 model_id;
 	char *hyperparams;
 } ModelScore;
 
 /*
- * Automated model selection
- * Trains multiple algorithms and selects the best one
+ * neurondb_automl_define_gucs
+ *	  Register GUC variables for AutoML
+ */
+void
+neurondb_automl_define_gucs(void)
+{
+	DefineCustomBoolVariable("neurondb.automl.use_gpu",
+		"Enable GPU acceleration for AutoML training",
+		"When enabled, AutoML will prefer GPU training for supported algorithms.",
+		&neurondb_automl_use_gpu,
+		false,
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
+
+	EmitWarningsOnPlaceholders("neurondb.automl");
+}
+
+/*
+ * neurondb_automl_choose_backend
+ *	  Determine if GPU should be used for a given algorithm
+ */
+AutoMLBackendType
+neurondb_automl_choose_backend(const char *algorithm)
+{
+	if (!neurondb_automl_use_gpu)
+		return AUTOML_BACKEND_CPU;
+
+	if (!neurondb_gpu_is_available())
+		return AUTOML_BACKEND_CPU;
+
+	/* Check if algorithm supports GPU */
+	if (algorithm != NULL)
+	{
+		if (strcmp(algorithm, "linear_regression") == 0
+			|| strcmp(algorithm, "logistic_regression") == 0
+			|| strcmp(algorithm, "random_forest") == 0
+			|| strcmp(algorithm, "decision_tree") == 0
+			|| strcmp(algorithm, "ridge") == 0
+			|| strcmp(algorithm, "lasso") == 0)
+			return AUTOML_BACKEND_GPU;
+	}
+
+	return AUTOML_BACKEND_CPU;
+}
+
+/*
+ * auto_train
+ *	  Automated model selection with GPU acceleration support
+ *
+ * Trains multiple algorithms and selects the best one based on evaluation metrics.
+ * Supports both classification and regression tasks.
  *
  * auto_train(
  *   table_name text,
  *   feature_col text,
  *   label_col text,
  *   task text,  -- 'classification' or 'regression'
- *   metric text DEFAULT 'accuracy'
+ *   metric text DEFAULT 'accuracy'  -- 'accuracy', 'f1', 'r2', 'mse', etc.
  * )
  */
 PG_FUNCTION_INFO_V1(auto_train);
@@ -63,13 +123,23 @@ auto_train(PG_FUNCTION_ARGS)
 	char *label_col_str = text_to_cstring(label_col);
 	char *task_str = text_to_cstring(task);
 	char *metric = metric_text ? text_to_cstring(metric_text)
-				   : pstrdup("accuracy");
+				   : (strcmp(task_str, "classification") == 0
+					  ? pstrdup("accuracy")
+					  : pstrdup("r2"));
+
+	MemoryContext oldcontext;
+	MemoryContext automl_context;
 	StringInfoData result;
+	StringInfoData sql;
 	const char *algorithms[5];
 	int n_algorithms;
 	int i;
 	float best_score = -1.0f;
 	const char *best_algorithm = NULL;
+	int32 best_model_id = 0;
+	ModelScore *scores = NULL;
+	int ret;
+	bool isnull;
 
 	/* Validate task */
 	if (strcmp(task_str, "classification") != 0
@@ -79,51 +149,303 @@ auto_train(PG_FUNCTION_ARGS)
 				errmsg("task must be 'classification' or "
 				       "'regression'")));
 
+	/* Create memory context for AutoML operations */
+	automl_context = AllocSetContextCreate(CurrentMemoryContext,
+		"automl memory context",
+		ALLOCSET_DEFAULT_SIZES);
+	oldcontext = MemoryContextSwitchTo(automl_context);
+
 	/* Select algorithms based on task */
 	if (strcmp(task_str, "classification") == 0)
 	{
 		algorithms[0] = "logistic_regression";
 		algorithms[1] = "decision_tree";
 		algorithms[2] = "random_forest";
-		algorithms[3] = "knn";
-		algorithms[4] = "neural_network";
+		algorithms[3] = "svm";
+		algorithms[4] = "knn";
 		n_algorithms = 5;
 	} else
 	{
 		algorithms[0] = "linear_regression";
-		algorithms[1] = "decision_tree";
-		algorithms[2] = "random_forest";
-		algorithms[3] = "knn";
-		algorithms[4] = "neural_network";
+		algorithms[1] = "ridge";
+		algorithms[2] = "lasso";
+		algorithms[3] = "decision_tree";
+		algorithms[4] = "random_forest";
 		n_algorithms = 5;
 	}
 
-	/* Train each algorithm and evaluate */
+	/* Allocate scores array */
+	scores = (ModelScore *)palloc0(n_algorithms * sizeof(ModelScore));
+
+	/* Connect to SPI */
+	if (SPI_connect() != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("auto_train: SPI_connect failed")));
+
+	/* Train and evaluate each algorithm */
 	for (i = 0; i < n_algorithms; i++)
 	{
-		/* Simplified: assign score based on algorithm complexity */
-		float score = 0.7f + (i * 0.05f);
+		int32 model_id = 0;
+		float score = -1.0f;
+		Jsonb *metrics_jsonb = NULL;
+		Datum metrics_datum;
+		bool metrics_isnull;
+		JsonbIterator *it;
+		JsonbValue v;
+		int r;
+		bool found_metric = false;
 
+		scores[i].algorithm = pstrdup(algorithms[i]);
+
+		elog(NOTICE,
+			"auto_train: Training algorithm %s (%d/%d)",
+			algorithms[i],
+			i + 1,
+			n_algorithms);
+
+		/* Train model using neurondb.train() */
+		initStringInfo(&sql);
+		appendStringInfo(&sql,
+			"SELECT neurondb.train("
+			"'automl_project', "
+			"'%s', "
+			"'%s', "
+			"'%s', "
+			"ARRAY['%s']::text[], "
+			"'{}'::jsonb)::integer",
+			algorithms[i],
+			table_name_str,
+			label_col_str,
+			feature_col_str);
+
+		ret = SPI_execute(sql.data, true, 1);
+		if (ret != SPI_OK_SELECT || SPI_processed == 0)
+		{
+			elog(WARNING,
+				"auto_train: Failed to train %s, skipping",
+				algorithms[i]);
+			pfree(sql.data);
+			scores[i].score = -1.0f;
+			scores[i].model_id = 0;
+			continue;
+		}
+
+		model_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
+			SPI_tuptable->tupdesc,
+			1,
+			&isnull));
+		pfree(sql.data);
+
+		if (isnull || model_id <= 0)
+		{
+			elog(WARNING,
+				"auto_train: Invalid model_id for %s, skipping",
+				algorithms[i]);
+			scores[i].score = -1.0f;
+			scores[i].model_id = 0;
+			continue;
+		}
+
+		scores[i].model_id = model_id;
+
+		/* Evaluate model using neurondb.evaluate() */
+		initStringInfo(&sql);
+		appendStringInfo(&sql,
+			"SELECT neurondb.evaluate("
+			"%d, "
+			"'%s', "
+			"'%s', "
+			"'%s')",
+			model_id,
+			table_name_str,
+			feature_col_str,
+			label_col_str);
+
+		ret = SPI_execute(sql.data, true, 1);
+		if (ret != SPI_OK_SELECT || SPI_processed == 0)
+		{
+			elog(WARNING,
+				"auto_train: Failed to evaluate %s, skipping",
+				algorithms[i]);
+			pfree(sql.data);
+			scores[i].score = -1.0f;
+			continue;
+		}
+
+		metrics_datum = SPI_getbinval(SPI_tuptable->vals[0],
+			SPI_tuptable->tupdesc,
+			1,
+			&metrics_isnull);
+		pfree(sql.data);
+
+		if (metrics_isnull)
+		{
+			elog(WARNING,
+				"auto_train: Null metrics for %s, skipping",
+				algorithms[i]);
+			scores[i].score = -1.0f;
+			continue;
+		}
+
+		/* Extract metric value from JSONB */
+		metrics_jsonb = DatumGetJsonbP(metrics_datum);
+		it = JsonbIteratorInit(&metrics_jsonb->root);
+
+		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
+		{
+			if (r == WJB_KEY)
+			{
+				char *key = pnstrdup(v.val.string.val,
+					v.val.string.len);
+				r = JsonbIteratorNext(&it, &v, false);
+
+				if (strcmp(key, metric) == 0 && v.type == jbvNumeric)
+				{
+					score = (float)DatumGetFloat8(
+						DirectFunctionCall1(numeric_float8,
+							NumericGetDatum(v.val.numeric)));
+					found_metric = true;
+					pfree(key);
+					break;
+				}
+				pfree(key);
+			}
+		}
+
+		if (!found_metric)
+		{
+			/* Try to find common metric names */
+			it = JsonbIteratorInit(&metrics_jsonb->root);
+			while ((r = JsonbIteratorNext(&it, &v, false))
+				!= WJB_DONE)
+			{
+				if (r == WJB_KEY)
+				{
+					char *key = pnstrdup(v.val.string.val,
+						v.val.string.len);
+					r = JsonbIteratorNext(&it, &v, false);
+
+					if (((strcmp(task_str, "classification") == 0
+						  && (strcmp(key, "accuracy") == 0
+							  || strcmp(key, "f1") == 0
+							  || strcmp(key, "precision") == 0
+							  || strcmp(key, "recall") == 0))
+						 || (strcmp(task_str, "regression") == 0
+							 && (strcmp(key, "r2") == 0
+								 || strcmp(key, "r_squared") == 0
+								 || strcmp(key, "mse") == 0
+								 || strcmp(key, "mae") == 0)))
+						&& v.type == jbvNumeric)
+					{
+						score = (float)DatumGetFloat8(
+							DirectFunctionCall1(
+								numeric_float8,
+								NumericGetDatum(
+									v.val.numeric)));
+						found_metric = true;
+						pfree(key);
+						break;
+					}
+					pfree(key);
+				}
+			}
+		}
+
+		if (!found_metric)
+		{
+			elog(WARNING,
+				"auto_train: Could not find metric '%s' for %s, using default score",
+				metric,
+				algorithms[i]);
+			score = 0.5f; /* Default score */
+		}
+
+		/* For regression, higher is better (r2), lower is better (mse/mae) */
+		if (strcmp(task_str, "regression") == 0
+			&& (strcmp(metric, "mse") == 0
+				|| strcmp(metric, "mae") == 0
+				|| strcmp(metric, "rmse") == 0))
+		{
+			/* Invert score for error metrics (lower is better) */
+			score = 1.0f / (1.0f + score);
+		}
+
+		scores[i].score = score;
+
+		elog(NOTICE,
+			"auto_train: %s scored %.4f (model_id: %d)",
+			algorithms[i],
+			score,
+			model_id);
+
+		/* Track best model */
 		if (score > best_score)
 		{
 			best_score = score;
 			best_algorithm = algorithms[i];
+			best_model_id = model_id;
 		}
 	}
 
+	SPI_finish();
+
 	/* Build result */
 	initStringInfo(&result);
-	appendStringInfo(&result,
-		"AutoML completed. Best algorithm: %s, %s: %.4f",
-		best_algorithm,
-		metric,
-		best_score);
+	if (best_algorithm != NULL && best_model_id > 0)
+	{
+		appendStringInfo(&result,
+			"AutoML completed. Best algorithm: %s, %s: %.4f, model_id: %d\n"
+			"Trained %d algorithms:\n",
+			best_algorithm,
+			metric,
+			best_score,
+			best_model_id,
+			n_algorithms);
+
+		for (i = 0; i < n_algorithms; i++)
+		{
+			if (scores[i].model_id > 0)
+			{
+				appendStringInfo(&result,
+					"  %d. %s: %.4f (model_id: %d)\n",
+					i + 1,
+					scores[i].algorithm,
+					scores[i].score,
+					scores[i].model_id);
+			} else
+			{
+				appendStringInfo(&result,
+					"  %d. %s: failed\n",
+					i + 1,
+					scores[i].algorithm);
+			}
+		}
+	} else
+	{
+		appendStringInfo(&result,
+			"AutoML failed: No models were successfully trained");
+	}
+
+	/* Cleanup */
+	for (i = 0; i < n_algorithms; i++)
+	{
+		if (scores[i].algorithm)
+			pfree(scores[i].algorithm);
+		if (scores[i].hyperparams)
+			pfree(scores[i].hyperparams);
+	}
+	if (scores)
+		pfree(scores);
 
 	pfree(table_name_str);
 	pfree(feature_col_str);
 	pfree(label_col_str);
 	pfree(task_str);
 	pfree(metric);
+
+	MemoryContextSwitchTo(oldcontext);
+	MemoryContextDelete(automl_context);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }

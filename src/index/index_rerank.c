@@ -207,17 +207,19 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 				"v",
 				table_name,
 				k);
+			{
+				Oid argtypes[1];
+				Datum values[1];
 
-			Oid argtypes[1] = {
-				3802
-			}; // vector type Oid (may vary in prod)
-			Datum values[1] = { PointerGetDatum(query) };
+					argtypes[0] = 3802; // vector type Oid (may vary in prod)
+				values[0] = PointerGetDatum(query);
 
-			SPI_finish();
-			if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-				elog(ERROR, "SPI_connect failed: %d", ret);
-			ret = SPI_execute_with_args(
-				sql.data, 1, argtypes, values, NULL, false, 0);
+				SPI_finish();
+				if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+					elog(ERROR, "SPI_connect failed: %d", ret);
+				ret = SPI_execute_with_args(
+					sql.data, 1, argtypes, values, NULL, false, 0);
+			}
 			if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE)
 			{
 				SPI_finish();
@@ -348,11 +350,16 @@ rerank_index_warm(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < nqueries; i++)
 	{
+		Vector *qv;
+		uint64 qhash;
+		Oid argtypes[1];
+		Datum values[1];
+
 		if (elem_nulls[i])
 			continue;
 
-		Vector *qv = (Vector *)DatumGetPointer(elem_values[i]);
-		uint64 qhash = vector_hash(qv);
+		qv = (Vector *)DatumGetPointer(elem_values[i]);
+		qhash = vector_hash(qv);
 
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
@@ -363,14 +370,12 @@ rerank_index_warm(PG_FUNCTION_ARGS)
 			cache_tbl,
 			NDB_UINT64_CAST(qhash));
 
-		Oid argtypes[1] = {
-			3802
-		}; // vector type Oid (should match real Oid)
-		Datum values[1] = { PointerGetDatum(qv) };
+		argtypes[0] = 3802; // vector type Oid (should match real Oid)
+		values[0] = PointerGetDatum(qv);
 
-		ret = SPI_execute_with_args(
-			sql.data, 1, argtypes, values, NULL, false, 0);
-		if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE)
+			ret = SPI_execute_with_args(
+				sql.data, 1, argtypes, values, NULL, false, 0);
+			if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE)
 		{
 			SPI_finish();
 			elog(ERROR,

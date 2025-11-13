@@ -157,14 +157,16 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 		float8 decay_rate = PG_GETARG_FLOAT8(6);
 
 		/* Suppress unused parameter warning - may be used in future */
-		(void)ts_col;
-
-		char *tbl_str = text_to_cstring(table_name);
-		char *vec_str = text_to_cstring(vector_col);
-
-		char *idx_tbl = get_temporal_index_table(tbl_str, vec_str);
+		char *tbl_str;
+		char *vec_str;
+		char *idx_tbl;
 		StringInfoData sql;
 		int ret;
+
+		(void)ts_col;
+		tbl_str = text_to_cstring(table_name);
+		vec_str = text_to_cstring(vector_col);
+		idx_tbl = get_temporal_index_table(tbl_str, vec_str);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 
@@ -223,38 +225,45 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
-	uint64 call_cntr = funcctx->call_cntr;
-	uint64 max_calls = SPI_processed;
-	SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
-
-	if (call_cntr < max_calls)
 	{
-		HeapTuple spi_tuple = tuptable->vals[call_cntr];
-		Datum values[3];
-		bool nulls[3] = { false, false, false };
-		bool isnull;
-		HeapTuple result_tuple;
+		uint64 call_cntr;
+		uint64 max_calls;
+		SPITupleTable *tuptable;
 
-		values[0] =
-			SPI_getbinval(spi_tuple, tuptable->tupdesc, 1, &isnull);
-		nulls[0] = isnull;
-		values[1] =
-			SPI_getbinval(spi_tuple, tuptable->tupdesc, 2, &isnull);
-		nulls[1] = isnull;
-		values[2] =
-			SPI_getbinval(spi_tuple, tuptable->tupdesc, 3, &isnull);
-		nulls[2] = isnull;
+		call_cntr = funcctx->call_cntr;
+		max_calls = SPI_processed;
+		tuptable = (SPITupleTable *)funcctx->user_fctx;
 
-		result_tuple =
-			heap_form_tuple(funcctx->tuple_desc, values, nulls);
+		if (call_cntr < max_calls)
+		{
+			HeapTuple spi_tuple = tuptable->vals[call_cntr];
+			Datum values[3];
+			bool nulls[3] = { false, false, false };
+			bool isnull;
+			HeapTuple result_tuple;
 
-		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(result_tuple));
-	} else
-	{
-		if (tuptable)
-			SPI_freetuptable(tuptable);
-		SPI_finish();
-		SRF_RETURN_DONE(funcctx);
+			values[0] =
+				SPI_getbinval(spi_tuple, tuptable->tupdesc, 1, &isnull);
+			nulls[0] = isnull;
+			values[1] =
+				SPI_getbinval(spi_tuple, tuptable->tupdesc, 2, &isnull);
+			nulls[1] = isnull;
+			values[2] =
+				SPI_getbinval(spi_tuple, tuptable->tupdesc, 3, &isnull);
+			nulls[2] = isnull;
+
+			result_tuple =
+				heap_form_tuple(funcctx->tuple_desc, values, nulls);
+
+			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(result_tuple));
+		}
+		else
+		{
+			if (tuptable)
+				SPI_freetuptable(tuptable);
+			SPI_finish();
+			SRF_RETURN_DONE(funcctx);
+		}
 	}
 }
 

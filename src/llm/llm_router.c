@@ -1056,11 +1056,12 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 			&& (opts == NULL || opts->prefer_gpu
 				|| opts->require_gpu))
 		{
-			elog(NOTICE, "neurondb: router batch GPU is available, attempting GPU batch");
 #ifdef NDB_GPU_CUDA
 			NdbCudaHfBatchResult *batch_results;
 			int rc;
 			char *gpu_err = NULL;
+
+			elog(NOTICE, "neurondb: router batch GPU is available, attempting GPU batch");
 
 			batch_results = (NdbCudaHfBatchResult *)palloc0(
 				num_prompts * sizeof(NdbCudaHfBatchResult));

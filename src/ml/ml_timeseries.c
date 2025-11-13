@@ -251,25 +251,29 @@ fit_arima(const float *data, int n, int p, int d, int q)
 						L[i][j] = sum / L[j][j];
 				}
 			}
-			float *y = (float *)palloc0(sizeof(float) * p);
-			for (i = 0; i < p; i++)
 			{
-				float sum = right[i];
-				for (j = 0; j < i; j++)
-					sum -= L[i][j] * y[j];
-				y[i] = sum / L[i][i];
+				float *y;
+
+				y = (float *)palloc0(sizeof(float) * p);
+				for (i = 0; i < p; i++)
+				{
+					float sum = right[i];
+					for (j = 0; j < i; j++)
+						sum -= L[i][j] * y[j];
+					y[i] = sum / L[i][i];
+				}
+				for (i = p - 1; i >= 0; i--)
+				{
+					float sum = y[i];
+					for (j = i + 1; j < p; j++)
+						sum -= L[j][i] * a[j];
+					a[i] = sum / L[i][i];
+				}
+				for (i = 0; i < p; i++)
+					pfree(L[i]);
+				pfree(L);
+				pfree(y);
 			}
-			for (i = p - 1; i >= 0; i--)
-			{
-				float sum = y[i];
-				for (j = i + 1; j < p; j++)
-					sum -= L[j][i] * a[j];
-				a[i] = sum / L[i][i];
-			}
-			for (i = 0; i < p; i++)
-				pfree(L[i]);
-			pfree(L);
-			pfree(y);
 		}
 		model->ar_coeffs = (float *)palloc(sizeof(float) * p);
 		for (i = 0; i < p; i++)
@@ -549,11 +553,13 @@ forecast_arima(PG_FUNCTION_ARGS)
 				       "neurondb_arima_models",
 					model_id)));
 	}
-	HeapTuple modeltuple = SPI_tuptable->vals[0];
-	TupleDesc modeldesc = SPI_tuptable->tupdesc;
-
 	{
+		HeapTuple modeltuple;
+		TupleDesc modeldesc;
 		bool isnull;
+
+		modeltuple = SPI_tuptable->vals[0];
+		modeldesc = SPI_tuptable->tupdesc;
 		p = DatumGetInt32(
 			SPI_getbinval(modeltuple, modeldesc, 1, &isnull));
 		d = DatumGetInt32(

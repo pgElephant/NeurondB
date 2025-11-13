@@ -1,5 +1,22 @@
 \timing on
 \pset footer off
+
+-- This test uses sample_train and sample_test tables created by ml_dataset.py
+-- Run: python ml_dataset.py <dataset_name> to populate the database first
+-- Or use the test runner: python run_ml_tests.py
+--
+-- Verify required tables exist
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
+		RAISE EXCEPTION 'sample_train table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
+		RAISE EXCEPTION 'sample_test table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	END IF;
+END
+$$;
+
 SET log_min_messages = debug1;
 SET neurondb.gpu_enabled = on;
 SET neurondb.gpu_kernels = 'l2,cosine,ip,svm_train,svm_predict';

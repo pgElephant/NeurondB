@@ -82,14 +82,21 @@ extract_hf_text(const char *json)
      * Example: [{"generated_text":"result"}], so we parse it.
      * The response might also be { "error": ... }.
      */
+	const char *key;
+	char *p;
+	char *q;
+	size_t len;
+	char *out;
+
 	if (!json || json[0] == '\0')
 		return NULL;
 	if (strncmp(json, "{\"error\"", 8) == 0)
 		return NULL;
 
 	/* Find first "generated_text":"..." pattern */
-	const char *key = "\"generated_text\":";
-	char *p = strstr(json, key);
+	key = "\"generated_text\":";
+
+	p = strstr(json, key);
 	if (!p)
 		return NULL;
 	/* Find the first quote after the key */
@@ -97,11 +104,11 @@ extract_hf_text(const char *json)
 	if (!p)
 		return NULL;
 	p++;
-	char *q = strchr(p, '"');
+	q = strchr(p, '"');
 	if (!q)
 		return NULL;
-	size_t len = q - p;
-	char *out = (char *)palloc(len + 1);
+	len = q - p;
+	out = (char *)palloc(len + 1);
 	memcpy(out, p, len);
 	out[len] = '\0';
 	return out;
@@ -149,10 +156,17 @@ static bool
 parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 {
 	/* Response is: [[float, float, ...]] */
+	const char *p;
+	float *vec = NULL;
+	int n = 0;
+	int cap = 32;
+	char *endptr;
+	double v;
+
 	if (!json)
 		return false;
 
-	const char *p = json;
+	p = json;
 	while (*p && *p != '[')
 		p++;
 	if (!*p)
@@ -165,16 +179,14 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 		return false;
 	p++;
 
-	float *vec = NULL;
-	int n = 0, cap = 32;
 	vec = (float *)palloc(sizeof(float) * cap);
 
 	while (*p && *p != ']')
 	{
 		while (*p && (isspace(*p) || *p == ','))
 			p++;
-		char *endptr = NULL;
-		double v = strtod(p, &endptr);
+		endptr = NULL;
+		v = strtod(p, &endptr);
 		if (endptr == p)
 			break;
 		if (n == cap)
@@ -206,6 +218,8 @@ ndb_hf_embed(const NdbLLMConfig *cfg,
 	StringInfoData url, body;
 	char *resp = NULL;
 	int code;
+	bool ok;
+
 	initStringInfo(&url);
 	initStringInfo(&body);
 	appendStringInfo(&url,
@@ -223,7 +237,7 @@ ndb_hf_embed(const NdbLLMConfig *cfg,
 			pfree(resp);
 		return -1;
 	}
-	bool ok = parse_hf_emb_vector(resp, vec_out, dim_out);
+	ok = parse_hf_emb_vector(resp, vec_out, dim_out);
 	pfree(resp);
 	if (!ok)
 		return -1;
@@ -236,24 +250,29 @@ parse_hf_scores(const char *json, float **scores_out, int ndocs)
 	/* The response is [{"scores":[float, float,...]}] or similar;
      * We will parse for the first float array in the string.
      */
+	const char *scores_key = "\"scores\"";
+	char *ps;
+	float *scores;
+	int n = 0;
+	char *endptr;
+	double v;
+
 	if (!json)
 		return false;
-	const char *scores_key = "\"scores\"";
-	char *ps = strstr(json, scores_key);
+	ps = strstr(json, scores_key);
 	if (!ps)
 		return false;
 	ps = strchr(ps, '[');
 	if (!ps)
 		return false;
 	ps++;
-	float *scores = palloc(sizeof(float) * ndocs);
-	int n = 0;
+	scores = palloc(sizeof(float) * ndocs);
 	while (*ps && *ps != ']' && n < ndocs)
 	{
 		while (*ps && (isspace(*ps) || *ps == ','))
 			ps++;
-		char *endptr = NULL;
-		double v = strtod(ps, &endptr);
+		endptr = NULL;
+		v = strtod(ps, &endptr);
 		if (endptr == ps)
 			break;
 		scores[n++] = (float)v;
@@ -276,13 +295,16 @@ ndb_hf_rerank(const NdbLLMConfig *cfg,
 	float **scores_out)
 {
 	StringInfoData url, body;
+	StringInfoData docs_json;
 	char *resp = NULL;
-	int code, i;
+	int code;
+	int i;
+	bool ok;
+
 	initStringInfo(&url);
 	initStringInfo(&body);
 
 	/* Compose the docs JSON array */
-	StringInfoData docs_json;
 	initStringInfo(&docs_json);
 	appendStringInfoChar(&docs_json, '[');
 	for (i = 0; i < ndocs; ++i)
@@ -314,7 +336,7 @@ ndb_hf_rerank(const NdbLLMConfig *cfg,
 		return -1;
 	}
 
-	bool ok = parse_hf_scores(resp, scores_out, ndocs);
+	ok = parse_hf_scores(resp, scores_out, ndocs);
 	pfree(resp);
 	if (!ok)
 		return -1;

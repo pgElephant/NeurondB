@@ -3483,55 +3483,58 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 						model_id)));
 
 		/* If GPU model, extract metrics from JSONB */
-		if (rf_metadata_is_gpu(metrics))
+		if (rf_metadata_is_gpu(metrics) && metrics != NULL)
 		{
-			if (metrics != NULL)
-			{
-				Datum acc_datum;
-				Datum gini_datum;
-				Datum acc_numeric;
-				Datum gini_numeric;
-				Numeric acc_num;
-				Numeric gini_num;
+			Datum acc_datum;
+			Datum gini_datum;
+			Datum acc_numeric;
+			Datum gini_numeric;
+			Numeric acc_num;
+			Numeric gini_num;
 
-				/* Try majority_fraction first (more reliable), then oob_accuracy */
+			/* Try majority_fraction first (more reliable), then oob_accuracy */
+			acc_datum = DirectFunctionCall2(
+				jsonb_object_field,
+				JsonbPGetDatum(metrics),
+				CStringGetTextDatum("majority_fraction"));
+			if (DatumGetPointer(acc_datum) == NULL)
+			{
 				acc_datum = DirectFunctionCall2(
 					jsonb_object_field,
 					JsonbPGetDatum(metrics),
-					CStringGetTextDatum("majority_fraction"));
-				if (DatumGetPointer(acc_datum) == NULL)
+					CStringGetTextDatum("oob_accuracy"));
+			}
+			if (DatumGetPointer(acc_datum) != NULL)
+			{
+				PG_TRY();
 				{
-					acc_datum = DirectFunctionCall2(
-						jsonb_object_field,
-						JsonbPGetDatum(metrics),
-						CStringGetTextDatum("oob_accuracy"));
-				}
-				if (DatumGetPointer(acc_datum) != NULL)
-				{
-					PG_TRY();
+					acc_numeric = DirectFunctionCall1(
+						jsonb_numeric,
+						acc_datum);
+					if (DatumGetPointer(acc_numeric) != NULL)
 					{
-						acc_numeric = DirectFunctionCall1(
-							jsonb_numeric,
-							acc_datum);
-						if (DatumGetPointer(acc_numeric) != NULL)
-						{
-							acc_num = DatumGetNumeric(acc_numeric);
-							accuracy = DatumGetFloat8(
-								DirectFunctionCall1(numeric_float8,
-									NumericGetDatum(acc_num)));
-						}
+						acc_num = DatumGetNumeric(acc_numeric);
+						accuracy = DatumGetFloat8(
+							DirectFunctionCall1(numeric_float8,
+								NumericGetDatum(acc_num)));
 					}
-					PG_CATCH();
+				}
+				PG_CATCH();
+				{
+					/* If conversion fails, try text extraction */
+					elog(NOTICE,
+						"evaluate_random_forest: jsonb_numeric failed, trying text extraction");
 					{
-						/* If conversion fails, try text extraction */
-						elog(NOTICE,
-							"evaluate_random_forest: jsonb_numeric failed, trying text extraction");
-						Datum acc_text = DirectFunctionCall1(
+						Datum acc_text;
+
+						acc_text = DirectFunctionCall1(
 							jsonb_extract_path_text,
 							acc_datum);
 						if (DatumGetPointer(acc_text) != NULL)
 						{
-							char *acc_str = TextDatumGetCString(acc_text);
+							char *acc_str;
+
+							acc_str = TextDatumGetCString(acc_text);
 
 							if (acc_str != NULL && strlen(acc_str) > 0)
 							{
@@ -3543,66 +3546,66 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 							pfree(acc_str);
 						}
 					}
-					PG_END_TRY();
 				}
-
-				gini_datum = DirectFunctionCall2(
-					jsonb_object_field,
-					JsonbPGetDatum(metrics),
-					CStringGetTextDatum("gini"));
-				if (DatumGetPointer(gini_datum) != NULL)
-				{
-					PG_TRY();
-					{
-						gini_numeric = DirectFunctionCall1(
-							jsonb_numeric,
-							gini_datum);
-						if (DatumGetPointer(gini_numeric) != NULL)
-						{
-							gini_num = DatumGetNumeric(gini_numeric);
-							gini = DatumGetFloat8(
-								DirectFunctionCall1(numeric_float8,
-									NumericGetDatum(gini_num)));
-						}
-					}
-					PG_CATCH();
-					{
-						/* If conversion fails, try text extraction */
-						Datum gini_text = DirectFunctionCall1(
-							jsonb_extract_path_text,
-							gini_datum);
-						if (DatumGetPointer(gini_text) != NULL)
-						{
-							char *gini_str = TextDatumGetCString(gini_text);
-
-							if (gini_str != NULL && strlen(gini_str) > 0)
-								gini = strtod(gini_str, NULL);
-							pfree(gini_str);
-						}
-					}
-					PG_END_TRY();
-				}
-
-				/* n_classes is not in metrics, use default */
-				n_classes = 2;
-
-				if (metrics)
-					pfree(metrics);
-				if (payload)
-					pfree(payload);
-
-				error_rate = (accuracy > 1.0) ? 0.0 : (1.0 - accuracy);
-
-				result_datums[0] = Float8GetDatum(accuracy);
-				result_datums[1] = Float8GetDatum(error_rate);
-				result_datums[2] = Float8GetDatum(gini);
-				result_datums[3] = Float8GetDatum((double)n_classes);
-
-				result_array = construct_array(
-					result_datums, 4, FLOAT8OID, sizeof(float8), true, 'd');
-
-				PG_RETURN_ARRAYTYPE_P(result_array);
+				PG_END_TRY();
 			}
+
+			gini_datum = DirectFunctionCall2(
+				jsonb_object_field,
+				JsonbPGetDatum(metrics),
+				CStringGetTextDatum("gini"));
+			if (DatumGetPointer(gini_datum) != NULL)
+			{
+				PG_TRY();
+				{
+					gini_numeric = DirectFunctionCall1(
+						jsonb_numeric,
+						gini_datum);
+					if (DatumGetPointer(gini_numeric) != NULL)
+					{
+						gini_num = DatumGetNumeric(gini_numeric);
+						gini = DatumGetFloat8(
+							DirectFunctionCall1(numeric_float8,
+								NumericGetDatum(gini_num)));
+					}
+				}
+				PG_CATCH();
+				{
+					/* If conversion fails, try text extraction */
+					Datum gini_text = DirectFunctionCall1(
+						jsonb_extract_path_text,
+						gini_datum);
+					if (DatumGetPointer(gini_text) != NULL)
+					{
+						char *gini_str = TextDatumGetCString(gini_text);
+
+						if (gini_str != NULL && strlen(gini_str) > 0)
+							gini = strtod(gini_str, NULL);
+						pfree(gini_str);
+					}
+				}
+				PG_END_TRY();
+			}
+
+			/* n_classes is not in metrics, use default */
+			n_classes = 2;
+
+			if (metrics)
+				pfree(metrics);
+			if (payload)
+				pfree(payload);
+
+			error_rate = (accuracy > 1.0) ? 0.0 : (1.0 - accuracy);
+
+			result_datums[0] = Float8GetDatum(accuracy);
+			result_datums[1] = Float8GetDatum(error_rate);
+			result_datums[2] = Float8GetDatum(gini);
+			result_datums[3] = Float8GetDatum((double)n_classes);
+
+			result_array = construct_array(
+				result_datums, 4, FLOAT8OID, sizeof(float8), true, 'd');
+
+			PG_RETURN_ARRAYTYPE_P(result_array);
 		}
 
 		/* Try loading CPU model from catalog */

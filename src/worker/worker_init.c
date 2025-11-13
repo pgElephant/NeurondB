@@ -28,6 +28,7 @@
 #include "neurondb_gpu_backend.h"
 #include "ml_gpu_registry.h"
 #include "neurondb_config.h"
+#include "neurondb_automl.h"
 
 /* Forward declarations from background worker modules */
 extern void neuranq_main(Datum main_arg);
@@ -96,6 +97,9 @@ _PG_init(void)
 	/* Initialize GPU and LLM GUC variables */
 	neurondb_gpu_init_guc();
 	neurondb_llm_init_guc();
+
+	/* Initialize AutoML GUC variables */
+	neurondb_automl_define_gucs();
 
 	/* Initialize ONNX Runtime for HuggingFace models */
 	neurondb_onnx_define_gucs();

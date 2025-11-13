@@ -147,12 +147,14 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 		int32 k = PG_GETARG_INT32(3);
 
 		/* Suppress unused parameter warning - may be used in future */
-		(void)query_vec;
-
-		char *idx_str = text_to_cstring(index_name);
-		char *txt_query = text_to_cstring(query_text);
+		char *idx_str;
+		char *txt_query;
 		StringInfoData sql;
 		int ret;
+
+		(void)query_vec;
+		idx_str = text_to_cstring(index_name);
+		txt_query = text_to_cstring(query_text);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 
@@ -178,23 +180,26 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 
 		oldcontext =
 			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		{
+			char *origin_table;
+			char *vec_col;
+			char *txt_col;
 
-		/*
-		 * A realistic system would:
-		 * - Look up the columns and ANN index config from metadata by idx_str
-		 * - Materialize to a temp table or C array for large k
-		 * - Use custom C logic for fast vector search
-		 * For demo: simulated with SQL and a UDF `vector_l2_dist` (must exist).
-		 * Assume origin table is named idx_str without prefix.
-		 */
-		char *origin_table = idx_str;
-		char *vec_col =
-			"vector"; // In real implementation, discover from meta.
-		char *txt_col = "document";
+			/*
+			 * A realistic system would:
+			 * - Look up the columns and ANN index config from metadata by idx_str
+			 * - Materialize to a temp table or C array for large k
+			 * - Use custom C logic for fast vector search
+			 * For demo: simulated with SQL and a UDF `vector_l2_dist` (must exist).
+			 * Assume origin table is named idx_str without prefix.
+			 */
+			origin_table = idx_str;
+			vec_col = "vector"; // In real implementation, discover from meta.
+			txt_col = "document";
 
-		/* Compose SQL to select candidates and rank by fusion of ts_rank and L2 distance. */
-		initStringInfo(&sql);
-		appendStringInfo(&sql,
+			/* Compose SQL to select candidates and rank by fusion of ts_rank and L2 distance. */
+			initStringInfo(&sql);
+			appendStringInfo(&sql,
 			"SELECT id, "
 			"(%1$.4f * ts_rank + (1-%1$.4f) * (1 - norm_dist)) AS "
 			"fused_score, "
@@ -256,37 +261,46 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 		funcctx->max_calls = SPI_processed;
 		funcctx->user_fctx = SPI_tuptable;
 		MemoryContextSwitchTo(oldcontext);
+		}
 	}
 
-	funcctx = SRF_PERCALL_SETUP();
-	uint64 call_cntr = funcctx->call_cntr;
-	uint64 max_calls = funcctx->max_calls;
-
-	if (call_cntr < max_calls)
 	{
-		SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
-		HeapTuple spi_tuple = tuptable->vals[call_cntr];
+		uint64 call_cntr;
+		uint64 max_calls;
+		SPITupleTable *tuptable;
+		HeapTuple spi_tuple;
 		Datum values[4];
 		bool nulls[4];
+		HeapTuple ret_tuple;
+		int att;
 
-		/* id, fused_score, ts_rank, vector_dist */
-		for (int att = 0; att < 4; ++att)
+		funcctx = SRF_PERCALL_SETUP();
+		call_cntr = funcctx->call_cntr;
+		max_calls = funcctx->max_calls;
+
+		if (call_cntr < max_calls)
 		{
-			values[att] = SPI_getbinval(spi_tuple,
-				tuptable->tupdesc,
-				att + 1,
-				&nulls[att]);
-		}
-		HeapTuple ret_tuple =
-			heap_form_tuple(funcctx->tuple_desc, values, nulls);
-		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(ret_tuple));
-	} else
-	{
-		SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
-		if (tuptable)
-			SPI_freetuptable(tuptable);
+			tuptable = (SPITupleTable *)funcctx->user_fctx;
+			spi_tuple = tuptable->vals[call_cntr];
 
-		SPI_finish();
-		SRF_RETURN_DONE(funcctx);
+			/* id, fused_score, ts_rank, vector_dist */
+			for (att = 0; att < 4; ++att)
+			{
+				values[att] = SPI_getbinval(spi_tuple,
+					tuptable->tupdesc,
+					att + 1,
+					&nulls[att]);
+			}
+			ret_tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(ret_tuple));
+		} else
+		{
+			tuptable = (SPITupleTable *)funcctx->user_fctx;
+			if (tuptable)
+				SPI_freetuptable(tuptable);
+
+			SPI_finish();
+			SRF_RETURN_DONE(funcctx);
+		}
 	}
 }

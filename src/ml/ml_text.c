@@ -75,14 +75,14 @@ simple_tokenize(const char *input, char **tokens, int *num_tokens)
 
 	while (i < input_len && t < MAX_TOKENS)
 	{
+		char wordbuf[MAX_TOKEN_LEN];
+		int j = 0;
+
 		/* Skip non-alphanumeric */
 		while (i < input_len && !isalnum((unsigned char)input[i]))
 			i++;
 		if (i >= input_len)
 			break;
-
-		char wordbuf[MAX_TOKEN_LEN];
-		int j = 0;
 
 		memset(wordbuf, 0, sizeof(wordbuf));
 		while (i < input_len && isalnum((unsigned char)input[i])
@@ -225,13 +225,13 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 
 		for (t = 0; t < num_tokens; t++)
 			pfree(tokens[t]);
+		{
+			/* Calculate confidences */
+			int total_count = 0;
 
-		SPI_finish();
-
-		/* Calculate confidences */
+			SPI_finish();
 		results = (ClassifyResult *)palloc0(
 			n_categories * sizeof(ClassifyResult));
-		int total_count = 0;
 
 		for (i = 0; i < n_categories; i++)
 			total_count += category_counts[i];
@@ -256,6 +256,7 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 		funcctx->user_fctx = results;
 		funcctx->max_calls = n_categories;
 		MemoryContextSwitchTo(oldcontext);
+		}
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
@@ -293,7 +294,8 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 			tuple = heap_form_tuple(
 				funcctx->tuple_desc, values, nulls);
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
-		} else
+		}
+		else
 		{
 			if (funcctx->max_calls > 0 && funcctx->user_fctx)
 				pfree(results);
@@ -751,88 +753,95 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 				(errmsg("could not query stopword table")));
 		}
-		int n_stopwords = SPI_processed;
-		char **stopwords =
-			(char **)palloc0(n_stopwords * sizeof(char *));
-		for (i = 0; i < n_stopwords; i++)
 		{
-			HeapTuple tup = SPI_tuptable->vals[i];
-			TupleDesc desc = SPI_tuptable->tupdesc;
-			stopwords[i] = TextDatumGetCString(
-				SPI_getbinval(tup, desc, 1, NULL));
-		}
+			int n_stopwords;
+			char **stopwords;
 
-		/* Score: count of non-stopword tokens per sentence */
-		for (s = 0; s < n_sentences; s++)
-		{
-			char *sentence = sentence_ptrs[s];
-			char *stoks[128];
-			int stok_ct = 0, tokidx;
-			simple_tokenize(sentence, stoks, &stok_ct);
-			for (tokidx = 0; tokidx < stok_ct; tokidx++)
+			n_stopwords = SPI_processed;
+			stopwords = (char **)palloc0(n_stopwords * sizeof(char *));
+			for (i = 0; i < n_stopwords; i++)
 			{
-				bool is_stop = false;
-				int sw;
-				for (sw = 0; sw < n_stopwords; sw++)
-				{
-					if (strcmp(stoks[tokidx], stopwords[sw])
-						== 0)
-					{
-						is_stop = true;
-						break;
-					}
-				}
-				if (!is_stop)
-					scores[s]++;
-				pfree(stoks[tokidx]);
+				HeapTuple tup = SPI_tuptable->vals[i];
+				TupleDesc desc = SPI_tuptable->tupdesc;
+				stopwords[i] = TextDatumGetCString(
+					SPI_getbinval(tup, desc, 1, NULL));
 			}
-		}
 
-		/* Assemble top sentences into summary */
-		written = 0;
-		while (written < max_length - 1)
-		{
-			int maxscore = -1, maxi = -1;
+			/* Score: count of non-stopword tokens per sentence */
 			for (s = 0; s < n_sentences; s++)
 			{
-				if (!used[s] && scores[s] > maxscore)
+				char *sentence = sentence_ptrs[s];
+				char *stoks[128];
+				int stok_ct = 0, tokidx;
+				simple_tokenize(sentence, stoks, &stok_ct);
+				for (tokidx = 0; tokidx < stok_ct; tokidx++)
 				{
-					maxscore = scores[s];
-					maxi = s;
+					bool is_stop = false;
+					int sw;
+					for (sw = 0; sw < n_stopwords; sw++)
+					{
+						if (strcmp(stoks[tokidx], stopwords[sw])
+							== 0)
+						{
+							is_stop = true;
+							break;
+						}
+					}
+					if (!is_stop)
+						scores[s]++;
+					pfree(stoks[tokidx]);
 				}
 			}
-			if (maxi == -1 || maxscore == 0)
-				break;
-			int sl = (int)strlen(sentence_ptrs[maxi]);
-			int tocopy = (sl > max_length - 1 - written)
-				? (max_length - 1 - written)
-				: sl;
-			if (tocopy > 0)
-			{
-				memcpy(summary + written,
-					sentence_ptrs[maxi],
-					tocopy);
-				written += tocopy;
-				if (written < max_length - 1)
-				{
-					summary[written] = ' ';
-					written++;
-				}
-			}
-			used[maxi] = 1;
-			if (written >= max_length - 1)
-				break;
-		}
-		if (written > 0)
-			summary[written - 1] = '\0';
-		else
-			summary[0] = '\0';
 
-		for (i = 0; i < n_sentences; i++)
-			pfree(sentence_ptrs[i]);
-		for (i = 0; i < n_stopwords; i++)
-			pfree(stopwords[i]);
-		pfree(stopwords);
+			/* Assemble top sentences into summary */
+			written = 0;
+			while (written < max_length - 1)
+			{
+				int maxscore = -1, maxi = -1;
+				int sl;
+				int tocopy;
+
+				for (s = 0; s < n_sentences; s++)
+				{
+					if (!used[s] && scores[s] > maxscore)
+					{
+						maxscore = scores[s];
+						maxi = s;
+					}
+				}
+				if (maxi == -1 || maxscore == 0)
+					break;
+				sl = (int)strlen(sentence_ptrs[maxi]);
+				tocopy = (sl > max_length - 1 - written)
+					? (max_length - 1 - written)
+					: sl;
+				if (tocopy > 0)
+				{
+					memcpy(summary + written,
+						sentence_ptrs[maxi],
+						tocopy);
+					written += tocopy;
+					if (written < max_length - 1)
+					{
+						summary[written] = ' ';
+						written++;
+					}
+				}
+				used[maxi] = 1;
+				if (written >= max_length - 1)
+					break;
+			}
+			if (written > 0)
+				summary[written - 1] = '\0';
+			else
+				summary[0] = '\0';
+
+			for (i = 0; i < n_sentences; i++)
+				pfree(sentence_ptrs[i]);
+			for (i = 0; i < n_stopwords; i++)
+				pfree(stopwords[i]);
+			pfree(stopwords);
+		}
 		SPI_finish();
 	} else
 	{
