@@ -3374,9 +3374,8 @@ BEGIN
 			max_iters := COALESCE((params->>'max_iters')::integer, 100);
 			RETURN cluster_kmeans(table_name, feature_col, k, max_iters);
 		WHEN 'gmm' THEN
-			k := COALESCE((params->>'k')::integer, (params->>'components')::integer, 3);
-			max_iters := COALESCE((params->>'max_iters')::integer, 100);
-			RETURN 0;
+			-- Delegate to C function with default project
+			RETURN neurondb.train('default', 'gmm', table_name, label_col, ARRAY[feature_col], params);
 		WHEN 'minibatch_kmeans' THEN
 			k := COALESCE((params->>'k')::integer, 3);
 			max_iters := COALESCE((params->>'max_iters')::integer, 100);
@@ -3389,7 +3388,11 @@ BEGIN
 			k := COALESCE((params->>'k')::integer, 3);
 			RETURN cluster_hierarchical(table_name, feature_col, k, COALESCE(params->>'linkage', 'average'));
 		WHEN 'naive_bayes' THEN
-			RETURN 0;
+			-- Delegate to C function with default project
+			RETURN neurondb.train('default', 'naive_bayes', table_name, label_col, ARRAY[feature_col], params);
+		WHEN 'knn' THEN
+			-- Delegate to C function with default project
+			RETURN neurondb.train('default', 'knn', table_name, label_col, ARRAY[feature_col], params);
 		WHEN 'decision_tree' THEN
 			max_depth := COALESCE((params->>'max_depth')::integer, 10);
 			min_samples := COALESCE((params->>'min_samples_split')::integer, 2);
@@ -3492,6 +3495,12 @@ BEGIN
 			RETURN predict_neural_network(model_id, vector_to_array(features));
 		WHEN 'naive_bayes' THEN
 			RETURN 0.0;
+		WHEN 'knn' THEN
+			-- Delegate to C function (convert vector to array)
+			RETURN neurondb_predict(model_id, vector_to_array(features));
+		WHEN 'gmm' THEN
+			-- Delegate to C function (convert vector to array)
+			RETURN neurondb_predict(model_id, vector_to_array(features));
 		ELSE
 			RAISE EXCEPTION 'Prediction not implemented for algorithm: %', algo;
 	END CASE;
