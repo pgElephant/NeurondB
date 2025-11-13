@@ -147,7 +147,7 @@ ndb_cuda_svm_predict(const bytea *model_data,
 	const NdbCudaSvmModelHeader *hdr;
 	const float *alphas;
 	const float *support_vectors;
-	const int32 *indices;
+	const int32 *indices __attribute__((unused));
 	const bytea *detoasted;
 	double prediction;
 	int i, j;

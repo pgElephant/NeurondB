@@ -199,7 +199,7 @@ ndb_cuda_ridge_train(const float *features,
 	/* Invert X'X + λI using Gauss-Jordan elimination */
 	{
 		double **augmented;
-		int row, col, k;
+		int row, col, k_local;
 		double pivot, factor;
 		bool invert_success = true;
 
@@ -226,13 +226,13 @@ ndb_cuda_ridge_train(const float *features,
 			if (fabs(pivot) < 1e-10)
 			{
 				bool found = false;
-				for (k = row + 1; k < dim_with_intercept; k++)
+				for (k_local = row + 1; k_local < dim_with_intercept; k_local++)
 				{
-					if (fabs(augmented[k][row]) > 1e-10)
+					if (fabs(augmented[k_local][row]) > 1e-10)
 					{
 						double *temp = augmented[row];
-						augmented[row] = augmented[k];
-						augmented[k] = temp;
+						augmented[row] = augmented[k_local];
+						augmented[k_local] = temp;
 						pivot = augmented[row][row];
 						found = true;
 						break;
@@ -248,15 +248,15 @@ ndb_cuda_ridge_train(const float *features,
 			for (col = 0; col < 2 * dim_with_intercept; col++)
 				augmented[row][col] /= pivot;
 
-			for (k = 0; k < dim_with_intercept; k++)
+			for (k_local = 0; k_local < dim_with_intercept; k_local++)
 			{
-				if (k != row)
+				if (k_local != row)
 				{
-					factor = augmented[k][row];
+					factor = augmented[k_local][row];
 					for (col = 0;
 						col < 2 * dim_with_intercept;
 						col++)
-						augmented[k][col] -= factor
+						augmented[k_local][col] -= factor
 							* augmented[row][col];
 				}
 			}
@@ -322,19 +322,19 @@ ndb_cuda_ridge_train(const float *features,
 
 		for (i = 0; i < n_samples; i++)
 		{
-			const float *row = features + (i * feature_dim);
-			double y_pred = model.intercept;
-			double error;
-			int j;
+		const float *row = features + (i * feature_dim);
+		double y_pred = model.intercept;
+		double error;
+		int j_local;
 
-			for (j = 0; j < feature_dim; j++)
-				y_pred += model.coefficients[j] * row[j];
+	for (j_local = 0; j_local < feature_dim; j_local++)
+		y_pred += model.coefficients[j_local] * row[j_local];
 
-			error = targets[i] - y_pred;
-			mse += error * error;
-			mae += fabs(error);
-			ss_res += error * error;
-			ss_tot += (targets[i] - y_mean) * (targets[i] - y_mean);
+	error = targets[i] - y_pred;
+	mse += error * error;
+	mae += fabs(error);
+	ss_res += error * error;
+	ss_tot += (targets[i] - y_mean) * (targets[i] - y_mean);
 		}
 
 		mse /= n_samples;

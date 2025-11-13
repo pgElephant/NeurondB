@@ -198,7 +198,7 @@ auto_train(PG_FUNCTION_ARGS)
 
 		scores[i].algorithm = pstrdup(algorithms[i]);
 
-		elog(NOTICE,
+		elog(DEBUG1,
 			"auto_train: Training algorithm %s (%d/%d)",
 			algorithms[i],
 			i + 1,
@@ -315,7 +315,7 @@ auto_train(PG_FUNCTION_ARGS)
 
 		if (!found_metric)
 		{
-			/* Try to find common metric names */
+			/* Try to find alternative names for the requested metric, then common metrics */
 			it = JsonbIteratorInit(&metrics_jsonb->root);
 			while ((r = JsonbIteratorNext(&it, &v, false))
 				!= WJB_DONE)
@@ -326,17 +326,31 @@ auto_train(PG_FUNCTION_ARGS)
 						v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 
-					if (((strcmp(task_str, "classification") == 0
-						  && (strcmp(key, "accuracy") == 0
-							  || strcmp(key, "f1") == 0
-							  || strcmp(key, "precision") == 0
-							  || strcmp(key, "recall") == 0))
-						 || (strcmp(task_str, "regression") == 0
-							 && (strcmp(key, "r2") == 0
-								 || strcmp(key, "r_squared") == 0
-								 || strcmp(key, "mse") == 0
-								 || strcmp(key, "mae") == 0)))
-						&& v.type == jbvNumeric)
+					/* Check for alternative names of requested metric */
+					bool matches_metric = false;
+					if (strcmp(metric, "r2") == 0 && strcmp(key, "r_squared") == 0)
+						matches_metric = true;
+					else if (strcmp(metric, "r_squared") == 0 && strcmp(key, "r2") == 0)
+						matches_metric = true;
+					else if (strcmp(key, metric) == 0)
+						matches_metric = true;
+
+					/* Also check common metric names */
+					bool matches_common = false;
+					if (strcmp(task_str, "classification") == 0
+						&& (strcmp(key, "accuracy") == 0
+							|| strcmp(key, "f1") == 0
+							|| strcmp(key, "precision") == 0
+							|| strcmp(key, "recall") == 0))
+						matches_common = true;
+					else if (strcmp(task_str, "regression") == 0
+						&& (strcmp(key, "r2") == 0
+							|| strcmp(key, "r_squared") == 0
+							|| strcmp(key, "mse") == 0
+							|| strcmp(key, "mae") == 0))
+						matches_common = true;
+
+					if ((matches_metric || matches_common) && v.type == jbvNumeric)
 					{
 						score = (float)DatumGetFloat8(
 							DirectFunctionCall1(
@@ -373,7 +387,7 @@ auto_train(PG_FUNCTION_ARGS)
 
 		scores[i].score = score;
 
-		elog(NOTICE,
+		elog(DEBUG1,
 			"auto_train: %s scored %.4f (model_id: %d)",
 			algorithms[i],
 			score,
@@ -427,27 +441,17 @@ auto_train(PG_FUNCTION_ARGS)
 			"AutoML failed: No models were successfully trained");
 	}
 
-	/* Cleanup */
-	for (i = 0; i < n_algorithms; i++)
-	{
-		if (scores[i].algorithm)
-			pfree(scores[i].algorithm);
-		if (scores[i].hyperparams)
-			pfree(scores[i].hyperparams);
-	}
-	if (scores)
-		pfree(scores);
-
-	pfree(table_name_str);
-	pfree(feature_col_str);
-	pfree(label_col_str);
-	pfree(task_str);
-	pfree(metric);
-
+	/* Save result to parent context before deleting automl_context */
 	MemoryContextSwitchTo(oldcontext);
-	MemoryContextDelete(automl_context);
-
-	PG_RETURN_TEXT_P(cstring_to_text(result.data));
+	{
+		char *result_copy = pstrdup(result.data);
+		text *result_text = cstring_to_text(result_copy);
+		
+		/* Delete automl_context (frees all allocations in it) */
+		MemoryContextDelete(automl_context);
+		
+		PG_RETURN_TEXT_P(result_text);
+	}
 }
 
 /*

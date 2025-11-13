@@ -1187,7 +1187,7 @@ train_decision_tree_classifier(PG_FUNCTION_ARGS)
 								   &gpu_err) &&
 			gpu_result.spec.model_data != NULL)
 		{
-			elog(NOTICE, "dt: GPU training succeeded");
+			elog(DEBUG1, "dt: GPU training succeeded");
 			spec = gpu_result.spec;
 
 			if (spec.training_table == NULL)

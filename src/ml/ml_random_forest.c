@@ -3475,14 +3475,26 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 	if (!rf_lookup_model(model_id, &model))
 	{
 		/* Try loading from catalog */
+		elog(DEBUG1,
+			 "evaluate_random_forest: model_id %d not in cache, trying catalog",
+			 model_id);
 		if (!ml_catalog_fetch_model_payload(
 			    model_id, &payload, NULL, &metrics))
+		{
+			elog(WARNING,
+				 "evaluate_random_forest: ml_catalog_fetch_model_payload returned false for model_id %d",
+				 model_id);
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					errmsg("random_forest: model %d not found",
 						model_id)));
+		}
 
 		/* If GPU model, extract metrics from JSONB */
+		elog(DEBUG1,
+			 "evaluate_random_forest: metrics=%p, rf_metadata_is_gpu=%d",
+			 (void *)metrics,
+			 metrics != NULL ? rf_metadata_is_gpu(metrics) : 0);
 		if (rf_metadata_is_gpu(metrics) && metrics != NULL)
 		{
 			Datum acc_datum;
@@ -3609,8 +3621,14 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 		}
 
 		/* Try loading CPU model from catalog */
+		elog(NOTICE,
+			 "evaluate_random_forest: not a GPU model, trying CPU load for model_id %d",
+			 model_id);
 		if (!rf_load_model_from_catalog(model_id, &model))
 		{
+			elog(NOTICE,
+				 "evaluate_random_forest: rf_load_model_from_catalog failed for model_id %d",
+				 model_id);
 			if (payload)
 				pfree(payload);
 			if (metrics)
@@ -4198,7 +4216,9 @@ rf_metadata_is_gpu(Jsonb *metadata)
 		{
 			if (strstr(meta_txt, "\"storage\":\"gpu\"") != NULL
 				|| strstr(meta_txt, "\"storage\": \"gpu\"") != NULL)
+			{
 				is_gpu = true;
+			}
 			pfree(meta_txt);
 		}
 	}

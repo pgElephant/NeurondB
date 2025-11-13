@@ -927,7 +927,7 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 		{
 			MLCatalogModelSpec spec;
 
-			elog(NOTICE, "ridge: GPU training succeeded");
+			elog(DEBUG1, "ridge: GPU training succeeded");
 			spec = gpu_result.spec;
 
 			if (spec.training_table == NULL)
@@ -1400,7 +1400,7 @@ train_lasso_regression(PG_FUNCTION_ARGS)
 		{
 			MLCatalogModelSpec spec;
 
-			elog(NOTICE, "lasso: GPU training succeeded");
+			elog(DEBUG1, "lasso: GPU training succeeded");
 			spec = gpu_result.spec;
 
 			if (spec.training_table == NULL)

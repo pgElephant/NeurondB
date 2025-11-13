@@ -42,7 +42,7 @@
  * This is a simplified implementation; full tokenizers should use
  * pre-trained vocabularies from Hugging Face.
  */
-__global__ static void
+__global__ static void __attribute__((unused))
 ndb_cuda_hf_tokenize_simple_kernel(const char *text,
 	int text_len,
 	int32_t *token_ids,
@@ -204,7 +204,7 @@ ndb_cuda_hf_add_vectors_kernel(const float *a,
 /*
  * Element-wise multiplication kernel: Multiply two vectors element-wise
  */
-__global__ static void
+__global__ static void __attribute__((unused))
 ndb_cuda_hf_multiply_vectors_kernel(const float *a,
 	const float *b,
 	float *output,
@@ -255,7 +255,7 @@ ndb_cuda_hf_mean_pooling_kernel(const float *embeddings,
 /*
  * CLS token extraction: Extract embedding from first token (CLS)
  */
-__global__ static void
+__global__ static void __attribute__((unused))
 ndb_cuda_hf_cls_pooling_kernel(const float *embeddings,
 	float *pooled_embedding,
 	int embed_dim)
@@ -293,7 +293,7 @@ ndb_cuda_init_cublas(void)
 	return 0;
 }
 
-static void
+static void __attribute__((unused))
 ndb_cuda_cleanup_cublas(void)
 {
 	if (g_cublas_handle != NULL)
@@ -308,7 +308,7 @@ ndb_cuda_cleanup_cublas(void)
  * A: [m x k], B: [k x n], C: [m x n]
  * cuBLAS uses column-major order, so we need to handle row-major inputs
  */
-static int
+static int __attribute__((unused))
 ndb_cuda_matmul(const float *A, const float *B, float *C, int m, int n, int k)
 {
 	cublasStatus_t status;
@@ -483,7 +483,7 @@ ndb_cuda_hf_gelu_kernel(const float *input, float *output, int n)
 /*
  * Softmax kernel
  */
-__global__ static void
+__global__ static void __attribute__((unused))
 ndb_cuda_hf_softmax_kernel(const float *input,
 	float *output,
 	int seq_len,
@@ -899,7 +899,7 @@ ndb_cuda_hf_ffn_forward(const float *input,
  * Feed-forward network kernel: Apply FFN with GELU activation
  * FFN(x) = GELU(x * W1 + b1) * W2 + b2
  */
-__global__ static void
+__global__ static void __attribute__((unused))
 ndb_cuda_hf_ffn_kernel(const float *input,
 	const float *ffn_weights1,
 	const float *ffn_weights2,
@@ -946,7 +946,7 @@ ndb_cuda_hf_ffn_kernel(const float *input,
 /*
  * Update KV cache kernel: Append new key/value to cache
  */
-__global__ static void
+__global__ static void __attribute__((unused))
 ndb_cuda_hf_update_kv_cache_kernel(const float *new_key,
 	const float *new_value,
 	float *key_cache,

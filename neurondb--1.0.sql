@@ -3445,6 +3445,18 @@ END;
 $$;
 COMMENT ON FUNCTION neurondb.train(text, text, text, text, jsonb) IS 'Unified training function: train(algorithm, table, features, labels, params) - supports all ML algorithms';
 
+CREATE OR REPLACE FUNCTION neurondb.train(
+	project_name text,
+	algorithm text,
+	table_name text,
+	label_col text,
+	feature_columns text[],
+	params jsonb DEFAULT '{}'::jsonb
+) RETURNS integer
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'neurondb_train';
+COMMENT ON FUNCTION neurondb.train(text, text, text, text, text[], jsonb) IS 'Unified training function with project support: train(project, algorithm, table, label, feature_columns[], params)';
+
 CREATE OR REPLACE FUNCTION neurondb.predict(
 	model_id integer,
 	features vector
@@ -5252,7 +5264,20 @@ LANGUAGE sql STABLE AS $$
 $$;
 COMMENT ON FUNCTION neurondb.version IS 'Get NeuronDB version and capabilities';
 
-GRANT EXECUTE ON FUNCTION neurondb.train TO PUBLIC;
+CREATE OR REPLACE FUNCTION auto_train(
+	table_name text,
+	feature_col text,
+	label_col text,
+	task text,
+	metric text DEFAULT 'accuracy'
+) RETURNS text
+LANGUAGE c
+AS 'MODULE_PATHNAME', 'auto_train';
+COMMENT ON FUNCTION auto_train(text, text, text, text, text) IS 'Automated model selection with GPU acceleration support';
+
+GRANT EXECUTE ON FUNCTION neurondb.train(text, text, text, text, jsonb) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.train(text, text, text, text, text[], jsonb) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION auto_train(text, text, text, text, text) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.predict(integer, vector) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.evaluate TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.list_algorithms TO PUBLIC;

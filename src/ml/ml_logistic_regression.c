@@ -207,7 +207,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 		{
 			MLCatalogModelSpec spec;
 
-			elog(NOTICE,
+			elog(DEBUG1,
 				"logistic_regression: GPU training succeeded");
 			spec = gpu_result.spec;
 

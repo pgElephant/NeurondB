@@ -89,6 +89,9 @@ dataset/*.zip
 dataset/*.ndjson
 dataset/*.json.gz
 
+# PMLB (Penn Machine Learning Benchmark) datasets
+pmlb/
+
 # Worker backups and patches
 *.orig
 *.rej

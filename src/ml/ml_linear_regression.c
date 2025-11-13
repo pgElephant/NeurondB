@@ -416,8 +416,12 @@ linreg_metadata_is_gpu(Jsonb *metadata)
 	{
 		meta_text = DatumGetCString(DirectFunctionCall1(
 			jsonb_out, JsonbPGetDatum(metadata)));
-		if (strstr(meta_text, "\"storage\":\"gpu\"") != NULL)
+		/* Accept both "storage":"gpu" and "storage": "gpu" (with/without space) */
+		if (strstr(meta_text, "\"storage\":\"gpu\"") != NULL ||
+		    strstr(meta_text, "\"storage\": \"gpu\"") != NULL)
+		{
 			is_gpu = true;
+		}
 		pfree(meta_text);
 	}
 	PG_CATCH();
@@ -459,7 +463,6 @@ linreg_try_gpu_predict_catalog(int32 model_id,
 
 	if (!linreg_metadata_is_gpu(metrics))
 		goto cleanup;
-
 	if (ndb_gpu_linreg_predict(payload,
 		    feature_vec->data,
 		    feature_vec->dim,
@@ -612,7 +615,7 @@ train_linear_regression(PG_FUNCTION_ARGS)
 		{
 			MLCatalogModelSpec spec;
 
-			elog(NOTICE,
+			elog(DEBUG1,
 				"linear_regression: GPU training succeeded");
 			spec = gpu_result.spec;
 

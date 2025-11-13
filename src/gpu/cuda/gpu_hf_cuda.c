@@ -56,7 +56,7 @@ typedef struct NdbCudaHfModelEntry
 /* Global model cache */
 static NdbCudaHfModelEntry *g_model_cache = NULL;
 static int g_model_cache_count = 0;
-static int g_model_cache_max = 10;
+static int __attribute__((unused)) g_model_cache_max = 10;
 
 /* Forward declarations */
 static NdbCudaHfModelEntry *ndb_cuda_hf_find_model(const char *model_name);
@@ -317,7 +317,6 @@ ndb_cuda_hf_embed(const char *model_name,
 	int rc = -1;
 	MemoryContext oldcontext;
 	MemoryContext embed_context = NULL;
-	bool weights_allocated = false;
 
 	/* Initialize error string */
 	if (errstr)
@@ -523,11 +522,10 @@ ndb_cuda_hf_embed(const char *model_name,
 				weights.lm_head_weights,
 				lm_head_size);
 
-			entry->weights.total_bytes = weights.total_bytes;
-			weights_allocated = true;
-		}
+		entry->weights.total_bytes = weights.total_bytes;
+	}
 
-		entry->loaded = true;
+	entry->loaded = true;
 		entry->weights_on_device = false;
 		entry->last_used = time(NULL);
 		entry->next = g_model_cache;
@@ -1498,18 +1496,18 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 									1;
 							}
 
-							pfree(stop_token_ids);
-						} else
-						{
-							/* Fallback: use word count estimation */
-							if (stop_token_ids)
-								pfree(stop_token_ids);
+					pfree(stop_token_ids);
+				} else
+				{
+					/* Fallback: use word count estimation */
+					const char *ptr = value;
+					int word_count = 0;
+					int in_word = 0;
 
-							const char *ptr = value;
-							int word_count = 0;
-							int in_word = 0;
+					if (stop_token_ids)
+						pfree(stop_token_ids);
 
-							while (*ptr)
+					while (*ptr)
 							{
 								if (!isspace((
 									    unsigned char)*ptr))
@@ -1543,19 +1541,20 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 							}
 						}
 					}
-					PG_CATCH();
-					{
-						/* On error, skip this stop sequence */
-						EmitErrorReport();
-						FlushErrorState();
-						if (stop_token_ids)
-							pfree(stop_token_ids);
-						/* Use fallback word count */
-						const char *ptr = value;
-						int word_count = 0;
-						int in_word = 0;
+				PG_CATCH();
+				{
+					/* On error, skip this stop sequence */
+					const char *ptr = value;
+					int word_count = 0;
+					int in_word = 0;
 
-						while (*ptr)
+					EmitErrorReport();
+					FlushErrorState();
+					if (stop_token_ids)
+						pfree(stop_token_ids);
+					/* Use fallback word count */
+
+					while (*ptr)
 						{
 							if (!isspace((
 								    unsigned char)*ptr))
@@ -2653,19 +2652,19 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 					if (token_ids)
 						pfree(token_ids);
 				}
-				PG_CATCH();
-				{
-					/* On error, use word count fallback */
-					EmitErrorReport();
-					FlushErrorState();
-					if (token_ids)
-						pfree(token_ids);
+			PG_CATCH();
+			{
+				/* On error, use word count fallback */
+				const char *ptr = text_out;
+				int word_count = 0;
+				int in_word = 0;
 
-					const char *ptr = text_out;
-					int word_count = 0;
-					int in_word = 0;
+				EmitErrorReport();
+				FlushErrorState();
+				if (token_ids)
+					pfree(token_ids);
 
-					while (*ptr)
+				while (*ptr)
 					{
 						if (!isspace((
 							    unsigned char)*ptr))
@@ -2830,19 +2829,19 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 					if (token_ids)
 						pfree(token_ids);
 				}
-				PG_CATCH();
-				{
-					/* On error, use word count fallback */
-					EmitErrorReport();
-					FlushErrorState();
-					if (token_ids)
-						pfree(token_ids);
+			PG_CATCH();
+			{
+				/* On error, use word count fallback */
+				const char *ptr = text_out;
+				int word_count = 0;
+				int in_word = 0;
 
-					const char *ptr = text_out;
-					int word_count = 0;
-					int in_word = 0;
+				EmitErrorReport();
+				FlushErrorState();
+				if (token_ids)
+					pfree(token_ids);
 
-					while (*ptr)
+				while (*ptr)
 					{
 						if (!isspace((
 							    unsigned char)*ptr))

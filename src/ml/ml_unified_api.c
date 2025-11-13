@@ -67,6 +67,44 @@ neurondb_quote_literal_cstr(const char *str)
 	return ret;
 }
 
+/* Helper: determine model type from algorithm name */
+static const char *
+neurondb_get_model_type(const char *algorithm)
+{
+	if (algorithm == NULL)
+		return "classification"; /* default */
+
+	/* Classification algorithms */
+	if (strcmp(algorithm, "logistic_regression") == 0 ||
+		strcmp(algorithm, "random_forest") == 0 ||
+		strcmp(algorithm, "svm") == 0 ||
+		strcmp(algorithm, "decision_tree") == 0 ||
+		strcmp(algorithm, "naive_bayes") == 0 ||
+		strcmp(algorithm, "xgboost") == 0)
+		return "classification";
+
+	/* Regression algorithms */
+	if (strcmp(algorithm, "linear_regression") == 0 ||
+		strcmp(algorithm, "ridge") == 0 ||
+		strcmp(algorithm, "lasso") == 0)
+		return "regression";
+
+	/* Clustering algorithms */
+	if (strcmp(algorithm, "kmeans") == 0 ||
+		strcmp(algorithm, "gmm") == 0 ||
+		strcmp(algorithm, "minibatch_kmeans") == 0 ||
+		strcmp(algorithm, "hierarchical") == 0)
+		return "clustering";
+
+	/* Dimensionality reduction */
+	if (strcmp(algorithm, "pca") == 0 ||
+		strcmp(algorithm, "opq") == 0)
+		return "dimensionality_reduction";
+
+	/* Default to classification */
+	return "classification";
+}
+
 /* ----------
  * neurondb_train
  * Unified model training interface.
@@ -108,7 +146,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 	table_name = text_to_cstring(table_name_text);
 	target_column = text_to_cstring(target_column_text);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb.train: project=\"%s\", algorithm=\"%s\", "
 		"table=\"%s\", "
 		"target=\"%s\"",
@@ -128,15 +166,22 @@ neurondb_train(PG_FUNCTION_ARGS)
 				errmsg("SPI_connect failed")));
 
 	/* Ensure ml_projects entry exists for the project */
-	initStringInfo(&sql);
-	appendStringInfo(&sql,
-		"INSERT INTO neurondb.ml_projects (project_name, model_type, "
-		"description) "
-		"VALUES (%s, 'supervised', 'Auto-created by neurondb.train()') "
-		"ON CONFLICT (project_name) DO UPDATE SET updated_at = "
-		"CURRENT_TIMESTAMP "
-		"RETURNING project_id",
-		neurondb_quote_literal_cstr(project_name));
+	{
+		const char *model_type = neurondb_get_model_type(algorithm);
+		char *model_type_quoted = neurondb_quote_literal_cstr(model_type);
+
+		initStringInfo(&sql);
+		appendStringInfo(&sql,
+			"INSERT INTO neurondb.ml_projects (project_name, model_type, "
+			"description) "
+			"VALUES (%s, %s, 'Auto-created by neurondb.train()') "
+			"ON CONFLICT (project_name) DO UPDATE SET updated_at = "
+			"CURRENT_TIMESTAMP "
+			"RETURNING project_id",
+			neurondb_quote_literal_cstr(project_name),
+			model_type_quoted);
+		pfree(model_type_quoted);
+	}
 	ret = SPI_execute(sql.data, false, 0);
 
 	if ((ret != SPI_OK_INSERT_RETURNING && ret != SPI_OK_UPDATE_RETURNING)
@@ -232,9 +277,22 @@ neurondb_train(PG_FUNCTION_ARGS)
 		    &gpu_result,
 		    &gpu_errmsg))
 	{
+		elog(DEBUG1,
+			 "neurondb.train: GPU training succeeded, gpu_result.spec.metrics=%p",
+			 (void *)gpu_result.spec.metrics);
+		if (gpu_result.spec.metrics != NULL)
+		{
+			char *metrics_txt = DatumGetCString(
+				DirectFunctionCall1(jsonb_out,
+					JsonbPGetDatum(gpu_result.spec.metrics)));
+			elog(DEBUG1,
+				 "neurondb.train: GPU metrics content: %s",
+				 metrics_txt);
+			pfree(metrics_txt);
+		}
 		model_id = ml_catalog_register_model(&gpu_result.spec);
 		gpu_result.model_id = model_id;
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb.train: GPU model_id=%d created "
 			"successfully",
 			model_id);
@@ -504,20 +562,41 @@ neurondb_train(PG_FUNCTION_ARGS)
 				}
 			}
 		}
+		{
+			/* Use advisory lock and CTE to calculate version atomically */
+			resetStringInfo(&sql);
+			appendStringInfo(&sql,
+				"SELECT pg_advisory_xact_lock(%d)",
+				project_id);
+			ret = SPI_execute(sql.data, false, 0);
+			if (ret != SPI_OK_SELECT)
+			{
+				neurondb_cleanup(oldcontext, callcontext, true);
+				ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("Failed to acquire advisory lock")));
+			}
+
 		resetStringInfo(&sql);
 		appendStringInfo(&sql,
+			"WITH next_version AS ("
+			"SELECT COALESCE(MAX(version), 0) + 1 AS v "
+			"FROM neurondb.ml_models "
+			"WHERE project_id = %d"
+			") "
 			"INSERT INTO neurondb.ml_models (project_id, "
-			"model_name, algorithm, training_table, "
-			"training_column, status, metadata) "
-			"VALUES (%d, %s, 'knn', %s, %s, 'completed', "
-			"'{\"algorithm\": \"knn\", \"k\": %d}'::jsonb) "
+			"version, algorithm, training_table, "
+			"training_column, status, parameters) "
+			"SELECT %d, v, 'knn'::neurondb.ml_algorithm_type, %s, %s, 'completed', "
+			"'{\"k\": %d}'::jsonb "
+			"FROM next_version "
 			"RETURNING model_id",
 			project_id,
-			neurondb_quote_literal_cstr(
-				psprintf("knn_%s", project_name)),
-			neurondb_quote_literal_cstr(table_name),
-			neurondb_quote_literal_cstr(target_column),
-			k_value);
+			project_id,
+				neurondb_quote_literal_cstr(table_name),
+				neurondb_quote_literal_cstr(target_column),
+				k_value);
+		}
 		ret = SPI_execute(sql.data, false, 0);
 		if (ret == SPI_OK_INSERT_RETURNING && SPI_processed > 0)
 		{
@@ -623,6 +702,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 	if (strcmp(algorithm, "random_forest") == 0
 		|| strcmp(algorithm, "logistic_regression") == 0
 		|| strcmp(algorithm, "linear_regression") == 0
+		|| strcmp(algorithm, "decision_tree") == 0
 		|| strcmp(algorithm, "svm") == 0)
 	{
 		if (SPI_processed == 0)
@@ -662,29 +742,52 @@ neurondb_train(PG_FUNCTION_ARGS)
 	{
 		bool model_registered = false;
 
+		/* If training function returned model_id > 0, it already registered */
 		if (model_id > 0)
 		{
-			resetStringInfo(&sql);
-			appendStringInfo(&sql,
-				"SELECT 1 FROM neurondb.ml_models WHERE "
-				"model_id = %d",
+			model_registered = true;
+			elog(DEBUG1,
+				"neurondb.train: model already registered by training function (model_id=%d)",
 				model_id);
-			ret = SPI_execute(sql.data, true, 1);
-			if (ret == SPI_OK_SELECT && SPI_processed > 0)
-				model_registered = true;
 		}
 
 		if (!model_registered)
 		{
+			/* Use advisory lock and CTE to calculate version atomically */
+			/* Lock on project_id to serialize version calculation */
 			resetStringInfo(&sql);
 			appendStringInfo(&sql,
+				"SELECT pg_advisory_xact_lock(%d)",
+				project_id);
+			ret = SPI_execute(sql.data, false, 0);
+			if (ret != SPI_OK_SELECT)
+			{
+				neurondb_cleanup(oldcontext, callcontext, true);
+				ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("Failed to acquire advisory lock")));
+			}
+
+			/* Now calculate version and insert atomically */
+			resetStringInfo(&sql);
+			appendStringInfo(&sql,
+				"WITH next_version AS ("
+				"SELECT COALESCE(MAX(version), 0) + 1 AS v "
+				"FROM neurondb.ml_models "
+				"WHERE project_id = %d"
+				") "
 				"INSERT INTO neurondb.ml_models (project_id, "
-				"algorithm, training_table, training_column, "
+				"version, algorithm, training_table, "
+				"training_column, "
 				"status, "
 				"parameters) "
-				"VALUES (%d, %s::neurondb.ml_algorithm_type, "
+				"SELECT %d, v, "
+				"%s::neurondb.ml_algorithm_type, "
 				"%s, %s, "
-				"'completed', '{}'::jsonb) RETURNING model_id",
+				"'completed', '{}'::jsonb "
+				"FROM next_version "
+				"RETURNING model_id",
+				project_id,
 				project_id,
 				neurondb_quote_literal_cstr(algorithm),
 				neurondb_quote_literal_cstr(table_name),
@@ -714,7 +817,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 	neurondb_cleanup(oldcontext, callcontext, true);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb.train: model_id=%d created successfully",
 		model_id);
 
@@ -870,7 +973,7 @@ neurondb_predict(PG_FUNCTION_ARGS)
 
 	neurondb_cleanup(oldcontext, callcontext, true);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb.predict: model_id=%d, algorithm=%s, prediction=%.6f",
 		model_id,
 		algorithm,
@@ -907,7 +1010,7 @@ neurondb_deploy(PG_FUNCTION_ARGS)
 	else
 		strategy = pstrdup("replace");
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb.deploy: model_id=%d, strategy=%s",
 		model_id,
 		strategy);
@@ -957,7 +1060,7 @@ neurondb_deploy(PG_FUNCTION_ARGS)
 
 	neurondb_cleanup(oldcontext, callcontext, true);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb.deploy: deployment_id=%d created",
 		deployment_id);
 
@@ -1048,19 +1151,43 @@ neurondb_load_model(PG_FUNCTION_ARGS)
 	project_id = DatumGetInt32(SPI_getbinval(
 		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 
-	resetStringInfo(&sql);
-	appendStringInfo(&sql,
-		"INSERT INTO neurondb.ml_models (project_id, model_name, "
-		"algorithm, training_table, training_column, status, metadata) "
-		"VALUES (%d, %s, %s, NULL, NULL, 'external', "
-		"'{\"model_path\": %s, \"model_format\": %s}'::jsonb) "
-		"RETURNING model_id",
-		project_id,
-		neurondb_quote_literal_cstr(
-			psprintf("%s_%ld", model_format, (long)time(NULL))),
-		neurondb_quote_literal_cstr(model_format),
-		neurondb_quote_literal_cstr(model_path),
-		neurondb_quote_literal_cstr(model_format));
+	{
+		/* Use advisory lock and CTE to calculate version atomically */
+		resetStringInfo(&sql);
+		appendStringInfo(&sql,
+			"SELECT pg_advisory_xact_lock(%d)",
+			project_id);
+		ret = SPI_execute(sql.data, false, 0);
+		if (ret != SPI_OK_SELECT)
+		{
+			neurondb_cleanup(oldcontext, callcontext, true);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("Failed to acquire advisory lock")));
+		}
+
+		resetStringInfo(&sql);
+		appendStringInfo(&sql,
+			"WITH next_version AS ("
+			"SELECT COALESCE(MAX(version), 0) + 1 AS v "
+			"FROM neurondb.ml_models "
+			"WHERE project_id = %d"
+			") "
+			"INSERT INTO neurondb.ml_models (project_id, version, "
+			"model_name, algorithm, training_table, training_column, "
+			"status, metadata) "
+			"SELECT %d, v, %s, %s, NULL, NULL, 'external', "
+			"'{\"model_path\": %s, \"model_format\": %s}'::jsonb "
+			"FROM next_version "
+			"RETURNING model_id",
+			project_id,
+			project_id,
+			neurondb_quote_literal_cstr(
+				psprintf("%s_%ld", model_format, (long)time(NULL))),
+			neurondb_quote_literal_cstr(model_format),
+			neurondb_quote_literal_cstr(model_path),
+			neurondb_quote_literal_cstr(model_format));
+	}
 
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0)

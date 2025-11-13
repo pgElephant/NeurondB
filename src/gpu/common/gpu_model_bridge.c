@@ -166,7 +166,7 @@ ndb_gpu_try_train_model(const char *algorithm,
 		if (trained)
 		{
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
-			ereport(NOTICE,
+			ereport(DEBUG1,
 				(errmsg("%s: GPU training succeeded",
 					 algorithm ? algorithm : "unknown"),
 					errdetail(
@@ -217,7 +217,7 @@ ndb_gpu_try_train_model(const char *algorithm,
 		{
 			trained = true;
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
-			ereport(NOTICE,
+			ereport(DEBUG1,
 				(errmsg("random_forest: GPU training succeeded "
 					"(direct)"),
 					errdetail(
@@ -359,7 +359,7 @@ ndb_gpu_try_train_model(const char *algorithm,
 		{
 			trained = true;
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
-			ereport(NOTICE,
+			ereport(DEBUG1,
 				(errmsg("decision_tree: GPU training succeeded "
 					"(direct)"),
 					errdetail(
@@ -411,7 +411,7 @@ ndb_gpu_try_train_model(const char *algorithm,
 		{
 			trained = true;
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
-			ereport(NOTICE,
+			ereport(DEBUG1,
 				(errmsg("ridge: GPU training succeeded "
 					"(direct)"),
 					errdetail(
@@ -463,7 +463,7 @@ ndb_gpu_try_train_model(const char *algorithm,
 		{
 			trained = true;
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
-			ereport(NOTICE,
+			ereport(DEBUG1,
 				(errmsg("lasso: GPU training succeeded "
 					"(direct)"),
 					errdetail(

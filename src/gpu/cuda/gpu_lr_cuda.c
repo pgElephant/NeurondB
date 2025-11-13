@@ -138,6 +138,10 @@ ndb_cuda_lr_train(const float *features,
 	size_t pred_bytes;
 	size_t z_bytes;
 	size_t weight_bytes;
+	size_t weight_bytes_gpu;
+	size_t free_mem;
+	size_t total_mem;
+	float *d_weights = NULL;
 	int iter;
 	int i;
 	int rc = -1;
@@ -242,6 +246,7 @@ ndb_cuda_lr_train(const float *features,
 	pred_bytes = sizeof(double) * (size_t)n_samples;
 	z_bytes = sizeof(double) * (size_t)n_samples;
 	weight_bytes = sizeof(double) * (size_t)feature_dim;
+	weight_bytes_gpu = sizeof(float) * (size_t)feature_dim;
 
 	elog(DEBUG1,
 		"ndb_cuda_lr_train: allocating GPU memory: feature_bytes=%zu "
@@ -251,7 +256,6 @@ ndb_cuda_lr_train(const float *features,
 		label_bytes);
 
 	/* Check available GPU memory before allocation */
-	size_t free_mem, total_mem;
 	cudaMemGetInfo(&free_mem, &total_mem);
 	elog(DEBUG1,
 		"ndb_cuda_lr_train: GPU memory: free=%.2f MB, total=%.2f MB",
@@ -308,8 +312,6 @@ ndb_cuda_lr_train(const float *features,
 		goto gpu_fail;
 
 	/* Allocate GPU memory for weights (needed for forward pass) */
-	float *d_weights = NULL;
-	size_t weight_bytes_gpu = sizeof(float) * (size_t)feature_dim;
 	status = cudaMalloc((void **)&d_weights, weight_bytes_gpu);
 	if (status != cudaSuccess)
 	{
@@ -326,10 +328,10 @@ ndb_cuda_lr_train(const float *features,
 		{
 			float *h_weights = (float *)palloc(
 				sizeof(float) * (size_t)feature_dim);
-			int i;
+			int j;
 
-			for (i = 0; i < feature_dim; i++)
-				h_weights[i] = (float)weights[i];
+			for (j = 0; j < feature_dim; j++)
+				h_weights[j] = (float)weights[j];
 			status = cudaMemcpy(d_weights,
 				h_weights,
 				weight_bytes_gpu,
