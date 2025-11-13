@@ -1,6 +1,6 @@
 \timing on
 \pset footer off
-
+SET log_min_messages = debug1;
 SET neurondb.gpu_enabled = on;
 SET neurondb.gpu_kernels = 'l2,cosine,ip,svm_train,svm_predict';
 SELECT neurondb_gpu_enable();

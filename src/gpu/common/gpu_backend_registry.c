@@ -422,6 +422,162 @@ ndb_gpu_svm_predict_double(const bytea *model_data,
 	return 0;
 }
 
+int
+ndb_gpu_dt_train(const float *features,
+	const double *labels,
+	int n_samples,
+	int feature_dim,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->dt_train == NULL)
+		return -1;
+	return active_backend->dt_train(features,
+		labels,
+		n_samples,
+		feature_dim,
+		hyperparams,
+		model_data,
+		metrics,
+		errstr);
+}
+
+int
+ndb_gpu_dt_predict(const bytea *model_data,
+	const float *input,
+	int feature_dim,
+	double *prediction_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->dt_predict == NULL)
+		return -1;
+	return active_backend->dt_predict(
+		model_data, input, feature_dim, prediction_out, errstr);
+}
+
+int
+ndb_gpu_dt_pack_model(const struct DTModel *model,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->dt_pack == NULL)
+		return -1;
+	return active_backend->dt_pack(model, model_data, metrics, errstr);
+}
+
+int
+ndb_gpu_ridge_train(const float *features,
+	const double *targets,
+	int n_samples,
+	int feature_dim,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->ridge_train == NULL)
+		return -1;
+	return active_backend->ridge_train(features,
+		targets,
+		n_samples,
+		feature_dim,
+		hyperparams,
+		model_data,
+		metrics,
+		errstr);
+}
+
+int
+ndb_gpu_ridge_predict(const bytea *model_data,
+	const float *input,
+	int feature_dim,
+	double *prediction_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->ridge_predict == NULL)
+		return -1;
+	return active_backend->ridge_predict(
+		model_data, input, feature_dim, prediction_out, errstr);
+}
+
+int
+ndb_gpu_ridge_pack_model(const struct RidgeModel *model,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->ridge_pack == NULL)
+		return -1;
+	return active_backend->ridge_pack(model, model_data, metrics, errstr);
+}
+
+int
+ndb_gpu_lasso_train(const float *features,
+	const double *targets,
+	int n_samples,
+	int feature_dim,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->lasso_train == NULL)
+		return -1;
+	return active_backend->lasso_train(features,
+		targets,
+		n_samples,
+		feature_dim,
+		hyperparams,
+		model_data,
+		metrics,
+		errstr);
+}
+
+int
+ndb_gpu_lasso_predict(const bytea *model_data,
+	const float *input,
+	int feature_dim,
+	double *prediction_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->lasso_predict == NULL)
+		return -1;
+	return active_backend->lasso_predict(
+		model_data, input, feature_dim, prediction_out, errstr);
+}
+
+int
+ndb_gpu_lasso_pack_model(const struct LassoModel *model,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = NULL;
+	if (!active_backend || active_backend->lasso_pack == NULL)
+		return -1;
+	return active_backend->lasso_pack(model, model_data, metrics, errstr);
+}
+
 const ndb_gpu_backend *
 ndb_gpu_select_backend(const char *name)
 {

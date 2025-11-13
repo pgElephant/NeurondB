@@ -3,8 +3,33 @@
  * ml_svm.c
  *    Support Vector Machine (SVM) implementation
  *
- * Implements Linear SVM using SMO (Sequential Minimal Optimization)
- * for binary classification.
+ * Support Vector Machines (SVMs) are supervised learning algorithms
+ * used for binary classification. SVMs attempt to find the optimal
+ * hyperplane that best separates two classes in the feature space by
+ * maximizing the margin between the closest points (support vectors) of
+ * each class and the separating hyperplane.
+ *
+ * The decision function of a linear SVM is:
+ *    f(x) = sign(w^T x + b)
+ * where w is the weight vector, b is the bias, and x is the input vector.
+ * Only support vectors contribute to the decision boundary.
+ *
+ * Training a linear SVM solves the convex optimization problem:
+ *    minimize    (1/2) * ||w||^2 + C * Σ ξ_i
+ *    subject to  yᵢ (w⋅xᵢ + b) ≥ 1 - ξᵢ,   ξᵢ ≥ 0
+ * where C is a regularization parameter and ξᵢ are slack variables for
+ * soft-margin SVMs.
+ *
+ * This implementation uses Sequential Minimal Optimization (SMO), an
+ * efficient algorithm for solving the dual formulation of the SVM
+ * optimization problem. SMO works by choosing two Lagrange multipliers
+ * at a time, optimizing them analytically while holding others fixed,
+ * and iterating until convergence.
+ *
+ * For each update, KKT conditions are checked, and the error for each
+ * training sample is computed to guide selection of multipliers. The
+ * resulting model is parameterized by support vectors, their weights,
+ * the bias term, and the kernel function (linear here).
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *

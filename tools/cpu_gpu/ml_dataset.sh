@@ -166,5 +166,10 @@ for DATASET in $DATASETS; do
 	log "Importing CSV into $TABLE..."
 	import_csv "$PGUSER" "$PGDATABASE" "$TABLE" "$CSV_OUT"
 
+	if [ $? -ne 0 ]; then
+		echo "Error: Table '$TABLE' was not added to database. See error messages above."
+		exit 1
+	fi
+
 	echo "Table '$TABLE' successfully created and populated in PostgreSQL."
 done

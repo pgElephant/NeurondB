@@ -464,33 +464,29 @@ CREATE FUNCTION evaluate_linear_regression(text, text, text, float8[])
     LANGUAGE C STABLE;
 COMMENT ON FUNCTION evaluate_linear_regression IS 'Evaluate linear regression. Built for macos_pg16.';
 
-CREATE OR REPLACE FUNCTION train_ridge_regression(text, text, text, float8)
-    RETURNS float8[]
-    LANGUAGE plpgsql STABLE
-AS $$
-DECLARE
-    v_coeffs float8[];
-BEGIN
-    RAISE NOTICE 'Ridge regression: PL/pgSQL implementation (dylib limit on macOS)';
-    v_coeffs := ARRAY[500.0, 0.0, 0.0, 0.0, 0.0, 0.0]::float8[];
-    RETURN v_coeffs;
-END;
-$$;
-COMMENT ON FUNCTION train_ridge_regression IS 'Ridge: PL/pgSQL on macOS, full C on Linux.';
+CREATE FUNCTION train_ridge_regression(text, text, text, float8)
+    RETURNS integer
+    AS 'MODULE_PATHNAME', 'train_ridge_regression'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION train_ridge_regression IS 'Train Ridge Regression and return model_id.';
 
-CREATE OR REPLACE FUNCTION train_lasso_regression(text, text, text, float8, integer DEFAULT 1000)
-    RETURNS float8[]
-    LANGUAGE plpgsql STABLE
-AS $$
-DECLARE
-    v_coeffs float8[];
-BEGIN
-    RAISE NOTICE 'Lasso regression: PL/pgSQL implementation (dylib limit on macOS)';
-    v_coeffs := ARRAY[500.0, 0.0, 0.0, 0.0, 0.0, 0.0]::float8[];
-    RETURN v_coeffs;
-END;
-$$;
-COMMENT ON FUNCTION train_lasso_regression IS 'Lasso: PL/pgSQL on macOS, full C on Linux.';
+CREATE FUNCTION predict_ridge_regression_model_id(integer, vector)
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'predict_ridge_regression_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_ridge_regression_model_id(integer, vector) IS 'Predict using Ridge Regression model_id from catalog. Supports both CPU and GPU models.';
+
+CREATE FUNCTION train_lasso_regression(text, text, text, float8, integer DEFAULT 1000)
+    RETURNS integer
+    AS 'MODULE_PATHNAME', 'train_lasso_regression'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION train_lasso_regression IS 'Train Lasso Regression and return model_id.';
+
+CREATE FUNCTION predict_lasso_regression_model_id(integer, vector)
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'predict_lasso_regression_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_lasso_regression_model_id(integer, vector) IS 'Predict using Lasso Regression model_id from catalog. Supports both CPU and GPU models.';
 
 CREATE OR REPLACE FUNCTION train_elastic_net(text, text, text, float8, float8)
     RETURNS float8[]
@@ -639,20 +635,22 @@ $$;
 COMMENT ON FUNCTION neurondb_evaluate_random_forest IS 'Evaluate Random Forest model';
 
 -- Decision Tree - Complete C Implementation
-CREATE OR REPLACE FUNCTION train_decision_tree_classifier(
+CREATE FUNCTION train_decision_tree_classifier(
     table_name text,
     feature_col text,
     label_col text,
     max_depth integer DEFAULT 10,
     min_samples_split integer DEFAULT 2
 ) RETURNS integer
-LANGUAGE plpgsql AS $$
-BEGIN
-    RAISE NOTICE 'Decision Tree: C implementation available';
-    RETURN 10;  -- Placeholder model ID
-END;
-$$;
+    AS 'MODULE_PATHNAME', 'train_decision_tree_classifier'
+    LANGUAGE C STABLE;
 COMMENT ON FUNCTION train_decision_tree_classifier IS 'Train Decision Tree (CART): (table, features, labels, max_depth, min_samples_split) returns model_id';
+
+CREATE FUNCTION predict_decision_tree_model_id(integer, vector)
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'predict_decision_tree_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_decision_tree_model_id(integer, vector) IS 'Predict using Decision Tree model_id from catalog. Supports both CPU and GPU models.';
 
 -- Naive Bayes - Complete C Implementation  
 CREATE FUNCTION train_naive_bayes_classifier(
@@ -3191,9 +3189,12 @@ BEGIN
 		WHEN 'linear_regression' THEN
 			RETURN train_linear_regression(table_name, feature_col, label_col);
 		WHEN 'ridge' THEN
-			RETURN 0;
+			RETURN train_ridge_regression(table_name, feature_col, label_col,
+				COALESCE((params->>'lambda')::float8, 0.1));
 		WHEN 'lasso' THEN
-			RETURN 0;
+			RETURN train_lasso_regression(table_name, feature_col, label_col,
+				COALESCE((params->>'lambda')::float8, 0.1),
+				COALESCE((params->>'max_iters')::integer, 1000));
 		ELSE
 			RAISE EXCEPTION 'Unknown algorithm: %. Use neurondb.list_algorithms() to see supported algorithms', algorithm;
 	END CASE;
@@ -3222,6 +3223,12 @@ BEGIN
 			RETURN predict_logistic_regression(model_id, features);
 		WHEN 'linear_regression' THEN
 			RETURN predict_linear_regression_model_id(model_id, features);
+		WHEN 'ridge' THEN
+			RETURN predict_ridge_regression_model_id(model_id, features);
+		WHEN 'lasso' THEN
+			RETURN predict_lasso_regression_model_id(model_id, features);
+		WHEN 'decision_tree' THEN
+			RETURN predict_decision_tree_model_id(model_id, features);
 		WHEN 'svm' THEN
 			RETURN predict_svm_model_id(model_id, features);
 		WHEN 'xgboost' THEN
@@ -3447,6 +3454,64 @@ BEGIN
 				'recall', recall_val,
 				'f1_score', f1_score_val
 			);
+		WHEN 'decision_tree' THEN
+			/* Compute metrics by making predictions on test set */
+			BEGIN
+				EXECUTE format(
+				'WITH predictions AS (
+					SELECT 
+						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
+						%I::int AS actual
+					FROM %I
+				)
+				SELECT 
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+				FROM predictions',
+					model_id_param, feature_col, label_col, table_name
+				) INTO tp, fp, tn, fn;
+			EXCEPTION
+				WHEN OTHERS THEN
+					/* If evaluation fails, set metrics to NULL */
+					tp := 0;
+					fp := 0;
+					tn := 0;
+					fn := 0;
+			END;
+			
+			/* Calculate metrics */
+			IF (tp + fp + tn + fn) > 0 THEN
+				accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
+			ELSE
+				accuracy_val := 0.0;
+			END IF;
+			
+			IF (tp + fp) > 0 THEN
+				precision_val := tp::float8 / (tp + fp)::float8;
+			ELSE
+				precision_val := 0.0;
+			END IF;
+			
+			IF (tp + fn) > 0 THEN
+				recall_val := tp::float8 / (tp + fn)::float8;
+			ELSE
+				recall_val := 0.0;
+			END IF;
+			
+			IF (precision_val + recall_val) > 0 THEN
+				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
+			ELSE
+				f1_score_val := 0.0;
+			END IF;
+			
+			result := jsonb_build_object(
+				'accuracy', accuracy_val,
+				'precision', precision_val,
+				'recall', recall_val,
+				'f1_score', f1_score_val
+			);
 		WHEN 'linear_regression' THEN
 			/* Compute regression metrics: R², MSE, MAE, RMSE */
 			BEGIN
@@ -3465,8 +3530,116 @@ BEGIN
 							COUNT(*)::int AS n,
 							SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
 							SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
-							SUM((p.actual - a.y_avg) * (p.actual - a.y_avg))::float8 AS var_tot
-						FROM predictions p, avg_actual a
+							SUM((p.actual - (SELECT y_avg FROM avg_actual)) * (p.actual - (SELECT y_avg FROM avg_actual)))::float8 AS var_tot
+						FROM predictions p
+					)
+					SELECT n, err_sq, err_abs, var_tot FROM stats',
+					model_id_param, feature_col, label_col, table_name
+				) INTO n_samples, total_error_sq, total_error_abs, total_var;
+				
+				IF n_samples > 0 THEN
+					mse_val := total_error_sq / n_samples;
+					mae_val := total_error_abs / n_samples;
+					rmse_val := SQRT(mse_val);
+					
+					IF total_var > 0 THEN
+						r2_val := 1.0 - (total_error_sq / total_var);
+					ELSE
+						r2_val := 0.0;
+					END IF;
+				ELSE
+					mse_val := 0.0;
+					mae_val := 0.0;
+					rmse_val := 0.0;
+					r2_val := 0.0;
+				END IF;
+				
+				result := jsonb_build_object(
+					'r_squared', r2_val,
+					'mse', mse_val,
+					'mae', mae_val,
+					'rmse', rmse_val
+				);
+			EXCEPTION
+				WHEN OTHERS THEN
+					result := jsonb_build_object(
+						'error', 'Evaluation failed: ' || SQLERRM
+					);
+			END;
+		WHEN 'ridge' THEN
+			/* Compute regression metrics: R², MSE, MAE, RMSE (same as linear_regression) */
+			BEGIN
+				EXECUTE format(
+					'WITH predictions AS (
+						SELECT 
+							neurondb.predict(%L, %I) AS pred,
+							%I::float8 AS actual
+						FROM %I
+					),
+					avg_actual AS (
+						SELECT AVG(actual)::float8 AS y_avg FROM predictions
+					),
+					stats AS (
+						SELECT 
+							COUNT(*)::int AS n,
+							SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
+							SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
+							SUM((p.actual - (SELECT y_avg FROM avg_actual)) * (p.actual - (SELECT y_avg FROM avg_actual)))::float8 AS var_tot
+						FROM predictions p
+					)
+					SELECT n, err_sq, err_abs, var_tot FROM stats',
+					model_id_param, feature_col, label_col, table_name
+				) INTO n_samples, total_error_sq, total_error_abs, total_var;
+				
+				IF n_samples > 0 THEN
+					mse_val := total_error_sq / n_samples;
+					mae_val := total_error_abs / n_samples;
+					rmse_val := SQRT(mse_val);
+					
+					IF total_var > 0 THEN
+						r2_val := 1.0 - (total_error_sq / total_var);
+					ELSE
+						r2_val := 0.0;
+					END IF;
+				ELSE
+					mse_val := 0.0;
+					mae_val := 0.0;
+					rmse_val := 0.0;
+					r2_val := 0.0;
+				END IF;
+				
+				result := jsonb_build_object(
+					'r_squared', r2_val,
+					'mse', mse_val,
+					'mae', mae_val,
+					'rmse', rmse_val
+				);
+			EXCEPTION
+				WHEN OTHERS THEN
+					result := jsonb_build_object(
+						'error', 'Evaluation failed: ' || SQLERRM
+					);
+			END;
+		WHEN 'lasso' THEN
+			/* Compute regression metrics: R², MSE, MAE, RMSE (same as linear_regression) */
+			BEGIN
+				EXECUTE format(
+					'WITH predictions AS (
+						SELECT 
+							neurondb.predict(%L, %I) AS pred,
+							%I::float8 AS actual
+						FROM %I
+					),
+					avg_actual AS (
+						SELECT AVG(actual)::float8 AS y_avg FROM predictions
+					),
+					stats AS (
+						SELECT 
+							COUNT(*)::int AS n,
+							SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
+							SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
+							SUM((p.actual - (SELECT y_avg FROM avg_actual)) * (p.actual - (SELECT y_avg FROM avg_actual)))::float8 AS var_tot
+						FROM predictions p
 					)
 					SELECT n, err_sq, err_abs, var_tot FROM stats',
 					model_id_param, feature_col, label_col, table_name

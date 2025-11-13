@@ -19,6 +19,32 @@
 #include "ml_gpu_logistic_regression.h"
 #include "neurondb_gpu_bridge.h"
 
+/* Forward declarations for GPU training functions */
+extern int ndb_gpu_dt_train(const float *features,
+	const double *labels,
+	int n_samples,
+	int feature_dim,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr);
+extern int ndb_gpu_ridge_train(const float *features,
+	const double *targets,
+	int n_samples,
+	int feature_dim,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr);
+extern int ndb_gpu_lasso_train(const float *features,
+	const double *targets,
+	int n_samples,
+	int feature_dim,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr);
+
 #include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
@@ -279,6 +305,141 @@ ndb_gpu_try_train_model(const char *algorithm,
 		}
 lr_fallback:
 		;
+	}
+
+	if (!trained && algorithm != NULL
+		&& strcmp(algorithm, "decision_tree") == 0
+		&& feature_matrix != NULL && label_vector != NULL
+		&& sample_count > 0 && feature_dim > 0)
+	{
+		TimestampTz train_start = GetCurrentTimestamp();
+		TimestampTz train_end;
+		int gpu_rc = ndb_gpu_dt_train(feature_matrix,
+			label_vector,
+			sample_count,
+			feature_dim,
+			hyperparameters,
+			&payload,
+			&metadata,
+			errstr);
+		long secs = 0;
+		int usecs = 0;
+		double elapsed_ms;
+
+		train_end = GetCurrentTimestamp();
+		TimestampDifference(train_start, train_end, &secs, &usecs);
+		elapsed_ms = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
+
+		if (gpu_rc == 0)
+		{
+			trained = true;
+			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
+			ereport(NOTICE,
+				(errmsg("decision_tree: GPU training succeeded (direct)"),
+				 errdetail("Elapsed %.3f ms on backend %s",
+					 elapsed_ms,
+					 ctx.backend_name ? ctx.backend_name : "unknown"),
+				 errhidestmt(true)));
+		} else
+		{
+			ndb_gpu_stats_record(false, 0.0, elapsed_ms, true);
+			ereport(NOTICE,
+				(errmsg("decision_tree: GPU training unavailable, using CPU"),
+				 errdetail("GPU attempt elapsed %.3f ms (%s)",
+					 elapsed_ms,
+					 (errstr && *errstr) ? *errstr : "no error"),
+				 errhidestmt(true)));
+		}
+	}
+
+	if (!trained && algorithm != NULL
+		&& strcmp(algorithm, "ridge") == 0
+		&& feature_matrix != NULL && label_vector != NULL
+		&& sample_count > 0 && feature_dim > 0)
+	{
+		TimestampTz train_start = GetCurrentTimestamp();
+		TimestampTz train_end;
+		int gpu_rc = ndb_gpu_ridge_train(feature_matrix,
+			label_vector,
+			sample_count,
+			feature_dim,
+			hyperparameters,
+			&payload,
+			&metadata,
+			errstr);
+		long secs = 0;
+		int usecs = 0;
+		double elapsed_ms;
+
+		train_end = GetCurrentTimestamp();
+		TimestampDifference(train_start, train_end, &secs, &usecs);
+		elapsed_ms = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
+
+		if (gpu_rc == 0)
+		{
+			trained = true;
+			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
+			ereport(NOTICE,
+				(errmsg("ridge: GPU training succeeded (direct)"),
+				 errdetail("Elapsed %.3f ms on backend %s",
+					 elapsed_ms,
+					 ctx.backend_name ? ctx.backend_name : "unknown"),
+				 errhidestmt(true)));
+		} else
+		{
+			ndb_gpu_stats_record(false, 0.0, elapsed_ms, true);
+			ereport(NOTICE,
+				(errmsg("ridge: GPU training unavailable, using CPU"),
+				 errdetail("GPU attempt elapsed %.3f ms (%s)",
+					 elapsed_ms,
+					 (errstr && *errstr) ? *errstr : "no error"),
+				 errhidestmt(true)));
+		}
+	}
+
+	if (!trained && algorithm != NULL
+		&& strcmp(algorithm, "lasso") == 0
+		&& feature_matrix != NULL && label_vector != NULL
+		&& sample_count > 0 && feature_dim > 0)
+	{
+		TimestampTz train_start = GetCurrentTimestamp();
+		TimestampTz train_end;
+		int gpu_rc = ndb_gpu_lasso_train(feature_matrix,
+			label_vector,
+			sample_count,
+			feature_dim,
+			hyperparameters,
+			&payload,
+			&metadata,
+			errstr);
+		long secs = 0;
+		int usecs = 0;
+		double elapsed_ms;
+
+		train_end = GetCurrentTimestamp();
+		TimestampDifference(train_start, train_end, &secs, &usecs);
+		elapsed_ms = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
+
+		if (gpu_rc == 0)
+		{
+			trained = true;
+			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
+			ereport(NOTICE,
+				(errmsg("lasso: GPU training succeeded (direct)"),
+				 errdetail("Elapsed %.3f ms on backend %s",
+					 elapsed_ms,
+					 ctx.backend_name ? ctx.backend_name : "unknown"),
+				 errhidestmt(true)));
+		} else
+		{
+			ndb_gpu_stats_record(false, 0.0, elapsed_ms, true);
+			ereport(NOTICE,
+				(errmsg("lasso: GPU training unavailable, using CPU"),
+				 errdetail("GPU attempt elapsed %.3f ms (%s)",
+					 elapsed_ms,
+					 (errstr && *errstr) ? *errstr : "no error"),
+				 errhidestmt(true)));
+		}
 	}
 
 	if (trained && result != NULL)

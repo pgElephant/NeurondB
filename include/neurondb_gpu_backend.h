@@ -8,6 +8,9 @@ struct RFModel;
 struct LRModel;
 struct LinRegModel;
 struct SVMModel;
+struct DTModel;
+struct RidgeModel;
+struct LassoModel;
 
 #define NDB_GPU_MAX_BACKENDS 8
 
@@ -167,6 +170,63 @@ typedef struct ndb_gpu_backend
 		double *confidence_out,
 		char **errstr);
 	int (*svm_pack)(const struct SVMModel *model,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+
+	/* Decision Tree */
+	int (*dt_train)(const float *features,
+		const double *labels,
+		int n_samples,
+		int feature_dim,
+		const Jsonb *hyperparams,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+	int (*dt_predict)(const bytea *model_data,
+		const float *input,
+		int feature_dim,
+		double *prediction_out,
+		char **errstr);
+	int (*dt_pack)(const struct DTModel *model,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+
+	/* Ridge Regression */
+	int (*ridge_train)(const float *features,
+		const double *targets,
+		int n_samples,
+		int feature_dim,
+		const Jsonb *hyperparams,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+	int (*ridge_predict)(const bytea *model_data,
+		const float *input,
+		int feature_dim,
+		double *prediction_out,
+		char **errstr);
+	int (*ridge_pack)(const struct RidgeModel *model,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+
+	/* Lasso Regression */
+	int (*lasso_train)(const float *features,
+		const double *targets,
+		int n_samples,
+		int feature_dim,
+		const Jsonb *hyperparams,
+		bytea **model_data,
+		Jsonb **metrics,
+		char **errstr);
+	int (*lasso_predict)(const bytea *model_data,
+		const float *input,
+		int feature_dim,
+		double *prediction_out,
+		char **errstr);
+	int (*lasso_pack)(const struct LassoModel *model,
 		bytea **model_data,
 		Jsonb **metrics,
 		char **errstr);
