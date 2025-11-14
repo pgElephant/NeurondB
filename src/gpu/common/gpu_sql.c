@@ -325,6 +325,66 @@ vector_to_binary_gpu(PG_FUNCTION_ARGS)
 }
 
 /*
+ * vector_to_uint8_gpu
+ * SQL-callable: Quantizes float32 vector to uint8, returns bytea.
+ * GPU preferred, CPU fallback when needed.
+ */
+PG_FUNCTION_INFO_V1(vector_to_uint8_gpu);
+Datum
+vector_to_uint8_gpu(PG_FUNCTION_ARGS)
+{
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	VectorU8 *result;
+	bytea *out;
+
+	/* For now, use CPU implementation (GPU kernels can be added later) */
+	result = quantize_vector_uint8(v);
+	out = (bytea *)result;
+
+	PG_RETURN_BYTEA_P(out);
+}
+
+/*
+ * vector_to_ternary_gpu
+ * SQL-callable: Quantizes float32 vector to ternary (2 bits per dimension),
+ * returns bytea. GPU preferred, CPU fallback when needed.
+ */
+PG_FUNCTION_INFO_V1(vector_to_ternary_gpu);
+Datum
+vector_to_ternary_gpu(PG_FUNCTION_ARGS)
+{
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	VectorTernary *result;
+	bytea *out;
+
+	/* For now, use CPU implementation (GPU kernels can be added later) */
+	result = quantize_vector_ternary(v);
+	out = (bytea *)result;
+
+	PG_RETURN_BYTEA_P(out);
+}
+
+/*
+ * vector_to_int4_gpu
+ * SQL-callable: Quantizes float32 vector to int4 (4 bits per dimension),
+ * returns bytea. GPU preferred, CPU fallback when needed.
+ */
+PG_FUNCTION_INFO_V1(vector_to_int4_gpu);
+Datum
+vector_to_int4_gpu(PG_FUNCTION_ARGS)
+{
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	VectorI4 *result;
+	bytea *out;
+
+	/* For now, use CPU implementation (GPU kernels can be added later) */
+	result = quantize_vector_int4(v);
+	out = (bytea *)result;
+
+	PG_RETURN_BYTEA_P(out);
+}
+
+/*
  * hnsw_knn_search_gpu
  * Placeholder: Not implemented. Throws error on use.
  */

@@ -27,6 +27,11 @@
 #include <ctype.h>
 #include <string.h>
 
+/* Forward declarations for vecmap distance functions */
+extern Datum vecmap_l2_distance(PG_FUNCTION_ARGS);
+extern Datum vecmap_cosine_distance(PG_FUNCTION_ARGS);
+extern Datum vecmap_inner_product(PG_FUNCTION_ARGS);
+
 /*
  * vectorp_in: Parse vectorp from text
  * Format: "[1.0,2.0,3.0]"
@@ -354,6 +359,392 @@ vecmap_out(PG_FUNCTION_ARGS)
 	appendStringInfoString(&buf, "]}");
 
 	PG_RETURN_CSTRING(buf.data);
+}
+
+/*-------------------------------------------------------------------------
+ * sparsevec type I/O functions (pgvector-compatible sparse vector type)
+ * Format: "{1:0.5, 5:0.3, 10:0.8}" or "{dim:1000,1:0.5,5:0.3,10:0.8}"
+ *-------------------------------------------------------------------------
+ */
+
+/*
+ * sparsevec_in: Parse pgvector-compatible sparse vector format
+ * Format: "{index:value, index:value, ...}" or "{dim:N, index:value, ...}"
+ */
+PG_FUNCTION_INFO_V1(sparsevec_in);
+Datum
+sparsevec_in(PG_FUNCTION_ARGS)
+{
+	char *str = PG_GETARG_CSTRING(0);
+	VectorMap *result;
+	int32 dim = 0;
+	int32 nnz = 0;
+	int32 *indices;
+	float4 *values;
+	char *ptr;
+	char *endptr;
+	int i;
+	int size;
+	int capacity;
+	int max_index = -1;
+
+	ptr = str;
+	while (isspace((unsigned char)*ptr))
+		ptr++;
+
+	if (*ptr != '{')
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				errmsg("sparsevec must start with '{'")));
+	ptr++;
+
+	capacity = 16;
+	indices = (int32 *)palloc(sizeof(int32) * capacity);
+	values = (float4 *)palloc(sizeof(float4) * capacity);
+
+	/* Parse entries */
+	while (*ptr && *ptr != '}')
+	{
+		while (isspace((unsigned char)*ptr) || *ptr == ',')
+			ptr++;
+
+		if (*ptr == '}' || *ptr == '\0')
+			break;
+
+		/* Check for dim: prefix */
+		if (strncmp(ptr, "dim:", 4) == 0)
+		{
+			ptr += 4;
+			dim = strtol(ptr, &endptr, 10);
+			if (ptr == endptr || dim <= 0)
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+						errmsg("invalid dim value in sparsevec")));
+			ptr = endptr;
+			continue;
+		}
+
+		/* Parse index:value pair */
+		if (nnz >= capacity)
+		{
+			capacity *= 2;
+			indices = (int32 *)repalloc(indices, sizeof(int32) * capacity);
+			values = (float4 *)repalloc(values, sizeof(float4) * capacity);
+		}
+
+		indices[nnz] = strtol(ptr, &endptr, 10);
+		if (ptr == endptr)
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					errmsg("invalid index in sparsevec")));
+
+		if (indices[nnz] < 0)
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("sparsevec indices must be non-negative")));
+
+		if (indices[nnz] > max_index)
+			max_index = indices[nnz];
+
+		ptr = endptr;
+		if (*ptr != ':')
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					errmsg("expected ':' after index in sparsevec")));
+		ptr++;
+
+		values[nnz] = strtof(ptr, &endptr);
+		if (ptr == endptr)
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					errmsg("invalid value in sparsevec")));
+
+		ptr = endptr;
+		nnz++;
+	}
+
+	if (nnz == 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				errmsg("sparsevec must have at least one entry")));
+
+	if (nnz > 1000)
+		ereport(ERROR,
+			(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				errmsg("sparsevec cannot have more than 1000 nonzero entries")));
+
+	/* Set dimension if not specified */
+	if (dim == 0)
+		dim = max_index + 1;
+
+	if (dim > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				errmsg("sparsevec dimension %d exceeds maximum of 1000000",
+					dim)));
+
+	/* Validate indices are within dimension */
+	for (i = 0; i < nnz; i++)
+	{
+		if (indices[i] >= dim)
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("sparsevec index %d out of range [0, %d)",
+						indices[i],
+						dim)));
+	}
+
+	/* Build result */
+	size = sizeof(VectorMap) + sizeof(int32) * nnz + sizeof(float4) * nnz;
+	result = (VectorMap *)palloc0(size);
+	SET_VARSIZE(result, size);
+
+	result->total_dim = dim;
+	result->nnz = nnz;
+
+	memcpy(VECMAP_INDICES(result), indices, sizeof(int32) * nnz);
+	memcpy(VECMAP_VALUES(result), values, sizeof(float4) * nnz);
+
+	pfree(indices);
+	pfree(values);
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
+ * sparsevec_out: Convert sparsevec to pgvector-compatible text format
+ */
+PG_FUNCTION_INFO_V1(sparsevec_out);
+Datum
+sparsevec_out(PG_FUNCTION_ARGS)
+{
+	VectorMap *vec = (VectorMap *)PG_GETARG_POINTER(0);
+	StringInfoData buf;
+	int32 *indices;
+	float4 *values;
+	int i;
+
+	if (vec == NULL)
+		PG_RETURN_CSTRING(pstrdup("NULL"));
+
+	indices = VECMAP_INDICES(vec);
+	values = VECMAP_VALUES(vec);
+
+	initStringInfo(&buf);
+	appendStringInfoChar(&buf, '{');
+
+	/* Output dim: if needed */
+	if (vec->total_dim > 0)
+		appendStringInfo(&buf, "dim:%d,", vec->total_dim);
+
+	/* Output index:value pairs */
+	for (i = 0; i < vec->nnz; i++)
+	{
+		if (i > 0)
+			appendStringInfoChar(&buf, ',');
+		appendStringInfo(&buf, "%d:%g", indices[i], values[i]);
+	}
+
+	appendStringInfoChar(&buf, '}');
+	PG_RETURN_CSTRING(buf.data);
+}
+
+/*
+ * sparsevec_recv: Binary receive function
+ */
+PG_FUNCTION_INFO_V1(sparsevec_recv);
+Datum
+sparsevec_recv(PG_FUNCTION_ARGS)
+{
+	StringInfo buf = (StringInfo)PG_GETARG_POINTER(0);
+	VectorMap *result;
+	int32 dim;
+	int32 nnz;
+	int size;
+	int i;
+
+	dim = pq_getmsgint(buf, sizeof(int32));
+	nnz = pq_getmsgint(buf, sizeof(int32));
+
+	if (dim <= 0 || dim > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				errmsg("invalid sparsevec dimension: %d", dim)));
+
+	if (nnz < 0 || nnz > 1000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				errmsg("invalid sparsevec nnz: %d", nnz)));
+
+	size = sizeof(VectorMap) + sizeof(int32) * nnz + sizeof(float4) * nnz;
+	result = (VectorMap *)palloc0(size);
+	SET_VARSIZE(result, size);
+	result->total_dim = dim;
+	result->nnz = nnz;
+
+	for (i = 0; i < nnz; i++)
+		VECMAP_INDICES(result)[i] = pq_getmsgint(buf, sizeof(int32));
+
+	for (i = 0; i < nnz; i++)
+		VECMAP_VALUES(result)[i] = pq_getmsgfloat4(buf);
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
+ * sparsevec_send: Binary send function
+ */
+PG_FUNCTION_INFO_V1(sparsevec_send);
+Datum
+sparsevec_send(PG_FUNCTION_ARGS)
+{
+	VectorMap *vec = (VectorMap *)PG_GETARG_POINTER(0);
+	StringInfoData buf;
+	int32 *indices;
+	float4 *values;
+	int i;
+
+	indices = VECMAP_INDICES(vec);
+	values = VECMAP_VALUES(vec);
+
+	pq_begintypsend(&buf);
+	pq_sendint(&buf, vec->total_dim, sizeof(int32));
+	pq_sendint(&buf, vec->nnz, sizeof(int32));
+
+	for (i = 0; i < vec->nnz; i++)
+		pq_sendint(&buf, indices[i], sizeof(int32));
+
+	for (i = 0; i < vec->nnz; i++)
+		pq_sendfloat4(&buf, values[i]);
+
+	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
+}
+
+/*-------------------------------------------------------------------------
+ * Comparison operators for sparsevec type
+ *-------------------------------------------------------------------------
+ */
+
+/*
+ * sparsevec_eq: Equality comparison for sparsevec
+ */
+PG_FUNCTION_INFO_V1(sparsevec_eq);
+Datum
+sparsevec_eq(PG_FUNCTION_ARGS)
+{
+	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
+	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
+	int32 *a_indices, *b_indices;
+	float4 *a_values, *b_values;
+	int i;
+
+	/* Handle NULL vectors */
+	if (a == NULL && b == NULL)
+		PG_RETURN_BOOL(true);
+	if (a == NULL || b == NULL)
+		PG_RETURN_BOOL(false);
+
+	if (a->total_dim != b->total_dim || a->nnz != b->nnz)
+		PG_RETURN_BOOL(false);
+
+	a_indices = VECMAP_INDICES(a);
+	b_indices = VECMAP_INDICES(b);
+	a_values = VECMAP_VALUES(a);
+	b_values = VECMAP_VALUES(b);
+
+	/* Compare indices and values */
+	for (i = 0; i < a->nnz; i++)
+	{
+		if (a_indices[i] != b_indices[i])
+			PG_RETURN_BOOL(false);
+		if (fabs(a_values[i] - b_values[i]) > 1e-6)
+			PG_RETURN_BOOL(false);
+	}
+
+	PG_RETURN_BOOL(true);
+}
+
+/*
+ * sparsevec_ne: Inequality comparison for sparsevec
+ */
+PG_FUNCTION_INFO_V1(sparsevec_ne);
+Datum
+sparsevec_ne(PG_FUNCTION_ARGS)
+{
+	return DirectFunctionCall2(
+		       sparsevec_eq, PG_GETARG_DATUM(0), PG_GETARG_DATUM(1))
+		? BoolGetDatum(false)
+		: BoolGetDatum(true);
+}
+
+/*
+ * sparsevec_hash: Hash function for sparsevec
+ */
+PG_FUNCTION_INFO_V1(sparsevec_hash);
+Datum
+sparsevec_hash(PG_FUNCTION_ARGS)
+{
+	VectorMap *v = (VectorMap *)PG_GETARG_POINTER(0);
+	int32 *indices;
+	float4 *values;
+	uint32 hash = 5381;
+	int i;
+
+	if (v == NULL)
+		PG_RETURN_UINT32(0);
+
+	indices = VECMAP_INDICES(v);
+	values = VECMAP_VALUES(v);
+
+	hash = ((hash << 5) + hash) + (uint32)v->total_dim;
+	hash = ((hash << 5) + hash) + (uint32)v->nnz;
+
+	for (i = 0; i < v->nnz && i < 16; i++)
+	{
+		hash = ((hash << 5) + hash) + (uint32)indices[i];
+		int32 tmp = (int32)(values[i] * 1000000.0f);
+		hash = ((hash << 5) + hash) + (uint32)tmp;
+	}
+
+	PG_RETURN_UINT32(hash);
+}
+
+/*-------------------------------------------------------------------------
+ * Distance functions for sparsevec type (reuse vecmap functions)
+ *-------------------------------------------------------------------------
+ */
+
+/*
+ * sparsevec_l2_distance: L2 distance for sparsevec (uses vecmap_l2_distance)
+ */
+PG_FUNCTION_INFO_V1(sparsevec_l2_distance);
+Datum
+sparsevec_l2_distance(PG_FUNCTION_ARGS)
+{
+	/* Reuse vecmap_l2_distance since sparsevec uses VectorMap structure */
+	return vecmap_l2_distance(fcinfo);
+}
+
+/*
+ * sparsevec_cosine_distance: Cosine distance for sparsevec
+ */
+PG_FUNCTION_INFO_V1(sparsevec_cosine_distance);
+Datum
+sparsevec_cosine_distance(PG_FUNCTION_ARGS)
+{
+	/* Reuse vecmap_cosine_distance since sparsevec uses VectorMap structure */
+	return vecmap_cosine_distance(fcinfo);
+}
+
+/*
+ * sparsevec_inner_product: Inner product for sparsevec
+ */
+PG_FUNCTION_INFO_V1(sparsevec_inner_product);
+Datum
+sparsevec_inner_product(PG_FUNCTION_ARGS)
+{
+	/* Reuse vecmap_inner_product since sparsevec uses VectorMap structure */
+	return vecmap_inner_product(fcinfo);
 }
 
 /*

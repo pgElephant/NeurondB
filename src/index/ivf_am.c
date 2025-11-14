@@ -34,8 +34,13 @@
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+#include "utils/varbit.h"
+#include "utils/lsyscache.h"
 #include <math.h>
 #include <float.h>
+
+/* Forward declarations for type conversion */
+extern float fp16_to_float(uint16 fp16);
 
 /* IVF parameters */
 #define IVF_DEFAULT_NLISTS 100 /* Number of clusters/centroids */
@@ -78,6 +83,120 @@ typedef IvfCentroidData *IvfCentroid;
 
 #define IvfGetCentroidVector(centroid) \
 	((float4 *)((char *)(centroid) + MAXALIGN(sizeof(IvfCentroidData))))
+
+/*
+ * Type conversion helpers for multi-type support (same as HNSW)
+ */
+
+/*
+ * Extract vector data from any supported type (vector, halfvec, sparsevec, bit)
+ * Returns allocated float4 array and dimension via out_dim
+ * Caller must pfree the result
+ */
+static float4 *
+ivfExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
+{
+	float4 *result;
+	int i;
+	MemoryContext oldctx;
+	Oid vectorOid, halfvecOid, sparsevecOid, bitOid;
+
+	if (out_dim == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("ivf: out_dim cannot be NULL")));
+
+	/* Type OIDs are cached at index build time in build state */
+	bitOid = BITOID; /* PostgreSQL built-in type */
+	
+	/* Get type OIDs - cache lookup (should be cached at index creation) */
+	vectorOid = GetSysCacheOid2(TYPENAMENSP,
+		CStringGetDatum("vector"),
+		ObjectIdGetDatum(get_namespace_oid("public", false)));
+	halfvecOid = GetSysCacheOid2(TYPENAMENSP,
+		CStringGetDatum("halfvec"),
+		ObjectIdGetDatum(get_namespace_oid("public", false)));
+	sparsevecOid = GetSysCacheOid2(TYPENAMENSP,
+		CStringGetDatum("sparsevec"),
+		ObjectIdGetDatum(get_namespace_oid("public", false)));
+
+	oldctx = MemoryContextSwitchTo(ctx);
+
+	/* Check type and extract accordingly */
+	if (typeOid == vectorOid)
+	{
+		Vector *v = DatumGetVector(value);
+		*out_dim = v->dim;
+		result = (float4 *)palloc(v->dim * sizeof(float4));
+		for (i = 0; i < v->dim; i++)
+			result[i] = v->data[i];
+	}
+	else if (typeOid == halfvecOid)
+	{
+		VectorF16 *hv = (VectorF16 *)PG_DETOAST_DATUM(value);
+		*out_dim = hv->dim;
+		result = (float4 *)palloc(hv->dim * sizeof(float4));
+		for (i = 0; i < hv->dim; i++)
+			result[i] = fp16_to_float(hv->data[i]);
+	}
+	else if (typeOid == sparsevecOid)
+	{
+		VectorMap *sv = (VectorMap *)PG_DETOAST_DATUM(value);
+		int32 *indices = VECMAP_INDICES(sv);
+		float4 *values = VECMAP_VALUES(sv);
+		*out_dim = sv->total_dim;
+		result = (float4 *)palloc0(sv->total_dim * sizeof(float4));
+		for (i = 0; i < sv->nnz; i++)
+		{
+			if (indices[i] >= 0 && indices[i] < sv->total_dim)
+				result[indices[i]] = values[i];
+		}
+	}
+	else if (typeOid == bitOid)
+	{
+		VarBit *bit_vec = (VarBit *)PG_DETOAST_DATUM(value);
+		int nbits = VARBITLEN(bit_vec);
+		bits8 *bit_data = VARBITS(bit_vec);
+		*out_dim = nbits;
+		result = (float4 *)palloc(nbits * sizeof(float4));
+		for (i = 0; i < nbits; i++)
+		{
+			int byte_idx = i / BITS_PER_BYTE;
+			int bit_idx = i % BITS_PER_BYTE;
+			int bit_val = (bit_data[byte_idx] >> (BITS_PER_BYTE - 1 - bit_idx)) & 1;
+			result[i] = bit_val ? 1.0f : -1.0f;
+		}
+	}
+	else
+	{
+		MemoryContextSwitchTo(oldctx);
+		ereport(ERROR,
+			(errcode(ERRCODE_DATATYPE_MISMATCH),
+				errmsg("ivf: unsupported type OID %u", typeOid)));
+		return NULL; /* not reached */
+	}
+
+	MemoryContextSwitchTo(oldctx);
+	return result;
+}
+
+/*
+ * Get type OID from index key attribute
+ */
+static Oid
+ivfGetKeyType(Relation index, int attno)
+{
+	TupleDesc indexDesc = RelationGetDescr(index);
+	Form_pg_attribute attr;
+
+	if (attno < 1 || attno > indexDesc->natts)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("ivf: invalid attribute number %d", attno)));
+
+	attr = TupleDescAttr(indexDesc, attno - 1);
+	return attr->atttypid;
+}
 
 /*
  * Inverted list entry
@@ -280,9 +399,31 @@ ivfinsert(Relation index,
 	if (isnull[0])
 		return false; /* don't insert NULLs */
 
-	input_vec = DatumGetVector(values[0]);
-	if (!input_vec)
-		return false;
+	/* Extract vector data (handles vector, halfvec, sparsevec, bit) */
+	{
+		float4 *vectorData;
+		int dim;
+		Oid keyType;
+		MemoryContext oldctx;
+
+		/* Get key type from index */
+		keyType = ivfGetKeyType(index, 1);
+
+		/* Extract vector data */
+		oldctx = MemoryContextSwitchTo(CurrentMemoryContext);
+		vectorData = ivfExtractVectorData(values[0], keyType, &dim, CurrentMemoryContext);
+		MemoryContextSwitchTo(oldctx);
+
+		if (vectorData == NULL)
+			return false;
+
+		/* Allocate Vector structure for compatibility */
+		input_vec = (Vector *)palloc(VECTOR_SIZE(dim));
+		SET_VARSIZE(input_vec, VECTOR_SIZE(dim));
+		input_vec->dim = dim;
+		memcpy(input_vec->data, vectorData, dim * sizeof(float4));
+		pfree(vectorData);
+	}
 
 	/*
 	 * Step 1: Read IVF metadata and centroids

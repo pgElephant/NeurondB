@@ -46,8 +46,15 @@
 #include "utils/rel.h"
 #include "utils/typcache.h"
 #include "funcapi.h"
+#include "utils/varbit.h"
+#include "catalog/pg_type.h"
+#include "utils/lsyscache.h"
+#include "utils/typcache.h"
 #include <math.h>
 #include <float.h>
+
+/* Forward declarations for type conversion */
+extern float fp16_to_float(uint16 fp16);
 
 /* HNSW parameters */
 #define HNSW_DEFAULT_M 16 /* Max connections per layer */
@@ -107,6 +114,123 @@ typedef HnswNodeData *HnswNode;
 	((BlockNumber *)((char *)(node) + MAXALIGN(sizeof(HnswNodeData)) \
 		+ (node)->dim * sizeof(float4) \
 		+ (lev) * HNSW_DEFAULT_M * 2 * sizeof(BlockNumber)))
+
+/*
+ * Type conversion helpers for multi-type support
+ */
+
+/*
+ * Extract vector data from any supported type (vector, halfvec, sparsevec, bit)
+ * Returns allocated float4 array and dimension via out_dim
+ * Caller must pfree the result
+ */
+static float4 *
+hnswExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
+{
+	float4 *result;
+	int i;
+	MemoryContext oldctx;
+	Oid vectorOid, halfvecOid, sparsevecOid, bitOid;
+
+	if (out_dim == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("hnsw: out_dim cannot be NULL")));
+
+	/* Type OIDs are cached at index build time in build state */
+	/* For now, use direct type comparison - typeOid is already known */
+	/* TODO: Cache type OIDs in build state for better performance */
+	bitOid = BITOID; /* PostgreSQL built-in type */
+	
+	/* Get type OIDs - cache lookup (should be cached at index creation) */
+	/* Use GetSysCacheOid2 with proper namespace */
+	vectorOid = GetSysCacheOid2(TYPENAMENSP,
+		CStringGetDatum("vector"),
+		ObjectIdGetDatum(get_namespace_oid("public", false)));
+	halfvecOid = GetSysCacheOid2(TYPENAMENSP,
+		CStringGetDatum("halfvec"),
+		ObjectIdGetDatum(get_namespace_oid("public", false)));
+	sparsevecOid = GetSysCacheOid2(TYPENAMENSP,
+		CStringGetDatum("sparsevec"),
+		ObjectIdGetDatum(get_namespace_oid("public", false)));
+
+	oldctx = MemoryContextSwitchTo(ctx);
+
+	/* Check type and extract accordingly */
+	if (typeOid == vectorOid)
+	{
+		Vector *v = DatumGetVector(value);
+		*out_dim = v->dim;
+		result = (float4 *)palloc(v->dim * sizeof(float4));
+		for (i = 0; i < v->dim; i++)
+			result[i] = v->data[i];
+	}
+	else if (typeOid == halfvecOid)
+	{
+		VectorF16 *hv = (VectorF16 *)PG_DETOAST_DATUM(value);
+		*out_dim = hv->dim;
+		result = (float4 *)palloc(hv->dim * sizeof(float4));
+		for (i = 0; i < hv->dim; i++)
+			result[i] = fp16_to_float(hv->data[i]);
+	}
+	else if (typeOid == sparsevecOid)
+	{
+		VectorMap *sv = (VectorMap *)PG_DETOAST_DATUM(value);
+		int32 *indices = VECMAP_INDICES(sv);
+		float4 *values = VECMAP_VALUES(sv);
+		*out_dim = sv->total_dim;
+		result = (float4 *)palloc0(sv->total_dim * sizeof(float4));
+		for (i = 0; i < sv->nnz; i++)
+		{
+			if (indices[i] >= 0 && indices[i] < sv->total_dim)
+				result[indices[i]] = values[i];
+		}
+	}
+	else if (typeOid == bitOid)
+	{
+		VarBit *bit_vec = (VarBit *)PG_DETOAST_DATUM(value);
+		int nbits = VARBITLEN(bit_vec);
+		bits8 *bit_data = VARBITS(bit_vec);
+		*out_dim = nbits;
+		result = (float4 *)palloc(nbits * sizeof(float4));
+		for (i = 0; i < nbits; i++)
+		{
+			int byte_idx = i / BITS_PER_BYTE;
+			int bit_idx = i % BITS_PER_BYTE;
+			int bit_val = (bit_data[byte_idx] >> (BITS_PER_BYTE - 1 - bit_idx)) & 1;
+			result[i] = bit_val ? 1.0f : -1.0f;
+		}
+	}
+	else
+	{
+		MemoryContextSwitchTo(oldctx);
+		ereport(ERROR,
+			(errcode(ERRCODE_DATATYPE_MISMATCH),
+				errmsg("hnsw: unsupported type OID %u", typeOid)));
+		return NULL; /* not reached */
+	}
+
+	MemoryContextSwitchTo(oldctx);
+	return result;
+}
+
+/*
+ * Get type OID from index key attribute
+ */
+static Oid
+hnswGetKeyType(Relation index, int attno)
+{
+	TupleDesc indexDesc = RelationGetDescr(index);
+	Form_pg_attribute attr;
+
+	if (attno < 1 || attno > indexDesc->natts)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("hnsw: invalid attribute number %d", attno)));
+
+	attr = TupleDescAttr(indexDesc, attno - 1);
+	return attr->atttypid;
+}
 
 /*
  * Index build state
@@ -353,17 +477,28 @@ hnswinsert(Relation index,
 	bool indexUnchanged,
 	struct IndexInfo *indexInfo)
 {
-	Vector *vector;
+	float4 *vectorData;
+	int dim;
 	Buffer metaBuffer;
 	Page metaPage;
 	HnswMetaPage meta;
+	Oid keyType;
+	MemoryContext oldctx;
 
 	/* Check for null */
 	if (isnull[0])
 		return false;
 
-	/* Get vector */
-	vector = DatumGetVector(values[0]);
+	/* Get key type from index */
+	keyType = hnswGetKeyType(index, 1);
+
+	/* Extract vector data (handles vector, halfvec, sparsevec, bit) */
+	oldctx = MemoryContextSwitchTo(CurrentMemoryContext);
+	vectorData = hnswExtractVectorData(values[0], keyType, &dim, CurrentMemoryContext);
+	MemoryContextSwitchTo(oldctx);
+
+	if (vectorData == NULL)
+		return false;
 
 	/* Read meta page */
 	metaBuffer = ReadBuffer(index, 0);
@@ -372,9 +507,12 @@ hnswinsert(Relation index,
 	meta = (HnswMetaPage)PageGetContents(metaPage);
 
 	/* Insert node into HNSW graph */
-	hnswInsertNode(index, meta, vector->data, vector->dim, ht_ctid);
+	hnswInsertNode(index, meta, vectorData, dim, ht_ctid);
 
 	UnlockReleaseBuffer(metaBuffer);
+
+	/* Free extracted vector data */
+	pfree(vectorData);
 
 	return false;
 }
@@ -493,7 +631,35 @@ hnswrescan(IndexScanDesc scan,
 	/* Extract query vector and k from orderbys */
 	if (norderbys > 0 && orderbys[0].sk_argument != 0)
 	{
-		so->queryVector = DatumGetVector(orderbys[0].sk_argument);
+		float4 *vectorData;
+		int dim;
+		Oid queryType;
+		MemoryContext oldctx;
+
+		/* Get query type from scan descriptor */
+		queryType = scan->indexRelation->rd_att->attrs[0].atttypid;
+
+		/* Extract vector data (handles vector, halfvec, sparsevec, bit) */
+		oldctx = MemoryContextSwitchTo(scan->indexRelation->rd_indexcxt);
+		vectorData = hnswExtractVectorData(orderbys[0].sk_argument,
+			queryType,
+			&dim,
+			scan->indexRelation->rd_indexcxt);
+		MemoryContextSwitchTo(oldctx);
+
+		if (vectorData != NULL)
+		{
+			/* Free old query vector if exists */
+			if (so->queryVector)
+				pfree(so->queryVector);
+
+			/* Allocate and populate Vector structure */
+			so->queryVector = (Vector *)palloc(VECTOR_SIZE(dim));
+			SET_VARSIZE(so->queryVector, VECTOR_SIZE(dim));
+			so->queryVector->dim = dim;
+			memcpy(so->queryVector->data, vectorData, dim * sizeof(float4));
+			pfree(vectorData);
+		}
 		so->k = 10; /* Default */
 	}
 }
