@@ -451,7 +451,9 @@ svm_metadata_is_gpu(Jsonb *metadata)
 	{
 		meta_text = DatumGetCString(DirectFunctionCall1(
 			jsonb_out, JsonbPGetDatum(metadata)));
-		if (strstr(meta_text, "\"storage\":\"gpu\"") != NULL)
+		/* Check for both "storage":"gpu" and "storage": "gpu" formats */
+		if (strstr(meta_text, "\"storage\":\"gpu\"") != NULL ||
+			strstr(meta_text, "\"storage\": \"gpu\"") != NULL)
 			is_gpu = true;
 		pfree(meta_text);
 	}
@@ -1548,12 +1550,39 @@ predict_svm_model_id(PG_FUNCTION_ARGS)
 			"svm: GPU prediction succeeded, prediction=%.6f",
 			prediction);
 		PG_RETURN_FLOAT8(prediction);
-	} else
-	{
-		elog(DEBUG1,
-			"svm: GPU prediction failed or not available, trying "
-			"CPU");
 	}
+
+	/* Check if model is GPU-only before attempting CPU deserialization */
+	{
+		bytea *payload = NULL;
+		Jsonb *metrics = NULL;
+		bool is_gpu_only = false;
+
+		if (ml_catalog_fetch_model_payload(model_id, &payload, NULL, &metrics))
+		{
+			if (payload == NULL && svm_metadata_is_gpu(metrics))
+			{
+				/* GPU-only model, cannot deserialize on CPU */
+				is_gpu_only = true;
+			}
+			if (payload != NULL)
+				pfree(payload);
+			if (metrics != NULL)
+				pfree(metrics);
+		}
+
+		if (is_gpu_only)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("svm: model %d is GPU-only, GPU prediction failed",
+						model_id),
+					errhint("Check GPU configuration and ensure GPU is available")));
+		}
+	}
+
+	elog(DEBUG1,
+		"svm: GPU prediction failed or not available, trying CPU");
 
 	/* Load model from catalog */
 	if (!svm_load_model_from_catalog(model_id, &model))

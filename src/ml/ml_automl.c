@@ -654,3 +654,15 @@ model_leaderboard(PG_FUNCTION_ARGS)
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Automl
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_automl_model(void)
+{
+	elog(DEBUG1, "Automl GPU Model Ops registration skipped - not yet implemented");
+}

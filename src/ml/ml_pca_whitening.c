@@ -369,3 +369,15 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for PcaWhitening
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_pca_whitening_model(void)
+{
+	elog(DEBUG1, "PcaWhitening GPU Model Ops registration skipped - not yet implemented");
+}

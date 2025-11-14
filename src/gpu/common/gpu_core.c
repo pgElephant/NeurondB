@@ -555,15 +555,14 @@ neurondb_gpu_enable(PG_FUNCTION_ARGS)
 {
 	neurondb_gpu_enabled = true;
 	gpu_disabled = false;
-	ndb_gpu_init_if_needed();
+	
+	/*
+	 * DO NOT initialize CUDA here! This function may be called in the postmaster
+	 * before forking backends. CUDA contexts are not fork-safe.
+	 * Instead, GPU backends will be lazily initialized on first actual use.
+	 */
 
-	if (!gpu_ready)
-	{
-		elog(WARNING, "neurondb: GPU initialization failed");
-		PG_RETURN_BOOL(false);
-	}
-
-	elog(NOTICE, "neurondb: GPU acceleration enabled");
+	elog(NOTICE, "neurondb: GPU acceleration enabled (lazy initialization)");
 	PG_RETURN_BOOL(true);
 }
 
@@ -926,11 +925,11 @@ neurondb_gpu_hf_complete_batch(const char *model_name,
 		goto out;
 
 	/* Call CUDA batch generation function */
-	elog(NOTICE, "neurondb: gpu_core calling ndb_cuda_hf_generate_batch with %d prompts", num_prompts);
+	elog(DEBUG1, "neurondb: gpu_core calling ndb_cuda_hf_generate_batch with %d prompts", num_prompts);
 	rc = ndb_cuda_hf_generate_batch(
 		model_name, prompts, num_prompts, params_json, results, errstr);
 	used_gpu = (rc == 0);
-	elog(NOTICE, "neurondb: gpu_core got rc=%d from ndb_cuda_hf_generate_batch", rc);
+	elog(DEBUG1, "neurondb: gpu_core got rc=%d from ndb_cuda_hf_generate_batch", rc);
 
 out:
 	t1 = GetCurrentTimestamp();

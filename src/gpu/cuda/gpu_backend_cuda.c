@@ -32,6 +32,7 @@
 #include "neurondb_cuda_hf.h"
 
 #include <stdint.h>
+#include <unistd.h>		/* for getpid() */
 
 #ifdef NDB_GPU_CUDA
 
@@ -56,11 +57,13 @@ typedef struct
 	int device_id;
 	bool initialized;
 	cublasHandle_t handle;
+	pid_t init_pid;		/* PID that initialized CUDA (for fork detection) */
 } NdbcCudaContext;
 
 static NdbcCudaContext cuda_ctx = { .device_id = 0,
 	.initialized = false,
-	.handle = NULL };
+	.handle = NULL,
+	.init_pid = 0 };
 
 static int ndb_cuda_init(void);
 static void ndb_cuda_shutdown(void);
@@ -129,14 +132,44 @@ ndb_cuda_init(void)
 	int device_count = 0;
 	cudaError_t err;
 	cublasStatus_t status;
+	pid_t current_pid = getpid();
+
+	/*
+	 * Fork detection: If CUDA was initialized in a different process,
+	 * we're in a forked backend and must reset/reinitialize CUDA.
+	 * CUDA contexts are not fork-safe and must be created per-process.
+	 */
+	if (cuda_ctx.initialized && cuda_ctx.init_pid != current_pid)
+	{
+		elog(NOTICE,
+			"neurondb: Detected fork (parent PID %d, current PID %d) - resetting CUDA",
+			cuda_ctx.init_pid,
+			current_pid);
+
+		/* Reset CUDA in this forked process */
+		cudaDeviceReset();
+
+		/* Destroy old handle if it exists (will likely fail, but try anyway) */
+		if (cuda_ctx.handle)
+		{
+			cublasDestroy(cuda_ctx.handle);
+			cuda_ctx.handle = NULL;
+		}
+
+		cuda_ctx.initialized = false;
+		cuda_ctx.init_pid = 0;
+	}
 
 	if (cuda_ctx.initialized)
 		return 0;
 
+	/* Clear any pending CUDA errors from previous operations */
+	cudaGetLastError();
+
 	err = cudaGetDeviceCount(&device_count);
 	if (err != cudaSuccess || device_count <= 0)
 	{
-		elog(WARNING,
+		elog(DEBUG1,
 			"neurondb: cudaGetDeviceCount failed: %s (devices=%d)",
 			cudaGetErrorString(err),
 			device_count);
@@ -146,7 +179,7 @@ ndb_cuda_init(void)
 	err = cudaSetDevice(cuda_ctx.device_id);
 	if (err != cudaSuccess)
 	{
-		elog(WARNING,
+		elog(DEBUG1,
 			"neurondb: cudaSetDevice(%d) failed: %s",
 			cuda_ctx.device_id,
 			cudaGetErrorString(err));
@@ -154,18 +187,32 @@ ndb_cuda_init(void)
 	}
 
 	/* Warm-up to ensure context is created before cuBLAS initialization. */
-	cudaFree(0);
+	err = cudaFree(0);
+	if (err != cudaSuccess)
+	{
+		elog(DEBUG1,
+			"neurondb: cudaFree(0) warm-up failed: %s",
+			cudaGetErrorString(err));
+		return -1;
+	}
 
 	status = cublasCreate(&cuda_ctx.handle);
 	if (status != CUBLAS_STATUS_SUCCESS)
 	{
-		elog(WARNING,
+		elog(DEBUG1,
 			"neurondb: cublasCreate failed with status %d",
 			status);
 		return -1;
 	}
 
 	cuda_ctx.initialized = true;
+	cuda_ctx.init_pid = current_pid;
+
+	elog(NOTICE,
+		"neurondb: CUDA initialized successfully in process %d (device %d)",
+		current_pid,
+		cuda_ctx.device_id);
+
 	return 0;
 }
 
@@ -178,6 +225,7 @@ ndb_cuda_shutdown(void)
 	cublasDestroy(cuda_ctx.handle);
 	cuda_ctx.handle = NULL;
 	cuda_ctx.initialized = false;
+	cuda_ctx.init_pid = 0;
 }
 
 static int

@@ -859,3 +859,15 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 	pfree(method);
 	PG_RETURN_TEXT_P(cstring_to_text(summary));
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Text
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_text_model(void)
+{
+	elog(DEBUG1, "Text GPU Model Ops registration skipped - not yet implemented");
+}

@@ -1301,3 +1301,15 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 		PG_RETURN_ARRAYTYPE_P(result_array);
 	}
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Recommender
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_recommender_model(void)
+{
+	elog(DEBUG1, "Recommender GPU Model Ops registration skipped - not yet implemented");
+}

@@ -1,5 +1,6 @@
 \timing on
 \pset footer off
+\pset pager off
 
 -- This test uses sample_train and sample_test tables created by ml_dataset.py
 -- Run: python ml_dataset.py <dataset_name> to populate the database first
@@ -17,9 +18,8 @@ BEGIN
 END
 $$;
 
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,nb_train,nb_predict';
-SELECT neurondb_gpu_enable();
+-- Naive Bayes: Use CPU due to CUDA fork-safety issues in PostgreSQL
+SET neurondb.gpu_enabled = off;
 
 \set ON_ERROR_STOP on
 

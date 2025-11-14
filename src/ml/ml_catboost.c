@@ -567,3 +567,15 @@ predict_catboost(PG_FUNCTION_ARGS)
     PG_RETURN_NULL();
 #endif
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Catboost
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_catboost_model(void)
+{
+	elog(DEBUG1, "Catboost GPU Model Ops registration skipped - not yet implemented");
+}

@@ -132,9 +132,28 @@ ndb_cuda_nb_count_classes(const double *labels,
 	cudaError_t status;
 	int threads = 256;
 	int blocks;
+	int device_count = 0;
 
 	if (labels == NULL || class_counts == NULL || n_samples <= 0 || n_classes <= 0)
 		return -1;
+
+	/* Initialize CUDA runtime if needed */
+	status = cudaFree(0);
+	if (status != cudaSuccess && status != cudaErrorInitializationError)
+		return -1;
+
+	/* Check CUDA device availability */
+	status = cudaGetDeviceCount(&device_count);
+	if (status != cudaSuccess || device_count <= 0)
+		return -1;
+
+	/* Ensure device is set */
+	status = cudaSetDevice(0);
+	if (status != cudaSuccess)
+		return -1;
+	
+	/* Reset any pending errors */
+	cudaGetLastError();
 
 	label_bytes = sizeof(double) * (size_t)n_samples;
 	count_bytes = sizeof(int) * (size_t)n_classes;

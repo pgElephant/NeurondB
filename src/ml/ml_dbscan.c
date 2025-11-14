@@ -242,3 +242,15 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(out_array);
 }
 
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Dbscan
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_dbscan_model(void)
+{
+	elog(DEBUG1, "Dbscan GPU Model Ops registration skipped - not yet implemented");
+}

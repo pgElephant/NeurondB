@@ -327,6 +327,7 @@ ndb_cuda_nb_train(const float *features,
 	elog(DEBUG1, "ndb_cuda_nb_train: starting training: n_samples=%d, feature_dim=%d, class_count=%d",
 		n_samples, feature_dim, class_count);
 
+	elog(DEBUG1, "ndb_cuda_nb_train: allocating host memory");
 	/* Allocate host memory with overflow checks */
 	class_counts = (int *)palloc0(sizeof(int) * class_count);
 	if (class_counts == NULL)
@@ -366,6 +367,7 @@ ndb_cuda_nb_train(const float *features,
 		goto cleanup;
 	}
 
+	elog(DEBUG1, "ndb_cuda_nb_train: validating labels");
 	/* Validate input data for NaN/Inf before processing */
 	for (i = 0; i < n_samples; i++)
 	{
@@ -384,6 +386,7 @@ ndb_cuda_nb_train(const float *features,
 		}
 	}
 
+	elog(DEBUG1, "ndb_cuda_nb_train: validating features");
 	for (i = 0; i < n_samples; i++)
 	{
 		for (j = 0; j < feature_dim; j++)
@@ -397,7 +400,10 @@ ndb_cuda_nb_train(const float *features,
 		}
 	}
 
-	/* Step 1: Count samples per class using CUDA */
+	elog(DEBUG1, "ndb_cuda_nb_train: calling CUDA class counting");
+	/* Step 1: Count samples per class using CUDA
+	 * NOTE: This may fail due to CUDA context issues in forked PostgreSQL backends.
+	 * If GPU training consistently fails, disable GPU or use CPU training. */
 	if (ndb_cuda_nb_count_classes(labels, n_samples, class_count, class_counts) != 0)
 	{
 		if (errstr && *errstr == NULL)

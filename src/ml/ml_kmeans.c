@@ -264,3 +264,15 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(out_array);
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for K-Means
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_kmeans_model(void)
+{
+	elog(DEBUG1, "K-Means GPU Model Ops registration skipped - not yet implemented");
+}

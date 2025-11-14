@@ -1058,3 +1058,15 @@ predict_decision_tree_model_id(PG_FUNCTION_ARGS)
 
 	PG_RETURN_FLOAT8(result);
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Decision Tree
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_dt_model(void)
+{
+	elog(DEBUG1, "Decision Tree GPU Model Ops registration skipped - not yet implemented");
+}

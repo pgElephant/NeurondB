@@ -550,6 +550,24 @@ CREATE FUNCTION knn_classify(text, text, text, vector, integer)
     LANGUAGE C STABLE;
 COMMENT ON FUNCTION knn_classify IS 'KNN classification. Built for macos_pg16.';
 
+CREATE FUNCTION train_knn_model_id(
+    table_name text,
+    feature_col text,
+    label_col text,
+    k integer
+) RETURNS integer
+    AS 'MODULE_PATHNAME', 'train_knn_model_id'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION train_knn_model_id IS 'Train KNN (lazy learner) and store metadata in catalog, returns model_id';
+
+CREATE FUNCTION predict_knn_model_id(
+    model_id integer,
+    features real[]
+) RETURNS double precision
+    AS 'MODULE_PATHNAME', 'predict_knn_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_knn_model_id IS 'Predict with KNN model: (model_id, features[]) returns prediction';
+
 CREATE FUNCTION knn_regress(text, text, text, vector, integer)
     RETURNS float8
     AS 'MODULE_PATHNAME', 'knn_regress'
@@ -662,6 +680,15 @@ CREATE FUNCTION train_naive_bayes_classifier(
     LANGUAGE C STABLE;
 COMMENT ON FUNCTION train_naive_bayes_classifier IS 'Train Naive Bayes: (table, features, labels) returns model parameters';
 
+CREATE FUNCTION train_naive_bayes_classifier_model_id(
+    table_name text,
+    feature_col text,
+    label_col text
+) RETURNS integer
+    AS 'MODULE_PATHNAME', 'train_naive_bayes_classifier_model_id'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION train_naive_bayes_classifier_model_id IS 'Train Naive Bayes and store in catalog, returns model_id';
+
 CREATE FUNCTION predict_naive_bayes(
     model_params float8[],
     features vector
@@ -669,6 +696,14 @@ CREATE FUNCTION predict_naive_bayes(
     AS 'MODULE_PATHNAME', 'predict_naive_bayes'
     LANGUAGE C STABLE STRICT;
 COMMENT ON FUNCTION predict_naive_bayes IS 'Predict with Naive Bayes: (params, features) returns class';
+
+CREATE FUNCTION predict_naive_bayes_model_id(
+    model_id integer,
+    features vector
+) RETURNS integer
+    AS 'MODULE_PATHNAME', 'predict_naive_bayes_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_naive_bayes_model_id IS 'Predict with Naive Bayes using model_id from catalog';
 
 CREATE FUNCTION neurondb_train_naive_bayes(
     table_name text,
@@ -686,6 +721,18 @@ LANGUAGE sql STABLE STRICT AS $$
     SELECT predict_naive_bayes(model_params, features);
 $$;
 COMMENT ON FUNCTION neurondb_predict_naive_bayes IS 'Predict with Naive Bayes';
+
+CREATE FUNCTION neurondb_predict(model_id integer, features real[])
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'neurondb_predict'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION neurondb_predict(integer, real[]) IS 'Unified prediction function that routes to algorithm-specific prediction functions.';
+
+CREATE FUNCTION predict_knn(model_id integer, features real[])
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'predict_knn_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_knn(integer, real[]) IS 'Predict using KNN model by model_id. CPU implementation called by neurondb_predict C function via SPI as fallback.';
 
 -- SVM - Complete C Implementation
 CREATE FUNCTION train_svm_classifier(text, text, text, float8 DEFAULT 1.0, integer DEFAULT 1000)
@@ -1109,11 +1156,35 @@ CREATE FUNCTION cluster_gmm(text, text, integer, integer DEFAULT 100)
     LANGUAGE C STABLE STRICT;
 COMMENT ON FUNCTION cluster_gmm IS 'GMM (EM): (table, vector_col, k_components, max_iters) returns soft cluster assignments';
 
+CREATE FUNCTION train_gmm_model_id(
+    table_name text,
+    vector_col text,
+    num_components integer,
+    max_iters integer DEFAULT 100
+) RETURNS integer
+    AS 'MODULE_PATHNAME', 'train_gmm_model_id'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION train_gmm_model_id IS 'Train GMM and store in catalog, returns model_id';
+
+CREATE FUNCTION predict_gmm_model_id(
+    model_id integer,
+    features vector
+) RETURNS integer
+    AS 'MODULE_PATHNAME', 'predict_gmm_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_gmm_model_id IS 'Predict cluster with GMM model: (model_id, features) returns cluster_id';
+
 CREATE FUNCTION cluster_hierarchical(text, text, integer, text DEFAULT 'average')
     RETURNS integer[]
     AS 'MODULE_PATHNAME', 'cluster_hierarchical'
     LANGUAGE C STABLE STRICT;
 COMMENT ON FUNCTION cluster_hierarchical IS 'Hierarchical clustering: (table, vector_col, k, linkage) linkages: average, complete, single';
+
+CREATE FUNCTION cluster_dbscan(text, text, float8, integer DEFAULT 5)
+    RETURNS integer[]
+    AS 'MODULE_PATHNAME', 'cluster_dbscan'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION cluster_dbscan IS 'DBSCAN clustering: (table, vector_col, eps, min_pts) - returns cluster assignments (-1 for noise)';
 
 -- =============================================================================
 -- Distance Distribution & Analytics
@@ -2003,7 +2074,7 @@ CREATE TABLE IF NOT EXISTS neurondb.ml_models (
     
     -- Training configuration
     training_table text NOT NULL,
-    training_column text NOT NULL,
+    training_column text,  -- NULL allowed for unsupervised algorithms
     parameters jsonb DEFAULT '{}'::jsonb,
     
     -- Model artifacts
@@ -3494,7 +3565,8 @@ BEGIN
 		WHEN 'neural_network' THEN
 			RETURN predict_neural_network(model_id, vector_to_array(features));
 		WHEN 'naive_bayes' THEN
-			RETURN 0.0;
+			-- Delegate to C function (convert vector to array)
+			RETURN neurondb_predict(model_id, vector_to_array(features));
 		WHEN 'knn' THEN
 			-- Delegate to C function (convert vector to array)
 			RETURN neurondb_predict(model_id, vector_to_array(features));
@@ -3661,6 +3733,64 @@ BEGIN
 				'f1_score', f1_score_val
 			);
 		WHEN 'svm' THEN
+			/* Compute metrics by making predictions on test set */
+			BEGIN
+				EXECUTE format(
+				'WITH predictions AS (
+					SELECT 
+						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
+						%I::int AS actual
+					FROM %I
+				)
+				SELECT 
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+				FROM predictions',
+					model_id_param, feature_col, label_col, table_name
+				) INTO tp, fp, tn, fn;
+			EXCEPTION
+				WHEN OTHERS THEN
+					/* If evaluation fails, set metrics to NULL */
+					tp := 0;
+					fp := 0;
+					tn := 0;
+					fn := 0;
+			END;
+			
+			/* Calculate metrics */
+			IF (tp + fp + tn + fn) > 0 THEN
+				accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
+			ELSE
+				accuracy_val := 0.0;
+			END IF;
+			
+			IF (tp + fp) > 0 THEN
+				precision_val := tp::float8 / (tp + fp)::float8;
+			ELSE
+				precision_val := 0.0;
+			END IF;
+			
+			IF (tp + fn) > 0 THEN
+				recall_val := tp::float8 / (tp + fn)::float8;
+			ELSE
+				recall_val := 0.0;
+			END IF;
+			
+			IF (precision_val + recall_val) > 0 THEN
+				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
+			ELSE
+				f1_score_val := 0.0;
+			END IF;
+			
+			result := jsonb_build_object(
+				'accuracy', accuracy_val,
+				'precision', precision_val,
+				'recall', recall_val,
+				'f1_score', f1_score_val
+			);
+		WHEN 'naive_bayes' THEN
 			/* Compute metrics by making predictions on test set */
 			BEGIN
 				EXECUTE format(

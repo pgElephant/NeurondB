@@ -18,7 +18,7 @@
 
 typedef struct MLGpuModelEntry
 {
-	const char *algorithm;
+	char algorithm[64];  /* Algorithm name as key */
 	const MLGpuModelOps *ops;
 } MLGpuModelEntry;
 
@@ -33,13 +33,13 @@ ndb_gpu_init_model_registry(void)
 		return;
 
 	MemSet(&ctl, 0, sizeof(HASHCTL));
-	ctl.keysize = sizeof(char *);
+	ctl.keysize = 64; /* Maximum algorithm name length */
 	ctl.entrysize = sizeof(MLGpuModelEntry);
 	ctl.hcxt = TopMemoryContext;
 	gpu_model_registry = hash_create("neurondb GPU model registry",
 		16,
 		&ctl,
-		HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+		HASH_ELEM | HASH_STRINGS | HASH_CONTEXT);
 }
 
 bool
@@ -47,18 +47,24 @@ ndb_gpu_register_model_ops(const MLGpuModelOps *ops)
 {
 	MLGpuModelEntry *entry;
 	bool found;
+	char key[64];
 
 	if (ops == NULL || ops->algorithm == NULL)
 		return false;
 
 	ndb_gpu_init_model_registry();
 
+	/* Copy algorithm name to key buffer */
+	strlcpy(key, ops->algorithm, sizeof(key));
+	
 	entry = (MLGpuModelEntry *)hash_search(
-		gpu_model_registry, &ops->algorithm, HASH_ENTER, &found);
+		gpu_model_registry, key, HASH_ENTER, &found);
 	if (entry == NULL)
 		return false;
-	entry->algorithm = ops->algorithm;
 	entry->ops = ops;
+	
+	elog(DEBUG1, "ndb_gpu_register_model_ops: registered '%s' (found=%d)", 
+		 entry->algorithm, found ? 1 : 0);
 	return !found;
 }
 
@@ -68,10 +74,18 @@ ndb_gpu_lookup_model_ops(const char *algorithm)
 	MLGpuModelEntry *entry;
 
 	if (algorithm == NULL || gpu_model_registry == NULL)
+	{
+		elog(DEBUG1, "ndb_gpu_lookup_model_ops: algorithm=%p, registry=%p",
+			 (void *)algorithm, (void *)gpu_model_registry);
 		return NULL;
+	}
 
 	entry = (MLGpuModelEntry *)hash_search(
-		gpu_model_registry, &algorithm, HASH_FIND, NULL);
+		gpu_model_registry, algorithm, HASH_FIND, NULL);
+	
+	elog(DEBUG1, "ndb_gpu_lookup_model_ops: algorithm='%s', entry=%p, ops=%p",
+		 algorithm, (void *)entry, entry ? (void *)entry->ops : NULL);
+	
 	if (entry == NULL)
 		return NULL;
 	return entry->ops;

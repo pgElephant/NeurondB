@@ -1,8 +1,0 @@
-000_automl.sql
-001_linreg.sql
-002_logreg.sql
-003_rf.sql
-004_svm.sql
-005_dt.sql
-006_ridge.sql
-007_lasso.sql

@@ -383,3 +383,15 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Mini-batch K-Means
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_minibatch_kmeans_model(void)
+{
+	elog(DEBUG1, "Mini-batch K-Means GPU Model Ops registration skipped - not yet implemented");
+}

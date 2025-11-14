@@ -124,6 +124,13 @@ ndb_hf_complete(const NdbLLMConfig *cfg,
 	initStringInfo(&url);
 	initStringInfo(&body);
 
+	if (prompt == NULL)
+	{
+		pfree(url.data);
+		pfree(body.data);
+		return -1;
+	}
+
 	appendStringInfo(&url, "%s/models/%s", cfg->endpoint, cfg->model);
 	appendStringInfo(&body,
 		"{\"inputs\":%s,\"parameters\":%s}",
@@ -222,6 +229,14 @@ ndb_hf_embed(const NdbLLMConfig *cfg,
 
 	initStringInfo(&url);
 	initStringInfo(&body);
+
+	if (text == NULL)
+	{
+		pfree(url.data);
+		pfree(body.data);
+		return -1;
+	}
+
 	appendStringInfo(&url,
 		"%s/pipeline/feature-extraction/%s",
 		cfg->endpoint,
@@ -304,6 +319,14 @@ ndb_hf_rerank(const NdbLLMConfig *cfg,
 	initStringInfo(&url);
 	initStringInfo(&body);
 
+	/* Validate inputs */
+	if (query == NULL || docs == NULL || ndocs <= 0)
+	{
+		pfree(url.data);
+		pfree(body.data);
+		return -1;
+	}
+
 	/* Compose the docs JSON array */
 	initStringInfo(&docs_json);
 	appendStringInfoChar(&docs_json, '[');
@@ -311,7 +334,10 @@ ndb_hf_rerank(const NdbLLMConfig *cfg,
 	{
 		if (i > 0)
 			appendStringInfoChar(&docs_json, ',');
-		appendStringInfoString(&docs_json, quote_literal_cstr(docs[i]));
+		if (docs[i] != NULL)
+			appendStringInfoString(&docs_json, quote_literal_cstr(docs[i]));
+		else
+			appendStringInfoString(&docs_json, "null");
 	}
 	appendStringInfoChar(&docs_json, ']');
 

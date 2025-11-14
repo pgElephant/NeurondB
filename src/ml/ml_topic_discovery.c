@@ -230,3 +230,15 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for TopicDiscovery
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_topic_discovery_model(void)
+{
+	elog(DEBUG1, "TopicDiscovery GPU Model Ops registration skipped - not yet implemented");
+}

@@ -1062,3 +1062,15 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(result_tuple));
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Timeseries
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_timeseries_model(void)
+{
+	elog(DEBUG1, "Timeseries GPU Model Ops registration skipped - not yet implemented");
+}

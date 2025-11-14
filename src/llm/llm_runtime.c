@@ -1327,7 +1327,7 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 			num_prompts,
 			params,
 			&batch_resp);
-		elog(NOTICE, "neurondb: llm_runtime got rc=%d from ndb_llm_route_complete_batch", rc);
+		elog(DEBUG1, "neurondb: llm_runtime got rc=%d from ndb_llm_route_complete_batch", rc);
 		if (rc != 0)
 		{
 			/* Free prompts */
@@ -1408,7 +1408,7 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 			(BatchCompleteState *)funcctx->user_fctx;
 		TupleDesc tupdesc_local;
 
-		elog(NOTICE, "neurondb: llm_runtime SRF_PERCALL_SETUP: state=%p", (void *)state);
+		elog(DEBUG1, "neurondb: llm_runtime SRF_PERCALL_SETUP: state=%p", (void *)state);
 		if (!state || !state->batch_resp || !state->tupdesc)
 		{
 			elog(ERROR, "neurondb: batch completion state is invalid");
@@ -1416,7 +1416,7 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 		}
 		tupdesc_local = state->tupdesc;
 
-		elog(NOTICE, "neurondb: llm_runtime SRF: current_idx=%d, num_items=%d", state->current_idx, state->batch_resp->num_items);
+		elog(DEBUG1, "neurondb: llm_runtime SRF: current_idx=%d, num_items=%d", state->current_idx, state->batch_resp->num_items);
 		if (state->current_idx < state->batch_resp->num_items)
 		{
 			int idx = state->current_idx;
@@ -1428,29 +1428,29 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 				SRF_RETURN_DONE(funcctx);
 			}
 
-			elog(NOTICE, "neurondb: llm_runtime SRF processing idx=%d", idx);
+			elog(DEBUG1, "neurondb: llm_runtime SRF processing idx=%d", idx);
 			values[0] = Int32GetDatum(idx);
 			if (resp->texts && idx < resp->num_items && resp->texts[idx])
 			{
-				elog(NOTICE, "neurondb: llm_runtime SRF text[%d]=%p, len=%zu", idx, (void *)resp->texts[idx], resp->texts[idx] ? strlen(resp->texts[idx]) : 0);
+				elog(DEBUG1, "neurondb: llm_runtime SRF text[%d]=%p, len=%zu", idx, (void *)resp->texts[idx], resp->texts[idx] ? strlen(resp->texts[idx]) : 0);
 				values[1] =
 					CStringGetTextDatum(resp->texts[idx]);
-				elog(NOTICE, "neurondb: llm_runtime SRF accessing tokens_in[%d]", idx);
+				elog(DEBUG1, "neurondb: llm_runtime SRF accessing tokens_in[%d]", idx);
 				values[2] = Int32GetDatum(resp->tokens_in
 						&& idx < resp->num_items
 						? resp->tokens_in[idx]
 						: 0);
-				elog(NOTICE, "neurondb: llm_runtime SRF accessing tokens_out[%d]", idx);
+				elog(DEBUG1, "neurondb: llm_runtime SRF accessing tokens_out[%d]", idx);
 				values[3] = Int32GetDatum(resp->tokens_out
 						&& idx < resp->num_items
 						? resp->tokens_out[idx]
 						: 0);
-				elog(NOTICE, "neurondb: llm_runtime SRF accessing http_status[%d]", idx);
+				elog(DEBUG1, "neurondb: llm_runtime SRF accessing http_status[%d]", idx);
 				values[4] = Int32GetDatum(resp->http_status
 						&& idx < resp->num_items
 						? resp->http_status[idx]
 						: 200);
-				elog(NOTICE, "neurondb: llm_runtime SRF creating tuple for idx=%d", idx);
+				elog(DEBUG1, "neurondb: llm_runtime SRF creating tuple for idx=%d", idx);
 				nulls[0] = false;
 				nulls[1] = false;
 				nulls[2] = false;
@@ -1470,7 +1470,7 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 			}
 
 			tuple = heap_form_tuple(tupdesc_local, values, nulls);
-			elog(NOTICE, "neurondb: llm_runtime SRF tuple created for idx=%d, returning next", idx);
+			elog(DEBUG1, "neurondb: llm_runtime SRF tuple created for idx=%d, returning next", idx);
 			state->current_idx++;
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 		} else

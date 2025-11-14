@@ -390,3 +390,15 @@ answer_question(PG_FUNCTION_ARGS)
 
 	PG_RETURN_TEXT_P(cstring_to_text(answer.data));
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for NlpProduction
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_nlp_production_model(void)
+{
+	elog(DEBUG1, "NlpProduction GPU Model Ops registration skipped - not yet implemented");
+}

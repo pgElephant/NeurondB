@@ -629,3 +629,15 @@ predict_xgboost(PG_FUNCTION_ARGS)
 }
 
 #endif /* HAVE_XGBOOST */
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for XGBoost
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_xgboost_model(void)
+{
+	elog(DEBUG1, "XGBoost GPU Model Ops registration skipped - not yet implemented");
+}

@@ -276,7 +276,6 @@ ndb_cuda_linreg_train(const float *features,
 		cudaFree(d_targets);
 		cudaFree(d_XtX);
 		cudaFree(d_Xty);
-		goto after_xtx;
 #endif
 
 gpu_cleanup:
@@ -313,8 +312,6 @@ cpu_fallback:
 			pfree(xi);
 		}
 	}
-
-after_xtx:
 
 	/* Invert X'X using Gauss-Jordan elimination */
 	{

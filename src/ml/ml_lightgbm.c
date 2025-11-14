@@ -81,3 +81,15 @@ predict_lightgbm(PG_FUNCTION_ARGS)
 			errhint("Rebuild NeuronDB with LightGBM support.")));
 	PG_RETURN_FLOAT8(0.0);
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Lightgbm
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_lightgbm_model(void)
+{
+	elog(DEBUG1, "Lightgbm GPU Model Ops registration skipped - not yet implemented");
+}

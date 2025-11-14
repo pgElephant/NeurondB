@@ -1810,3 +1810,21 @@ train_elastic_net(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stubs for Ridge and Lasso
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_ridge_model(void)
+{
+	elog(DEBUG1, "Ridge GPU Model Ops registration skipped - not yet implemented");
+}
+
+void
+neurondb_gpu_register_lasso_model(void)
+{
+	elog(DEBUG1, "Lasso GPU Model Ops registration skipped - not yet implemented");
+}

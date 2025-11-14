@@ -1,0 +1,419 @@
+2025-11-14 10:46:36.950 PKT [561628] LOG:  neurondb: initializing background workers
+2025-11-14 10:46:36.957 PKT [561628] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-14 10:46:36.957 PKT [561628] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-14 10:46:36.957 PKT [561628] LOG:  neurondb: registered neuranq background worker
+2025-11-14 10:46:36.957 PKT [561628] LOG:  neurondb: registered neuranmon background worker
+2025-11-14 10:46:36.957 PKT [561628] LOG:  neurondb: registered neurandefrag background worker
+2025-11-14 10:46:36.957 PKT [561628] LOG:  neurondb: registered neuranllm background worker
+2025-11-14 10:46:36.957 PKT [561628] LOG:  neurondb: all background workers registered successfully
+2025-11-14 10:46:36.983 PKT [561628] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 10:46:36.984 PKT [561628] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-14 10:46:36.984 PKT [561628] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-14 10:46:36.985 PKT [561628] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-14 10:46:36.990 PKT [561634] LOG:  database system was shut down at 2025-11-14 10:46:36 PKT
+2025-11-14 10:46:37.001 PKT [561628] LOG:  database system is ready to accept connections
+2025-11-14 10:46:37.004 PKT [561638] LOG:  neurondb: neurandefrag worker started (PID 561638)
+2025-11-14 10:46:37.012 PKT [561640] LOG:  neurondb: neuranq worker started (PID 561640)
+2025-11-14 10:46:37.014 PKT [561637] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 10:46:37.014 PKT [561639] LOG:  neurondb: neuranmon worker started (PID 561639)
+2025-11-14 10:46:37.017 PKT [561639] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 10:47:03.983 PKT [561806] LOG:  neurondb: selected GPU backend: CUDA
+2025-11-14 10:47:03.983 PKT [561806] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 10:47:03.983 PKT [561806] LOG:  neurondb: GPU backend CUDA (NVIDIA) initialized on device 0
+2025-11-14 10:47:03.983 PKT [561806] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 10:47:13.146 PKT [561628] LOG:  client backend (PID 561806) was terminated by signal 11: Segmentation fault
+2025-11-14 10:47:13.146 PKT [561628] DETAIL:  Failed process was running: CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'gmm',
+		'sample_train',
+		'features',
+		NULL,
+		'{"k": 3, "max_iters": 100}'::jsonb
+	)::integer AS model_id;
+2025-11-14 10:47:13.146 PKT [561628] LOG:  terminating any other active server processes
+2025-11-14 10:47:13.148 PKT [561628] LOG:  all server processes terminated; reinitializing
+2025-11-14 10:47:13.185 PKT [561628] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 10:47:13.188 PKT [561948] LOG:  database system was interrupted; last known up at 2025-11-14 10:46:36 PKT
+2025-11-14 10:47:13.214 PKT [561948] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-14 10:47:13.215 PKT [561948] LOG:  redo starts at 41/E23049C0
+2025-11-14 10:47:13.216 PKT [561948] LOG:  invalid record length at 41/E237AAF8: expected at least 24, got 0
+2025-11-14 10:47:13.216 PKT [561948] LOG:  redo done at 41/E237AAC0 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-14 10:47:13.218 PKT [561949] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-14 10:47:13.227 PKT [561949] LOG:  checkpoint complete: wrote 84 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.007 s, sync=0.002 s, total=0.011 s; sync files=47, longest=0.001 s, average=0.001 s; distance=472 kB, estimate=472 kB; lsn=41/E237AAF8, redo lsn=41/E237AAF8
+2025-11-14 10:47:13.236 PKT [561628] LOG:  database system is ready to accept connections
+2025-11-14 10:47:13.239 PKT [561954] LOG:  neurondb: neurandefrag worker started (PID 561954)
+2025-11-14 10:47:13.247 PKT [561955] LOG:  neurondb: neuranmon worker started (PID 561955)
+2025-11-14 10:47:13.247 PKT [561956] LOG:  neurondb: neuranq worker started (PID 561956)
+2025-11-14 10:47:13.248 PKT [561953] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 10:47:13.251 PKT [561955] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 10:47:17.987 PKT [561988] FATAL:  database "db" does not exist
+2025-11-14 10:47:27.244 PKT [562009] LOG:  neurondb: selected GPU backend: CUDA
+2025-11-14 10:47:27.244 PKT [562009] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 10:47:27.244 PKT [562009] LOG:  neurondb: GPU backend CUDA (NVIDIA) initialized on device 0
+2025-11-14 10:47:27.244 PKT [562009] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 10:47:40.318 PKT [561628] LOG:  client backend (PID 562009) was terminated by signal 11: Segmentation fault
+2025-11-14 10:47:40.318 PKT [561628] DETAIL:  Failed process was running: CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'gmm',
+		'sample_train',
+		'features',
+		NULL,
+		'{"k": 3, "max_iters": 100}'::jsonb
+	)::integer AS model_id;
+2025-11-14 10:47:40.318 PKT [561628] LOG:  terminating any other active server processes
+2025-11-14 10:47:40.320 PKT [561628] LOG:  all server processes terminated; reinitializing
+2025-11-14 10:47:40.356 PKT [561628] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 10:47:40.360 PKT [562163] LOG:  database system was interrupted; last known up at 2025-11-14 10:47:13 PKT
+2025-11-14 10:47:40.398 PKT [562163] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-14 10:47:40.399 PKT [562163] LOG:  redo starts at 41/E237AB70
+2025-11-14 10:47:40.401 PKT [562163] LOG:  invalid record length at 41/E23DDA68: expected at least 24, got 0
+2025-11-14 10:47:40.402 PKT [562163] LOG:  redo done at 41/E23DDA30 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-14 10:47:40.404 PKT [562164] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-14 10:47:40.415 PKT [562164] LOG:  checkpoint complete: wrote 70 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.008 s, sync=0.002 s, total=0.013 s; sync files=43, longest=0.001 s, average=0.001 s; distance=395 kB, estimate=395 kB; lsn=41/E23DDA68, redo lsn=41/E23DDA68
+2025-11-14 10:47:40.431 PKT [561628] LOG:  database system is ready to accept connections
+2025-11-14 10:47:40.438 PKT [562169] LOG:  neurondb: neurandefrag worker started (PID 562169)
+2025-11-14 10:47:40.448 PKT [562170] LOG:  neurondb: neuranmon worker started (PID 562170)
+2025-11-14 10:47:40.449 PKT [562168] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 10:47:40.451 PKT [562171] LOG:  neurondb: neuranq worker started (PID 562171)
+2025-11-14 10:47:40.453 PKT [562170] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 10:47:52.873 PKT [562212] LOG:  neurondb: selected GPU backend: CUDA
+2025-11-14 10:47:52.873 PKT [562212] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 10:47:52.873 PKT [562212] LOG:  neurondb: GPU backend CUDA (NVIDIA) initialized on device 0
+2025-11-14 10:47:52.873 PKT [562212] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 10:47:52.935 PKT [562212] ERROR:  function neurondb_predict(integer, real[]) does not exist at character 1
+2025-11-14 10:47:52.935 PKT [562212] HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+2025-11-14 10:47:52.935 PKT [562212] QUERY:  neurondb_predict(model_id, vector_to_array(features))
+2025-11-14 10:47:52.935 PKT [562212] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 34 at RETURN
+2025-11-14 10:47:52.935 PKT [562212] STATEMENT:  SELECT
+		AVG((CASE WHEN neurondb.predict(m.model_id, features) >= 0.5
+				THEN 1 ELSE 0 END = label::int)::int)::float8 AS accuracy
+	FROM sample_test, gpu_model_temp m;
+2025-11-14 10:48:16.405 PKT [562212] ERROR:  function neurondb_predict(integer, real[]) does not exist at character 1
+2025-11-14 10:48:16.405 PKT [562212] HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+2025-11-14 10:48:16.405 PKT [562212] QUERY:  neurondb_predict(model_id, vector_to_array(features))
+2025-11-14 10:48:16.405 PKT [562212] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 34 at RETURN
+2025-11-14 10:48:16.405 PKT [562212] STATEMENT:  SELECT
+		AVG((CASE WHEN neurondb.predict(m.model_id, features) >= 0.5
+				THEN 1 ELSE 0 END = label::int)::int)::float8 AS accuracy
+	FROM sample_test, gpu_model_temp m;
+2025-11-14 10:48:40.513 PKT [562170] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-14 10:49:40.528 PKT [563535] LOG:  autovacuum: dropping orphan temp table "pmdb.pg_temp_15.hf_rerank_test"
+2025-11-14 10:49:40.575 PKT [562170] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-14 10:50:38.770 PKT [561628] LOG:  client backend (PID 562212) was terminated by signal 11: Segmentation fault
+2025-11-14 10:50:38.770 PKT [561628] DETAIL:  Failed process was running: CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'gmm',
+		'sample_train',
+		'features',
+		NULL,
+		'{"k": 3, "max_iters": 100}'::jsonb
+	)::integer AS model_id;
+2025-11-14 10:50:38.770 PKT [561628] LOG:  terminating any other active server processes
+2025-11-14 10:50:38.773 PKT [561628] LOG:  all server processes terminated; reinitializing
+2025-11-14 10:50:38.810 PKT [561628] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 10:50:38.814 PKT [563771] LOG:  database system was interrupted; last known up at 2025-11-14 10:47:40 PKT
+2025-11-14 10:50:38.847 PKT [563771] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-14 10:50:38.848 PKT [563771] LOG:  redo starts at 41/E23DDAE0
+2025-11-14 10:50:38.850 PKT [563771] LOG:  invalid record length at 41/E2442AA0: expected at least 24, got 0
+2025-11-14 10:50:38.850 PKT [563771] LOG:  redo done at 41/E2442A68 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-14 10:50:38.851 PKT [563772] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-14 10:50:38.861 PKT [563772] LOG:  checkpoint complete: wrote 66 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.007 s, sync=0.002 s, total=0.010 s; sync files=41, longest=0.001 s, average=0.001 s; distance=404 kB, estimate=404 kB; lsn=41/E2442AA0, redo lsn=41/E2442AA0
+2025-11-14 10:50:38.870 PKT [561628] LOG:  database system is ready to accept connections
+2025-11-14 10:50:38.874 PKT [563777] LOG:  neurondb: neurandefrag worker started (PID 563777)
+2025-11-14 10:50:38.880 PKT [563776] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 10:50:38.880 PKT [563778] LOG:  neurondb: neuranmon worker started (PID 563778)
+2025-11-14 10:50:38.884 PKT [563779] LOG:  neurondb: neuranq worker started (PID 563779)
+2025-11-14 10:50:38.885 PKT [563778] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 10:51:38.917 PKT [563778] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-14 10:52:38.990 PKT [563778] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-14 10:53:39.089 PKT [563778] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-14 10:54:39.180 PKT [563778] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-14 10:55:38.961 PKT [563772] LOG:  checkpoint starting: time
+2025-11-14 10:55:39.279 PKT [563778] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-14 10:55:40.043 PKT [563772] LOG:  checkpoint complete: wrote 10 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=1.007 s, sync=0.038 s, total=1.083 s; sync files=5, longest=0.038 s, average=0.008 s; distance=64 kB, estimate=370 kB; lsn=41/E2453BA0, redo lsn=41/E2452B58
+2025-11-14 10:56:39.377 PKT [563778] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-14 10:57:39.390 PKT [563778] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-14 10:58:39.491 PKT [563778] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-14 10:59:39.590 PKT [563778] LOG:  neurondb: tuned ef_search=385 (latency=0.00ms, recall=0.000)
+2025-11-14 10:59:46.007 PKT [561628] LOG:  received fast shutdown request
+2025-11-14 10:59:46.044 PKT [561628] LOG:  aborting any active transactions
+2025-11-14 10:59:46.044 PKT [563779] LOG:  neurondb: neuranq worker shutting down
+2025-11-14 10:59:46.045 PKT [563778] LOG:  neurondb: neuranmon worker shutting down
+2025-11-14 10:59:46.047 PKT [563777] LOG:  neurondb: neurandefrag worker shutting down (PID 563777)
+2025-11-14 10:59:46.049 PKT [563776] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-14 10:59:46.063 PKT [561628] LOG:  background worker "logical replication launcher" (PID 563780) exited with exit code 1
+2025-11-14 10:59:46.064 PKT [563772] LOG:  shutting down
+2025-11-14 10:59:46.071 PKT [563772] LOG:  checkpoint starting: shutdown immediate
+2025-11-14 10:59:46.078 PKT [563772] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.001 s, total=0.014 s; sync files=2, longest=0.001 s, average=0.001 s; distance=7 kB, estimate=333 kB; lsn=41/E24547B8, redo lsn=41/E24547B8
+2025-11-14 10:59:46.114 PKT [561628] LOG:  database system is shut down
+2025-11-14 11:02:20.284 PKT [568017] LOG:  neurondb: initializing background workers
+2025-11-14 11:02:20.292 PKT [568017] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-14 11:02:20.292 PKT [568017] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-14 11:02:20.292 PKT [568017] LOG:  neurondb: registered neuranq background worker
+2025-11-14 11:02:20.292 PKT [568017] LOG:  neurondb: registered neuranmon background worker
+2025-11-14 11:02:20.292 PKT [568017] LOG:  neurondb: registered neurandefrag background worker
+2025-11-14 11:02:20.292 PKT [568017] LOG:  neurondb: registered neuranllm background worker
+2025-11-14 11:02:20.292 PKT [568017] LOG:  neurondb: all background workers registered successfully
+2025-11-14 11:02:20.320 PKT [568017] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 11:02:20.320 PKT [568017] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-14 11:02:20.320 PKT [568017] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-14 11:02:20.321 PKT [568017] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-14 11:02:20.326 PKT [568023] LOG:  database system was shut down at 2025-11-14 11:02:20 PKT
+2025-11-14 11:02:20.340 PKT [568017] LOG:  database system is ready to accept connections
+2025-11-14 11:02:20.343 PKT [568027] LOG:  neurondb: neurandefrag worker started (PID 568027)
+2025-11-14 11:02:20.350 PKT [568029] LOG:  neurondb: neuranq worker started (PID 568029)
+2025-11-14 11:02:20.351 PKT [568028] LOG:  neurondb: neuranmon worker started (PID 568028)
+2025-11-14 11:02:20.351 PKT [568026] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 11:02:20.355 PKT [568028] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 11:02:33.428 PKT [568061] LOG:  neurondb: selected GPU backend: CUDA
+2025-11-14 11:02:33.428 PKT [568061] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 11:02:33.428 PKT [568061] LOG:  neurondb: GPU backend CUDA (NVIDIA) initialized on device 0
+2025-11-14 11:02:33.428 PKT [568061] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 11:02:33.578 PKT [568017] LOG:  client backend (PID 568061) was terminated by signal 11: Segmentation fault
+2025-11-14 11:02:33.578 PKT [568017] DETAIL:  Failed process was running: CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'gmm',
+		'sample_train',
+		'features',
+		NULL,
+		'{"k": 3, "max_iters": 100}'::jsonb
+	)::integer AS model_id;
+2025-11-14 11:02:33.578 PKT [568017] LOG:  terminating any other active server processes
+2025-11-14 11:02:33.580 PKT [568017] LOG:  all server processes terminated; reinitializing
+2025-11-14 11:02:33.614 PKT [568017] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 11:02:33.617 PKT [568084] LOG:  database system was interrupted; last known up at 2025-11-14 11:02:20 PKT
+2025-11-14 11:02:33.646 PKT [568084] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-14 11:02:33.647 PKT [568084] LOG:  redo starts at 41/E3EF8F10
+2025-11-14 11:02:33.647 PKT [568084] LOG:  unexpected pageaddr 41/DFF04000 in WAL segment 0000000100000041000000E3, LSN 41/E3F04000, offset 15745024
+2025-11-14 11:02:33.647 PKT [568084] LOG:  redo done at 41/E3F02A30 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-14 11:02:33.649 PKT [568085] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-14 11:02:33.658 PKT [568085] LOG:  checkpoint complete: wrote 7 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.007 s, sync=0.002 s, total=0.010 s; sync files=7, longest=0.001 s, average=0.001 s; distance=44 kB, estimate=44 kB; lsn=41/E3F04048, redo lsn=41/E3F04048
+2025-11-14 11:02:33.666 PKT [568017] LOG:  database system is ready to accept connections
+2025-11-14 11:02:33.669 PKT [568090] LOG:  neurondb: neurandefrag worker started (PID 568090)
+2025-11-14 11:02:33.677 PKT [568092] LOG:  neurondb: neuranq worker started (PID 568092)
+2025-11-14 11:02:33.680 PKT [568091] LOG:  neurondb: neuranmon worker started (PID 568091)
+2025-11-14 11:02:33.680 PKT [568089] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 11:02:33.684 PKT [568091] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 11:02:43.409 PKT [568125] LOG:  neurondb: selected GPU backend: CUDA
+2025-11-14 11:02:43.409 PKT [568125] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 11:02:43.409 PKT [568125] LOG:  neurondb: GPU backend CUDA (NVIDIA) initialized on device 0
+2025-11-14 11:02:43.409 PKT [568125] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 11:02:49.186 PKT [568017] LOG:  client backend (PID 568125) was terminated by signal 11: Segmentation fault
+2025-11-14 11:02:49.186 PKT [568017] DETAIL:  Failed process was running: SELECT
+		AVG((CASE WHEN neurondb.predict(m.model_id, features) >= 0.5
+				THEN 1 ELSE 0 END = label::int)::int)::float8 AS accuracy
+	FROM sample_test, gpu_model_temp m;
+2025-11-14 11:02:49.186 PKT [568017] LOG:  terminating any other active server processes
+2025-11-14 11:02:49.188 PKT [568017] LOG:  all server processes terminated; reinitializing
+2025-11-14 11:02:49.222 PKT [568017] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 11:02:49.225 PKT [568230] LOG:  database system was interrupted; last known up at 2025-11-14 11:02:33 PKT
+2025-11-14 11:02:49.253 PKT [568230] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-14 11:02:49.254 PKT [568230] LOG:  redo starts at 41/E3F040C0
+2025-11-14 11:02:49.256 PKT [568230] LOG:  unexpected pageaddr 41/DFF6A000 in WAL segment 0000000100000041000000E3, LSN 41/E3F6A000, offset 16162816
+2025-11-14 11:02:49.256 PKT [568230] LOG:  redo done at 41/E3F69598 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-14 11:02:49.258 PKT [568231] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-14 11:02:49.268 PKT [568231] LOG:  checkpoint complete: wrote 76 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.008 s, sync=0.002 s, total=0.012 s; sync files=49, longest=0.001 s, average=0.001 s; distance=408 kB, estimate=408 kB; lsn=41/E3F6A048, redo lsn=41/E3F6A048
+2025-11-14 11:02:49.277 PKT [568017] LOG:  database system is ready to accept connections
+2025-11-14 11:02:49.281 PKT [568236] LOG:  neurondb: neurandefrag worker started (PID 568236)
+2025-11-14 11:02:49.288 PKT [568237] LOG:  neurondb: neuranmon worker started (PID 568237)
+2025-11-14 11:02:49.291 PKT [568235] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 11:02:49.292 PKT [568238] LOG:  neurondb: neuranq worker started (PID 568238)
+2025-11-14 11:02:49.293 PKT [568237] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 11:03:49.323 PKT [568504] LOG:  autovacuum: dropping orphan temp table "pmdb.pg_temp_16.hf_rerank_test"
+2025-11-14 11:03:49.325 PKT [568504] LOG:  autovacuum: dropping orphan temp table "pmdb.pg_temp_0.gpu_model_temp"
+2025-11-14 11:03:49.357 PKT [568237] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-14 11:04:20.847 PKT [568017] LOG:  received fast shutdown request
+2025-11-14 11:04:20.884 PKT [568017] LOG:  aborting any active transactions
+2025-11-14 11:04:20.884 PKT [568236] LOG:  neurondb: neurandefrag worker shutting down (PID 568236)
+2025-11-14 11:04:20.884 PKT [568235] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-14 11:04:20.884 PKT [568238] LOG:  neurondb: neuranq worker shutting down
+2025-11-14 11:04:20.884 PKT [568237] LOG:  neurondb: neuranmon worker shutting down
+2025-11-14 11:04:20.893 PKT [568017] LOG:  background worker "logical replication launcher" (PID 568239) exited with exit code 1
+2025-11-14 11:04:20.896 PKT [568231] LOG:  shutting down
+2025-11-14 11:04:20.896 PKT [568231] LOG:  checkpoint starting: shutdown immediate
+2025-11-14 11:04:20.903 PKT [568231] LOG:  checkpoint complete: wrote 12 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.001 s, total=0.007 s; sync files=11, longest=0.001 s, average=0.001 s; distance=56 kB, estimate=372 kB; lsn=41/E3F78238, redo lsn=41/E3F78238
+2025-11-14 11:04:20.928 PKT [568017] LOG:  database system is shut down
+2025-11-14 16:12:52.285 PKT [663830] LOG:  neurondb: initializing background workers
+2025-11-14 16:12:52.294 PKT [663830] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-14 16:12:52.294 PKT [663830] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-14 16:12:52.294 PKT [663830] LOG:  neurondb: registered neuranq background worker
+2025-11-14 16:12:52.294 PKT [663830] LOG:  neurondb: registered neuranmon background worker
+2025-11-14 16:12:52.294 PKT [663830] LOG:  neurondb: registered neurandefrag background worker
+2025-11-14 16:12:52.294 PKT [663830] LOG:  neurondb: registered neuranllm background worker
+2025-11-14 16:12:52.294 PKT [663830] LOG:  neurondb: all background workers registered successfully
+2025-11-14 16:12:52.321 PKT [663830] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 16:12:52.321 PKT [663830] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-14 16:12:52.321 PKT [663830] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-14 16:12:52.322 PKT [663830] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-14 16:12:52.328 PKT [663836] LOG:  database system was shut down at 2025-11-14 16:12:52 PKT
+2025-11-14 16:12:52.336 PKT [663830] LOG:  database system is ready to accept connections
+2025-11-14 16:12:52.340 PKT [663840] LOG:  neurondb: neurandefrag worker started (PID 663840)
+2025-11-14 16:12:52.347 PKT [663839] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 16:12:52.347 PKT [663841] LOG:  neurondb: neuranmon worker started (PID 663841)
+2025-11-14 16:12:52.347 PKT [663842] LOG:  neurondb: neuranq worker started (PID 663842)
+2025-11-14 16:12:52.351 PKT [663841] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 16:13:10.758 PKT [663902] LOG:  neurondb: selected GPU backend: CUDA
+2025-11-14 16:13:10.758 PKT [663902] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 16:13:10.758 PKT [663902] LOG:  neurondb: GPU backend CUDA (NVIDIA) initialized on device 0
+2025-11-14 16:13:10.758 PKT [663902] STATEMENT:  SELECT neurondb_gpu_enable();
+2025-11-14 16:13:10.966 PKT [663830] LOG:  client backend (PID 663902) was terminated by signal 11: Segmentation fault
+2025-11-14 16:13:10.966 PKT [663830] DETAIL:  Failed process was running: CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'naive_bayes',
+		'sample_train',
+		'features',
+		'label',
+		'{}'::jsonb
+	)::integer AS model_id;
+2025-11-14 16:13:10.966 PKT [663830] LOG:  terminating any other active server processes
+2025-11-14 16:13:10.968 PKT [663830] LOG:  all server processes terminated; reinitializing
+2025-11-14 16:13:11.038 PKT [663830] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 16:13:11.042 PKT [663931] LOG:  database system was interrupted; last known up at 2025-11-14 16:12:52 PKT
+2025-11-14 16:13:11.067 PKT [663931] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-14 16:13:11.068 PKT [663931] LOG:  redo starts at 41/E7F04968
+2025-11-14 16:13:11.069 PKT [663931] LOG:  unexpected pageaddr 41/E2F24000 in WAL segment 0000000100000041000000E7, LSN 41/E7F24000, offset 15876096
+2025-11-14 16:13:11.069 PKT [663931] LOG:  redo done at 41/E7F21550 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-14 16:13:11.071 PKT [663932] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-14 16:13:11.080 PKT [663932] LOG:  checkpoint complete: wrote 26 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.001 s, total=0.010 s; sync files=25, longest=0.001 s, average=0.001 s; distance=125 kB, estimate=125 kB; lsn=41/E7F24048, redo lsn=41/E7F24048
+2025-11-14 16:13:11.088 PKT [663830] LOG:  database system is ready to accept connections
+2025-11-14 16:13:11.092 PKT [663937] LOG:  neurondb: neurandefrag worker started (PID 663937)
+2025-11-14 16:13:11.099 PKT [663939] LOG:  neurondb: neuranq worker started (PID 663939)
+2025-11-14 16:13:11.102 PKT [663938] LOG:  neurondb: neuranmon worker started (PID 663938)
+2025-11-14 16:13:11.102 PKT [663936] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 16:13:11.106 PKT [663938] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 16:14:11.170 PKT [663938] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-14 16:14:21.938 PKT [663830] LOG:  received fast shutdown request
+2025-11-14 16:14:21.977 PKT [663830] LOG:  aborting any active transactions
+2025-11-14 16:14:21.977 PKT [663936] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-14 16:14:21.977 PKT [663937] LOG:  neurondb: neurandefrag worker shutting down (PID 663937)
+2025-11-14 16:14:21.977 PKT [663939] LOG:  neurondb: neuranq worker shutting down
+2025-11-14 16:14:21.977 PKT [663938] LOG:  neurondb: neuranmon worker shutting down
+2025-11-14 16:14:21.989 PKT [663830] LOG:  background worker "logical replication launcher" (PID 663940) exited with exit code 1
+2025-11-14 16:14:21.989 PKT [663932] LOG:  shutting down
+2025-11-14 16:14:21.991 PKT [663932] LOG:  checkpoint starting: shutdown immediate
+2025-11-14 16:14:22.011 PKT [663932] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.003 s, total=0.022 s; sync files=2, longest=0.002 s, average=0.002 s; distance=3 kB, estimate=113 kB; lsn=41/E7F24E60, redo lsn=41/E7F24E60
+2025-11-14 16:14:22.038 PKT [663830] LOG:  database system is shut down
+2025-11-14 16:14:22.068 PKT [664065] LOG:  neurondb: initializing background workers
+2025-11-14 16:14:22.076 PKT [664065] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-14 16:14:22.076 PKT [664065] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-14 16:14:22.076 PKT [664065] LOG:  neurondb: registered neuranq background worker
+2025-11-14 16:14:22.076 PKT [664065] LOG:  neurondb: registered neuranmon background worker
+2025-11-14 16:14:22.076 PKT [664065] LOG:  neurondb: registered neurandefrag background worker
+2025-11-14 16:14:22.076 PKT [664065] LOG:  neurondb: registered neuranllm background worker
+2025-11-14 16:14:22.076 PKT [664065] LOG:  neurondb: all background workers registered successfully
+2025-11-14 16:14:22.103 PKT [664065] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 16:14:22.103 PKT [664065] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-14 16:14:22.103 PKT [664065] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-14 16:14:22.104 PKT [664065] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-14 16:14:22.110 PKT [664071] LOG:  database system was shut down at 2025-11-14 16:14:22 PKT
+2025-11-14 16:14:22.118 PKT [664065] LOG:  database system is ready to accept connections
+2025-11-14 16:14:22.121 PKT [664075] LOG:  neurondb: neurandefrag worker started (PID 664075)
+2025-11-14 16:14:22.129 PKT [664076] LOG:  neurondb: neuranmon worker started (PID 664076)
+2025-11-14 16:14:22.129 PKT [664077] LOG:  neurondb: neuranq worker started (PID 664077)
+2025-11-14 16:14:22.129 PKT [664074] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 16:14:22.133 PKT [664076] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 16:14:41.628 PKT [664143] LOG:  neurondb: selected GPU backend: CUDA
+2025-11-14 16:14:41.628 PKT [664143] STATEMENT:  SET neurondb.gpu_enabled = on; SET neurondb.gpu_kernels = 'l2,cosine,ip,nb_train,nb_predict'; SELECT neurondb_gpu_enable(); DROP TABLE IF EXISTS test_model2; CREATE TEMP TABLE test_model2 AS SELECT neurondb.train('naive_bayes', 'sample_train', 'features', 'label', '{}'::jsonb)::integer AS model_id; SELECT * FROM test_model2;
+2025-11-14 16:14:41.628 PKT [664143] LOG:  neurondb: GPU backend CUDA (NVIDIA) initialized on device 0
+2025-11-14 16:14:41.628 PKT [664143] STATEMENT:  SET neurondb.gpu_enabled = on; SET neurondb.gpu_kernels = 'l2,cosine,ip,nb_train,nb_predict'; SELECT neurondb_gpu_enable(); DROP TABLE IF EXISTS test_model2; CREATE TEMP TABLE test_model2 AS SELECT neurondb.train('naive_bayes', 'sample_train', 'features', 'label', '{}'::jsonb)::integer AS model_id; SELECT * FROM test_model2;
+2025-11-14 16:14:41.865 PKT [664065] LOG:  client backend (PID 664143) was terminated by signal 11: Segmentation fault
+2025-11-14 16:14:41.865 PKT [664065] DETAIL:  Failed process was running: SET neurondb.gpu_enabled = on; SET neurondb.gpu_kernels = 'l2,cosine,ip,nb_train,nb_predict'; SELECT neurondb_gpu_enable(); DROP TABLE IF EXISTS test_model2; CREATE TEMP TABLE test_model2 AS SELECT neurondb.train('naive_bayes', 'sample_train', 'features', 'label', '{}'::jsonb)::integer AS model_id; SELECT * FROM test_model2;
+2025-11-14 16:14:41.865 PKT [664065] LOG:  terminating any other active server processes
+2025-11-14 16:14:41.869 PKT [664065] LOG:  all server processes terminated; reinitializing
+2025-11-14 16:14:41.921 PKT [664065] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 16:14:41.927 PKT [664172] LOG:  database system was interrupted; last known up at 2025-11-14 16:14:22 PKT
+2025-11-14 16:14:41.965 PKT [664172] LOG:  database system was not properly shut down; automatic recovery in progress
+2025-11-14 16:14:41.967 PKT [664172] LOG:  redo starts at 41/E7F24ED8
+2025-11-14 16:14:41.967 PKT [664172] LOG:  unexpected pageaddr 41/E2F48000 in WAL segment 0000000100000041000000E7, LSN 41/E7F48000, offset 16023552
+2025-11-14 16:14:41.967 PKT [664172] LOG:  redo done at 41/E7F47000 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2025-11-14 16:14:41.969 PKT [664173] LOG:  checkpoint starting: end-of-recovery immediate wait
+2025-11-14 16:14:41.979 PKT [664173] LOG:  checkpoint complete: wrote 28 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.007 s, sync=0.002 s, total=0.011 s; sync files=25, longest=0.001 s, average=0.001 s; distance=140 kB, estimate=140 kB; lsn=41/E7F48048, redo lsn=41/E7F48048
+2025-11-14 16:14:41.988 PKT [664065] LOG:  database system is ready to accept connections
+2025-11-14 16:14:41.996 PKT [664178] LOG:  neurondb: neurandefrag worker started (PID 664178)
+2025-11-14 16:14:42.003 PKT [664179] LOG:  neurondb: neuranmon worker started (PID 664179)
+2025-11-14 16:14:42.003 PKT [664180] LOG:  neurondb: neuranq worker started (PID 664180)
+2025-11-14 16:14:42.003 PKT [664177] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 16:14:42.008 PKT [664179] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 16:15:42.052 PKT [664179] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-14 16:16:42.106 PKT [664179] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-14 16:17:42.169 PKT [664179] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-14 16:18:42.231 PKT [664179] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-14 16:19:36.285 PKT [664065] LOG:  received fast shutdown request
+2025-11-14 16:19:36.323 PKT [664065] LOG:  aborting any active transactions
+2025-11-14 16:19:36.323 PKT [664177] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-14 16:19:36.323 PKT [664179] LOG:  neurondb: neuranmon worker shutting down
+2025-11-14 16:19:36.323 PKT [664178] LOG:  neurondb: neurandefrag worker shutting down (PID 664178)
+2025-11-14 16:19:36.323 PKT [664180] LOG:  neurondb: neuranq worker shutting down
+2025-11-14 16:19:36.333 PKT [664065] LOG:  background worker "logical replication launcher" (PID 664181) exited with exit code 1
+2025-11-14 16:19:36.336 PKT [664173] LOG:  shutting down
+2025-11-14 16:19:36.337 PKT [664173] LOG:  checkpoint starting: shutdown immediate
+2025-11-14 16:19:36.349 PKT [664173] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.006 s, total=0.014 s; sync files=3, longest=0.006 s, average=0.002 s; distance=7 kB, estimate=127 kB; lsn=41/E7F49D80, redo lsn=41/E7F49D80
+2025-11-14 16:19:36.377 PKT [664065] LOG:  database system is shut down
+2025-11-14 16:20:29.914 PKT [666452] LOG:  neurondb: initializing background workers
+2025-11-14 16:20:29.921 PKT [666452] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-14 16:20:29.921 PKT [666452] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-14 16:20:29.921 PKT [666452] LOG:  neurondb: registered neuranq background worker
+2025-11-14 16:20:29.921 PKT [666452] LOG:  neurondb: registered neuranmon background worker
+2025-11-14 16:20:29.921 PKT [666452] LOG:  neurondb: registered neurandefrag background worker
+2025-11-14 16:20:29.921 PKT [666452] LOG:  neurondb: registered neuranllm background worker
+2025-11-14 16:20:29.921 PKT [666452] LOG:  neurondb: all background workers registered successfully
+2025-11-14 16:20:29.947 PKT [666452] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 16:20:29.948 PKT [666452] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-14 16:20:29.948 PKT [666452] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-14 16:20:29.949 PKT [666452] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-14 16:20:29.954 PKT [666458] LOG:  database system was shut down at 2025-11-14 16:20:29 PKT
+2025-11-14 16:20:29.963 PKT [666452] LOG:  database system is ready to accept connections
+2025-11-14 16:20:29.967 PKT [666462] LOG:  neurondb: neurandefrag worker started (PID 666462)
+2025-11-14 16:20:29.974 PKT [666463] LOG:  neurondb: neuranmon worker started (PID 666463)
+2025-11-14 16:20:29.974 PKT [666461] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 16:20:29.977 PKT [666464] LOG:  neurondb: neuranq worker started (PID 666464)
+2025-11-14 16:20:29.978 PKT [666463] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 16:21:30.029 PKT [666463] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-14 16:22:30.092 PKT [666463] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-14 16:23:30.190 PKT [666463] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-14 16:24:30.288 PKT [666463] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-14 16:25:30.025 PKT [666456] LOG:  checkpoint starting: time
+2025-11-14 16:25:30.307 PKT [666456] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.207 s, sync=0.038 s, total=0.283 s; sync files=4, longest=0.037 s, average=0.010 s; distance=9 kB, estimate=9 kB; lsn=41/E7F6D608, redo lsn=41/E7F6D5B0
+2025-11-14 16:25:30.363 PKT [666463] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-14 16:26:18.574 PKT [666452] LOG:  received fast shutdown request
+2025-11-14 16:26:18.612 PKT [666452] LOG:  aborting any active transactions
+2025-11-14 16:26:18.612 PKT [666463] LOG:  neurondb: neuranmon worker shutting down
+2025-11-14 16:26:18.612 PKT [666464] LOG:  neurondb: neuranq worker shutting down
+2025-11-14 16:26:18.612 PKT [666461] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-14 16:26:18.612 PKT [666462] LOG:  neurondb: neurandefrag worker shutting down (PID 666462)
+2025-11-14 16:26:18.622 PKT [666452] LOG:  background worker "logical replication launcher" (PID 666465) exited with exit code 1
+2025-11-14 16:26:18.623 PKT [666456] LOG:  shutting down
+2025-11-14 16:26:18.624 PKT [666456] LOG:  checkpoint starting: shutdown immediate
+2025-11-14 16:26:18.630 PKT [666456] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.001 s, total=0.007 s; sync files=2, longest=0.001 s, average=0.001 s; distance=7 kB, estimate=9 kB; lsn=41/E7F6F508, redo lsn=41/E7F6F508
+2025-11-14 16:26:18.654 PKT [666452] LOG:  database system is shut down
+2025-11-14 16:35:15.908 PKT [679559] LOG:  neurondb: initializing background workers
+2025-11-14 16:35:15.915 PKT [679559] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-14 16:35:15.915 PKT [679559] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-14 16:35:15.915 PKT [679559] LOG:  neurondb: registered neuranq background worker
+2025-11-14 16:35:15.915 PKT [679559] LOG:  neurondb: registered neuranmon background worker
+2025-11-14 16:35:15.915 PKT [679559] LOG:  neurondb: registered neurandefrag background worker
+2025-11-14 16:35:15.915 PKT [679559] LOG:  neurondb: registered neuranllm background worker
+2025-11-14 16:35:15.915 PKT [679559] LOG:  neurondb: all background workers registered successfully
+2025-11-14 16:35:15.942 PKT [679559] LOG:  neurondb: shared memory initialized for all workers
+2025-11-14 16:35:15.942 PKT [679559] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-14 16:35:15.942 PKT [679559] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-14 16:35:15.943 PKT [679559] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-14 16:35:15.948 PKT [679565] LOG:  database system was shut down at 2025-11-14 16:35:15 PKT
+2025-11-14 16:35:15.958 PKT [679559] LOG:  database system is ready to accept connections
+2025-11-14 16:35:15.962 PKT [679569] LOG:  neurondb: neurandefrag worker started (PID 679569)
+2025-11-14 16:35:15.968 PKT [679568] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-14 16:35:15.968 PKT [679570] LOG:  neurondb: neuranmon worker started (PID 679570)
+2025-11-14 16:35:15.969 PKT [679571] LOG:  neurondb: neuranq worker started (PID 679571)
+2025-11-14 16:35:15.973 PKT [679570] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-14 16:36:16.037 PKT [679570] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-14 16:36:30.164 PKT [679559] LOG:  received fast shutdown request
+2025-11-14 16:36:30.203 PKT [679559] LOG:  aborting any active transactions
+2025-11-14 16:36:30.203 PKT [679570] LOG:  neurondb: neuranmon worker shutting down
+2025-11-14 16:36:30.203 PKT [679571] LOG:  neurondb: neuranq worker shutting down
+2025-11-14 16:36:30.203 PKT [679568] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-14 16:36:30.203 PKT [679569] LOG:  neurondb: neurandefrag worker shutting down (PID 679569)
+2025-11-14 16:36:30.212 PKT [679559] LOG:  background worker "logical replication launcher" (PID 679572) exited with exit code 1
+2025-11-14 16:36:30.215 PKT [679563] LOG:  shutting down
+2025-11-14 16:36:30.216 PKT [679563] LOG:  checkpoint starting: shutdown immediate
+2025-11-14 16:36:30.229 PKT [679563] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.006 s, total=0.014 s; sync files=4, longest=0.006 s, average=0.002 s; distance=8 kB, estimate=8 kB; lsn=41/E7FD5D58, redo lsn=41/E7FD5D58
+2025-11-14 16:36:30.251 PKT [679559] LOG:  database system is shut down

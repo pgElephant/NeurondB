@@ -332,3 +332,15 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for Hierarchical Clustering
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_hierarchical_model(void)
+{
+	elog(DEBUG1, "Hierarchical GPU Model Ops registration skipped - not yet implemented");
+}

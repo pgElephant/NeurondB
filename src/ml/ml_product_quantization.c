@@ -574,3 +574,15 @@ pq_asymmetric_distance(PG_FUNCTION_ARGS)
 
 	PG_RETURN_FLOAT4((float4)sqrt(total_dist));
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for ProductQuantization
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_product_quantization_model(void)
+{
+	elog(DEBUG1, "ProductQuantization GPU Model Ops registration skipped - not yet implemented");
+}

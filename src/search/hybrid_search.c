@@ -18,6 +18,7 @@
 #include "postgres.h"
 #include "neurondb.h"
 #include "fmgr.h"
+#include "funcapi.h"
 #include "executor/spi.h"
 #include "utils/builtins.h"
 #include "catalog/pg_type.h"
@@ -28,6 +29,7 @@
 #include "utils/array.h"
 #include "utils/varlena.h"
 #include "utils/elog.h"
+#include "utils/fmgrprotos.h"
 
 typedef struct mmr_cand_t
 {
@@ -68,33 +70,79 @@ vector_to_float_array(const Vector *vec, float *arr, int dim)
 	int i;
 
 	for (i = 0; i < dim; i++)
-		arr[i] = ((const float *)&vec[1])[i];
+		arr[i] = vec->data[i];
 }
 
 /*
  * Hybrid search: Vector + FTS + Metadata filters
+ * Returns SRF: TABLE(id bigint, score real)
  */
+typedef struct HybridSearchState
+{
+	int num_results;
+	int current_idx;
+	int64 *ids;
+	float4 *scores;
+} HybridSearchState;
+
 PG_FUNCTION_INFO_V1(hybrid_search);
 Datum
 hybrid_search(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_PP(0);
-	Vector *query_vec = PG_GETARG_VECTOR_P(1);
-	text *query_text = PG_GETARG_TEXT_PP(2);
-	text *filters = PG_GETARG_TEXT_PP(3);
-	float8 vector_weight = PG_GETARG_FLOAT8(4);
-	int32 limit = PG_GETARG_INT32(5);
-	char *tbl_str;
-	char *txt_str;
-	char *filter_str;
-	StringInfoData sql;
-	StringInfoData vec_lit;
-	Datum *results_datums;
-	bool *results_nulls;
-	int proc;
-	ArrayType *ret_array;
-	int spi_ret;
-	int i;
+	FuncCallContext *funcctx;
+	HybridSearchState *state;
+	
+	if (SRF_IS_FIRSTCALL())
+	{
+		MemoryContext oldcontext;
+		TupleDesc tupdesc;
+		text *table_name = PG_GETARG_TEXT_PP(0);
+		Vector *query_vec;
+		text *query_text = PG_GETARG_TEXT_PP(2);
+		text *filters = PG_GETARG_TEXT_PP(3);
+		float8 vector_weight = PG_GETARG_FLOAT8(4);
+		int32 limit = PG_GETARG_INT32(5);
+		char *tbl_str;
+		char *txt_str;
+		char *filter_str;
+		StringInfoData sql;
+		StringInfoData vec_lit;
+		int spi_ret;
+		int i;
+		int proc;
+
+	/* Get vector argument - handle NULL case */
+	if (PG_ARGISNULL(1))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("hybrid_search: query vector cannot be NULL")));
+	
+	/* PG_GETARG_VECTOR_P already handles detoasting */
+	query_vec = PG_GETARG_VECTOR_P(1);
+	
+	/* Validate vector structure */
+	if (query_vec == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("hybrid_search: query vector is NULL")));
+	
+	/* Check vector size */
+	if (VARSIZE(query_vec) < VARHDRSZ + sizeof(int16) * 2)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("hybrid_search: invalid vector size")));
+	
+	if (query_vec->dim <= 0 || query_vec->dim > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("hybrid_search: invalid vector dimension %d", query_vec->dim)));
+	
+	/* Validate vector has enough data */
+	if (VARSIZE(query_vec) < VARHDRSZ + sizeof(int16) * 2 + sizeof(float4) * query_vec->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("hybrid_search: vector size mismatch (dim=%d, size=%d)",
+				query_vec->dim, VARSIZE(query_vec))));
 
 	tbl_str = text_to_cstring(table_name);
 	txt_str = text_to_cstring(query_text);
@@ -114,13 +162,32 @@ hybrid_search(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("SPI_connect failed")));
 
 	/* Build vector literal representation for SQL (float array as '{...}') */
+	/* Vector data is a flexible array member, access directly */
 	initStringInfo(&vec_lit);
 	appendStringInfoChar(&vec_lit, '{');
 	for (i = 0; i < query_vec->dim; i++)
 	{
+		float4 val;
+		
 		if (i)
 			appendStringInfoChar(&vec_lit, ',');
-		appendStringInfo(&vec_lit, "%g", ((float *)&query_vec[1])[i]);
+		
+		/* Access vector data safely - flexible array member */
+		val = query_vec->data[i];
+		
+		/* Validate each value before formatting */
+		if (!isfinite(val))
+		{
+			pfree(vec_lit.data);
+			SPI_finish();
+			pfree(tbl_str);
+			pfree(txt_str);
+			pfree(filter_str);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("hybrid_search: non-finite value in vector at index %d", i)));
+		}
+		appendStringInfo(&vec_lit, "%g", val);
 	}
 	appendStringInfoChar(&vec_lit, '}');
 
@@ -136,7 +203,7 @@ hybrid_search(PG_FUNCTION_ARGS)
 		"   FROM %s "
 		"  WHERE metadata @> %s "
 		") "
-		"SELECT id "
+		"SELECT id, hybrid_score "
 		" FROM (SELECT id, "
 		"              (%f * vector_score + (1 - %f) * fts_score) as "
 		"hybrid_score "
@@ -160,50 +227,105 @@ hybrid_search(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errmsg("Failed to execute hybrid search SQL")));
 	}
 
-	proc = SPI_processed;
+		proc = SPI_processed;
 
-	if (proc == 0)
-	{
+		/* Initialize SRF context */
+		funcctx = SRF_FIRSTCALL_INIT();
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		
+		/* Build tuple descriptor */
+		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+			ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("function returning record called in context that cannot accept type record")));
+		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+		
+		/* Allocate state */
+		state = (HybridSearchState *)palloc0(sizeof(HybridSearchState));
+		
+		if (proc == 0)
+		{
+			state->num_results = 0;
+			state->ids = NULL;
+			state->scores = NULL;
+		}
+		else
+		{
+			/* Extract results from SPI */
+			state->num_results = proc;
+			state->ids = (int64 *)palloc(sizeof(int64) * proc);
+			state->scores = (float4 *)palloc(sizeof(float4) * proc);
+			
+			for (i = 0; i < proc; i++)
+			{
+				bool isnull_id, isnull_score;
+				Datum id_val, score_val;
+				
+				/* Get id (column 1) */
+				id_val = SPI_getbinval(SPI_tuptable->vals[i],
+					SPI_tuptable->tupdesc,
+					1,
+					&isnull_id);
+				
+				/* Get score (column 2) */
+				score_val = SPI_getbinval(SPI_tuptable->vals[i],
+					SPI_tuptable->tupdesc,
+					2,
+					&isnull_score);
+				
+				if (!isnull_id)
+				{
+					/* Convert id to int64 */
+					Oid id_type = SPI_gettypeid(SPI_tuptable->tupdesc, 1);
+					if (id_type == INT8OID)
+						state->ids[i] = DatumGetInt64(id_val);
+					else if (id_type == INT4OID)
+						state->ids[i] = (int64)DatumGetInt32(id_val);
+					else
+						state->ids[i] = 0; /* fallback */
+				}
+				else
+					state->ids[i] = 0;
+				
+				if (!isnull_score)
+					state->scores[i] = DatumGetFloat4(score_val);
+				else
+					state->scores[i] = 0.0f;
+			}
+		}
+		
+		funcctx->user_fctx = state;
+		funcctx->max_calls = proc;
+		
 		pfree(sql.data);
 		pfree(vec_lit.data);
+		pfree(tbl_str);
+		pfree(txt_str);
+		pfree(filter_str);
 		SPI_finish();
-		/* Return empty text[] */
-		ret_array = construct_empty_array(TEXTOID);
-		PG_RETURN_ARRAYTYPE_P(ret_array);
+		MemoryContextSwitchTo(oldcontext);
 	}
-
-	results_datums = palloc0(sizeof(Datum) * proc);
-	results_nulls = palloc0(sizeof(bool) * proc);
-
-	for (i = 0; i < proc; i++)
+	
+	/* Subsequent calls */
+	funcctx = SRF_PERCALL_SETUP();
+	state = (HybridSearchState *)funcctx->user_fctx;
+	
+	if (funcctx->call_cntr < funcctx->max_calls)
 	{
-		bool isnull;
-		Datum val;
-
-		val = SPI_getbinval(SPI_tuptable->vals[i],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
-		if (!isnull)
-		{
-			text *t = cstring_to_text(DatumGetCString(val));
-			results_datums[i] = PointerGetDatum(t);
-			results_nulls[i] = false;
-		} else
-		{
-			results_datums[i] = (Datum)0;
-			results_nulls[i] = true;
-		}
+		Datum values[2];
+		bool nulls[2] = { false, false };
+		HeapTuple tuple;
+		
+		values[0] = Int64GetDatum(state->ids[funcctx->call_cntr]);
+		values[1] = Float4GetDatum(state->scores[funcctx->call_cntr]);
+		
+		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 	}
-
-	ret_array =
-		construct_array(results_datums, proc, TEXTOID, -1, false, 'i');
-	pfree(results_datums);
-	pfree(results_nulls);
-	pfree(sql.data);
-	pfree(vec_lit.data);
-	SPI_finish();
-	PG_RETURN_ARRAYTYPE_P(ret_array);
+	else
+	{
+		SRF_RETURN_DONE(funcctx);
+	}
 }
 
 /*

@@ -1,6 +1,6 @@
 \timing on
 \pset footer off
-
+\pset pager off
 -- This test uses sample_train and sample_test tables created by ml_dataset.py
 -- Run: python ml_dataset.py <dataset_name> to populate the database first
 -- Or use the test runner: python run_ml_tests.py

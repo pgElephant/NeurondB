@@ -254,3 +254,15 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 
 	PG_RETURN_FLOAT8(db_index);
 }
+
+/*-------------------------------------------------------------------------
+ * GPU Model Ops Registration Stub for DaviesBouldin
+ *-------------------------------------------------------------------------
+ */
+#include "neurondb_gpu_model.h"
+
+void
+neurondb_gpu_register_davies_bouldin_model(void)
+{
+	elog(DEBUG1, "DaviesBouldin GPU Model Ops registration skipped - not yet implemented");
+}

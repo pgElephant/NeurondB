@@ -931,7 +931,10 @@ ndb_llm_route_rerank(const NdbLLMConfig *cfg,
 
 	if (cfg->provider == NULL || provider_is(cfg->provider, "huggingface")
 		|| provider_is(cfg->provider, "hf-http"))
-		return ndb_hf_rerank(cfg, query, docs, ndocs, scores_out);
+	{
+		int rc = ndb_hf_rerank(cfg, query, docs, ndocs, scores_out);
+		return (rc == 0) ? NDB_LLM_ROUTE_SUCCESS : NDB_LLM_ROUTE_ERROR;
+	}
 
 	if (provider_is(cfg->provider, "huggingface-local")
 		|| provider_is(cfg->provider, "hf-local"))
@@ -1072,7 +1075,7 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 				params_json,
 				batch_results,
 				&gpu_err);
-			elog(NOTICE, "neurondb: router got rc=%d from neurondb_gpu_hf_complete_batch", rc);
+			elog(DEBUG1, "neurondb: router got rc=%d from neurondb_gpu_hf_complete_batch", rc);
 			if (rc == 0)
 			{
 				/* Copy results to output */
@@ -1119,7 +1122,7 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 					}
 				}
 				out->num_success = num_success;
-				elog(NOTICE, "neurondb: router processed GPU batch results: %d/%d succeeded", num_success, num_prompts);
+				elog(DEBUG1, "neurondb: router processed GPU batch results: %d/%d succeeded", num_success, num_prompts);
 				if (gpu_err)
 					pfree(gpu_err);
 				pfree(batch_results);
@@ -1245,13 +1248,22 @@ ndb_llm_route_rerank_batch(const NdbLLMConfig *cfg,
 		float *scores = NULL;
 		int rc;
 
+		/* Skip if query or docs are NULL */
+		if (queries[i] == NULL || docs_array[i] == NULL
+			|| ndocs_array[i] <= 0)
+		{
+			(*scores_out)[i] = NULL;
+			(*nscores_out)[i] = 0;
+			continue;
+		}
+
 		rc = ndb_llm_route_rerank(cfg,
 			opts,
 			queries[i],
 			docs_array[i],
 			ndocs_array[i],
 			&scores);
-		if (rc == 0 && scores != NULL)
+		if (rc == NDB_LLM_ROUTE_SUCCESS && scores != NULL)
 		{
 			(*scores_out)[i] = scores;
 			(*nscores_out)[i] = ndocs_array[i];
