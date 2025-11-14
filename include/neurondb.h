@@ -64,6 +64,30 @@ typedef struct VectorBinary
 	uint8 data[FLEXIBLE_ARRAY_MEMBER];
 } VectorBinary;
 
+/* UINT8 quantized vector (8x compression, unsigned) */
+typedef struct VectorU8
+{
+	int32 vl_len_;
+	int16 dim;
+	uint8 data[FLEXIBLE_ARRAY_MEMBER];
+} VectorU8;
+
+/* Ternary vector (16x compression, 2 bits per dimension) */
+typedef struct VectorTernary
+{
+	int32 vl_len_;
+	int16 dim; /* number of dimensions */
+	uint8 data[FLEXIBLE_ARRAY_MEMBER]; /* Packed: 4 values per byte */
+} VectorTernary;
+
+/* INT4 quantized vector (16x compression, 4 bits per dimension) */
+typedef struct VectorI4
+{
+	int32 vl_len_;
+	int16 dim; /* number of dimensions */
+	uint8 data[FLEXIBLE_ARRAY_MEMBER]; /* Packed: 2 values per byte */
+} VectorI4;
+
 /* ========== Macros ========== */
 
 #define DatumGetVector(x) ((Vector *)PG_DETOAST_DATUM(x))
@@ -97,6 +121,9 @@ float4 l1_distance(Vector *a, Vector *b);
 VectorI8 *quantize_vector_i8(Vector *v);
 VectorF16 *quantize_vector_f16(Vector *v);
 VectorBinary *quantize_vector_binary(Vector *v);
+VectorU8 *quantize_vector_uint8(Vector *v);
+VectorTernary *quantize_vector_ternary(Vector *v);
+VectorI4 *quantize_vector_int4(Vector *v);
 Vector *dequantize_vector(void *qv, int type);
 
 /* index_hnsw.c - HNSW index */

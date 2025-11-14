@@ -24,6 +24,7 @@
 #include "utils/lsyscache.h"
 #include "catalog/pg_type.h"
 #include <math.h>
+#include <float.h>
 #include <ctype.h>
 
 PG_MODULE_MAGIC;
@@ -61,7 +62,20 @@ Vector *
 copy_vector(Vector *vector)
 {
 	Vector *result;
-	int size = VARSIZE_ANY(vector);
+	int size;
+
+	if (vector == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot copy NULL vector")));
+
+	size = VARSIZE_ANY(vector);
+
+	/* Validate size is reasonable */
+	if (size < (int)offsetof(Vector, data) || size > (int)(offsetof(Vector, data) + sizeof(float4) * VECTOR_MAX_DIM))
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("invalid vector size: %d", size)));
 
 	result = (Vector *)palloc(size);
 	memcpy(result, vector, size);
@@ -271,8 +285,26 @@ vector_norm(PG_FUNCTION_ARGS)
 	double sum = 0.0;
 	int i;
 
+	if (vector == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute norm of NULL vector")));
+
+	if (vector->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("cannot compute norm of vector with dimension %d",
+					vector->dim)));
+
 	for (i = 0; i < vector->dim; i++)
-		sum += (double)vector->data[i] * (double)vector->data[i];
+	{
+		double val = (double)vector->data[i];
+		if (isnan(val) || isinf(val))
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("cannot compute norm of vector containing NaN or Infinity")));
+		sum += val * val;
+	}
 
 	PG_RETURN_FLOAT8(sqrt(sum));
 }
@@ -284,22 +316,50 @@ normalize_vector(Vector *v)
 	double norm = 0.0;
 	int i;
 
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot normalize NULL vector")));
+
+	if (v->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("cannot normalize vector with dimension %d",
+					v->dim)));
+
 	for (i = 0; i < v->dim; i++)
-		norm += (double)v->data[i] * (double)v->data[i];
+	{
+		double val = (double)v->data[i];
+		if (isnan(val) || isinf(val))
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("cannot normalize vector containing NaN or Infinity")));
+		norm += val * val;
+	}
 
 	if (norm > 0.0)
 	{
 		norm = sqrt(norm);
-		for (i = 0; i < v->dim; i++)
-			v->data[i] /= norm;
+		if (norm > 0.0)
+		{
+			for (i = 0; i < v->dim; i++)
+				v->data[i] /= norm;
+		}
 	}
+	/* If norm == 0.0, vector is zero vector - leave unchanged */
 }
 
 Vector *
 normalize_vector_new(Vector *v)
 {
-	Vector *result = copy_vector(v);
+	Vector *result;
 
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot normalize NULL vector")));
+
+	result = copy_vector(v);
 	normalize_vector(result);
 	return result;
 }
@@ -322,8 +382,22 @@ vector_concat(PG_FUNCTION_ARGS)
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	Vector *result;
-	int new_dim = a->dim + b->dim;
+	int new_dim;
 
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot concatenate NULL vectors")));
+
+	/* Check for overflow */
+	if (a->dim > VECTOR_MAX_DIM - b->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				errmsg("concatenated vector dimension %d would exceed maximum %d",
+					a->dim + b->dim,
+					VECTOR_MAX_DIM)));
+
+	new_dim = a->dim + b->dim;
 	result = new_vector(new_dim);
 	memcpy(result->data, a->data, sizeof(float4) * a->dim);
 	memcpy(result->data + a->dim, b->data, sizeof(float4) * b->dim);
@@ -341,14 +415,27 @@ vector_add(PG_FUNCTION_ARGS)
 	Vector *result;
 	int i;
 
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot add NULL vectors")));
+
 	if (a->dim != b->dim)
 		ereport(ERROR,
 			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector dimensions must match")));
+				errmsg("vector dimensions must match: %d vs %d",
+					a->dim,
+					b->dim)));
 
 	result = new_vector(a->dim);
 	for (i = 0; i < a->dim; i++)
-		result->data[i] = a->data[i] + b->data[i];
+	{
+		double sum = (double)a->data[i] + (double)b->data[i];
+		if (isinf(sum))
+			ereport(WARNING,
+				(errmsg("vector addition resulted in infinity at index %d", i)));
+		result->data[i] = (float4)sum;
+	}
 
 	PG_RETURN_VECTOR_P(result);
 }
@@ -363,14 +450,27 @@ vector_sub(PG_FUNCTION_ARGS)
 	Vector *result;
 	int i;
 
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot subtract NULL vectors")));
+
 	if (a->dim != b->dim)
 		ereport(ERROR,
 			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector dimensions must match")));
+				errmsg("vector dimensions must match: %d vs %d",
+					a->dim,
+					b->dim)));
 
 	result = new_vector(a->dim);
 	for (i = 0; i < a->dim; i++)
-		result->data[i] = a->data[i] - b->data[i];
+	{
+		double diff = (double)a->data[i] - (double)b->data[i];
+		if (isinf(diff))
+			ereport(WARNING,
+				(errmsg("vector subtraction resulted in infinity at index %d", i)));
+		result->data[i] = (float4)diff;
+	}
 
 	PG_RETURN_VECTOR_P(result);
 }
@@ -385,9 +485,25 @@ vector_mul(PG_FUNCTION_ARGS)
 	Vector *result;
 	int i;
 
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot multiply NULL vector")));
+
+	if (isnan(scalar) || isinf(scalar))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("scalar multiplier cannot be NaN or Infinity")));
+
 	result = new_vector(v->dim);
 	for (i = 0; i < v->dim; i++)
-		result->data[i] = v->data[i] * scalar;
+	{
+		double product = (double)v->data[i] * scalar;
+		if (isinf(product))
+			ereport(WARNING,
+				(errmsg("vector multiplication resulted in infinity at index %d", i)));
+		result->data[i] = (float4)product;
+	}
 
 	PG_RETURN_VECTOR_P(result);
 }

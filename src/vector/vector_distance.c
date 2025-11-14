@@ -25,12 +25,42 @@
 static inline void
 check_dimensions(const Vector *a, const Vector *b)
 {
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute distance with NULL vectors")));
+
 	if (a->dim != b->dim)
 		ereport(ERROR,
 			(errcode(ERRCODE_DATA_EXCEPTION),
 				errmsg("vector dimensions must match: %d vs %d",
 					a->dim,
 					b->dim)));
+
+	if (a->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("cannot compute distance for vector with dimension %d",
+					a->dim)));
+
+	/* Check for NaN/Inf in vectors */
+	{
+		int i;
+		for (i = 0; i < a->dim; i++)
+		{
+			if (isnan(a->data[i]) || isinf(a->data[i]))
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("vector contains NaN or Infinity at index %d", i)));
+		}
+		for (i = 0; i < b->dim; i++)
+		{
+			if (isnan(b->data[i]) || isinf(b->data[i]))
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("vector contains NaN or Infinity at index %d", i)));
+		}
+	}
 }
 
 /* L2 (Euclidean) distance, uses Kahan summation for numerical stability */
@@ -39,6 +69,7 @@ l2_distance(Vector *a, Vector *b)
 {
 	double sum = 0.0, c = 0.0;
 	int i;
+	float4 result;
 
 	check_dimensions(a, b);
 
@@ -51,7 +82,15 @@ l2_distance(Vector *a, Vector *b)
 		sum = t;
 	}
 
-	return (float4)sqrt(sum);
+	result = (float4)sqrt(sum);
+
+	/* Check for overflow/underflow */
+	if (isnan(result) || isinf(result))
+		ereport(ERROR,
+			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				errmsg("L2 distance calculation resulted in NaN or Infinity")));
+
+	return result;
 }
 
 PG_FUNCTION_INFO_V1(vector_l2_distance);
@@ -93,6 +132,7 @@ cosine_distance(Vector *a, Vector *b)
 {
 	double dot = 0.0, norm_a = 0.0, norm_b = 0.0;
 	int i;
+	float4 result;
 
 	check_dimensions(a, b);
 
@@ -110,7 +150,15 @@ cosine_distance(Vector *a, Vector *b)
 	if (norm_a == 0.0 || norm_b == 0.0)
 		return 1.0;
 
-	return (float4)(1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b))));
+	result = (float4)(1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b))));
+
+	/* Validate result */
+	if (isnan(result) || isinf(result))
+		ereport(ERROR,
+			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				errmsg("cosine distance calculation resulted in NaN or Infinity")));
+
+	return result;
 }
 
 PG_FUNCTION_INFO_V1(vector_cosine_distance);
@@ -248,4 +296,159 @@ vector_minkowski_distance(PG_FUNCTION_ARGS)
 		}
 		PG_RETURN_FLOAT8(pow(sum, 1.0 / p));
 	}
+}
+
+/*
+ * Squared Euclidean distance: L2^2 (faster, no sqrt)
+ * Useful when only relative distances matter
+ */
+PG_FUNCTION_INFO_V1(vector_squared_l2_distance);
+Datum
+vector_squared_l2_distance(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	double sum = 0.0, c = 0.0;
+	int i;
+
+	check_dimensions(a, b);
+
+	for (i = 0; i < a->dim; i++)
+	{
+		double diff = (double)a->data[i] - (double)b->data[i];
+		double y = (diff * diff) - c;
+		double t = sum + y;
+		c = (t - sum) - y;
+		sum = t;
+	}
+
+	PG_RETURN_FLOAT8(sum);
+}
+
+/*
+ * Jaccard distance: 1 - Jaccard similarity
+ * Jaccard similarity = |A ∩ B| / |A ∪ B|
+ * For vectors, treats non-zero values as set membership
+ */
+PG_FUNCTION_INFO_V1(vector_jaccard_distance);
+Datum
+vector_jaccard_distance(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	int intersection = 0;
+	int union_count = 0;
+	int i;
+	double jaccard_sim;
+
+	check_dimensions(a, b);
+
+	for (i = 0; i < a->dim; i++)
+	{
+		bool a_nonzero = (fabs((double)a->data[i]) > 1e-10);
+		bool b_nonzero = (fabs((double)b->data[i]) > 1e-10);
+
+		if (a_nonzero && b_nonzero)
+			intersection++;
+		if (a_nonzero || b_nonzero)
+			union_count++;
+	}
+
+	if (union_count == 0)
+	{
+		PG_RETURN_FLOAT8(0.0); /* Both vectors are zero */
+	}
+
+	jaccard_sim = (double)intersection / (double)union_count;
+	PG_RETURN_FLOAT8(1.0 - jaccard_sim);
+}
+
+/*
+ * Dice distance: 1 - Dice coefficient
+ * Dice coefficient = 2|A ∩ B| / (|A| + |B|)
+ * For vectors, treats non-zero values as set membership
+ */
+PG_FUNCTION_INFO_V1(vector_dice_distance);
+Datum
+vector_dice_distance(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	int intersection = 0;
+	int a_count = 0;
+	int b_count = 0;
+	int i;
+	double dice_coeff;
+
+	check_dimensions(a, b);
+
+	for (i = 0; i < a->dim; i++)
+	{
+		bool a_nonzero = (fabs((double)a->data[i]) > 1e-10);
+		bool b_nonzero = (fabs((double)b->data[i]) > 1e-10);
+
+		if (a_nonzero && b_nonzero)
+			intersection++;
+		if (a_nonzero)
+			a_count++;
+		if (b_nonzero)
+			b_count++;
+	}
+
+	if (a_count == 0 && b_count == 0)
+		return 0.0; /* Both vectors are zero */
+
+	if (a_count == 0 || b_count == 0)
+		return 1.0; /* No overlap */
+
+	dice_coeff = (2.0 * (double)intersection) / ((double)a_count + (double)b_count);
+	PG_RETURN_FLOAT8(1.0 - dice_coeff);
+}
+
+/*
+ * Mahalanobis distance: sqrt((a-b)^T * S^(-1) * (a-b))
+ * Where S is the covariance matrix
+ * Requires pre-computed covariance matrix (passed as vector of inverse diagonal)
+ * Simplified version: assumes diagonal covariance matrix
+ */
+PG_FUNCTION_INFO_V1(vector_mahalanobis_distance);
+Datum
+vector_mahalanobis_distance(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *covariance_inv = PG_ARGISNULL(2) ? NULL : PG_GETARG_VECTOR_P(2);
+	double sum = 0.0;
+	int i;
+
+	check_dimensions(a, b);
+
+	if (covariance_inv == NULL)
+	{
+		/* No covariance matrix: fall back to L2 distance */
+		PG_RETURN_FLOAT4(l2_distance(a, b));
+	}
+
+	if (covariance_inv->dim != a->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("covariance matrix dimension must match vector dimension: %d vs %d",
+					covariance_inv->dim,
+					a->dim)));
+
+	/* Compute Mahalanobis distance with diagonal covariance assumption */
+	for (i = 0; i < a->dim; i++)
+	{
+		double diff = (double)a->data[i] - (double)b->data[i];
+		double inv_var = (double)covariance_inv->data[i];
+
+		if (inv_var <= 0.0 || isnan(inv_var) || isinf(inv_var))
+			ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+					errmsg("covariance inverse must be positive and finite")));
+
+		sum += diff * diff * inv_var;
+	}
+
+	PG_RETURN_FLOAT8(sqrt(sum));
 }

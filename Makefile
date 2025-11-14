@@ -299,7 +299,7 @@ ifeq ($(UNAME_S),Darwin)
 		HAVE_METAL := yes
 		PG_CPPFLAGS += -DNDB_GPU_METAL
 		SHLIB_LINK += -framework Metal -framework MetalPerformanceShaders -framework Accelerate -framework Foundation
-		METAL_OBJS = src/gpu/metal/gpu_metal.o src/gpu/metal/gpu_metal_impl.o
+		METAL_OBJS = src/gpu/metal/gpu_metal.o src/gpu/metal/gpu_metal_impl.o src/gpu/metal/gpu_backend_metal.o
 	endif
 endif
 

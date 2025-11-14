@@ -129,10 +129,11 @@ const char *
 metal_backend_device_name(void)
 {
 	@autoreleasepool {
+		static char device_name[256];
+
 		if (!metal_device)
 			return "None";
 
-		static char device_name[256];
 		snprintf(device_name, sizeof(device_name), "%s", [[metal_device name] UTF8String]);
 		return device_name;
 	}
@@ -146,6 +147,9 @@ float
 metal_backend_l2_distance(const float *a, const float *b, int dim)
 {
 	@autoreleasepool {
+		float *diff;
+		float result;
+
 		if (!metal_backend_is_available())
 			return -1.0f;
 
@@ -154,7 +158,7 @@ metal_backend_l2_distance(const float *a, const float *b, int dim)
 			return -1.0f;
 
 		/* Use Accelerate vDSP - GPU-optimized on Apple Silicon, NO shader compilation */
-		float *diff = (float *)malloc(dim * sizeof(float));
+		diff = (float *)malloc(dim * sizeof(float));
 		if (!diff)
 			return -1.0f;
 
@@ -165,7 +169,7 @@ metal_backend_l2_distance(const float *a, const float *b, int dim)
 		vDSP_vsq(diff, 1, diff, 1, dim);
 
 		/* Sum squared differences: result = sum(diff) */
-		float result = 0.0f;
+		result = 0.0f;
 		vDSP_sve(diff, 1, &result, dim);
 
 		free(diff);
@@ -185,6 +189,10 @@ float
 metal_backend_cosine_distance(const float *a, const float *b, int dim)
 {
 	@autoreleasepool {
+		vDSP_Length n;
+		float dot, norm_a, norm_b;
+		float similarity;
+
 		if (!metal_backend_is_available())
 			return -1.0f;
 
@@ -192,15 +200,14 @@ metal_backend_cosine_distance(const float *a, const float *b, int dim)
 			return -1.0f;
 
 		/* Use Accelerate vDSP - GPU-optimized on Apple Silicon, NO shader compilation */
-		vDSP_Length n = (vDSP_Length)dim;
-		float dot, norm_a, norm_b;
+		n = (vDSP_Length)dim;
 
 		/* GPU-accelerated operations via Accelerate */
 		vDSP_dotpr(a, 1, b, 1, &dot, n);
 		vDSP_dotpr(a, 1, a, 1, &norm_a, n);
 		vDSP_dotpr(b, 1, b, 1, &norm_b, n);
 
-		float similarity = dot / (sqrtf(norm_a) * sqrtf(norm_b));
+		similarity = dot / (sqrtf(norm_a) * sqrtf(norm_b));
 
 		total_gpu_ops++;
 		return 1.0f - similarity;
@@ -214,6 +221,8 @@ float
 metal_backend_inner_product(const float *a, const float *b, int dim)
 {
 	@autoreleasepool {
+		float result;
+
 		if (!metal_backend_is_available())
 			return -1.0f;
 
@@ -221,7 +230,6 @@ metal_backend_inner_product(const float *a, const float *b, int dim)
 			return -1.0f;
 
 		/* GPU-accelerated dot product via Accelerate vDSP */
-		float result;
 		vDSP_dotpr(a, 1, b, 1, &result, (vDSP_Length)dim);
 
 		total_gpu_ops++;

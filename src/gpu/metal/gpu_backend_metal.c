@@ -20,6 +20,10 @@
 #include "utils/elog.h"
 #include "utils/palloc.h"
 #include "utils/jsonb.h"
+#include "utils/builtins.h"
+#include "fmgr.h"
+#include "utils/numeric.h"
+#include "lib/stringinfo.h"
 #include "neurondb_gpu_backend.h"
 #include "neurondb_gpu_types.h"
 #include "neurondb_gpu.h"
@@ -44,6 +48,82 @@
 #include <float.h>
 #include <stdint.h>
 #include <stdbool.h>
+
+/* Flat RF layout (must match ml_random_forest.c) */
+typedef struct RFNodeFlat_Metal
+{
+	int32 feature_index;
+	uint32 _pad0;
+	double threshold;
+	int32 left;
+	int32 right;
+	int32 is_leaf;
+	uint32 _pad1;
+	double value;
+} RFNodeFlat_Metal;
+
+/* Forward declarations for all backend functions */
+static int ndb_metal_init(void);
+static void ndb_metal_shutdown(void);
+static int ndb_metal_is_available(void);
+static int ndb_metal_device_count(void);
+static int ndb_metal_device_info(int device_id, NDBGpuDeviceInfo *info);
+static int ndb_metal_set_device(int device_id);
+static int ndb_metal_mem_alloc(void **ptr, size_t bytes);
+static int ndb_metal_mem_free(void *ptr);
+static int ndb_metal_memcpy_h2d(void *dst, const void *src, size_t bytes);
+static int ndb_metal_memcpy_d2h(void *dst, const void *src, size_t bytes);
+static int ndb_metal_launch_l2_distance(const float *A, const float *B, float *out, int n, int d, ndb_stream_t stream);
+static int ndb_metal_launch_cosine(const float *A, const float *B, float *out, int n, int d, ndb_stream_t stream);
+static int ndb_metal_launch_kmeans_assign(const float *X, const float *C, int *idx, int n, int d, int k, ndb_stream_t stream);
+static int ndb_metal_launch_kmeans_update(const float *X, const int *idx, float *C, int n, int d, int k, ndb_stream_t stream);
+static int ndb_metal_launch_quant_fp16(const float *in, void *out, int n, ndb_stream_t stream);
+static int ndb_metal_launch_quant_int8(const float *in, int8_t *out, int n, float scale, ndb_stream_t stream);
+static int ndb_metal_launch_quant_binary(const float *in, uint8_t *out, int n, ndb_stream_t stream);
+static int ndb_metal_launch_pq_encode(const float *X, const float *codebooks, uint8_t *codes, int n, int d, int m, int ks, ndb_stream_t stream);
+static int ndb_metal_rf_train(const float *features, const double *labels, int n_samples, int feature_dim, int class_count, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_rf_predict(const bytea *model_data, const float *input, int feature_dim, int *class_out, char **errstr);
+static int ndb_metal_rf_pack(const struct RFModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_lr_train(const float *features, const double *labels, int n_samples, int feature_dim, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_lr_predict(const bytea *model_data, const float *input, int feature_dim, double *probability_out, char **errstr);
+static int ndb_metal_lr_pack(const struct LRModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_linreg_train(const float *features, const double *targets, int n_samples, int feature_dim, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_linreg_predict(const bytea *model_data, const float *input, int feature_dim, double *prediction_out, char **errstr);
+static int ndb_metal_linreg_pack(const struct LinRegModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_svm_train(const float *features, const double *labels, int n_samples, int feature_dim, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_svm_predict(const bytea *model_data, const float *input, int feature_dim, int *class_out, double *confidence_out, char **errstr);
+static int ndb_metal_svm_pack(const struct SVMModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_dt_train(const float *features, const double *labels, int n_samples, int feature_dim, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_dt_predict(const bytea *model_data, const float *input, int feature_dim, double *prediction_out, char **errstr);
+static int ndb_metal_dt_pack(const struct DTModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_ridge_train(const float *features, const double *targets, int n_samples, int feature_dim, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_ridge_predict(const bytea *model_data, const float *input, int feature_dim, double *prediction_out, char **errstr);
+static int ndb_metal_ridge_pack(const struct RidgeModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_lasso_train(const float *features, const double *targets, int n_samples, int feature_dim, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_lasso_predict(const bytea *model_data, const float *input, int feature_dim, double *prediction_out, char **errstr);
+static int ndb_metal_lasso_pack(const struct LassoModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_nb_train(const float *features, const double *labels, int n_samples, int feature_dim, int class_count, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_nb_predict(const bytea *model_data, const float *input, int feature_dim, int *class_out, double *probability_out, char **errstr);
+static int ndb_metal_nb_pack(const struct GaussianNBModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_gmm_train(const float *features, int n_samples, int feature_dim, int n_components, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_gmm_predict(const bytea *model_data, const float *input, int feature_dim, int *cluster_out, double *probability_out, char **errstr);
+static int ndb_metal_gmm_pack(const struct GMMModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_knn_train(const float *features, const double *labels, int n_samples, int feature_dim, int k, int task_type, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_knn_predict(const bytea *model_data, const float *input, int feature_dim, double *prediction_out, char **errstr);
+static int ndb_metal_knn_pack(const struct KNNModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_stream_create(ndb_stream_t *stream);
+static int ndb_metal_stream_destroy(ndb_stream_t stream);
+static int ndb_metal_stream_synchronize(ndb_stream_t stream);
+
+/* Weak symbol for RF prediction - forward declaration */
+bool neurondb_gpu_rf_predict_backend(const void *rf_hdr,
+	const void *trees,
+	const void *nodes,
+	int node_capacity,
+	const float *x,
+	int n_features,
+	int *class_out,
+	char **errstr);
 
 /* Metal Backend Lifecycle */
 
@@ -100,7 +180,7 @@ metal_backend_get_device_count_impl(void)
 	return count;
 }
 
-static bool
+static bool __attribute__((unused))
 metal_backend_get_device_info_impl(int device_id, GPUDeviceInfo *info)
 {
 	const char *device_name;
@@ -139,26 +219,21 @@ metal_backend_get_device_info_impl(int device_id, GPUDeviceInfo *info)
 	info->name[sizeof(info->name) - 1] = '\0';
 
 	info->device_id = 0;
-	info->total_memory = (total_mem > 0) ? total_mem : (8ULL << 30);
-	info->free_memory = (free_mem > 0) ? free_mem : (4ULL << 30);
+	info->total_memory_mb = (total_mem > 0) ? (int64)(total_mem / (1024 * 1024)) : (8ULL << 20);
+	info->free_memory_mb = (free_mem > 0) ? (int64)(free_mem / (1024 * 1024)) : (4ULL << 20);
 	info->compute_major = 3;
 	info->compute_minor = 0;
-	info->max_threads_per_block = 1024;
-	info->multiprocessor_count = 8;
-	info->unified_memory = true;
 	info->is_available = true;
 
 	elog(DEBUG2,
-		"neurondb: Metal get_device_info: name='%s', total=0x%llx, "
-		"free=0x%llx, "
-		"major=%d, minor=%d, multiproc=%d, unified=%d",
+		"neurondb: Metal get_device_info: name='%s', total=%lld MB, "
+		"free=%lld MB, "
+		"major=%d, minor=%d",
 		info->name,
-		(unsigned long long)info->total_memory,
-		(unsigned long long)info->free_memory,
+		(long long)info->total_memory_mb,
+		(long long)info->free_memory_mb,
 		info->compute_major,
-		info->compute_minor,
-		info->multiprocessor_count,
-		info->unified_memory);
+		info->compute_minor);
 
 	return true;
 }
@@ -248,7 +323,7 @@ metal_backend_mem_copy_d2h_impl(void *dst, const void *src, Size bytes)
 	return false;
 }
 
-static void
+static void __attribute__((unused))
 metal_backend_synchronize_impl(void)
 {
 	elog(DEBUG2,
@@ -258,21 +333,21 @@ metal_backend_synchronize_impl(void)
 
 /* Metal Vector Operations */
 
-static float
+static float __attribute__((unused))
 metal_backend_l2_distance_impl(const float *a, const float *b, int dim)
 {
 	Assert(a != NULL && b != NULL && dim > 0);
 	return metal_backend_l2_distance(a, b, dim);
 }
 
-static float
+static float __attribute__((unused))
 metal_backend_cosine_distance_impl(const float *a, const float *b, int dim)
 {
 	Assert(a != NULL && b != NULL && dim > 0);
 	return metal_backend_cosine_distance(a, b, dim);
 }
 
-static float
+static float __attribute__((unused))
 metal_backend_inner_product_impl(const float *a, const float *b, int dim)
 {
 	Assert(a != NULL && b != NULL && dim > 0);
@@ -281,7 +356,7 @@ metal_backend_inner_product_impl(const float *a, const float *b, int dim)
 
 /* Metal Batch Operations */
 
-static bool
+static bool __attribute__((unused))
 metal_backend_batch_l2_impl(const float *queries,
 	const float *targets,
 	int num_queries,
@@ -300,7 +375,7 @@ metal_backend_batch_l2_impl(const float *queries,
 	return true;
 }
 
-static bool
+static bool __attribute__((unused))
 metal_backend_batch_cosine_impl(const float *queries,
 	const float *targets,
 	int num_queries,
@@ -438,7 +513,7 @@ metal_backend_quantize_fp16_impl(const float *input, void *output, int count)
 
 /* Metal Clustering (K-means, DBSCAN) */
 
-static bool
+static bool __attribute__((unused))
 metal_backend_kmeans_impl(const float *vectors,
 	int num_vectors,
 	int dim,
@@ -540,7 +615,7 @@ metal_backend_kmeans_impl(const float *vectors,
 	return true;
 }
 
-static bool
+static bool __attribute__((unused))
 metal_backend_dbscan_impl(const float *vectors,
 	int num_vectors,
 	int dim,
@@ -551,7 +626,7 @@ metal_backend_dbscan_impl(const float *vectors,
 	bool *visited;
 	int *neighbors;
 	int cluster = -1;
-	int i, j, d;
+	int i;
 
 	Assert(vectors != NULL && cluster_ids != NULL && num_vectors > 0
 		&& dim > 0);
@@ -564,18 +639,30 @@ metal_backend_dbscan_impl(const float *vectors,
 
 	for (i = 0; i < num_vectors; i++)
 	{
+		int neighbor_count;
+		const float *vec_i;
+		int j;
+		int n;
+		int nn_count;
+		const float *vec_n;
+		int m;
+
 		if (visited[i])
 			continue;
 		visited[i] = true;
 
 		/* Find neighbors within eps */
-		int neighbor_count = 0;
-		const float *vec_i = vectors + i * dim;
+		neighbor_count = 0;
+		vec_i = vectors + i * dim;
 
 		for (j = 0; j < num_vectors; j++)
 		{
-			const float *vec_j = vectors + j * dim;
-			float dist2 = 0.0f;
+			const float *vec_j;
+			float dist2;
+			int d;
+
+			vec_j = vectors + j * dim;
+			dist2 = 0.0f;
 
 			for (d = 0; d < dim; d++)
 			{
@@ -595,19 +682,23 @@ metal_backend_dbscan_impl(const float *vectors,
 
 		for (j = 0; j < neighbor_count; j++)
 		{
-			int n = neighbors[j];
+			n = neighbors[j];
 
 			if (!visited[n])
 			{
+				const float *vec_m;
+				float d2;
+
 				visited[n] = true;
-				int nn_count = 0;
-				const float *vec_n = vectors + n * dim;
-				int m;
+				nn_count = 0;
+				vec_n = vectors + n * dim;
 
 				for (m = 0; m < num_vectors; m++)
 				{
-					const float *vec_m = vectors + m * dim;
-					float d2 = 0.0f;
+					int d;
+
+					vec_m = vectors + m * dim;
+					d2 = 0.0f;
 
 					for (d = 0; d < dim; d++)
 					{
@@ -645,7 +736,7 @@ metal_backend_dbscan_impl(const float *vectors,
 
 /* Streams and Contexts */
 
-static bool
+static bool __attribute__((unused))
 metal_backend_create_streams_impl(int num_streams)
 {
 	elog(DEBUG1,
@@ -654,14 +745,14 @@ metal_backend_create_streams_impl(int num_streams)
 	return true;
 }
 
-static void
+static void __attribute__((unused))
 metal_backend_destroy_streams_impl(void)
 {
 	elog(DEBUG1,
 		"neurondb: Metal destroy_streams: command queues released");
 }
 
-static void *
+static void * __attribute__((unused))
 metal_backend_get_context_impl(void)
 {
 	elog(DEBUG1,
@@ -733,7 +824,7 @@ ndb_metal_launch_kmeans_assign(const float *vectors,
 			       int k,
 			       ndb_stream_t stream)
 {
-	int i, j, c;
+	int i, c;
 	float min_dist;
 	int best_c;
 
@@ -950,33 +1041,32 @@ ndb_metal_rf_predict(const bytea *model_data,
 	/* Use existing Metal RF prediction implementation */
 	/* The neurondb_gpu_rf_predict_backend weak symbol is implemented in this file */
 	extern bool neurondb_gpu_rf_predict_backend(const void *, const void *, const void *, int, const float *, int, int *, char **);
-	
+	const char *base;
+	const void *rf_hdr;
+	const void *trees;
+	const void *nodes;
+	int node_capacity;
+	bool ok;
+
 	if (!model_data || !input || !class_out || feature_dim <= 0)
 	{
 		if (errstr)
 			*errstr = pstrdup("invalid parameters for Metal RF prediction");
 		return -1;
 	}
-	
+
 	/* Parse bytea to extract model components (same format as CUDA) */
-	const char *base = VARDATA_ANY(model_data);
-	const void *rf_hdr = (const void *)base;
-	const void *trees = (const void *)(base + sizeof(int32) * 7);  /* Skip header fields */
-	const void *nodes = (const void *)(base + sizeof(int32) * 7 + sizeof(int32) * 2);  /* Skip trees */
-	
+	base = VARDATA_ANY(model_data);
+	rf_hdr = (const void *)base;
+	trees = (const void *)(base + sizeof(int32) * 7);  /* Skip header fields */
+	nodes = (const void *)(base + sizeof(int32) * 7 + sizeof(int32) * 2);  /* Skip trees */
+
 	/* Estimate node capacity from bytea size */
-	int node_capacity = (VARSIZE_ANY_EXHDR(model_data) - sizeof(int32) * 9) / sizeof(RFNodeFlat_Metal);
-	
-	if (neurondb_gpu_rf_predict_backend)
-	{
-		bool ok = neurondb_gpu_rf_predict_backend(rf_hdr, trees, nodes, node_capacity, input, feature_dim, class_out, errstr);
-		return ok ? 0 : -1;
-	}
-	
-	/* Fallback if weak symbol not available */
-	if (errstr)
-		*errstr = pstrdup("Metal RF prediction backend not available");
-	return -1;
+	node_capacity = (VARSIZE_ANY_EXHDR(model_data) - sizeof(int32) * 9) / sizeof(RFNodeFlat_Metal);
+
+	/* Call weak symbol - Metal backend provides this implementation */
+	ok = neurondb_gpu_rf_predict_backend(rf_hdr, trees, nodes, node_capacity, input, feature_dim, class_out, errstr);
+	return ok ? 0 : -1;
 }
 
 static int
@@ -1887,7 +1977,6 @@ ndb_metal_svm_predict(const bytea *model_data,
 	const NdbCudaSvmModelHeader *hdr;
 	const float *alphas;
 	const float *support_vectors;
-	const int32 *indices;
 	const bytea *detoasted;
 	double prediction;
 	int i, j;
@@ -1915,7 +2004,7 @@ ndb_metal_svm_predict(const bytea *model_data,
 
 	alphas = (const float *)((const char *)hdr + sizeof(NdbCudaSvmModelHeader));
 	support_vectors = alphas + hdr->n_support_vectors;
-	indices = (const int32 *)(support_vectors + hdr->n_support_vectors * hdr->feature_dim);
+	/* Note: indices are stored after support_vectors but not used in linear kernel prediction */
 
 	/* Compute prediction: f(x) = Σ(alpha_i * y_i * K(x_i, x)) + bias */
 	prediction = hdr->bias;
@@ -1987,11 +2076,14 @@ dt_compute_gini_metal(const int *class_counts, int class_count, int total)
 static double
 dt_compute_variance_metal(double sum, double sumsq, int count)
 {
+	double mean;
+	double variance;
+
 	if (count <= 0)
 		return 0.0;
 
-	double mean = sum / (double)count;
-	double variance = (sumsq / (double)count) - (mean * mean);
+	mean = sum / (double)count;
+	variance = (sumsq / (double)count) - (mean * mean);
 
 	return (variance > 0.0) ? variance : 0.0;
 }
@@ -2112,14 +2204,19 @@ dt_build_tree_metal(const float *features,
 		if (is_classification)
 		{
 			/* Count classes for majority vote */
-			int *class_counts = (int *)palloc0(sizeof(int) * class_count);
+			int *class_counts;
+			int majority;
+			int label;
+			int i;
+
+			class_counts = (int *)palloc0(sizeof(int) * class_count);
 			for (i = 0; i < n_samples; i++)
 			{
-				int label = (int)labels[indices[i]];
+				label = (int)labels[indices[i]];
 				if (label >= 0 && label < class_count)
 					class_counts[label]++;
 			}
-			int majority = 0;
+			majority = 0;
 			for (i = 1; i < class_count; i++)
 			{
 				if (class_counts[i] > class_counts[majority])
@@ -2155,146 +2252,185 @@ dt_build_tree_metal(const float *features,
 	}
 
 	/* Find best split (CPU-based) */
-	for (int feat = 0; feat < feature_dim; feat++)
 	{
-		float min_val = FLT_MAX;
-		float max_val = -FLT_MAX;
+		int feat;
+		float min_val;
+		float max_val;
+		float val;
+		int thresh_idx;
+		float threshold;
+		double gain;
+		double left_imp;
+		double right_imp;
+		int left_total;
+		int right_total;
 
-		/* Compute feature range */
-		for (i = 0; i < n_samples; i++)
+		for (feat = 0; feat < feature_dim; feat++)
 		{
-			float val = features[indices[i] * feature_dim + feat];
-			if (isfinite(val))
+			min_val = FLT_MAX;
+			max_val = -FLT_MAX;
+
+			/* Compute feature range */
+			for (i = 0; i < n_samples; i++)
 			{
-				if (val < min_val)
-					min_val = val;
-				if (val > max_val)
-					max_val = val;
+				val = features[indices[i] * feature_dim + feat];
+				if (isfinite(val))
+				{
+					if (val < min_val)
+						min_val = val;
+					if (val > max_val)
+						max_val = val;
+				}
 			}
-		}
 
-		if (min_val == max_val || !isfinite(min_val) || !isfinite(max_val))
-			continue;
+			if (min_val == max_val || !isfinite(min_val) || !isfinite(max_val))
+				continue;
 
-		/* Try candidate thresholds (10 uniformly spaced) */
-		for (int thresh_idx = 1; thresh_idx < 10; thresh_idx++)
-		{
-			float threshold = min_val + (max_val - min_val) * (float)thresh_idx / 10.0f;
-			double gain = 0.0;
-			double left_imp = 0.0;
-			double right_imp = 0.0;
-			int left_total = 0;
-			int right_total = 0;
-
-			if (is_classification)
+			/* Try candidate thresholds (10 uniformly spaced) */
+			for (thresh_idx = 1; thresh_idx < 10; thresh_idx++)
 			{
-				/* Count classes for left and right splits */
-				int *left_counts = (int *)palloc0(sizeof(int) * class_count);
-				int *right_counts = (int *)palloc0(sizeof(int) * class_count);
+				threshold = min_val + (max_val - min_val) * (float)thresh_idx / 10.0f;
+				gain = 0.0;
+				left_imp = 0.0;
+				right_imp = 0.0;
+				left_total = 0;
+				right_total = 0;
 
-				for (i = 0; i < n_samples; i++)
+				if (is_classification)
 				{
-					float val = features[indices[i] * feature_dim + feat];
-					int label = (int)labels[indices[i]];
-					if (label >= 0 && label < class_count)
+					/* Count classes for left and right splits */
+					int *left_counts;
+					int *right_counts;
+					int label;
+
+					left_counts = (int *)palloc0(sizeof(int) * class_count);
+					right_counts = (int *)palloc0(sizeof(int) * class_count);
+
+					for (i = 0; i < n_samples; i++)
 					{
-						if (isfinite(val) && val <= threshold)
-							left_counts[label]++;
-						else
-							right_counts[label]++;
+						val = features[indices[i] * feature_dim + feat];
+						label = (int)labels[indices[i]];
+						if (label >= 0 && label < class_count)
+						{
+							if (isfinite(val) && val <= threshold)
+								left_counts[label]++;
+							else
+								right_counts[label]++;
+						}
 					}
-				}
 
-				/* Compute totals */
-				for (i = 0; i < class_count; i++)
-				{
-					left_total += left_counts[i];
-					right_total += right_counts[i];
-				}
+					/* Compute totals */
+					for (i = 0; i < class_count; i++)
+					{
+						left_total += left_counts[i];
+						right_total += right_counts[i];
+					}
 
-				if (left_total <= 0 || right_total <= 0)
-				{
+					if (left_total <= 0 || right_total <= 0)
+					{
+						pfree(left_counts);
+						pfree(right_counts);
+						continue;
+					}
+
+					/* Compute parent impurity from all samples */
+					{
+						int *parent_counts;
+						double parent_imp;
+						int label;
+						int i;
+
+						parent_counts = (int *)palloc0(sizeof(int) * class_count);
+						for (i = 0; i < n_samples; i++)
+						{
+							label = (int)labels[indices[i]];
+							if (label >= 0 && label < class_count)
+								parent_counts[label]++;
+						}
+						parent_imp = dt_compute_gini_metal(parent_counts, class_count, n_samples);
+						pfree(parent_counts);
+
+						/* Compute Gini impurity */
+						left_imp = dt_compute_gini_metal(left_counts, class_count, left_total);
+						right_imp = dt_compute_gini_metal(right_counts, class_count, right_total);
+
+						/* Information gain */
+						gain = parent_imp - (((double)left_total / (double)n_samples) * left_imp +
+							((double)right_total / (double)n_samples) * right_imp);
+					}
+
 					pfree(left_counts);
 					pfree(right_counts);
-					continue;
 				}
-
-				/* Compute parent impurity from all samples */
-				int *parent_counts = (int *)palloc0(sizeof(int) * class_count);
-				for (i = 0; i < n_samples; i++)
+				else
 				{
-					int label = (int)labels[indices[i]];
-					if (label >= 0 && label < class_count)
-						parent_counts[label]++;
-				}
-				double parent_imp = dt_compute_gini_metal(parent_counts, class_count, n_samples);
-				pfree(parent_counts);
+					/* Compute statistics for regression */
+					double left_sum;
+					double left_sumsq;
+					int left_count_reg;
+					double right_sum;
+					double right_sumsq;
+					int right_count_reg;
+					double label_val;
 
-				/* Compute Gini impurity */
-				left_imp = dt_compute_gini_metal(left_counts, class_count, left_total);
-				right_imp = dt_compute_gini_metal(right_counts, class_count, right_total);
+					left_sum = 0.0;
+					left_sumsq = 0.0;
+					left_count_reg = 0;
+					right_sum = 0.0;
+					right_sumsq = 0.0;
+					right_count_reg = 0;
 
-				/* Information gain */
-				gain = parent_imp - (((double)left_total / (double)n_samples) * left_imp +
-					((double)right_total / (double)n_samples) * right_imp);
+					for (i = 0; i < n_samples; i++)
+					{
+						val = features[indices[i] * feature_dim + feat];
+						label_val = labels[indices[i]];
 
-				pfree(left_counts);
-				pfree(right_counts);
-			}
-			else
-			{
-				/* Compute statistics for regression */
-				double left_sum = 0.0;
-				double left_sumsq = 0.0;
-				int left_count_reg = 0;
-				double right_sum = 0.0;
-				double right_sumsq = 0.0;
-				int right_count_reg = 0;
+						if (!isfinite(val) || !isfinite(label_val))
+							continue;
 
-				for (i = 0; i < n_samples; i++)
-				{
-					float val = features[indices[i] * feature_dim + feat];
-					double label_val = labels[indices[i]];
+						if (val <= threshold)
+						{
+							left_sum += label_val;
+							left_sumsq += label_val * label_val;
+							left_count_reg++;
+						}
+						else
+						{
+							right_sum += label_val;
+							right_sumsq += label_val * label_val;
+							right_count_reg++;
+						}
+					}
 
-					if (!isfinite(val) || !isfinite(label_val))
+					if (left_count_reg <= 0 || right_count_reg <= 0)
 						continue;
 
-					if (val <= threshold)
+					/* Compute variance */
 					{
-						left_sum += label_val;
-						left_sumsq += label_val * label_val;
-						left_count_reg++;
+						double left_var;
+						double right_var;
+						double parent_var;
+
+						left_var = dt_compute_variance_metal(left_sum, left_sumsq, left_count_reg);
+						right_var = dt_compute_variance_metal(right_sum, right_sumsq, right_count_reg);
+
+						/* Variance reduction */
+						parent_var = dt_compute_variance_metal(left_sum + right_sum,
+							left_sumsq + right_sumsq, left_count_reg + right_count_reg);
+						gain = parent_var - (((double)left_count_reg / (double)n_samples) * left_var +
+							((double)right_count_reg / (double)n_samples) * right_var);
 					}
-					else
-					{
-						right_sum += label_val;
-						right_sumsq += label_val * label_val;
-						right_count_reg++;
-					}
+					left_total = left_count_reg;
+					right_total = right_count_reg;
 				}
 
-				if (left_count_reg <= 0 || right_count_reg <= 0)
-					continue;
-
-				/* Compute variance */
-				double left_var = dt_compute_variance_metal(left_sum, left_sumsq, left_count_reg);
-				double right_var = dt_compute_variance_metal(right_sum, right_sumsq, right_count_reg);
-
-				/* Variance reduction */
-				double parent_var = dt_compute_variance_metal(left_sum + right_sum,
-					left_sumsq + right_sumsq, left_count_reg + right_count_reg);
-				gain = parent_var - (((double)left_count_reg / (double)n_samples) * left_var +
-					((double)right_count_reg / (double)n_samples) * right_var);
-				left_total = left_count_reg;
-				right_total = right_count_reg;
-			}
-
-			/* Update best split if this is better */
-			if (gain > best_gain && isfinite(gain))
-			{
-				best_gain = gain;
-				best_feature = feat;
-				best_threshold = threshold;
+				/* Update best split if this is better */
+				if (gain > best_gain && isfinite(gain))
+				{
+					best_gain = gain;
+					best_feature = feat;
+					best_threshold = threshold;
+				}
 			}
 		}
 	}
@@ -2305,14 +2441,19 @@ dt_build_tree_metal(const float *features,
 		node->is_leaf = true;
 		if (is_classification)
 		{
-			int *class_counts = (int *)palloc0(sizeof(int) * class_count);
+			int *class_counts;
+			int majority;
+			int label;
+			int i;
+
+			class_counts = (int *)palloc0(sizeof(int) * class_count);
 			for (i = 0; i < n_samples; i++)
 			{
-				int label = (int)labels[indices[i]];
+				label = (int)labels[indices[i]];
 				if (label >= 0 && label < class_count)
 					class_counts[label]++;
 			}
-			int majority = 0;
+			majority = 0;
 			for (i = 1; i < class_count; i++)
 			{
 				if (class_counts[i] > class_counts[majority])
@@ -2334,13 +2475,17 @@ dt_build_tree_metal(const float *features,
 	}
 
 	/* Partition indices based on best split */
-	for (i = 0; i < n_samples; i++)
 	{
-		float val = features[indices[i] * feature_dim + best_feature];
-		if (isfinite(val) && val <= best_threshold)
-			left_indices[left_count++] = indices[i];
-		else
-			right_indices[right_count++] = indices[i];
+		float val;
+
+		for (i = 0; i < n_samples; i++)
+		{
+			val = features[indices[i] * feature_dim + best_feature];
+			if (isfinite(val) && val <= best_threshold)
+				left_indices[left_count++] = indices[i];
+			else
+				right_indices[right_count++] = indices[i];
+		}
 	}
 
 	/* Validate split */
@@ -2349,14 +2494,19 @@ dt_build_tree_metal(const float *features,
 		node->is_leaf = true;
 		if (is_classification)
 		{
-			int *class_counts = (int *)palloc0(sizeof(int) * class_count);
+			int *class_counts;
+			int majority;
+			int label;
+			int i;
+
+			class_counts = (int *)palloc0(sizeof(int) * class_count);
 			for (i = 0; i < n_samples; i++)
 			{
-				int label = (int)labels[indices[i]];
+				label = (int)labels[indices[i]];
 				if (label >= 0 && label < class_count)
 					class_counts[label]++;
 			}
-			int majority = 0;
+			majority = 0;
 			for (i = 1; i < class_count; i++)
 			{
 				if (class_counts[i] > class_counts[majority])
@@ -2557,13 +2707,17 @@ ndb_metal_dt_train(const float *features,
 				*errstr = pstrdup("Metal DT train: non-finite value in labels array");
 			return -1;
 		}
-		for (int j = 0; j < feature_dim; j++)
 		{
-			if (!isfinite(features[i * feature_dim + j]))
+			int j;
+
+			for (j = 0; j < feature_dim; j++)
 			{
-				if (errstr)
-					*errstr = pstrdup("Metal DT train: non-finite value in features array");
-				return -1;
+				if (!isfinite(features[i * feature_dim + j]))
+				{
+					if (errstr)
+						*errstr = pstrdup("Metal DT train: non-finite value in features array");
+					return -1;
+				}
 			}
 		}
 	}
@@ -4587,12 +4741,14 @@ ndb_metal_knn_train(const float *features,
 			CStringGetTextDatum("task_type"));
 		if (DatumGetPointer(task_type_datum) != NULL)
 		{
+			int extracted_task;
+
 			numeric_datum = DirectFunctionCall1(
 				jsonb_numeric, task_type_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
-				int extracted_task = DatumGetInt32(
+				extracted_task = DatumGetInt32(
 					DirectFunctionCall1(numeric_int4,
 						NumericGetDatum(num)));
 				if (extracted_task == 0 || extracted_task == 1)
@@ -4651,7 +4807,6 @@ ndb_metal_knn_predict(const bytea *model_data,
 	float *distances = NULL;
 	int *top_k_indices = NULL;
 	int i, j;
-	int rc = -1;
 
 	if (errstr)
 		*errstr = NULL;
@@ -4833,20 +4988,6 @@ neurondb_gpu_register_metal_backend(void)
 /* ----------------------------
  * Random Forest predict (CPU-on-Metal implementation)
  * ---------------------------- */
-#ifdef NDB_GPU_METAL
-
-/* Flat RF layout (must match ml_random_forest.c) */
-typedef struct RFNodeFlat_Metal
-{
-	int32 feature_index;
-	uint32 _pad0;
-	double threshold;
-	int32 left;
-	int32 right;
-	int32 is_leaf;
-	uint32 _pad1;
-	double value;
-} RFNodeFlat_Metal;
 
 typedef struct RFTreeFlat_Metal
 {
@@ -4899,6 +5040,8 @@ rf_tree_predict_flat_safe_metal(const RFNodeFlat_Metal *nodes,
 	return -1;
 }
 
+/* Weak symbol for RF prediction backend - can be overridden */
+__attribute__((weak))
 bool
 neurondb_gpu_rf_predict_backend(const void *rf_hdr,
 	const void *trees,
@@ -4914,7 +5057,6 @@ neurondb_gpu_rf_predict_backend(const void *rf_hdr,
 	const RFNodeFlat_Metal *blob_nodes;
 	int n_trees;
 	int n_classes;
-	Size payload_dummy = 0; /* header validation already done by caller */
 	int *tally = NULL;
 	int i;
 
@@ -4986,16 +5128,6 @@ neurondb_gpu_rf_predict_backend(const void *rf_hdr,
 	}
 	pfree(tally);
 	return true;
-}
-
-#endif /* NDB_GPU_METAL */
-
-#else /* !NDB_GPU_METAL */
-
-void
-neurondb_gpu_register_metal_backend(void)
-{
-	/* Metal backend not compiled; stub does nothing. */
 }
 
 #endif /* NDB_GPU_METAL */

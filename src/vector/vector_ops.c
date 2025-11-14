@@ -23,6 +23,7 @@
 #include "utils/array.h"
 #include "catalog/pg_type.h"
 #include <math.h>
+#include <stdint.h>
 
 /*
  * Vector element access
@@ -274,6 +275,17 @@ vector_mean(PG_FUNCTION_ARGS)
 	double sum = 0.0;
 	int i;
 
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute mean of NULL vector")));
+
+	if (v->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_DIVISION_BY_ZERO),
+				errmsg("cannot compute mean of vector with dimension %d",
+					v->dim)));
+
 	for (i = 0; i < v->dim; i++)
 		sum += v->data[i];
 
@@ -287,6 +299,17 @@ vector_variance(PG_FUNCTION_ARGS)
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	double mean = 0.0, variance = 0.0;
 	int i;
+
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute variance of NULL vector")));
+
+	if (v->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_DIVISION_BY_ZERO),
+				errmsg("cannot compute variance of vector with dimension %d",
+					v->dim)));
 
 	for (i = 0; i < v->dim; i++)
 		mean += v->data[i];
@@ -309,6 +332,17 @@ vector_stddev(PG_FUNCTION_ARGS)
 	double mean = 0.0, variance = 0.0;
 	int i;
 
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute standard deviation of NULL vector")));
+
+	if (v->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_DIVISION_BY_ZERO),
+				errmsg("cannot compute standard deviation of vector with dimension %d",
+					v->dim)));
+
 	for (i = 0; i < v->dim; i++)
 		mean += v->data[i];
 	mean /= v->dim;
@@ -327,9 +361,20 @@ Datum
 vector_min(PG_FUNCTION_ARGS)
 {
 	Vector *v = PG_GETARG_VECTOR_P(0);
-	float4 min_val = v->data[0];
+	float4 min_val;
 	int i;
 
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot find minimum of NULL vector")));
+
+	if (v->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("cannot find minimum of empty vector")));
+
+	min_val = v->data[0];
 	for (i = 1; i < v->dim; i++)
 		if (v->data[i] < min_val)
 			min_val = v->data[i];
@@ -342,9 +387,20 @@ Datum
 vector_max(PG_FUNCTION_ARGS)
 {
 	Vector *v = PG_GETARG_VECTOR_P(0);
-	float4 max_val = v->data[0];
+	float4 max_val;
 	int i;
 
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot find maximum of NULL vector")));
+
+	if (v->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("cannot find maximum of empty vector")));
+
+	max_val = v->data[0];
 	for (i = 1; i < v->dim; i++)
 		if (v->data[i] > max_val)
 			max_val = v->data[i];
@@ -377,12 +433,27 @@ vector_eq(PG_FUNCTION_ARGS)
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	int i;
 
+	/* Handle NULL vectors */
+	if (a == NULL && b == NULL)
+		PG_RETURN_BOOL(true);
+	if (a == NULL || b == NULL)
+		PG_RETURN_BOOL(false);
+
 	if (a->dim != b->dim)
 		PG_RETURN_BOOL(false);
 
+	/* Use epsilon comparison for float equality */
 	for (i = 0; i < a->dim; i++)
-		if (a->data[i] != b->data[i])
+	{
+		if (isnan(a->data[i]) || isnan(b->data[i]))
+		{
+			/* NaN != NaN */
+			if (isnan(a->data[i]) != isnan(b->data[i]))
+				PG_RETURN_BOOL(false);
+		}
+		else if (fabs(a->data[i] - b->data[i]) > 1e-6)
 			PG_RETURN_BOOL(false);
+	}
 
 	PG_RETURN_BOOL(true);
 }
@@ -395,6 +466,46 @@ vector_ne(PG_FUNCTION_ARGS)
 		       vector_eq, PG_GETARG_DATUM(0), PG_GETARG_DATUM(1))
 		? BoolGetDatum(false)
 		: BoolGetDatum(true);
+}
+
+/*
+ * vector_hash(vector) -> uint32
+ * Hash function for vector type to support hash joins and hash-based operations
+ */
+PG_FUNCTION_INFO_V1(vector_hash);
+Datum
+vector_hash(PG_FUNCTION_ARGS)
+{
+	Vector *v = PG_GETARG_VECTOR_P(0);
+	uint32 hash = 5381; /* DJB hash seed */
+	int i;
+
+	if (v == NULL)
+		PG_RETURN_UINT32(0);
+
+	/* Hash dimension first */
+	hash = ((hash << 5) + hash) + (uint32)v->dim;
+
+	/* Hash vector data (use first 16 elements for performance) */
+	for (i = 0; i < v->dim && i < 16; i++)
+	{
+		/* Convert float to int for hashing (multiply by large number) */
+		int32 tmp = (int32)(v->data[i] * 1000000.0f);
+		hash = ((hash << 5) + hash) + (uint32)tmp;
+	}
+
+	/* If vector is longer, hash remaining elements with stride */
+	if (v->dim > 16)
+	{
+		int stride = v->dim / 16;
+		for (i = 16; i < v->dim; i += stride)
+		{
+			int32 tmp = (int32)(v->data[i] * 1000000.0f);
+			hash = ((hash << 5) + hash) + (uint32)tmp;
+		}
+	}
+
+	PG_RETURN_UINT32(hash);
 }
 
 /*
@@ -441,6 +552,17 @@ vector_standardize(PG_FUNCTION_ARGS)
 	double mean = 0.0, stddev = 0.0;
 	int i;
 
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot standardize NULL vector")));
+
+	if (v->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_DIVISION_BY_ZERO),
+				errmsg("cannot standardize vector with dimension %d",
+					v->dim)));
+
 	/* Calculate mean */
 	for (i = 0; i < v->dim; i++)
 		mean += v->data[i];
@@ -462,7 +584,7 @@ vector_standardize(PG_FUNCTION_ARGS)
 			result->data[i] = (v->data[i] - mean) / stddev;
 	} else
 	{
-		/* All values are the same */
+		/* All values are the same - set to zero */
 		memset(result->data, 0, sizeof(float4) * v->dim);
 	}
 
@@ -478,11 +600,22 @@ vector_minmax_normalize(PG_FUNCTION_ARGS)
 {
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	Vector *result;
-	float4 min_val = v->data[0], max_val = v->data[0];
+	float4 min_val, max_val;
 	float4 range;
 	int i;
 
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot normalize NULL vector")));
+
+	if (v->dim <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("cannot normalize empty vector")));
+
 	/* Find min and max */
+	min_val = max_val = v->data[0];
 	for (i = 1; i < v->dim; i++)
 	{
 		if (v->data[i] < min_val)

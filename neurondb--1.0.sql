@@ -91,6 +91,150 @@ CREATE TYPE vector (
 COMMENT ON TYPE vector IS 'NeurondB vector type (float32 array)';
 
 -- ============================================================================
+-- ADDITIONAL VECTOR TYPES
+-- ============================================================================
+
+-- Packed vector type (vectorp): SIMD-optimized packed format
+CREATE TYPE vectorp;
+
+CREATE FUNCTION vectorp_in(cstring) RETURNS vectorp
+    AS 'MODULE_PATHNAME', 'vectorp_in'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION vectorp_out(vectorp) RETURNS cstring
+    AS 'MODULE_PATHNAME', 'vectorp_out'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE vectorp (
+    INPUT = vectorp_in,
+    OUTPUT = vectorp_out,
+    STORAGE = extended,
+    CATEGORY = 'U'
+);
+
+COMMENT ON TYPE vectorp IS 'Packed SIMD vector with optimized storage layout';
+
+-- Sparse vector map type (vecmap): Stores only non-zero values
+CREATE TYPE vecmap;
+
+CREATE FUNCTION vecmap_in(cstring) RETURNS vecmap
+    AS 'MODULE_PATHNAME', 'vecmap_in'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION vecmap_out(vecmap) RETURNS cstring
+    AS 'MODULE_PATHNAME', 'vecmap_out'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE vecmap (
+    INPUT = vecmap_in,
+    OUTPUT = vecmap_out,
+    STORAGE = extended,
+    CATEGORY = 'U'
+);
+
+COMMENT ON TYPE vecmap IS 'Sparse high-dimensional vector map (stores only non-zero values)';
+
+-- Vector graph type (vgraph): Graph structure with nodes and edges
+CREATE TYPE vgraph;
+
+CREATE FUNCTION vgraph_in(cstring) RETURNS vgraph
+    AS 'MODULE_PATHNAME', 'vgraph_in'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION vgraph_out(vgraph) RETURNS cstring
+    AS 'MODULE_PATHNAME', 'vgraph_out'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE vgraph (
+    INPUT = vgraph_in,
+    OUTPUT = vgraph_out,
+    STORAGE = extended,
+    CATEGORY = 'U'
+);
+
+COMMENT ON TYPE vgraph IS 'Graph-based vector structure for neighbor relations and clustering';
+
+-- Retrievable text type (rtext): Text with token metadata
+CREATE TYPE rtext;
+
+CREATE FUNCTION rtext_in(cstring) RETURNS rtext
+    AS 'MODULE_PATHNAME', 'rtext_in'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION rtext_out(rtext) RETURNS cstring
+    AS 'MODULE_PATHNAME', 'rtext_out'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE rtext (
+    INPUT = rtext_in,
+    OUTPUT = rtext_out,
+    STORAGE = extended,
+    CATEGORY = 'U'
+);
+
+COMMENT ON TYPE rtext IS 'Retrievable text type with token metadata for RAG pipelines';
+
+-- Half-precision vector type (halfvec): FP16 quantized vectors (pgvector compatibility)
+CREATE TYPE halfvec;
+
+CREATE FUNCTION halfvec_in(cstring) RETURNS halfvec
+    AS 'MODULE_PATHNAME', 'halfvec_in'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION halfvec_out(halfvec) RETURNS cstring
+    AS 'MODULE_PATHNAME', 'halfvec_out'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION halfvec_recv(internal) RETURNS halfvec
+    AS 'MODULE_PATHNAME', 'halfvec_recv'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION halfvec_send(halfvec) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'halfvec_send'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE halfvec (
+    INPUT = halfvec_in,
+    OUTPUT = halfvec_out,
+    RECEIVE = halfvec_recv,
+    SEND = halfvec_send,
+    STORAGE = extended,
+    CATEGORY = 'U'
+);
+
+COMMENT ON TYPE halfvec IS 'Half-precision vector type (FP16) for 2x compression, supports up to 4000 dimensions (pgvector compatible)';
+
+-- Sparse vector type (sparsevec): pgvector-compatible sparse vector format
+CREATE TYPE sparsevec;
+
+CREATE FUNCTION sparsevec_in(cstring) RETURNS sparsevec
+    AS 'MODULE_PATHNAME', 'sparsevec_in'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION sparsevec_out(sparsevec) RETURNS cstring
+    AS 'MODULE_PATHNAME', 'sparsevec_out'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION sparsevec_recv(internal) RETURNS sparsevec
+    AS 'MODULE_PATHNAME', 'sparsevec_recv'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION sparsevec_send(sparsevec) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'sparsevec_send'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE sparsevec (
+    INPUT = sparsevec_in,
+    OUTPUT = sparsevec_out,
+    RECEIVE = sparsevec_recv,
+    SEND = sparsevec_send,
+    STORAGE = extended,
+    CATEGORY = 'U'
+);
+
+COMMENT ON TYPE sparsevec IS 'Sparse vector type (pgvector compatible), supports up to 1000 nonzero entries and 1M dimensions';
+
+-- ============================================================================
 -- CORE CONFIGURATION TABLES (neurondb schema)
 -- ============================================================================
 
@@ -221,6 +365,58 @@ CREATE OPERATOR <-> (
     COMMUTATOR = '<->'
 );
 
+-- Distance operators for halfvec type
+CREATE OPERATOR <-> (
+    LEFTARG = halfvec,
+    RIGHTARG = halfvec,
+    PROCEDURE = halfvec_l2_distance,
+    COMMUTATOR = '<->'
+);
+
+CREATE OPERATOR <=> (
+    LEFTARG = halfvec,
+    RIGHTARG = halfvec,
+    PROCEDURE = halfvec_cosine_distance,
+    COMMUTATOR = '<=>'
+);
+
+CREATE OPERATOR <#> (
+    LEFTARG = halfvec,
+    RIGHTARG = halfvec,
+    PROCEDURE = halfvec_inner_product,
+    COMMUTATOR = '<#>'
+);
+
+-- Distance operators for sparsevec type
+CREATE OPERATOR <-> (
+    LEFTARG = sparsevec,
+    RIGHTARG = sparsevec,
+    PROCEDURE = sparsevec_l2_distance,
+    COMMUTATOR = '<->'
+);
+
+CREATE OPERATOR <=> (
+    LEFTARG = sparsevec,
+    RIGHTARG = sparsevec,
+    PROCEDURE = sparsevec_cosine_distance,
+    COMMUTATOR = '<=>'
+);
+
+CREATE OPERATOR <#> (
+    LEFTARG = sparsevec,
+    RIGHTARG = sparsevec,
+    PROCEDURE = sparsevec_inner_product,
+    COMMUTATOR = '<#>'
+);
+
+-- Distance operator for bit type (Hamming distance)
+CREATE OPERATOR <-> (
+    LEFTARG = bit,
+    RIGHTARG = bit,
+    PROCEDURE = bit_hamming_distance,
+    COMMUTATOR = '<->'
+);
+
 -- Inner Product (Negative for ordering)
 CREATE FUNCTION vector_inner_product(vector, vector) RETURNS real
     AS 'MODULE_PATHNAME', 'vector_inner_product'
@@ -271,6 +467,30 @@ CREATE FUNCTION vector_minkowski_distance(vector, vector, double precision) RETU
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION vector_minkowski_distance IS 'Minkowski distance with parameter p';
 
+-- Squared Euclidean Distance (L2^2, faster, no sqrt)
+CREATE FUNCTION vector_squared_l2_distance(vector, vector) RETURNS double precision
+    AS 'MODULE_PATHNAME', 'vector_squared_l2_distance'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_squared_l2_distance IS 'Squared Euclidean distance (L2^2, faster, no sqrt)';
+
+-- Jaccard Distance
+CREATE FUNCTION vector_jaccard_distance(vector, vector) RETURNS double precision
+    AS 'MODULE_PATHNAME', 'vector_jaccard_distance'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_jaccard_distance IS 'Jaccard distance (1 - Jaccard similarity) for set-based vectors';
+
+-- Dice Distance
+CREATE FUNCTION vector_dice_distance(vector, vector) RETURNS double precision
+    AS 'MODULE_PATHNAME', 'vector_dice_distance'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_dice_distance IS 'Dice distance (1 - Dice coefficient) for set-based vectors';
+
+-- Mahalanobis Distance
+CREATE FUNCTION vector_mahalanobis_distance(vector, vector, vector) RETURNS double precision
+    AS 'MODULE_PATHNAME', 'vector_mahalanobis_distance'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_mahalanobis_distance IS 'Mahalanobis distance with diagonal covariance matrix (3rd arg: inverse variances)';
+
 -- ============================================================================
 -- QUANTIZATION FUNCTIONS
 -- ============================================================================
@@ -285,15 +505,189 @@ CREATE FUNCTION int8_to_vector(bytea) RETURNS vector
     LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION int8_to_vector IS 'Dequantize int8 vector';
 
+-- FP16 quantization (2x compression, CPU version)
+CREATE FUNCTION vector_to_fp16(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_float16'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_to_fp16 IS 'Quantize vector to FP16 (2x compression, IEEE 754 half-precision)';
+
+CREATE FUNCTION fp16_to_vector(bytea) RETURNS vector
+    AS 'MODULE_PATHNAME', 'float16_to_vector'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION fp16_to_vector IS 'Dequantize FP16 vector';
+
 CREATE FUNCTION vector_to_binary(vector) RETURNS bytea
     AS 'MODULE_PATHNAME', 'vector_to_binary'
     LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION vector_to_binary IS 'Convert vector to binary (32x compression)';
 
+CREATE FUNCTION binary_quantize(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'binary_quantize'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION binary_quantize IS 'Alias for vector_to_binary (pgvector compatibility)';
+
+-- Bit type support for binary vectors (pgvector compatibility)
+CREATE FUNCTION vector_to_bit(vector) RETURNS bit
+    AS 'MODULE_PATHNAME', 'vector_to_bit'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_to_bit IS 'Convert vector to PostgreSQL bit type (pgvector compatibility)';
+
+CREATE FUNCTION bit_to_vector(bit) RETURNS vector
+    AS 'MODULE_PATHNAME', 'bit_to_vector'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION bit_to_vector IS 'Convert PostgreSQL bit type to vector';
+
 CREATE FUNCTION binary_hamming_distance(bytea, bytea) RETURNS integer
     AS 'MODULE_PATHNAME', 'binary_hamming_distance'
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION binary_hamming_distance IS 'Hamming distance for binary vectors';
+
+-- UINT8 quantization (4x compression, unsigned)
+CREATE FUNCTION vector_to_uint8(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_uint8'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_to_uint8 IS 'Quantize vector to uint8 (4x compression, unsigned [0,255])';
+
+CREATE FUNCTION uint8_to_vector(bytea) RETURNS vector
+    AS 'MODULE_PATHNAME', 'uint8_to_vector'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION uint8_to_vector IS 'Dequantize uint8 vector';
+
+-- Ternary quantization (16x compression, 2 bits per dimension: -1, 0, +1)
+CREATE FUNCTION vector_to_ternary(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_ternary'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_to_ternary IS 'Quantize vector to ternary (16x compression, values: -1, 0, +1)';
+
+CREATE FUNCTION ternary_to_vector(bytea) RETURNS vector
+    AS 'MODULE_PATHNAME', 'ternary_to_vector'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION ternary_to_vector IS 'Dequantize ternary vector';
+
+-- INT4 quantization (8x compression, 4 bits per dimension, signed [-8, 7])
+CREATE FUNCTION vector_to_int4(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_int4'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_to_int4 IS 'Quantize vector to int4 (8x compression, 4 bits per dimension)';
+
+CREATE FUNCTION int4_to_vector(bytea) RETURNS vector
+    AS 'MODULE_PATHNAME', 'int4_to_vector'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION int4_to_vector IS 'Dequantize int4 vector';
+
+-- Quantization accuracy analysis functions
+CREATE FUNCTION quantize_analyze_int8(vector) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'quantize_analyze_int8'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION quantize_analyze_int8 IS 'Analyze INT8 quantization accuracy (MSE, MAE, compression ratio)';
+
+CREATE FUNCTION quantize_analyze_fp16(vector) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'quantize_analyze_fp16'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION quantize_analyze_fp16 IS 'Analyze FP16 quantization accuracy (MSE, MAE, compression ratio)';
+
+CREATE FUNCTION quantize_analyze_binary(vector) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'quantize_analyze_binary'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION quantize_analyze_binary IS 'Analyze binary quantization accuracy (MSE, MAE, compression ratio)';
+
+CREATE FUNCTION quantize_analyze_uint8(vector) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'quantize_analyze_uint8'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION quantize_analyze_uint8 IS 'Analyze UINT8 quantization accuracy (MSE, MAE, compression ratio)';
+
+CREATE FUNCTION quantize_analyze_ternary(vector) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'quantize_analyze_ternary'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION quantize_analyze_ternary IS 'Analyze ternary quantization accuracy (MSE, MAE, compression ratio)';
+
+CREATE FUNCTION quantize_analyze_int4(vector) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'quantize_analyze_int4'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION quantize_analyze_int4 IS 'Analyze INT4 quantization accuracy (MSE, MAE, compression ratio)';
+
+CREATE FUNCTION quantize_compare_distances(vector, vector, text) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'quantize_compare_distances'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION quantize_compare_distances IS 'Compare distance preservation before and after quantization';
+
+-- ============================================================================
+-- SPARSE VECTOR OPERATIONS (vecmap)
+-- ============================================================================
+
+-- Sparse vector distance metrics (optimized for sparse data)
+CREATE FUNCTION vecmap_l2_distance(bytea, bytea) RETURNS real
+    AS 'MODULE_PATHNAME', 'vecmap_l2_distance'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vecmap_l2_distance IS 'L2 (Euclidean) distance for sparse vectors';
+
+CREATE FUNCTION vecmap_cosine_distance(bytea, bytea) RETURNS real
+    AS 'MODULE_PATHNAME', 'vecmap_cosine_distance'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vecmap_cosine_distance IS 'Cosine distance for sparse vectors';
+
+CREATE FUNCTION vecmap_inner_product(bytea, bytea) RETURNS real
+    AS 'MODULE_PATHNAME', 'vecmap_inner_product'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vecmap_inner_product IS 'Inner product for sparse vectors';
+
+CREATE FUNCTION vecmap_l1_distance(bytea, bytea) RETURNS real
+    AS 'MODULE_PATHNAME', 'vecmap_l1_distance'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vecmap_l1_distance IS 'L1 (Manhattan) distance for sparse vectors';
+
+-- Sparse vector arithmetic operations
+CREATE FUNCTION vecmap_add(bytea, bytea) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vecmap_add'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vecmap_add IS 'Add two sparse vectors';
+
+CREATE FUNCTION vecmap_sub(bytea, bytea) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vecmap_sub'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vecmap_sub IS 'Subtract two sparse vectors';
+
+CREATE FUNCTION vecmap_mul_scalar(bytea, real) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vecmap_mul_scalar'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vecmap_mul_scalar IS 'Multiply sparse vector by scalar';
+
+CREATE FUNCTION vecmap_norm(bytea) RETURNS real
+    AS 'MODULE_PATHNAME', 'vecmap_norm'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vecmap_norm IS 'Compute L2 norm of sparse vector';
+
+-- ============================================================================
+-- GRAPH-BASED VECTOR OPERATIONS (vgraph)
+-- ============================================================================
+
+-- Breadth-First Search: Traverse graph from starting node
+CREATE FUNCTION vgraph_bfs(vgraph, integer, integer DEFAULT -1)
+    RETURNS TABLE(node_idx integer, depth integer, parent_idx integer)
+    AS 'MODULE_PATHNAME', 'vgraph_bfs'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vgraph_bfs IS 'Breadth-First Search: traverse graph from starting node (returns node_idx, depth, parent_idx)';
+
+-- Depth-First Search: Traverse graph from starting node
+CREATE FUNCTION vgraph_dfs(vgraph, integer)
+    RETURNS TABLE(node_idx integer, discovery_time integer, finish_time integer, parent_idx integer)
+    AS 'MODULE_PATHNAME', 'vgraph_dfs'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vgraph_dfs IS 'Depth-First Search: traverse graph from starting node (returns node_idx, discovery_time, finish_time, parent_idx)';
+
+-- PageRank: Compute PageRank scores for all nodes
+CREATE FUNCTION vgraph_pagerank(vgraph, double precision DEFAULT 0.85, integer DEFAULT 100, double precision DEFAULT 1e-6)
+    RETURNS TABLE(node_idx integer, pagerank_score double precision)
+    AS 'MODULE_PATHNAME', 'vgraph_pagerank'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vgraph_pagerank IS 'PageRank algorithm: compute importance scores for all nodes (damping_factor, max_iterations, tolerance)';
+
+-- Community Detection: Detect communities using simplified Louvain algorithm
+CREATE FUNCTION vgraph_community_detection(vgraph, integer DEFAULT 10)
+    RETURNS TABLE(node_idx integer, community_id integer, modularity double precision)
+    AS 'MODULE_PATHNAME', 'vgraph_community_detection'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vgraph_community_detection IS 'Community detection: detect communities in graph using simplified Louvain algorithm (max_iterations)';
 
 -- ============================================================================
 -- ONNX RUNTIME SUPPORT
@@ -1410,6 +1804,149 @@ CREATE FUNCTION vector_ne(vector, vector) RETURNS boolean
     LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION vector_ne IS 'Vector inequality comparison';
 
+-- Vector hash function (required for HASHES operator support)
+CREATE FUNCTION vector_hash(vector) RETURNS integer
+    AS 'MODULE_PATHNAME', 'vector_hash'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_hash IS 'Hash function for vector type (supports hash joins)';
+
+-- Vector Comparison Operators (pgvector compatibility)
+CREATE OPERATOR = (
+    LEFTARG = vector,
+    RIGHTARG = vector,
+    PROCEDURE = vector_eq,
+    COMMUTATOR = =,
+    NEGATOR = <>,
+    HASHES,
+    MERGES
+);
+COMMENT ON OPERATOR =(vector, vector) IS 'Vector equality operator (supports hash joins and merge joins)';
+
+CREATE OPERATOR <> (
+    LEFTARG = vector,
+    RIGHTARG = vector,
+    PROCEDURE = vector_ne,
+    COMMUTATOR = <>,
+    NEGATOR = =
+);
+COMMENT ON OPERATOR <>(vector, vector) IS 'Vector inequality operator';
+
+-- Comparison operators for halfvec type
+CREATE FUNCTION halfvec_eq(halfvec, halfvec) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'halfvec_eq'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION halfvec_eq IS 'Halfvec equality comparison';
+
+CREATE FUNCTION halfvec_ne(halfvec, halfvec) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'halfvec_ne'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION halfvec_ne IS 'Halfvec inequality comparison';
+
+CREATE FUNCTION halfvec_hash(halfvec) RETURNS integer
+    AS 'MODULE_PATHNAME', 'halfvec_hash'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION halfvec_hash IS 'Hash function for halfvec type';
+
+CREATE OPERATOR = (
+    LEFTARG = halfvec,
+    RIGHTARG = halfvec,
+    PROCEDURE = halfvec_eq,
+    COMMUTATOR = =,
+    NEGATOR = <>,
+    HASHES,
+    MERGES
+);
+COMMENT ON OPERATOR =(halfvec, halfvec) IS 'Halfvec equality operator (supports hash joins and merge joins)';
+
+CREATE OPERATOR <> (
+    LEFTARG = halfvec,
+    RIGHTARG = halfvec,
+    PROCEDURE = halfvec_ne,
+    COMMUTATOR = <>,
+    NEGATOR = =
+);
+COMMENT ON OPERATOR <>(halfvec, halfvec) IS 'Halfvec inequality operator';
+
+-- Comparison operators for sparsevec type
+CREATE FUNCTION sparsevec_eq(sparsevec, sparsevec) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'sparsevec_eq'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION sparsevec_eq IS 'Sparsevec equality comparison';
+
+CREATE FUNCTION sparsevec_ne(sparsevec, sparsevec) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'sparsevec_ne'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION sparsevec_ne IS 'Sparsevec inequality comparison';
+
+CREATE FUNCTION sparsevec_hash(sparsevec) RETURNS integer
+    AS 'MODULE_PATHNAME', 'sparsevec_hash'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION sparsevec_hash IS 'Hash function for sparsevec type';
+
+CREATE OPERATOR = (
+    LEFTARG = sparsevec,
+    RIGHTARG = sparsevec,
+    PROCEDURE = sparsevec_eq,
+    COMMUTATOR = =,
+    NEGATOR = <>,
+    HASHES,
+    MERGES
+);
+COMMENT ON OPERATOR =(sparsevec, sparsevec) IS 'Sparsevec equality operator (supports hash joins and merge joins)';
+
+CREATE OPERATOR <> (
+    LEFTARG = sparsevec,
+    RIGHTARG = sparsevec,
+    PROCEDURE = sparsevec_ne,
+    COMMUTATOR = <>,
+    NEGATOR = =
+);
+COMMENT ON OPERATOR <>(sparsevec, sparsevec) IS 'Sparsevec inequality operator';
+
+-- Note: bit type already has native = and <> operators in PostgreSQL
+
+-- ============================================================================
+-- DISTANCE FUNCTIONS FOR NEW TYPES (halfvec, sparsevec, bit)
+-- ============================================================================
+
+-- Distance functions for halfvec type
+CREATE FUNCTION halfvec_l2_distance(halfvec, halfvec) RETURNS real
+    AS 'MODULE_PATHNAME', 'halfvec_l2_distance'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION halfvec_l2_distance IS 'L2 (Euclidean) distance between halfvec vectors';
+
+CREATE FUNCTION halfvec_cosine_distance(halfvec, halfvec) RETURNS real
+    AS 'MODULE_PATHNAME', 'halfvec_cosine_distance'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION halfvec_cosine_distance IS 'Cosine distance between halfvec vectors';
+
+CREATE FUNCTION halfvec_inner_product(halfvec, halfvec) RETURNS real
+    AS 'MODULE_PATHNAME', 'halfvec_inner_product'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION halfvec_inner_product IS 'Inner product (negative for distance ordering) between halfvec vectors';
+
+-- Distance functions for sparsevec type
+CREATE FUNCTION sparsevec_l2_distance(sparsevec, sparsevec) RETURNS real
+    AS 'MODULE_PATHNAME', 'sparsevec_l2_distance'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION sparsevec_l2_distance IS 'L2 (Euclidean) distance between sparsevec vectors';
+
+CREATE FUNCTION sparsevec_cosine_distance(sparsevec, sparsevec) RETURNS real
+    AS 'MODULE_PATHNAME', 'sparsevec_cosine_distance'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION sparsevec_cosine_distance IS 'Cosine distance between sparsevec vectors';
+
+CREATE FUNCTION sparsevec_inner_product(sparsevec, sparsevec) RETURNS real
+    AS 'MODULE_PATHNAME', 'sparsevec_inner_product'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION sparsevec_inner_product IS 'Inner product (negative for distance ordering) between sparsevec vectors';
+
+-- Distance function for bit type (Hamming distance)
+CREATE FUNCTION bit_hamming_distance(bit, bit) RETURNS integer
+    AS 'MODULE_PATHNAME', 'bit_hamming_distance'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION bit_hamming_distance IS 'Hamming distance between bit vectors';
+
 -- Vector preprocessing
 CREATE FUNCTION vector_clip(vector, double precision, double precision) RETURNS vector
     AS 'MODULE_PATHNAME', 'vector_clip'
@@ -1526,6 +2063,49 @@ CREATE FUNCTION vector_to_binary_gpu(vector) RETURNS bytea
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION vector_to_binary_gpu IS 'GPU-accelerated binary quantization';
 
+CREATE FUNCTION vector_to_uint8_gpu(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_uint8_gpu'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_to_uint8_gpu IS 'GPU-accelerated UINT8 quantization (4x compression)';
+
+CREATE FUNCTION vector_to_ternary_gpu(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_ternary_gpu'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_to_ternary_gpu IS 'GPU-accelerated ternary quantization (16x compression)';
+
+CREATE FUNCTION vector_to_int4_gpu(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_to_int4_gpu'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+COMMENT ON FUNCTION vector_to_int4_gpu IS 'GPU-accelerated INT4 quantization (8x compression)';
+
+-- ============================================================================
+-- AUTOMATIC INDEX TUNING
+-- ============================================================================
+
+-- Automatically optimize HNSW parameters
+CREATE FUNCTION index_tune_hnsw(text, text) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'index_tune_hnsw'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION index_tune_hnsw IS 'Automatically optimize HNSW parameters (m, ef_construction) based on dataset';
+
+-- Automatically optimize IVF parameters
+CREATE FUNCTION index_tune_ivf(text, text) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'index_tune_ivf'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION index_tune_ivf IS 'Automatically optimize IVF parameters (lists, probes) based on dataset';
+
+-- Recommend index type (HNSW vs IVF)
+CREATE FUNCTION index_recommend_type(text, text) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'index_recommend_type'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION index_recommend_type IS 'Recommend index type (HNSW or IVF) based on dataset and workload';
+
+-- Automatically tune query parameters (ef_search/probes)
+CREATE FUNCTION index_tune_query_params(text) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'index_tune_query_params'
+    LANGUAGE C STRICT;
+COMMENT ON FUNCTION index_tune_query_params IS 'Automatically tune query parameters based on performance history';
+
 -- ============================================================================
 -- INDEX VALIDATION AND DIAGNOSTICS
 -- ============================================================================
@@ -1565,6 +2145,24 @@ CREATE FUNCTION neurondb_rebuild_index(index_oid regclass) RETURNS void
     AS 'MODULE_PATHNAME', 'neurondb_rebuild_index'
     LANGUAGE C VOLATILE;
 COMMENT ON FUNCTION neurondb_rebuild_index IS 'Rebuild index with optimization (compaction, rebalancing)';
+
+-- Get comprehensive index statistics
+CREATE FUNCTION index_statistics(index_name text) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'index_statistics'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION index_statistics IS 'Get comprehensive index statistics (size, nodes, edges, tuple counts, performance metrics)';
+
+-- Check index health and quality
+CREATE FUNCTION index_health(index_name text) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'index_health'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION index_health IS 'Check index health and quality, returning health status and recommendations';
+
+-- Recommend when to rebuild index
+CREATE FUNCTION index_rebuild_recommendation(index_name text) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'index_rebuild_recommendation'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION index_rebuild_recommendation IS 'Analyze index and recommend when to rebuild based on health metrics';
 
 -- ============================================================================
 -- INDEX ACCESS METHODS (HNSW, IVF)
@@ -1633,6 +2231,78 @@ CREATE FUNCTION neurondb_has_opclass(opclass_name text) RETURNS boolean
     AS 'MODULE_PATHNAME', 'neurondb_has_opclass'
     LANGUAGE C STABLE;
 COMMENT ON FUNCTION neurondb_has_opclass IS 'Check if NeurondB operator class exists';
+
+-- ============================================================================
+-- OPERATOR CLASSES FOR NEW TYPES (halfvec, sparsevec, bit)
+-- ============================================================================
+-- Note: These enable direct indexing of new types. Full support requires
+-- index AM modifications to handle these types in hnsw_am.c and ivf_am.c
+
+-- Operator classes for halfvec type with HNSW
+CREATE OPERATOR CLASS halfvec_l2_ops
+    DEFAULT FOR TYPE halfvec USING hnsw AS
+    OPERATOR 1 <-> (halfvec, halfvec) FOR ORDER BY float_ops,
+    FUNCTION 1 halfvec_l2_distance(halfvec, halfvec);
+
+CREATE OPERATOR CLASS halfvec_cosine_ops
+    FOR TYPE halfvec USING hnsw AS
+    OPERATOR 1 <=> (halfvec, halfvec) FOR ORDER BY float_ops,
+    FUNCTION 1 halfvec_cosine_distance(halfvec, halfvec);
+
+CREATE OPERATOR CLASS halfvec_ip_ops
+    FOR TYPE halfvec USING hnsw AS
+    OPERATOR 1 <#> (halfvec, halfvec) FOR ORDER BY float_ops,
+    FUNCTION 1 halfvec_inner_product(halfvec, halfvec);
+
+-- Operator classes for halfvec type with IVF
+CREATE OPERATOR CLASS halfvec_l2_ops
+    DEFAULT FOR TYPE halfvec USING ivf AS
+    OPERATOR 1 <-> (halfvec, halfvec) FOR ORDER BY float_ops,
+    FUNCTION 1 halfvec_l2_distance(halfvec, halfvec);
+
+CREATE OPERATOR CLASS halfvec_cosine_ops
+    FOR TYPE halfvec USING ivf AS
+    OPERATOR 1 <=> (halfvec, halfvec) FOR ORDER BY float_ops,
+    FUNCTION 1 halfvec_cosine_distance(halfvec, halfvec);
+
+-- Operator classes for sparsevec type with HNSW
+CREATE OPERATOR CLASS sparsevec_l2_ops
+    DEFAULT FOR TYPE sparsevec USING hnsw AS
+    OPERATOR 1 <-> (sparsevec, sparsevec) FOR ORDER BY float_ops,
+    FUNCTION 1 sparsevec_l2_distance(sparsevec, sparsevec);
+
+CREATE OPERATOR CLASS sparsevec_cosine_ops
+    FOR TYPE sparsevec USING hnsw AS
+    OPERATOR 1 <=> (sparsevec, sparsevec) FOR ORDER BY float_ops,
+    FUNCTION 1 sparsevec_cosine_distance(sparsevec, sparsevec);
+
+CREATE OPERATOR CLASS sparsevec_ip_ops
+    FOR TYPE sparsevec USING hnsw AS
+    OPERATOR 1 <#> (sparsevec, sparsevec) FOR ORDER BY float_ops,
+    FUNCTION 1 sparsevec_inner_product(sparsevec, sparsevec);
+
+-- Operator classes for sparsevec type with IVF
+CREATE OPERATOR CLASS sparsevec_l2_ops
+    DEFAULT FOR TYPE sparsevec USING ivf AS
+    OPERATOR 1 <-> (sparsevec, sparsevec) FOR ORDER BY float_ops,
+    FUNCTION 1 sparsevec_l2_distance(sparsevec, sparsevec);
+
+CREATE OPERATOR CLASS sparsevec_cosine_ops
+    FOR TYPE sparsevec USING ivf AS
+    OPERATOR 1 <=> (sparsevec, sparsevec) FOR ORDER BY float_ops,
+    FUNCTION 1 sparsevec_cosine_distance(sparsevec, sparsevec);
+
+-- Operator class for bit type with HNSW (Hamming distance)
+CREATE OPERATOR CLASS bit_hamming_ops
+    DEFAULT FOR TYPE bit USING hnsw AS
+    OPERATOR 1 <-> (bit, bit) FOR ORDER BY integer_ops,
+    FUNCTION 1 bit_hamming_distance(bit, bit);
+
+-- Operator class for bit type with IVF (Hamming distance)
+CREATE OPERATOR CLASS bit_hamming_ops
+    DEFAULT FOR TYPE bit USING ivf AS
+    OPERATOR 1 <-> (bit, bit) FOR ORDER BY integer_ops,
+    FUNCTION 1 bit_hamming_distance(bit, bit);
 
 -- ============================================================================
 -- ROW-LEVEL SECURITY (RLS) INTEGRATION
@@ -5457,4 +6127,99 @@ GRANT EXECUTE ON FUNCTION neurondb.predict_batch(integer, vector[]) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.create_pipeline TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.compare TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.version TO PUBLIC;
+
+-- Grant permissions for new distance functions
+GRANT EXECUTE ON FUNCTION vector_squared_l2_distance(vector, vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_jaccard_distance(vector, vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_dice_distance(vector, vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_mahalanobis_distance(vector, vector, vector) TO PUBLIC;
+
+-- Grant permissions for quantization functions
+GRANT EXECUTE ON FUNCTION vector_to_int8(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION int8_to_vector(bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_fp16(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION fp16_to_vector(bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_uint8(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION uint8_to_vector(bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_ternary(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION ternary_to_vector(bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_int4(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION int4_to_vector(bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_binary(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION binary_hamming_distance(bytea, bytea) TO PUBLIC;
+
+-- Grant permissions for GPU quantization functions
+GRANT EXECUTE ON FUNCTION vector_to_int8_gpu(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_fp16_gpu(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_binary_gpu(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_uint8_gpu(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_ternary_gpu(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_to_int4_gpu(vector) TO PUBLIC;
+
+-- Grant permissions for quantization analysis functions
+GRANT EXECUTE ON FUNCTION quantize_analyze_int8(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION quantize_analyze_fp16(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION quantize_analyze_binary(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION quantize_analyze_uint8(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION quantize_analyze_ternary(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION quantize_analyze_int4(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION quantize_compare_distances(vector, vector, text) TO PUBLIC;
+
+-- Grant permissions for sparse vector (vecmap) functions
+GRANT EXECUTE ON FUNCTION vecmap_l2_distance(bytea, bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vecmap_cosine_distance(bytea, bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vecmap_inner_product(bytea, bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vecmap_l1_distance(bytea, bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vecmap_add(bytea, bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vecmap_sub(bytea, bytea) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vecmap_mul_scalar(bytea, real) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vecmap_norm(bytea) TO PUBLIC;
+
+-- Grant permissions for index tuning functions
+GRANT EXECUTE ON FUNCTION index_tune_hnsw(text, text) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION index_tune_ivf(text, text) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION index_recommend_type(text, text) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION index_tune_query_params(text) TO PUBLIC;
+
+-- Grant permissions for vector comparison functions
+GRANT EXECUTE ON FUNCTION vector_eq(vector, vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_ne(vector, vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vector_hash(vector) TO PUBLIC;
+
+-- Grant permissions for halfvec functions
+GRANT EXECUTE ON FUNCTION halfvec_eq(halfvec, halfvec) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION halfvec_ne(halfvec, halfvec) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION halfvec_hash(halfvec) TO PUBLIC;
+
+-- Grant permissions for sparsevec functions
+GRANT EXECUTE ON FUNCTION sparsevec_eq(sparsevec, sparsevec) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION sparsevec_ne(sparsevec, sparsevec) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION sparsevec_hash(sparsevec) TO PUBLIC;
+
+-- Grant permissions for bit type functions
+GRANT EXECUTE ON FUNCTION vector_to_bit(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION bit_to_vector(bit) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION binary_quantize(vector) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION bit_hamming_distance(bit, bit) TO PUBLIC;
+
+-- Grant permissions for halfvec distance functions
+GRANT EXECUTE ON FUNCTION halfvec_l2_distance(halfvec, halfvec) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION halfvec_cosine_distance(halfvec, halfvec) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION halfvec_inner_product(halfvec, halfvec) TO PUBLIC;
+
+-- Grant permissions for sparsevec distance functions
+GRANT EXECUTE ON FUNCTION sparsevec_l2_distance(sparsevec, sparsevec) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION sparsevec_cosine_distance(sparsevec, sparsevec) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION sparsevec_inner_product(sparsevec, sparsevec) TO PUBLIC;
+
+-- Grant permissions for graph operations (vgraph) functions
+GRANT EXECUTE ON FUNCTION vgraph_bfs(vgraph, integer, integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vgraph_dfs(vgraph, integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vgraph_pagerank(vgraph, double precision, integer, double precision) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION vgraph_community_detection(vgraph, integer) TO PUBLIC;
+
+-- Grant permissions for index statistics and monitoring functions
+GRANT EXECUTE ON FUNCTION index_statistics(text) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION index_health(text) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION index_rebuild_recommendation(text) TO PUBLIC;
 
