@@ -49,6 +49,12 @@ PGDLLEXPORT void neuranllm_main(Datum main_arg);
 static void
 process_llm_job(int job_id, const char *job_type, const char *payload);
 
+static void
+process_llm_job_safe(int job_id, const char *job_type, const char *payload);
+
+static int
+prune_llm_jobs_safe(int max_age_days);
+
 /* Signal handlers */
 static volatile sig_atomic_t got_sigterm = false;
 
@@ -172,39 +178,10 @@ neuranllm_main(Datum main_arg)
 					(int)job_id,
 					job_type);
 
-				PG_TRY();
-				{
-					// -- Any crash/exception/failure inside here processing the job WILL be caught.
-					// Cast volatile pointers to const for function call
-					process_llm_job(job_id,
-						(const char *)job_type,
-						(const char *)payload);
-				}
-				PG_CATCH();
-				{
-					// -- Catches crash during process_llm_job.
-					EmitErrorReport();
-					FlushErrorState();
-
-					if (IsTransactionState())
-						AbortCurrentTransaction();
-
-					elog(LOG,
-						"neurondb: LLM job crashed; "
-						"marking as failed.");
-
-					if (job_type && job_id > 0)
-					{
-						// -- If process_llm_job crashed, forcibly mark job as failed.
-						ndb_llm_job_update(job_id,
-							"failed",
-							NULL,
-							"Crash or unexpected "
-							"error during job "
-							"execution");
-					}
-				}
-				PG_END_TRY();
+				// Process job in separate function to avoid nested PG_TRY
+				process_llm_job_safe(job_id,
+					(const char *)job_type,
+					(const char *)payload);
 
 				// -- Always free job_type/payload after job processing, no matter what
 				if (job_type)
@@ -221,26 +198,12 @@ neuranllm_main(Datum main_arg)
 			++iterations;
 			if (iterations % 1000 == 0)
 			{
-				volatile int pruned = 0;
+				int pruned;
 
 				StartTransactionCommand();
 				PushActiveSnapshot(GetTransactionSnapshot());
-				PG_TRY();
-				{
-					pruned = ndb_llm_job_prune(7);
-				}
-				PG_CATCH();
-				{
-					EmitErrorReport();
-					FlushErrorState();
-					if (IsTransactionState())
-						AbortCurrentTransaction();
-					elog(LOG,
-						"neurondb: Exception pruning "
-						"old LLM jobs; continuing "
-						"safely.");
-				}
-				PG_END_TRY();
+				// Prune jobs in separate function to avoid nested PG_TRY
+				pruned = prune_llm_jobs_safe(7);
 				if (pruned > 0)
 					elog(LOG,
 						"neurondb: Pruned %d old LLM "
@@ -493,4 +456,70 @@ process_llm_job(int job_id, const char *job_type, const char *payload)
 
 	MemoryContextSwitchTo(oldcxt);
 	MemoryContextDelete(job_ctx);
+}
+
+/*
+ * process_llm_job_safe - Wrapper to process LLM job with error handling.
+ * Extracted to avoid nested PG_TRY blocks.
+ */
+static void
+process_llm_job_safe(int job_id, const char *job_type, const char *payload)
+{
+	PG_TRY();
+	{
+		process_llm_job(job_id, job_type, payload);
+	}
+	PG_CATCH();
+	{
+		EmitErrorReport();
+		FlushErrorState();
+
+		if (IsTransactionState())
+			AbortCurrentTransaction();
+
+		elog(LOG,
+			"neurondb: LLM job crashed; "
+			"marking as failed.");
+
+		if (job_type && job_id > 0)
+		{
+			ndb_llm_job_update(job_id,
+				"failed",
+				NULL,
+				"Crash or unexpected "
+				"error during job "
+				"execution");
+		}
+	}
+	PG_END_TRY();
+}
+
+/*
+ * prune_llm_jobs_safe - Wrapper to prune old LLM jobs with error handling.
+ * Extracted to avoid nested PG_TRY blocks.
+ */
+static int
+prune_llm_jobs_safe(int max_age_days)
+{
+	int pruned = 0;
+
+	PG_TRY();
+	{
+		pruned = ndb_llm_job_prune(max_age_days);
+	}
+	PG_CATCH();
+	{
+		EmitErrorReport();
+		FlushErrorState();
+		if (IsTransactionState())
+			AbortCurrentTransaction();
+		elog(LOG,
+			"neurondb: Exception pruning "
+			"old LLM jobs; continuing "
+			"safely.");
+		pruned = 0;
+	}
+	PG_END_TRY();
+
+	return pruned;
 }
