@@ -118,10 +118,10 @@ auto_train(PG_FUNCTION_ARGS)
 	text	   *task = PG_GETARG_TEXT_PP(3);
 	text	   *metric_text = PG_ARGISNULL(4) ? NULL : PG_GETARG_TEXT_PP(4);
 
-	char	   *table_name_str = text_to_cstring(table_name);
-	char	   *feature_col_str = text_to_cstring(feature_col);
-	char	   *label_col_str = text_to_cstring(label_col);
-	char	   *task_str = text_to_cstring(task);
+	char	   *table_name_str;
+	char	   *feature_col_str;
+	char	   *label_col_str;
+	char	   *task_str;
 	char	   *metric;
 	MemoryContext oldcontext;
 	MemoryContext automl_context;
@@ -137,18 +137,70 @@ auto_train(PG_FUNCTION_ARGS)
 	int			ret;
 	bool		isnull;
 
+	CHECK_NARGS_RANGE(4, 5);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || label_col == NULL || task == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("auto_train: table_name, feature_col, label_col, and task cannot be NULL")));
+
+	table_name_str = text_to_cstring(table_name);
+	feature_col_str = text_to_cstring(feature_col);
+	label_col_str = text_to_cstring(label_col);
+	task_str = text_to_cstring(task);
+
+	/* Defensive: Validate allocations */
+	if (table_name_str == NULL || feature_col_str == NULL ||
+		label_col_str == NULL || task_str == NULL)
+	{
+		if (table_name_str)
+			pfree(table_name_str);
+		if (feature_col_str)
+			pfree(feature_col_str);
+		if (label_col_str)
+			pfree(label_col_str);
+		if (task_str)
+			pfree(task_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
 	if (metric_text)
 		metric = text_to_cstring(metric_text);
 	else
 		metric = (strcmp(task_str, "classification") == 0) ?
 			pstrdup("accuracy") : pstrdup("r2");
 
-	/* Validate task */
+	/* Defensive: Validate metric allocation */
+	if (metric == NULL)
+	{
+		pfree(table_name_str);
+		pfree(feature_col_str);
+		pfree(label_col_str);
+		pfree(task_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate metric string")));
+	}
+
+	/* Defensive: Validate task */
 	if (strcmp(task_str, "classification") != 0 &&
 		strcmp(task_str, "regression") != 0)
+	{
+		pfree(table_name_str);
+		pfree(feature_col_str);
+		pfree(label_col_str);
+		pfree(task_str);
+		pfree(metric);
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("task must be 'classification' or 'regression'")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("task must be 'classification' or 'regression', got '%s'", task_str)));
+	}
+
+	elog(DEBUG1, "auto_train: Starting AutoML training (task='%s', metric='%s')",
+		task_str, metric);
 
 	/* Create memory context for AutoML operations */
 	automl_context = AllocSetContextCreate(CurrentMemoryContext,
@@ -181,9 +233,18 @@ auto_train(PG_FUNCTION_ARGS)
 
 	/* Connect to SPI */
 	if (SPI_connect() != SPI_OK_CONNECT)
+	{
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(automl_context);
+		pfree(table_name_str);
+		pfree(feature_col_str);
+		pfree(label_col_str);
+		pfree(task_str);
+		pfree(metric);
 		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("auto_train: SPI_connect failed")));
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("auto_train: SPI_connect failed")));
+	}
 
 	/* Train and evaluate each algorithm */
 	for (i = 0; i < n_algorithms; i++)
@@ -452,16 +513,47 @@ optimize_hyperparameters(PG_FUNCTION_ARGS)
 	text	   *table_name = PG_GETARG_TEXT_PP(1);
 	text	   *param_grid_json = PG_GETARG_TEXT_PP(2);
 
-	char	   *algorithm_str = text_to_cstring(algorithm);
-	char	   *table_name_str = text_to_cstring(table_name);
-	char	   *param_grid_str = text_to_cstring(param_grid_json);
+	char	   *algorithm_str;
+	char	   *table_name_str;
+	char	   *param_grid_str;
 	StringInfoData result;
 
-	/* Validate algorithm */
-	if (strlen(algorithm_str) == 0)
+	CHECK_NARGS(3);
+
+	/* Defensive: Check NULL inputs */
+	if (algorithm == NULL || table_name == NULL || param_grid_json == NULL)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("algorithm cannot be empty")));
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("optimize_hyperparameters: algorithm, table_name, and param_grid_json cannot be NULL")));
+
+	algorithm_str = text_to_cstring(algorithm);
+	table_name_str = text_to_cstring(table_name);
+	param_grid_str = text_to_cstring(param_grid_json);
+
+	/* Defensive: Validate allocations */
+	if (algorithm_str == NULL || table_name_str == NULL || param_grid_str == NULL)
+	{
+		if (algorithm_str)
+			pfree(algorithm_str);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (param_grid_str)
+			pfree(param_grid_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	/* Defensive: Validate algorithm */
+	if (strlen(algorithm_str) == 0 || strlen(algorithm_str) > 100)
+	{
+		pfree(algorithm_str);
+		pfree(table_name_str);
+		pfree(param_grid_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("algorithm cannot be empty and must be <= 100 characters, got %zu", strlen(algorithm_str))));
+	}
 
 	/* Placeholder: perform grid search */
 	(void) table_name_str;

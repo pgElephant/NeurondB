@@ -126,9 +126,17 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 	bool typbyval;
 	char typalign;
 
+	CHECK_NARGS_RANGE(2, 4);
+
 	/* Parse arguments */
 	doc_ids_array = PG_GETARG_ARRAYTYPE_P(0);
 	score_matrix_array = PG_GETARG_ARRAYTYPE_P(1);
+
+	/* Defensive: Check NULL inputs */
+	if (doc_ids_array == NULL || score_matrix_array == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("rerank_ensemble_weighted: doc_ids_array and score_matrix_array cannot be NULL")));
 
 	if (!PG_ARGISNULL(2))
 		weights_array = PG_GETARG_ARRAYTYPE_P(2);

@@ -195,14 +195,52 @@ train_catboost_classifier(PG_FUNCTION_ARGS)
     MemoryContext oldctx;
     MemoryContext per_query_ctx;
 
+    CHECK_NARGS_RANGE(3, 6);
+
+    /* Defensive: Check NULL inputs */
+    if (table_name_text == NULL || feature_col_text == NULL || label_col_text == NULL)
+        ereport(ERROR,
+            (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                errmsg("train_catboost_classifier: table_name, feature_col, and label_col cannot be NULL")));
+
     /* Assign parameters with defaults if NULL */
     iterations = PG_ARGISNULL(3) ? 1000 : PG_GETARG_INT32(3);
     learning_rate = PG_ARGISNULL(4) ? 0.03 : PG_GETARG_FLOAT8(4);
     depth = PG_ARGISNULL(5) ? 6 : PG_GETARG_INT32(5);
 
+    /* Defensive: Validate parameters */
+    if (iterations < 1 || iterations > 1000000)
+        ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("iterations must be between 1 and 1000000, got %d", iterations)));
+
+    if (isnan(learning_rate) || isinf(learning_rate) || learning_rate <= 0.0 || learning_rate > 1.0)
+        ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("learning_rate must be between 0.0 and 1.0, got %f", learning_rate)));
+
+    if (depth < 1 || depth > 16)
+        ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("depth must be between 1 and 16, got %d", depth)));
+
     table_name = text_to_cstring(table_name_text);
     feature_col_list = text_to_cstring(feature_col_text);
     label_col = text_to_cstring(label_col_text);
+
+    /* Defensive: Validate allocations */
+    if (table_name == NULL || feature_col_list == NULL || label_col == NULL)
+    {
+        if (table_name)
+            pfree(table_name);
+        if (feature_col_list)
+            pfree(feature_col_list);
+        if (label_col)
+            pfree(label_col);
+        ereport(ERROR,
+            (errcode(ERRCODE_OUT_OF_MEMORY),
+                errmsg("failed to allocate strings")));
+    }
 
     /* Parse feature_col_list into features[] */
     n_features = 1;

@@ -50,17 +50,29 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	char		nulls[3];
 	bool		isnull = false;
 
+	/* Assert: Internal invariants */
+	Assert(spec != NULL);
+
+	/* Defensive: Check NULL spec */
 	if (spec == NULL)
-		elog(ERROR, "ml_catalog_register_model: invalid spec (NULL)");
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: ml_catalog_register_model "
+				       "invalid spec (NULL)")));
 
 	algorithm = spec->algorithm;
 	if (algorithm == NULL)
-		elog(ERROR, "ml_catalog_register_model: algorithm must be provided");
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: ml_catalog_register_model "
+				       "algorithm must be provided")));
 
 	training_table = spec->training_table;
 	if (training_table == NULL)
-		elog(ERROR,
-			 "ml_catalog_register_model: training_table must be provided");
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: ml_catalog_register_model "
+				       "training_table must be provided")));
 
 	training_column = spec->training_column;
 	if (spec->model_type != NULL)
@@ -81,17 +93,21 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 
 		meta_txt = DatumGetCString(DirectFunctionCall1(jsonb_out,
 													   JsonbPGetDatum(metrics)));
-		elog(DEBUG1, "ml_catalog_register_model: received metrics: %s",
-			 meta_txt);
+		elog(DEBUG1, "neurondb: ml_catalog_register_model received "
+		     "metrics: %s", meta_txt);
 		pfree(meta_txt);
 	}
 	else
 	{
-		elog(DEBUG1, "ml_catalog_register_model: metrics is NULL");
+		elog(DEBUG1, "neurondb: ml_catalog_register_model metrics is "
+		     "NULL");
 	}
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "ml_catalog_register_model: SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: ml_catalog_register_model "
+				       "SPI_connect failed")));
 
 	/* Insert or update project entry */
 	memset(nulls, ' ', sizeof(nulls));
@@ -118,15 +134,30 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 		false,
 		1);
 
+	/* Defensive: Validate SPI result */
 	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0 ||
-		SPI_tuptable == NULL)
-		elog(ERROR, "ml_catalog_register_model: failed to upsert project");
+		SPI_tuptable == NULL || SPI_tuptable->vals == NULL ||
+		SPI_tuptable->tupdesc == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: ml_catalog_register_model "
+				       "failed to upsert project")));
+
+	/* Defensive: Validate tuple */
+	if (SPI_tuptable->vals[0] == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: ml_catalog_register_model "
+				       "NULL tuple returned from SPI")));
 
 	project_id = DatumGetInt32(SPI_getbinval(
 								SPI_tuptable->vals[0],
 								SPI_tuptable->tupdesc, 1, &isnull));
 	if (isnull)
-		elog(ERROR, "ml_catalog_register_model: project_id NULL after upsert");
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: ml_catalog_register_model "
+				       "project_id NULL after upsert")));
 	isnull = false;
 
 	/* Determine next model version for project */
@@ -137,7 +168,10 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 					 project_id);
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "ml_catalog_register_model: failed to acquire advisory lock");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: ml_catalog_register_model "
+				       "failed to acquire advisory lock")));
 
 	/* Now calculate version atomically */
 	resetStringInfo(&sql);
@@ -147,15 +181,26 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 					 project_id);
 
 	ret = SPI_execute(sql.data, true, 1);
-	if (ret != SPI_OK_SELECT || SPI_processed == 0 || SPI_tuptable == NULL)
+	if (ret != SPI_OK_SELECT || SPI_processed == 0 || SPI_tuptable == NULL ||
+		SPI_tuptable->vals == NULL || SPI_tuptable->tupdesc == NULL)
+	{
 		version = 1;
+	}
 	else
 	{
-		version = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-											  SPI_tuptable->tupdesc, 1,
-											  &isnull));
-		if (isnull)
+		/* Defensive: Validate tuple */
+		if (SPI_tuptable->vals[0] == NULL)
+		{
 			version = 1;
+		}
+		else
+		{
+			version = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
+												  SPI_tuptable->tupdesc, 1,
+												  &isnull));
+			if (isnull || version <= 0)
+				version = 1;
+		}
 	}
 
 	pfree(sql.data);
@@ -286,10 +331,13 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			if (params_quoted) pfree(params_quoted);
 			if (metrics_txt) pfree(metrics_txt);
 			if (metrics_quoted) pfree(metrics_quoted);
-			elog(ERROR,
-				 "ml_catalog_register_model: failed to insert/update ml_models row "
-				 "(ret=%d, processed=%lu)",
-				 ret, (unsigned long) SPI_processed);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: ml_catalog_register_model "
+					       "failed to insert/update ml_models "
+					       "row (ret=%d, processed=%lu)",
+					       ret,
+					       (unsigned long) SPI_processed)));
 		}
 
 		{
@@ -299,13 +347,18 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 				SPI_getbinval(SPI_tuptable->vals[0],
 							  SPI_tuptable->tupdesc, 1,
 							  &isnull_result));
+		/* Defensive: Validate model_id */
 		if (isnull_result)
-				elog(ERROR,
-					 "ml_catalog_register_model: model_id NULL after insert/update");
-			if (model_id <= 0)
-				elog(ERROR,
-					 "ml_catalog_register_model: model_id=%d is invalid (should be > 0)",
-					 model_id);
+			ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					errmsg("neurondb: ml_catalog_register_model "
+					       "model_id NULL after insert/update")));
+		if (model_id <= 0)
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: ml_catalog_register_model "
+					       "model_id=%d is invalid "
+					       "(should be > 0)", model_id)));
 		}
 
 		/* Update model_data separately if provided (bytea can't be embedded in SQL string) */
@@ -330,8 +383,9 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			ret = SPI_execute_with_args(update_sql.data, 2, argtypes, values, nulls, false, 0);
 			if (ret != SPI_OK_UPDATE)
 				elog(WARNING,
-					 "ml_catalog_register_model: failed to update model_data for model_id %d (ret=%d)",
-					 model_id, ret);
+				     "neurondb: ml_catalog_register_model "
+				     "failed to update model_data for "
+				     "model_id %d (ret=%d)", model_id, ret);
 
 			pfree(update_sql.data);
 		}
@@ -371,6 +425,17 @@ ml_catalog_fetch_model_payload(int32 model_id,
 	MemoryContext	oldcontext;
 	MemoryContext	caller_context;
 
+	/* Assert: Internal invariants */
+	Assert(model_id > 0);
+
+	/* Defensive: Validate model_id */
+	if (model_id <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: ml_catalog_fetch_model_payload "
+				       "model_id must be positive, got %d",
+				       model_id)));
+
 	if (model_data_out != NULL)
 		*model_data_out = NULL;
 	if (parameters_out != NULL)
@@ -382,7 +447,10 @@ ml_catalog_fetch_model_payload(int32 model_id,
 	caller_context = CurrentMemoryContext;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "ml_catalog_fetch_model_payload: SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: ml_catalog_fetch_model_payload "
+				       "SPI_connect failed")));
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
@@ -408,6 +476,23 @@ ml_catalog_fetch_model_payload(int32 model_id,
 	{
 		Datum		datum;
 		bool		isnull;
+
+		/* Defensive: Validate SPI_tuptable */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL ||
+			SPI_tuptable->tupdesc == NULL)
+		{
+			pfree(sql.data);
+			SPI_finish();
+			return false;
+		}
+
+		/* Defensive: Validate tuple */
+		if (SPI_tuptable->vals[0] == NULL)
+		{
+			pfree(sql.data);
+			SPI_finish();
+			return false;
+		}
 
 		found = true;
 

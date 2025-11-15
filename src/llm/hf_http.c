@@ -16,9 +16,26 @@ typedef struct
 static size_t
 write_cb(void *ptr, size_t size, size_t nmemb, void *userdata)
 {
-	MemBuf *m = (MemBuf *)userdata;
-	size_t n = size * nmemb;
-	m->data = repalloc(m->data, m->len + n + 1);
+	MemBuf *m;
+	size_t n;
+	char *new_data;
+
+	/* Defensive: Check NULL inputs */
+	if (ptr == NULL || userdata == NULL)
+		return 0;
+
+	m = (MemBuf *)userdata;
+	n = size * nmemb;
+
+	/* Defensive: Check for overflow */
+	if (n > SIZE_MAX - m->len - 1)
+		return 0;
+
+	new_data = repalloc(m->data, m->len + n + 1);
+	if (new_data == NULL)
+		return 0;
+
+	m->data = new_data;
 	memcpy(m->data + m->len, ptr, n);
 	m->len += n;
 	m->data[m->len] = '\0';
@@ -33,13 +50,27 @@ http_post_json(const char *url,
 	int timeout_ms,
 	char **out)
 {
-	CURL *curl = curl_easy_init();
+	CURL *curl;
 	struct curl_slist *headers = NULL;
-	MemBuf buf = { palloc0(1), 0 };
+	MemBuf buf;
 	long code = 0;
 	CURLcode res;
-	if (!curl)
+
+	/* Defensive: Check NULL inputs */
+	if (url == NULL || out == NULL)
 		return -1;
+
+	buf.data = palloc0(1);
+	if (buf.data == NULL)
+		return -1;
+	buf.len = 0;
+
+	curl = curl_easy_init();
+	if (!curl)
+	{
+		pfree(buf.data);
+		return -1;
+	}
 
 	headers = curl_slist_append(headers, "Content-Type: application/json");
 	if (api_key && api_key[0])
@@ -187,6 +218,8 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 	p++;
 
 	vec = (float *)palloc(sizeof(float) * cap);
+	if (vec == NULL)
+		return false;
 
 	while (*p && *p != ']')
 	{
@@ -196,10 +229,26 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 		v = strtod(p, &endptr);
 		if (endptr == p)
 			break;
+
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(v) || isinf(v))
+		{
+			pfree(vec);
+			return false;
+		}
+
 		if (n == cap)
 		{
+			/* Defensive: Check for overflow */
+			if (cap > 1000000)
+			{
+				pfree(vec);
+				return false;
+			}
 			cap *= 2;
 			vec = repalloc(vec, sizeof(float) * cap);
+			if (vec == NULL)
+				return false;
 		}
 		vec[n++] = (float)v;
 		p = endptr;
@@ -281,7 +330,14 @@ parse_hf_scores(const char *json, float **scores_out, int ndocs)
 	if (!ps)
 		return false;
 	ps++;
+	/* Defensive: Validate ndocs */
+	if (ndocs <= 0 || ndocs > 1000000)
+		return false;
+
 	scores = palloc(sizeof(float) * ndocs);
+	if (scores == NULL)
+		return false;
+
 	while (*ps && *ps != ']' && n < ndocs)
 	{
 		while (*ps && (isspace(*ps) || *ps == ','))
@@ -290,6 +346,14 @@ parse_hf_scores(const char *json, float **scores_out, int ndocs)
 		v = strtod(ps, &endptr);
 		if (endptr == ps)
 			break;
+
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(v) || isinf(v))
+		{
+			pfree(scores);
+			return false;
+		}
+
 		scores[n++] = (float)v;
 		ps = endptr;
 	}

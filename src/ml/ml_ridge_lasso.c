@@ -862,20 +862,43 @@ train_ridge_regression(PG_FUNCTION_ARGS)
 	StringInfoData hyperbuf;
 	int32 model_id = 0;
 
+	CHECK_NARGS(4);
+
 	table_name = PG_GETARG_TEXT_PP(0);
 	feature_col = PG_GETARG_TEXT_PP(1);
 	target_col = PG_GETARG_TEXT_PP(2);
 
-	if (lambda < 0.0)
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || target_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_ridge_regression: table_name, feature_col, and target_col cannot be NULL")));
+
+	/* Defensive: Validate lambda */
+	if (lambda < 0.0 || isnan(lambda) || isinf(lambda))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("ridge: lambda must be non-negative, "
-				       "got %.6f",
-					lambda)));
+				errmsg("ridge: lambda must be non-negative, got %.6f", lambda)));
 
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
 	targ_str = text_to_cstring(target_col);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || feat_str == NULL || targ_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (feat_str)
+			pfree(feat_str);
+		if (targ_str)
+			pfree(targ_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	elog(DEBUG1, "train_ridge_regression: Starting training (lambda=%.6f)", lambda);
 
 	ridge_dataset_init(&dataset);
 

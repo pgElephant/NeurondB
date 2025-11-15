@@ -38,8 +38,40 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 	double *dist;
 	int c, i, d;
 
+	/* Assert: Internal invariants */
+	Assert(data != NULL);
+	Assert(centroids != NULL);
+	Assert(nvec > 0);
+	Assert(dim > 0);
+	Assert(k > 0);
+	Assert(k <= nvec);
+
+	/* Defensive: Check for NULL pointers */
+	if (data == NULL || centroids == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("kmeanspp_init: NULL pointer argument")));
+
+	if (nvec <= 0 || dim <= 0 || k <= 0 || k > nvec)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("kmeanspp_init: invalid parameters (nvec=%d, dim=%d, k=%d)",
+					nvec, dim, k)));
+
 	selected = (bool *)palloc0(sizeof(bool) * nvec);
 	dist = (double *)palloc(sizeof(double) * nvec);
+
+	/* Defensive: Validate allocations */
+	if (selected == NULL || dist == NULL)
+	{
+		if (selected)
+			pfree(selected);
+		if (dist)
+			pfree(dist);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate arrays in kmeanspp_init")));
+	}
 
 	/* Pick first centroid randomly */
 	centroids[0] = rand() % nvec;
@@ -148,11 +180,54 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 	float **centers = NULL;
 	bool changed = false;
 	int iter, i, c, d;
-	Datum *out_datums;
-	ArrayType *out_array;
+
+	CHECK_NARGS(4);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cluster_kmeans: table_name and vector_col cannot be NULL")));
+
+	/* Defensive: Validate parameters */
+	if (num_clusters < 1 || num_clusters > 1000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_clusters must be between 1 and 1000, got %d", num_clusters)));
+
+	if (max_iters < 1 || max_iters > 10000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("max_iters must be between 1 and 10000, got %d", max_iters)));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_col);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (col_str)
+			pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	/* Defensive: Validate string lengths */
+	if (strlen(tbl_str) == 0 || strlen(tbl_str) > NAMEDATALEN ||
+		strlen(col_str) == 0 || strlen(col_str) > NAMEDATALEN)
+	{
+		pfree(tbl_str);
+		pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_NAME),
+				errmsg("cluster_kmeans: invalid table or column name length")));
+	}
+
+	elog(DEBUG1, "cluster_kmeans: Starting k-means clustering (k=%d, max_iters=%d)",
+		num_clusters, max_iters);
 
 	if (num_clusters <= 1)
 		ereport(ERROR,

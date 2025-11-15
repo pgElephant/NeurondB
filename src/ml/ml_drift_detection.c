@@ -65,6 +65,15 @@ vector_distance(const double *a, const double *b, int dim)
 	double	sum = 0.0;
 	int		i;
 
+	/* Assert: Internal invariants */
+	Assert(a != NULL);
+	Assert(b != NULL);
+	Assert(dim > 0);
+
+	/* Defensive: Check NULL inputs and invalid dimension */
+	if (a == NULL || b == NULL || dim <= 0)
+		return 0.0;
+
 	for (i = 0; i < dim; i++)
 	{
 		double	diff = a[i] - b[i];
@@ -124,16 +133,50 @@ detect_centroid_drift(PG_FUNCTION_ARGS)
 	bool		nulls[3];
 	HeapTuple	tuple;
 
+	CHECK_NARGS(4);
+
 	/* Parse arguments */
 	baseline_table = PG_GETARG_TEXT_PP(0);
 	baseline_column = PG_GETARG_TEXT_PP(1);
 	current_table = PG_GETARG_TEXT_PP(2);
 	current_column = PG_GETARG_TEXT_PP(3);
 
+	/* Assert: Internal invariants */
+	Assert(baseline_table != NULL);
+	Assert(baseline_column != NULL);
+	Assert(current_table != NULL);
+	Assert(current_column != NULL);
+
+	/* Defensive: Check NULL inputs */
+	if (baseline_table == NULL || baseline_column == NULL ||
+		current_table == NULL || current_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: detect_centroid_drift all table and "
+				       "column arguments cannot be NULL")));
+
 	baseline_tbl = text_to_cstring(baseline_table);
 	baseline_col = text_to_cstring(baseline_column);
 	current_tbl = text_to_cstring(current_table);
 	current_col = text_to_cstring(current_column);
+
+	/* Defensive: Validate allocations */
+	if (baseline_tbl == NULL || baseline_col == NULL ||
+		current_tbl == NULL || current_col == NULL)
+	{
+		if (baseline_tbl)
+			pfree(baseline_tbl);
+		if (baseline_col)
+			pfree(baseline_col);
+		if (current_tbl)
+			pfree(current_tbl);
+		if (current_col)
+			pfree(current_col);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: detect_centroid_drift failed to "
+				       "allocate strings")));
+	}
 
 	elog(DEBUG1,
 		 "neurondb: Drift detection: baseline=%s.%s, current=%s.%s",
@@ -145,22 +188,60 @@ detect_centroid_drift(PG_FUNCTION_ARGS)
 	current_vecs = neurondb_fetch_vectors_from_table(
 		current_tbl, current_col, &n_current, &dim_current);
 
+	/* Defensive: Validate vector counts */
 	if (n_baseline < 10 || n_current < 10)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Need at least 10 vectors in each dataset "
-						"(baseline=%d, current=%d)",
-						n_baseline, n_current)));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: detect_centroid_drift need at least "
+				       "10 vectors in each dataset "
+				       "(baseline=%d, current=%d)",
+				       n_baseline, n_current)));
 
+	/* Defensive: Validate dimensions */
 	if (dim_baseline != dim_current)
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Dimension mismatch: baseline=%d, current=%d",
-						dim_baseline, dim_current)));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: detect_centroid_drift dimension "
+				       "mismatch baseline=%d, current=%d",
+				       dim_baseline, dim_current)));
+
+	/* Defensive: Validate dimensions */
+	if (dim_baseline <= 0 || dim_baseline > 65536)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: detect_centroid_drift invalid "
+				       "dimension: %d", dim_baseline)));
 
 	/* Compute baseline centroid and standard deviation */
 	baseline_mean = (double *) palloc0(sizeof(double) * dim_baseline);
 	baseline_std = (double *) palloc0(sizeof(double) * dim_baseline);
+
+	/* Defensive: Validate allocations */
+	if (baseline_mean == NULL || baseline_std == NULL)
+	{
+		if (baseline_vecs)
+		{
+			for (i = 0; i < n_baseline; i++)
+				if (baseline_vecs[i])
+					pfree(baseline_vecs[i]);
+			pfree(baseline_vecs);
+		}
+		if (current_vecs)
+		{
+			for (i = 0; i < n_current; i++)
+				if (current_vecs[i])
+					pfree(current_vecs[i]);
+			pfree(current_vecs);
+		}
+		pfree(baseline_tbl);
+		pfree(baseline_col);
+		pfree(current_tbl);
+		pfree(current_col);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: detect_centroid_drift failed to "
+				       "allocate baseline arrays")));
+	}
 
 	for (i = 0; i < n_baseline; i++)
 	{
@@ -195,6 +276,35 @@ detect_centroid_drift(PG_FUNCTION_ARGS)
 	/* Compute current centroid */
 	current_mean = (double *) palloc0(sizeof(double) * dim_current);
 
+	/* Defensive: Validate allocation */
+	if (current_mean == NULL)
+	{
+		if (baseline_vecs)
+		{
+			for (i = 0; i < n_baseline; i++)
+				if (baseline_vecs[i])
+					pfree(baseline_vecs[i]);
+			pfree(baseline_vecs);
+		}
+		if (current_vecs)
+		{
+			for (i = 0; i < n_current; i++)
+				if (current_vecs[i])
+					pfree(current_vecs[i]);
+			pfree(current_vecs);
+		}
+		pfree(baseline_mean);
+		pfree(baseline_std);
+		pfree(baseline_tbl);
+		pfree(baseline_col);
+		pfree(current_tbl);
+		pfree(current_col);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: detect_centroid_drift failed to "
+				       "allocate current mean array")));
+	}
+
 	for (i = 0; i < n_current; i++)
 	{
 		for (d = 0; d < dim_current; d++)
@@ -215,8 +325,10 @@ detect_centroid_drift(PG_FUNCTION_ARGS)
 	/* Build result tuple */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("Function returning record called in context that cannot accept type record")));
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				errmsg("neurondb: detect_centroid_drift function "
+				       "returning record called in context that "
+				       "cannot accept type record")));
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
@@ -281,16 +393,50 @@ compute_distribution_divergence(PG_FUNCTION_ARGS)
 	int			i,
 				d;
 
+	CHECK_NARGS(4);
+
 	/* Parse arguments */
 	baseline_table = PG_GETARG_TEXT_PP(0);
 	baseline_column = PG_GETARG_TEXT_PP(1);
 	current_table = PG_GETARG_TEXT_PP(2);
 	current_column = PG_GETARG_TEXT_PP(3);
 
+	/* Assert: Internal invariants */
+	Assert(baseline_table != NULL);
+	Assert(baseline_column != NULL);
+	Assert(current_table != NULL);
+	Assert(current_column != NULL);
+
+	/* Defensive: Check NULL inputs */
+	if (baseline_table == NULL || baseline_column == NULL ||
+		current_table == NULL || current_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: compute_distribution_divergence all "
+				       "table and column arguments cannot be NULL")));
+
 	baseline_tbl = text_to_cstring(baseline_table);
 	baseline_col = text_to_cstring(baseline_column);
 	current_tbl = text_to_cstring(current_table);
 	current_col = text_to_cstring(current_column);
+
+	/* Defensive: Validate allocations */
+	if (baseline_tbl == NULL || baseline_col == NULL ||
+		current_tbl == NULL || current_col == NULL)
+	{
+		if (baseline_tbl)
+			pfree(baseline_tbl);
+		if (baseline_col)
+			pfree(baseline_col);
+		if (current_tbl)
+			pfree(current_tbl);
+		if (current_col)
+			pfree(current_col);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: compute_distribution_divergence "
+				       "failed to allocate strings")));
+	}
 
 	/* Fetch vectors */
 	baseline_vecs = neurondb_fetch_vectors_from_table(
@@ -298,19 +444,78 @@ compute_distribution_divergence(PG_FUNCTION_ARGS)
 	current_vecs = neurondb_fetch_vectors_from_table(
 		current_tbl, current_col, &n_current, &dim_current);
 
+	/* Defensive: Validate vector counts */
 	if (n_baseline < 10 || n_current < 10)
+	{
+		pfree(baseline_tbl);
+		pfree(baseline_col);
+		pfree(current_tbl);
+		pfree(current_col);
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Need at least 10 vectors in each dataset")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: compute_distribution_divergence "
+				       "need at least 10 vectors in each dataset "
+				       "(baseline=%d, current=%d)",
+				       n_baseline, n_current)));
+	}
 
+	/* Defensive: Validate dimensions */
 	if (dim_baseline != dim_current)
+	{
+		pfree(baseline_tbl);
+		pfree(baseline_col);
+		pfree(current_tbl);
+		pfree(current_col);
 		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("Dimension mismatch")));
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: compute_distribution_divergence "
+				       "dimension mismatch baseline=%d, current=%d",
+				       dim_baseline, dim_current)));
+	}
+
+	/* Defensive: Validate dimensions */
+	if (dim_baseline <= 0 || dim_baseline > 65536)
+	{
+		pfree(baseline_tbl);
+		pfree(baseline_col);
+		pfree(current_tbl);
+		pfree(current_col);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: compute_distribution_divergence "
+				       "invalid dimension: %d", dim_baseline)));
+	}
 
 	/* Compute means */
 	baseline_mean = (double *) palloc0(sizeof(double) * dim_baseline);
 	current_mean = (double *) palloc0(sizeof(double) * dim_current);
+
+	/* Defensive: Validate allocations */
+	if (baseline_mean == NULL || current_mean == NULL)
+	{
+		if (baseline_vecs)
+		{
+			for (i = 0; i < n_baseline; i++)
+				if (baseline_vecs[i])
+					pfree(baseline_vecs[i]);
+			pfree(baseline_vecs);
+		}
+		if (current_vecs)
+		{
+			for (i = 0; i < n_current; i++)
+				if (current_vecs[i])
+					pfree(current_vecs[i]);
+			pfree(current_vecs);
+		}
+		pfree(baseline_tbl);
+		pfree(baseline_col);
+		pfree(current_tbl);
+		pfree(current_col);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: compute_distribution_divergence "
+				       "failed to allocate mean arrays")));
+	}
 
 	for (i = 0; i < n_baseline; i++)
 	{
@@ -331,6 +536,35 @@ compute_distribution_divergence(PG_FUNCTION_ARGS)
 	/* Compute variances */
 	baseline_var = (double *) palloc0(sizeof(double) * dim_baseline);
 	current_var = (double *) palloc0(sizeof(double) * dim_current);
+
+	/* Defensive: Validate allocations */
+	if (baseline_var == NULL || current_var == NULL)
+	{
+		if (baseline_vecs)
+		{
+			for (i = 0; i < n_baseline; i++)
+				if (baseline_vecs[i])
+					pfree(baseline_vecs[i]);
+			pfree(baseline_vecs);
+		}
+		if (current_vecs)
+		{
+			for (i = 0; i < n_current; i++)
+				if (current_vecs[i])
+					pfree(current_vecs[i]);
+			pfree(current_vecs);
+		}
+		pfree(baseline_mean);
+		pfree(current_mean);
+		pfree(baseline_tbl);
+		pfree(baseline_col);
+		pfree(current_tbl);
+		pfree(current_col);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: compute_distribution_divergence "
+				       "failed to allocate variance arrays")));
+	}
 
 	for (i = 0; i < n_baseline; i++)
 	{

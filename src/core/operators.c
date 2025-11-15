@@ -51,6 +51,7 @@ vector_lt(PG_FUNCTION_ARGS)
 	Vector *b;
 	int i;
 
+	CHECK_NARGS(2);
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
 
@@ -75,6 +76,7 @@ vector_le(PG_FUNCTION_ARGS)
 	Vector *b;
 	int i;
 
+	CHECK_NARGS(2);
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
 
@@ -99,6 +101,7 @@ vector_gt(PG_FUNCTION_ARGS)
 	Vector *b;
 	int i;
 
+	CHECK_NARGS(2);
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
 
@@ -123,6 +126,7 @@ vector_ge(PG_FUNCTION_ARGS)
 	Vector *b;
 	int i;
 
+	CHECK_NARGS(2);
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
 
@@ -148,12 +152,20 @@ PG_FUNCTION_INFO_V1(vector_cosine_similarity);
 Datum
 vector_cosine_similarity(PG_FUNCTION_ARGS)
 {
-	Vector *a = PG_GETARG_VECTOR_P(0);
-	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *a;
+	Vector *b;
 	float4 dot = 0.0f, na = 0.0f, nb = 0.0f;
 	int i;
 
-	if (a == NULL || b == NULL || a->dim != b->dim)
+	CHECK_NARGS(2);
+	a = PG_GETARG_VECTOR_P(0);
+	b = PG_GETARG_VECTOR_P(1);
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		PG_RETURN_NULL();
+
+	/* Defensive: Validate dimensions */
+	if (a->dim <= 0 || b->dim <= 0 || a->dim != b->dim)
 		PG_RETURN_NULL();
 
 	for (i = 0; i < a->dim; i++)
@@ -173,11 +185,21 @@ PG_FUNCTION_INFO_V1(vector_dot_product);
 Datum
 vector_dot_product(PG_FUNCTION_ARGS)
 {
-	Vector *a = PG_GETARG_VECTOR_P(0);
-	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *a;
+	Vector *b;
 	float4 result = 0.0f;
 	int i;
-	if (a == NULL || b == NULL || a->dim != b->dim)
+
+	CHECK_NARGS(2);
+	a = PG_GETARG_VECTOR_P(0);
+	b = PG_GETARG_VECTOR_P(1);
+
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		PG_RETURN_NULL();
+
+	/* Defensive: Validate dimensions */
+	if (a->dim <= 0 || b->dim <= 0 || a->dim != b->dim)
 		PG_RETURN_NULL();
 	for (i = 0; i < a->dim; i++)
 		result += a->data[i] * b->data[i];
@@ -193,18 +215,33 @@ PG_FUNCTION_INFO_V1(vector_div);
 Datum
 vector_div(PG_FUNCTION_ARGS)
 {
-	Vector *a, *b, *res;
+	Vector *a;
+	Vector *b;
+	Vector *res;
 	int i;
 	size_t bytes;
 
+	CHECK_NARGS(2);
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
 
-	if (a == NULL || b == NULL || a->dim != b->dim)
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		PG_RETURN_NULL();
+
+	/* Defensive: Validate dimensions */
+	if (a->dim <= 0 || b->dim <= 0 || a->dim != b->dim)
 		PG_RETURN_NULL();
 
 	bytes = VARHDRSZ + sizeof(int32) + sizeof(float4) * a->dim;
 	res = (Vector *)palloc0(bytes);
+
+	/* Defensive: Validate allocation */
+	if (res == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate vector")));
+
 	SET_VARSIZE(res, bytes);
 	res->dim = a->dim;
 
@@ -230,11 +267,19 @@ Datum
 vector_avg(PG_FUNCTION_ARGS)
 {
 	ArrayType *input;
-	int nvec, i, j, count = 0;
+	int nvec;
+	int i;
+	int j;
+	int count = 0;
 	Vector *sumvec = NULL;
 	bool sum_allocated = false;
 
+	CHECK_NARGS(1);
 	input = PG_GETARG_ARRAYTYPE_P(0);
+
+	/* Defensive: Check NULL input */
+	if (input == NULL)
+		PG_RETURN_NULL();
 	nvec = ArrayGetNItems(ARR_NDIM(input), ARR_DIMS(input));
 
 	if (nvec <= 0)
@@ -259,6 +304,13 @@ vector_avg(PG_FUNCTION_ARGS)
 				size_t bytes = VARHDRSZ + sizeof(int32)
 					+ sizeof(float4) * vec->dim;
 				sumvec = (Vector *)palloc0(bytes);
+
+				/* Defensive: Validate allocation */
+				if (sumvec == NULL)
+					ereport(ERROR,
+						(errcode(ERRCODE_OUT_OF_MEMORY),
+							errmsg("failed to allocate vector")));
+
 				SET_VARSIZE(sumvec, bytes);
 				sumvec->dim = vec->dim;
 				memcpy(sumvec->data,
@@ -293,10 +345,18 @@ PG_FUNCTION_INFO_V1(vector_contains);
 Datum
 vector_contains(PG_FUNCTION_ARGS)
 {
-	ArrayType *set1 = PG_GETARG_ARRAYTYPE_P(0);
-	ArrayType *set2 = PG_GETARG_ARRAYTYPE_P(1);
-	int n1, n2, i2, i1, d;
+	ArrayType *set1;
+	ArrayType *set2;
+	int n1;
+	int n2;
+	int i2;
+	int i1;
+	int d;
 
+	CHECK_NARGS(2);
+	set1 = PG_GETARG_ARRAYTYPE_P(0);
+	set2 = PG_GETARG_ARRAYTYPE_P(1);
+	/* Defensive: Check NULL inputs */
 	if (set1 == NULL || set2 == NULL)
 		PG_RETURN_BOOL(false);
 
@@ -355,10 +415,19 @@ PG_FUNCTION_INFO_V1(vector_overlap);
 Datum
 vector_overlap(PG_FUNCTION_ARGS)
 {
-	ArrayType *set1 = PG_GETARG_ARRAYTYPE_P(0);
-	ArrayType *set2 = PG_GETARG_ARRAYTYPE_P(1);
-	int n1, n2, i1, i2, d;
+	ArrayType *set1;
+	ArrayType *set2;
+	int n1;
+	int n2;
+	int i1;
+	int i2;
+	int d;
 
+	CHECK_NARGS(2);
+	set1 = PG_GETARG_ARRAYTYPE_P(0);
+	set2 = PG_GETARG_ARRAYTYPE_P(1);
+
+	/* Defensive: Check NULL inputs */
 	if (set1 == NULL || set2 == NULL)
 		PG_RETURN_BOOL(false);
 
@@ -452,9 +521,18 @@ vec_join(PG_FUNCTION_ARGS)
 		oldcontext =
 			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
+		CHECK_NARGS_RANGE(4, 5);
 		left_table_text = PG_GETARG_TEXT_PP(0);
 		right_table_text = PG_GETARG_TEXT_PP(1);
 		join_pred_text = PG_GETARG_TEXT_PP(2);
+
+		/* Defensive: Check NULL inputs */
+		if (left_table_text == NULL || right_table_text == NULL
+			|| join_pred_text == NULL)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			PG_RETURN_NULL();
+		}
 
 		left_table = text_to_cstring(left_table_text);
 		right_table = text_to_cstring(right_table_text);
@@ -470,6 +548,22 @@ vec_join(PG_FUNCTION_ARGS)
 			join_pred);
 
 		newstate = (vec_join_fctx *)palloc0(sizeof(vec_join_fctx));
+
+		/* Defensive: Validate allocation */
+		if (newstate == NULL)
+		{
+			if (left_table)
+				pfree(left_table);
+			if (right_table)
+				pfree(right_table);
+			if (join_pred)
+				pfree(join_pred);
+			MemoryContextSwitchTo(oldcontext);
+			ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+					errmsg("failed to allocate join state")));
+		}
+
 		newstate->fn_mcxt = funcctx->multi_call_memory_ctx;
 		newstate->threshold = PG_GETARG_FLOAT4(3);
 		newstate->ntuples = 0;
@@ -634,29 +728,34 @@ graph_knn(PG_FUNCTION_ARGS)
 		graph_knn_fctx *newstate;
 		TupleDesc tupdesc;
 
+		CHECK_NARGS(5);
 		query_vec = PG_GETARG_VECTOR_P(0);
 		graph_col_text = PG_GETARG_TEXT_PP(1);
 		edge_labels = PG_GETARG_ARRAYTYPE_P(3);
 		max_hops = PG_GETARG_INT32(2);
 		k = PG_GETARG_INT32(4);
 
-		/* Validate inputs */
+		/* Defensive: Validate inputs */
 		if (query_vec == NULL)
-			ereport(ERROR, (errmsg("query_vec cannot be null")));
+			ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					errmsg("query_vec cannot be null")));
 		if (graph_col_text == NULL)
-			ereport(ERROR, (errmsg("graph_col cannot be null")));
+			ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					errmsg("graph_col cannot be null")));
 		if (edge_labels == NULL)
-			ereport(ERROR, (errmsg("edge_labels cannot be null")));
+			ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					errmsg("edge_labels cannot be null")));
 		if (max_hops <= 0)
-			ereport(ERROR, (errmsg("max_hops must be positive")));
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("max_hops must be positive")));
 		if (k <= 0)
-			ereport(ERROR, (errmsg("k must be positive")));
-
-		elog(DEBUG1,
-			"Graph KNN: query_dim=%d, max_hops=%d, k=%d",
-			query_vec->dim,
-			max_hops,
-			k);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("k must be positive")));
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext =
@@ -669,6 +768,18 @@ graph_knn(PG_FUNCTION_ARGS)
 			graph_col_cstr);
 
 		newstate = (graph_knn_fctx *)palloc0(sizeof(graph_knn_fctx));
+
+		/* Defensive: Validate allocation */
+		if (newstate == NULL)
+		{
+			if (graph_col_cstr)
+				pfree(graph_col_cstr);
+			MemoryContextSwitchTo(oldcontext);
+			ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+					errmsg("failed to allocate graph knn state")));
+		}
+
 		newstate->fn_mcxt = funcctx->multi_call_memory_ctx;
 
 		if (SPI_connect() != SPI_OK_CONNECT)
@@ -784,24 +895,21 @@ hybrid_rank(PG_FUNCTION_ARGS)
 	float4 beta = 0.5f;
 	int d;
 
+	CHECK_NARGS(3);
 	/* Get arguments */
 	relation_name = PG_GETARG_TEXT_PP(0);
 	query_vec = PG_GETARG_VECTOR_P(1);
 	query_text = PG_GETARG_TEXT_PP(2);
 
+	/* Defensive: Check NULL inputs */
 	if (relation_name == NULL || query_vec == NULL || query_text == NULL)
 		PG_RETURN_FLOAT4(0.0f);
 
-	/* Validate query vector */
+	/* Defensive: Validate query vector */
 	if (query_vec->dim <= 0)
 		ereport(ERROR,
-			(errmsg("query vector dimension must be positive")));
-
-	elog(DEBUG1,
-		"Hybrid rank: relation=%s, query_dim=%d, text_len=%zu",
-		text_to_cstring(relation_name),
-		query_vec->dim,
-		strlen(text_to_cstring(query_text)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("query vector dimension must be positive")));
 
 	rel_str = text_to_cstring(relation_name);
 	txt_str = text_to_cstring(query_text);
@@ -872,19 +980,22 @@ vec_window_rank(PG_FUNCTION_ARGS)
 	const char *p;
 	uint64 hash = UINT64CONST(5381);
 
+	CHECK_NARGS(2);
 	ref_vector = PG_GETARG_VECTOR_P(0);
 	partition_col = PG_GETARG_TEXT_PP(1);
 
+	/* Defensive: Check NULL inputs */
 	if (partition_col == NULL)
 		PG_RETURN_INT64(1);
 	if (ref_vector == NULL)
 		PG_RETURN_INT64(1);
 
-	/* Validate ref_vector */
+	/* Defensive: Validate ref_vector */
 	if (ref_vector->dim <= 0)
 		ereport(ERROR,
-			(errmsg("reference vector dimension must be "
-				"positive")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("reference vector dimension must be "
+					"positive")));
 
 	part_str = text_to_cstring(partition_col);
 
@@ -910,11 +1021,17 @@ vec_route(PG_FUNCTION_ARGS)
 	Vector *centroid = NULL;
 	double min_dist = -1.0;
 
+	CHECK_NARGS(3);
 	query = PG_GETARG_VECTOR_P(0);
 	shard_centroids = PG_GETARG_ARRAYTYPE_P(1);
 	fallback_global = PG_GETARG_BOOL(2);
 
+	/* Defensive: Check NULL inputs */
 	if (query == NULL || shard_centroids == NULL)
+		PG_RETURN_INT32(0);
+
+	/* Defensive: Validate query vector */
+	if (query->dim <= 0)
 		PG_RETURN_INT32(0);
 
 	nshards = ArrayGetNItems(

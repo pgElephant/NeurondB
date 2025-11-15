@@ -40,7 +40,7 @@ PG_FUNCTION_INFO_V1(vectorp_in);
 Datum
 vectorp_in(PG_FUNCTION_ARGS)
 {
-	char *str = PG_GETARG_CSTRING(0);
+	char *str;
 	VectorPacked *result;
 	float4 *temp_data;
 	int dim;
@@ -49,6 +49,15 @@ vectorp_in(PG_FUNCTION_ARGS)
 	char *endptr;
 	uint32 fingerprint;
 	int size;
+
+	CHECK_NARGS(1);
+	str = PG_GETARG_CSTRING(0);
+
+	/* Defensive: Check NULL input */
+	if (str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot parse NULL string")));
 
 	dim = 0;
 	capacity = 16;
@@ -61,6 +70,10 @@ vectorp_in(PG_FUNCTION_ARGS)
 		ptr++;
 
 	temp_data = (float4 *)palloc(sizeof(float4) * capacity);
+	if (temp_data == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate temporary buffer")));
 
 	while (*ptr && *ptr != ']')
 	{
@@ -70,11 +83,25 @@ vectorp_in(PG_FUNCTION_ARGS)
 		if (*ptr == ']' || *ptr == '\0')
 			break;
 
+		/* Defensive: Limit maximum dimensions */
+		if (dim >= VECTOR_MAX_DIM)
+			ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					errmsg("vectorp dimension exceeds maximum %d",
+						VECTOR_MAX_DIM)));
+
 		if (dim >= capacity)
 		{
 			capacity *= 2;
+			/* Defensive: Check for overflow */
+			if (capacity > VECTOR_MAX_DIM)
+				capacity = VECTOR_MAX_DIM;
 			temp_data = (float4 *)repalloc(
 				temp_data, sizeof(float4) * capacity);
+			if (temp_data == NULL)
+				ereport(ERROR,
+					(errcode(ERRCODE_OUT_OF_MEMORY),
+						errmsg("failed to reallocate temporary buffer")));
 		}
 
 		temp_data[dim] = strtof(ptr, &endptr);
@@ -82,6 +109,12 @@ vectorp_in(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 					errmsg("invalid input for vectorp")));
+
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(temp_data[dim]) || isinf(temp_data[dim]))
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					errmsg("vectorp values cannot be NaN or Infinity")));
 
 		ptr = endptr;
 		dim++;
@@ -93,8 +126,22 @@ vectorp_in(PG_FUNCTION_ARGS)
 				errmsg("vectorp must have at least 1 "
 				       "dimension")));
 
+	/* Defensive: Validate dimension */
+	if (dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				errmsg("vectorp dimension %d exceeds maximum %d",
+					dim, VECTOR_MAX_DIM)));
+
 	size = VECTORP_SIZE(dim);
 	result = (VectorPacked *)palloc0(size);
+	if (result == NULL)
+	{
+		pfree(temp_data);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate vectorp")));
+	}
 	SET_VARSIZE(result, size);
 
 	/* Compute fingerprint (CRC32 of dimension count) */
@@ -120,9 +167,22 @@ PG_FUNCTION_INFO_V1(vectorp_out);
 Datum
 vectorp_out(PG_FUNCTION_ARGS)
 {
-	VectorPacked *vec = (VectorPacked *)PG_GETARG_POINTER(0);
+	VectorPacked *vec;
 	StringInfoData buf;
 	int i;
+
+	CHECK_NARGS(1);
+	vec = (VectorPacked *)PG_GETARG_POINTER(0);
+
+	/* Defensive: Check NULL input */
+	if (vec == NULL)
+		PG_RETURN_CSTRING(pstrdup("NULL"));
+
+	/* Defensive: Validate vector dimension */
+	if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("invalid vectorp dimension %d", vec->dim)));
 
 	initStringInfo(&buf);
 	appendStringInfoChar(&buf, '[');
@@ -146,7 +206,7 @@ PG_FUNCTION_INFO_V1(vecmap_in);
 Datum
 vecmap_in(PG_FUNCTION_ARGS)
 {
-	char *str = PG_GETARG_CSTRING(0);
+	char *str;
 	VectorMap *result;
 	int32 dim;
 	int32 nnz;
@@ -157,10 +217,17 @@ vecmap_in(PG_FUNCTION_ARGS)
 	int i;
 	int size;
 
+	CHECK_NARGS(1);
+	str = PG_GETARG_CSTRING(0);
+
+	/* Defensive: Check NULL input */
+	if (str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot parse NULL string")));
+
 	dim = 0;
 	nnz = 0;
-
-	(void)i; /* Suppress unused warning */
 
 	/* Parse JSON-like format */
 	ptr = str;
@@ -213,8 +280,27 @@ vecmap_in(PG_FUNCTION_ARGS)
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("nnz cannot exceed dim")));
 
+	/* Defensive: Validate dimensions */
+	if (dim <= 0 || dim > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("vecmap dim %d out of valid range [1, 1000000]",
+					dim)));
+
+	if (nnz < 0 || nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("vecmap nnz %d out of valid range [0, 1000000]",
+					nnz)));
+
 	indices = (int32 *)palloc(sizeof(int32) * nnz);
 	values = (float4 *)palloc(sizeof(float4) * nnz);
+
+	/* Defensive: Validate allocation */
+	if (indices == NULL || values == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate vecmap arrays")));
 
 	/* Parse indices array */
 	while (isspace((unsigned char)*ptr) || *ptr == ',')
@@ -239,17 +325,26 @@ vecmap_in(PG_FUNCTION_ARGS)
 
 			indices[i] = strtol(ptr, &endptr, 10);
 			if (ptr == endptr)
+			{
+				pfree(indices);
+				pfree(values);
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 						errmsg("invalid index value")));
+			}
 
+			/* Defensive: Validate index bounds */
 			if (indices[i] < 0 || indices[i] >= dim)
+			{
+				pfree(indices);
+				pfree(values);
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("index %d out of range "
 						       "[0, %d)",
 							indices[i],
 							dim)));
+			}
 
 			ptr = endptr;
 		}
@@ -286,9 +381,23 @@ vecmap_in(PG_FUNCTION_ARGS)
 
 			values[i] = strtof(ptr, &endptr);
 			if (ptr == endptr)
+			{
+				pfree(indices);
+				pfree(values);
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 						errmsg("invalid value")));
+			}
+
+			/* Defensive: Check for NaN/Inf */
+			if (isnan(values[i]) || isinf(values[i]))
+			{
+				pfree(indices);
+				pfree(values);
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+						errmsg("vecmap values cannot be NaN or Infinity")));
+			}
 
 			ptr = endptr;
 		}
@@ -304,7 +413,29 @@ vecmap_in(PG_FUNCTION_ARGS)
 
 	/* Build result */
 	size = sizeof(VectorMap) + sizeof(int32) * nnz + sizeof(float4) * nnz;
+
+	/* Defensive: Validate size calculation */
+	if (size < (int)sizeof(VectorMap) || size > 100000000)
+	{
+		pfree(indices);
+		pfree(values);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("vecmap size %d out of valid range", size)));
+	}
+
 	result = (VectorMap *)palloc0(size);
+
+	/* Defensive: Validate allocation */
+	if (result == NULL)
+	{
+		pfree(indices);
+		pfree(values);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate vecmap")));
+	}
+
 	SET_VARSIZE(result, size);
 
 	result->total_dim = dim;
@@ -326,14 +457,44 @@ PG_FUNCTION_INFO_V1(vecmap_out);
 Datum
 vecmap_out(PG_FUNCTION_ARGS)
 {
-	VectorMap *vec = (VectorMap *)PG_GETARG_POINTER(0);
+	VectorMap *vec;
 	StringInfoData buf;
 	int32 *indices;
 	float4 *values;
 	int i;
 
+	CHECK_NARGS(1);
+	vec = (VectorMap *)PG_GETARG_POINTER(0);
+
+	/* Defensive: Check NULL input */
+	if (vec == NULL)
+		PG_RETURN_CSTRING(pstrdup("NULL"));
+
+	/* Defensive: Validate vector structure */
+	if (vec->total_dim <= 0 || vec->total_dim > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("invalid vecmap total_dim %d", vec->total_dim)));
+
+	if (vec->nnz < 0 || vec->nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("invalid vecmap nnz %d", vec->nnz)));
+
+	if (vec->nnz > vec->total_dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("vecmap nnz %d exceeds total_dim %d",
+					vec->nnz, vec->total_dim)));
+
 	indices = VECMAP_INDICES(vec);
 	values = VECMAP_VALUES(vec);
+
+	/* Defensive: Validate pointers */
+	if (indices == NULL || values == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("vecmap has NULL indices or values")));
 
 	initStringInfo(&buf);
 
@@ -632,6 +793,7 @@ PG_FUNCTION_INFO_V1(sparsevec_eq);
 Datum
 sparsevec_eq(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
 	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
 	int32 *a_indices, *b_indices;
@@ -671,6 +833,7 @@ PG_FUNCTION_INFO_V1(sparsevec_ne);
 Datum
 sparsevec_ne(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	return DirectFunctionCall2(
 		       sparsevec_eq, PG_GETARG_DATUM(0), PG_GETARG_DATUM(1))
 		? BoolGetDatum(false)
@@ -684,6 +847,7 @@ PG_FUNCTION_INFO_V1(sparsevec_hash);
 Datum
 sparsevec_hash(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	VectorMap *v = (VectorMap *)PG_GETARG_POINTER(0);
 	int32 *indices;
 	float4 *values;
@@ -721,6 +885,7 @@ PG_FUNCTION_INFO_V1(sparsevec_l2_distance);
 Datum
 sparsevec_l2_distance(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	/* Reuse vecmap_l2_distance since sparsevec uses VectorMap structure */
 	return vecmap_l2_distance(fcinfo);
 }
@@ -732,6 +897,7 @@ PG_FUNCTION_INFO_V1(sparsevec_cosine_distance);
 Datum
 sparsevec_cosine_distance(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	/* Reuse vecmap_cosine_distance since sparsevec uses VectorMap structure */
 	return vecmap_cosine_distance(fcinfo);
 }
@@ -743,6 +909,7 @@ PG_FUNCTION_INFO_V1(sparsevec_inner_product);
 Datum
 sparsevec_inner_product(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	/* Reuse vecmap_inner_product since sparsevec uses VectorMap structure */
 	return vecmap_inner_product(fcinfo);
 }

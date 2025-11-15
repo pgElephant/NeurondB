@@ -98,6 +98,25 @@ typedef struct VectorI4
 #define VECTOR_DIM(v) ((v)->dim)
 #define VECTOR_DATA(v) ((v)->data)
 
+/* Argument validation macros */
+#define CHECK_NARGS(expected) \
+	do { \
+		if (PG_NARGS() != (expected)) \
+			ereport(ERROR, \
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE), \
+				 errmsg("function requires %d argument(s), got %d", \
+					(expected), PG_NARGS()))); \
+	} while (0)
+
+#define CHECK_NARGS_RANGE(min, max) \
+	do { \
+		if (PG_NARGS() < (min) || PG_NARGS() > (max)) \
+			ereport(ERROR, \
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE), \
+				 errmsg("function requires %d-%d argument(s), got %d", \
+					(min), (max), PG_NARGS()))); \
+	} while (0)
+
 /* Maximum vector dimensions */
 #define VECTOR_MAX_DIM 16000
 

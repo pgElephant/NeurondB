@@ -51,28 +51,88 @@ neurondb_create_feature_store(PG_FUNCTION_ARGS)
 	text *entity_key_text = PG_GETARG_TEXT_PP(2);
 	text *description_text = PG_ARGISNULL(3) ? NULL : PG_GETARG_TEXT_PP(3);
 
-	char *store_name = text_to_cstring(store_name_text);
-	char *entity_table = text_to_cstring(entity_table_text);
-	char *entity_key = text_to_cstring(entity_key_text);
-	char *description =
-		description_text ? text_to_cstring(description_text) : NULL;
-
+	char *store_name;
+	char *entity_table;
+	char *entity_key;
+	char *description;
 	StringInfoData sql;
 	int ret;
 	bool isnull;
 	int store_id;
 
-	elog(NOTICE,
-		"neurondb.create_feature_store: name='%s', entity_table='%s', "
-		"entity_key='%s'",
-		store_name,
-		entity_table,
-		entity_key);
+	CHECK_NARGS_RANGE(3, 4);
+
+	/* Assert: Internal invariants */
+	Assert(store_name_text != NULL);
+	Assert(entity_table_text != NULL);
+	Assert(entity_key_text != NULL);
+
+	/* Defensive: Check NULL inputs */
+	if (store_name_text == NULL || entity_table_text == NULL ||
+		entity_key_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: create_feature_store store_name, "
+				       "entity_table, and entity_key cannot be NULL")));
+
+	store_name = text_to_cstring(store_name_text);
+	entity_table = text_to_cstring(entity_table_text);
+	entity_key = text_to_cstring(entity_key_text);
+	description =
+		description_text ? text_to_cstring(description_text) : NULL;
+
+	/* Defensive: Validate allocations */
+	if (store_name == NULL || entity_table == NULL || entity_key == NULL)
+	{
+		if (store_name)
+			pfree(store_name);
+		if (entity_table)
+			pfree(entity_table);
+		if (entity_key)
+			pfree(entity_key);
+		if (description)
+			pfree(description);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: create_feature_store failed to "
+				       "allocate strings")));
+	}
+
+	/* Defensive: Validate string lengths */
+	if (strlen(store_name) == 0 || strlen(store_name) > NAMEDATALEN ||
+		strlen(entity_table) == 0 || strlen(entity_table) > NAMEDATALEN ||
+		strlen(entity_key) == 0 || strlen(entity_key) > NAMEDATALEN)
+	{
+		pfree(store_name);
+		pfree(entity_table);
+		pfree(entity_key);
+		if (description)
+			pfree(description);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_NAME),
+				errmsg("neurondb: create_feature_store invalid string "
+				       "length")));
+	}
+
+	elog(DEBUG1,
+	     "neurondb: create_feature_store name='%s', entity_table='%s', "
+	     "entity_key='%s'",
+	     store_name,
+	     entity_table,
+	     entity_key);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
+	{
+		pfree(store_name);
+		pfree(entity_table);
+		pfree(entity_key);
+		if (description)
+			pfree(description);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("could not connect to SPI manager")));
+				errmsg("neurondb: create_feature_store could not "
+				       "connect to SPI manager")));
+	}
 
 	/* Insert feature store definition */
 	initStringInfo(&sql);
@@ -89,12 +149,55 @@ neurondb_create_feature_store(PG_FUNCTION_ARGS)
 
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed != 1)
+	{
+		SPI_finish();
+		pfree(store_name);
+		pfree(entity_table);
+		pfree(entity_key);
+		if (description)
+			pfree(description);
+		pfree(sql.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("failed to create feature store")));
+				errmsg("neurondb: create_feature_store failed to "
+				       "create feature store")));
+	}
+
+	/* Defensive: Validate SPI_tuptable */
+	if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL ||
+		SPI_tuptable->tupdesc == NULL)
+	{
+		SPI_finish();
+		pfree(store_name);
+		pfree(entity_table);
+		pfree(entity_key);
+		if (description)
+			pfree(description);
+		pfree(sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: create_feature_store SPI_tuptable "
+				       "is invalid")));
+	}
 
 	store_id = DatumGetInt32(SPI_getbinval(
 		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+
+	/* Defensive: Validate store_id */
+	if (isnull || store_id <= 0)
+	{
+		SPI_finish();
+		pfree(store_name);
+		pfree(entity_table);
+		pfree(entity_key);
+		if (description)
+			pfree(description);
+		pfree(sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: create_feature_store store_id "
+				       "returned as NULL or invalid")));
+	}
 
 	SPI_finish();
 
@@ -129,24 +232,80 @@ neurondb_register_feature(PG_FUNCTION_ARGS)
 	int feature_id;
 	bool isnull;
 
+	CHECK_NARGS_RANGE(3, 4);
+
+	/* Assert: Internal invariants */
+	Assert(feature_name_text != NULL);
+	Assert(feature_type_text != NULL);
+
+	/* Defensive: Check NULL inputs */
+	if (feature_name_text == NULL || feature_type_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: register_feature feature_name and "
+				       "feature_type cannot be NULL")));
+
+	/* Defensive: Validate store_id */
+	if (store_id <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: register_feature store_id must be "
+				       "positive, got %d", store_id)));
+
 	feature_name = text_to_cstring(feature_name_text);
 	feature_type = text_to_cstring(feature_type_text);
 	transformation = transformation_text
 		? text_to_cstring(transformation_text)
 		: NULL;
 
-	elog(NOTICE,
-		"neurondb.register_feature: store=%d, feature='%s', type=%s, "
-		"transformation='%s'",
-		store_id,
-		feature_name,
-		feature_type,
-		transformation ? transformation : "none");
+	/* Defensive: Validate allocations */
+	if (feature_name == NULL || feature_type == NULL)
+	{
+		if (feature_name)
+			pfree(feature_name);
+		if (feature_type)
+			pfree(feature_type);
+		if (transformation)
+			pfree(transformation);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: register_feature failed to allocate "
+				       "strings")));
+	}
+
+	/* Defensive: Validate string lengths */
+	if (strlen(feature_name) == 0 || strlen(feature_name) > NAMEDATALEN ||
+		strlen(feature_type) == 0 || strlen(feature_type) > 64)
+	{
+		pfree(feature_name);
+		pfree(feature_type);
+		if (transformation)
+			pfree(transformation);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_NAME),
+				errmsg("neurondb: register_feature invalid string "
+				       "length")));
+	}
+
+	elog(DEBUG1,
+	     "neurondb: register_feature store=%d, feature='%s', type=%s, "
+	     "transformation='%s'",
+	     store_id,
+	     feature_name,
+	     feature_type,
+	     transformation ? transformation : "none");
 
 	if (SPI_connect() != SPI_OK_CONNECT)
+	{
+		pfree(feature_name);
+		pfree(feature_type);
+		if (transformation)
+			pfree(transformation);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("could not connect to SPI manager")));
+				errmsg("neurondb: register_feature could not connect "
+				       "to SPI manager")));
+	}
 
 	initStringInfo(&sql);
 	if (transformation)
@@ -177,7 +336,8 @@ neurondb_register_feature(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed != 1)
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("failed to register feature")));
+				errmsg("neurondb: register_feature failed to register "
+				       "feature")));
 
 	feature_id = DatumGetInt32(SPI_getbinval(
 		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
@@ -239,11 +399,22 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 	JsonbValue ent_key_jbv, feature_obj_value;
 	Jsonb *result_jsonb;
 
-	/* Validate array arguments */
+	/* Assert: Internal invariants */
+	Assert(entities_array != NULL);
+
+	/* Defensive: Check NULL input */
+	if (entities_array == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: get_features entities_array cannot "
+				       "be NULL")));
+
+	/* Defensive: Validate array arguments */
 	if (ARR_NDIM(entities_array) != 1 || ARR_HASNULL(entities_array))
 		ereport(ERROR,
-			(errmsg("entity_ids must be a one-dimensional, not "
-				"null array")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: get_features entity_ids must be a "
+				       "one-dimensional, not null array")));
 	entity_elemtype = ARR_ELEMTYPE(entities_array);
 	get_typlenbyvalalign(entity_elemtype,
 		&entity_typlen,
@@ -264,8 +435,10 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 		if (ARR_NDIM(features_array) != 1
 			|| ARR_HASNULL(features_array))
 			ereport(ERROR,
-				(errmsg("feature_names must be a "
-					"one-dimensional, not null array")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: get_features feature_names "
+					       "must be a one-dimensional, not null "
+					       "array")));
 		feat_elemtype = ARR_ELEMTYPE(features_array);
 		get_typlenbyvalalign(feat_elemtype,
 			&feat_typlen,
@@ -326,8 +499,8 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 		if (SPI_connect() != SPI_OK_CONNECT)
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("could not connect to SPI "
-					       "manager")));
+					errmsg("neurondb: get_features could not "
+					       "connect to SPI manager")));
 
 		spi_ret = SPI_execute(sql.data, true, 1);
 
@@ -520,7 +693,8 @@ neurondb_feature_engineering(PG_FUNCTION_ARGS)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("could not connect to SPI manager")));
+				errmsg("neurondb: feature_engineering could not "
+				       "connect to SPI manager")));
 
 	/*
      * Apply each transformation to each feature.
@@ -551,8 +725,9 @@ neurondb_feature_engineering(PG_FUNCTION_ARGS)
 		if (ret != SPI_OK_UPDATE)
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("Failed to update feature '%s'",
-						feature_names[i])));
+					errmsg("neurondb: feature_engineering failed "
+					       "to update feature '%s'",
+					       feature_names[i])));
 		updated += SPI_processed;
 		pfree(sql.data);
 	}
@@ -609,17 +784,17 @@ entity_key_for_store(int32 store_id)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("could not connect to SPI manager in "
-				       "helper")));
+				errmsg("neurondb: entity_key_for_store could not "
+				       "connect to SPI manager")));
 
 	ret = SPI_execute(sql.data, true, 0);
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("feature store %d not found",
-					store_id)));
+			(errcode(ERRCODE_UNDEFINED_OBJECT),
+				errmsg("neurondb: entity_key_for_store feature store "
+				       "%d not found", store_id)));
 	}
 
 	entity_key = TextDatumGetCString(SPI_getbinval(
@@ -640,6 +815,16 @@ entity_table_for_store(int32 store_id)
 	bool isnull;
 	char *entity_table;
 
+	/* Assert: Internal invariants */
+	Assert(store_id > 0);
+
+	/* Defensive: Validate store_id */
+	if (store_id <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: entity_table_for_store store_id "
+				       "must be positive, got %d", store_id)));
+
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 		"SELECT entity_table FROM neurondb.feature_stores WHERE "
@@ -649,23 +834,46 @@ entity_table_for_store(int32 store_id)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("could not connect to SPI manager in "
-				       "helper")));
+				errmsg("neurondb: entity_key_for_store could not "
+				       "connect to SPI manager")));
 
 	ret = SPI_execute(sql.data, true, 0);
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
 		SPI_finish();
 		ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_OBJECT),
+				errmsg("neurondb: entity_key_for_store feature store "
+				       "%d not found", store_id)));
+	}
+
+	/* Defensive: Validate tuple */
+	if (SPI_tuptable->vals[0] == NULL)
+	{
+		SPI_finish();
+		pfree(sql.data);
+		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("feature store %d not found",
-					store_id)));
+				errmsg("neurondb: entity_table_for_store NULL tuple "
+				       "returned")));
 	}
 
 	entity_table = TextDatumGetCString(SPI_getbinval(
 		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 
+	/* Defensive: Validate result */
+	if (isnull || entity_table == NULL)
+	{
+		SPI_finish();
+		pfree(sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: entity_table_for_store entity_table "
+				       "is NULL")));
+	}
+
 	SPI_finish();
+	pfree(sql.data);
 	return entity_table;
 }
 
@@ -696,8 +904,8 @@ get_feature_definitions(int32 store_id,
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("could not connect to SPI manager in "
-				       "feature_definitions helper")));
+				errmsg("neurondb: get_feature_definitions could not "
+				       "connect to SPI manager")));
 
 	ret = SPI_execute(sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -705,9 +913,9 @@ get_feature_definitions(int32 store_id,
 		SPI_finish();
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("could not retrieve feature definitions "
-				       "for store %d",
-					store_id)));
+				errmsg("neurondb: get_feature_definitions could not "
+				       "retrieve feature definitions for store %d",
+				       store_id)));
 	}
 
 	nfeat = SPI_processed;

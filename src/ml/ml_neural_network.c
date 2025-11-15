@@ -353,6 +353,25 @@ train_neural_network(PG_FUNCTION_ARGS)
 	text *activation_text = PG_ARGISNULL(4) ? NULL : PG_GETARG_TEXT_PP(4);
 	float8 learning_rate = PG_ARGISNULL(5) ? 0.01 : PG_GETARG_FLOAT8(5);
 	int32 epochs = PG_ARGISNULL(6) ? 100 : PG_GETARG_INT32(6);
+
+	CHECK_NARGS_RANGE(4, 7);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || label_col == NULL || hidden_layers_array == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_neural_network: table_name, feature_col, label_col, and hidden_layers_array cannot be NULL")));
+
+	/* Defensive: Validate parameters */
+	if (isnan(learning_rate) || isinf(learning_rate) || learning_rate <= 0.0 || learning_rate > 1.0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("learning_rate must be between 0.0 and 1.0, got %f", learning_rate)));
+
+	if (epochs < 1 || epochs > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("epochs must be between 1 and 100000, got %d", epochs)));
 	char *table_name_str;
 	char *feature_col_str;
 	char *label_col_str;

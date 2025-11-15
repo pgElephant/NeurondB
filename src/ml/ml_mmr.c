@@ -91,16 +91,31 @@ mmr_rerank(PG_FUNCTION_ARGS)
 	bool typbyval;
 	char typalign;
 
+	CHECK_NARGS(4);
+
 	/* Parse arguments */
 	query_array = PG_GETARG_ARRAYTYPE_P(0);
 	candidates_array = PG_GETARG_ARRAYTYPE_P(1);
+
+	/* Defensive: Check NULL inputs */
+	if (query_array == NULL || candidates_array == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("mmr_rerank: query_array and candidates_array cannot be NULL")));
+
 	lambda = PG_GETARG_FLOAT4(2);
 	top_k = PG_GETARG_INT32(3);
 
-	if (lambda < 0.0 || lambda > 1.0)
+	/* Defensive: Validate parameters */
+	if (lambda < 0.0 || lambda > 1.0 || isnan(lambda) || isinf(lambda))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("lambda must be between 0.0 and 1.0")));
+				errmsg("lambda must be between 0.0 and 1.0, got %f", lambda)));
+
+	if (top_k < 1 || top_k > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("top_k must be between 1 and 100000, got %d", top_k)));
 
 	/* Extract query vector */
 	query_dim = ARR_DIMS(query_array)[0];

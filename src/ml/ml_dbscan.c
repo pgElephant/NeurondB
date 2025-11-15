@@ -158,30 +158,64 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 	bool		typbyval;
 	char		typalign;
 
+	CHECK_NARGS_RANGE(3, 4);
+
 	table_name = PG_GETARG_TEXT_PP(0);
 	column_name = PG_GETARG_TEXT_PP(1);
 	eps = PG_GETARG_FLOAT8(2);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || column_name == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cluster_dbscan: table_name and column_name cannot be NULL")));
 
 	if (PG_NARGS() >= 4)
 		min_pts = PG_GETARG_INT32(3);
 	else
 		min_pts = 5;
 
-	if (eps <= 0.0)
+	/* Defensive: Validate parameters */
+	if (eps <= 0.0 || isnan(eps) || isinf(eps))
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("eps must be positive")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("eps must be positive, got %f", eps)));
 
-	if (min_pts < 1)
+	if (min_pts < 1 || min_pts > 10000)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("min_pts must be at least 1")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("min_pts must be between 1 and 10000, got %d", min_pts)));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(column_name);
 
-	elog(DEBUG1, "neurondb: DBSCAN clustering on %s.%s (eps=%.4f, min_pts=%d)",
-		 tbl_str, col_str, eps, min_pts);
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (col_str)
+			pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	/* Defensive: Validate string lengths */
+	if (strlen(tbl_str) == 0 || strlen(tbl_str) > NAMEDATALEN ||
+		strlen(col_str) == 0 || strlen(col_str) > NAMEDATALEN)
+	{
+		pfree(tbl_str);
+		pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_NAME),
+				errmsg("cluster_dbscan: invalid table or column name length")));
+	}
+
+	elog(DEBUG1, "cluster_dbscan: Starting DBSCAN clustering (eps=%f, min_pts=%d)", eps, min_pts);
+
+	tbl_str = text_to_cstring(table_name);
+	col_str = text_to_cstring(column_name);
 
 	state.data = neurondb_fetch_vectors_from_table(
 		tbl_str, col_str, &state.nvec, &state.dim);

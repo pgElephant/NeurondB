@@ -207,11 +207,32 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 	bool typbyval;
 	char typalign;
 
+	CHECK_NARGS_RANGE(3, 5);
+
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	column_name = PG_GETARG_TEXT_PP(1);
 	num_clusters = PG_GETARG_INT32(2);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || column_name == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cluster_minibatch_kmeans: table_name and column_name cannot be NULL")));
+
+	/* Defensive: Validate parameters */
+	if (num_clusters < 1 || num_clusters > 10000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_clusters must be between 1 and 10000, got %d", num_clusters)));
+
 	batch_size = PG_ARGISNULL(3) ? 100 : PG_GETARG_INT32(3);
+
+	/* Defensive: Validate batch_size */
+	if (batch_size < 1 || batch_size > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("batch_size must be between 1 and 100000, got %d", batch_size)));
 	max_iters = PG_ARGISNULL(4) ? 100 : PG_GETARG_INT32(4);
 
 	/* Validation */

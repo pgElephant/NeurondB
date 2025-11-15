@@ -80,14 +80,36 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	StringInfoData sql;
 	int			ret;
 
+	CHECK_NARGS(3);
+
 	/* Parse input arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
 	cluster_column = PG_GETARG_TEXT_PP(2);
 
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_column == NULL || cluster_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("davies_bouldin_index: table_name, vector_column, and cluster_column cannot be NULL")));
+
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
 	cluster_col_str = text_to_cstring(cluster_column);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || vec_col_str == NULL || cluster_col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (vec_col_str)
+			pfree(vec_col_str);
+		if (cluster_col_str)
+			pfree(cluster_col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
 
 	elog(DEBUG1, "neurondb: Computing Davies-Bouldin Index for %s.%s (clusters=%s)",
 		 tbl_str, vec_col_str, cluster_col_str);

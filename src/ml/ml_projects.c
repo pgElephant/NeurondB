@@ -59,17 +59,59 @@ neurondb_create_ml_project(PG_FUNCTION_ARGS)
 	int project_id;
 	bool isnull;
 
+	CHECK_NARGS_RANGE(2, 3);
+
+	/* Defensive: Check NULL inputs */
+	if (project_name_text == NULL || model_type_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb_create_ml_project: project_name and model_type cannot be NULL")));
+
 	project_name = text_to_cstring(project_name_text);
 	model_type = text_to_cstring(model_type_text);
 	description =
 		description_text ? text_to_cstring(description_text) : NULL;
 
-	/* Validate project name */
+	/* Defensive: Validate allocations */
+	if (project_name == NULL || model_type == NULL)
+	{
+		if (project_name)
+			pfree(project_name);
+		if (model_type)
+			pfree(model_type);
+		if (description)
+			pfree(description);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	/* Defensive: Validate project name */
 	if (strlen(project_name) < 3 || strlen(project_name) > 100)
+	{
+		pfree(project_name);
+		pfree(model_type);
+		if (description)
+			pfree(description);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("project name must be between 3 and 100 "
-				       "characters")));
+				errmsg("project name must be between 3 and 100 characters, got %zu", strlen(project_name))));
+	}
+
+	/* Defensive: Validate model_type */
+	if (strlen(model_type) == 0 || strlen(model_type) > 64)
+	{
+		pfree(project_name);
+		pfree(model_type);
+		if (description)
+			pfree(description);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("model_type must be between 1 and 64 characters, got %zu", strlen(model_type))));
+	}
+
+	elog(DEBUG1, "neurondb_create_ml_project: Creating project '%s' with type '%s'",
+		project_name, model_type);
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
@@ -83,13 +125,27 @@ neurondb_create_ml_project(PG_FUNCTION_ARGS)
 		description ? quote_literal_cstr(description) : "NULL");
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+	{
+		pfree(project_name);
+		pfree(model_type);
+		if (description)
+			pfree(description);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_connect failed")));
+	}
 
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_INSERT_RETURNING)
 	{
 		SPI_finish();
-		elog(ERROR, "failed to create project: %s", project_name);
+		pfree(project_name);
+		pfree(model_type);
+		if (description)
+			pfree(description);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("failed to create project: %s", project_name)));
 	}
 
 	if (SPI_processed == 0)
@@ -106,14 +162,45 @@ neurondb_create_ml_project(PG_FUNCTION_ARGS)
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		{
 			SPI_finish();
-			elog(ERROR,
-				"project exists but could not retrieve ID: %s",
-				project_name);
+			pfree(project_name);
+			pfree(model_type);
+			if (description)
+				pfree(description);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("project exists but could not retrieve ID: %s", project_name)));
 		}
+	}
+
+	/* Defensive: Validate SPI_tuptable */
+	if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL ||
+		SPI_tuptable->tupdesc == NULL || SPI_processed == 0)
+	{
+		SPI_finish();
+		pfree(project_name);
+		pfree(model_type);
+		if (description)
+			pfree(description);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_tuptable is invalid")));
 	}
 
 	project_id = DatumGetInt32(SPI_getbinval(
 		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+
+	/* Defensive: Validate project_id */
+	if (isnull || project_id <= 0)
+	{
+		SPI_finish();
+		pfree(project_name);
+		pfree(model_type);
+		if (description)
+			pfree(description);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("project_id returned as NULL or invalid")));
+	}
 
 	SPI_finish();
 
@@ -144,22 +231,24 @@ neurondb_list_ml_projects(PG_FUNCTION_ARGS)
 	int ret;
 	int i;
 
-	/* Check result context */
+	CHECK_NARGS(0);
+
+	/* Defensive: Check result context */
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("set-valued function called in context "
-				       "that cannot accept a set")));
+				errmsg("set-valued function called in context that cannot accept a set")));
 
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("materialize mode required, but it is "
-				       "not allowed in this context")));
+				errmsg("materialize mode required, but it is not allowed in this context")));
 
 	/* Build tuple descriptor */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-		elog(ERROR, "return type must be a row type");
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("return type must be a row type")));
 
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
 	oldcontext = MemoryContextSwitchTo(per_query_ctx);
@@ -173,18 +262,55 @@ neurondb_list_ml_projects(PG_FUNCTION_ARGS)
 
 	/* Query projects */
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_connect failed")));
 
 	ret = SPI_execute("SELECT * FROM neurondb.ml_projects_summary ORDER BY "
 			  "created_at DESC",
 		true,
 		0);
 
+	/* Defensive: Validate SPI result */
+	if (ret != SPI_OK_SELECT)
+	{
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_execute failed for ml_projects_summary")));
+	}
+
+	/* Defensive: Validate SPI_tuptable */
+	if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL ||
+		SPI_tuptable->tupdesc == NULL)
+	{
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_tuptable is invalid")));
+	}
+
 	if (ret == SPI_OK_SELECT)
 	{
+		/* Defensive: Validate SPI_processed */
+		if (SPI_processed < 0 || SPI_processed > 1000000)
+		{
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("SPI_processed has invalid value: %ld", (long)SPI_processed)));
+		}
+
 		for (i = 0; i < (int)SPI_processed; i++)
 		{
 			HeapTuple spi_tuple = SPI_tuptable->vals[i];
+
+			/* Defensive: Validate tuple */
+			if (spi_tuple == NULL)
+			{
+				elog(WARNING, "neurondb_list_ml_projects: NULL tuple at index %d", i);
+				continue;
+			}
 			Datum values[6];
 			bool nulls[6];
 

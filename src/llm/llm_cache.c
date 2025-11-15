@@ -39,7 +39,13 @@ ndb_llm_cache_lookup(const char *key, int max_age_seconds, char **out_text)
 	bool isnull;
 	Datum d;
 
-	/* All declarations above */
+	/* Defensive: Check NULL input */
+	if (key == NULL)
+		return false;
+
+	/* Defensive: Validate max_age_seconds */
+	if (max_age_seconds < 0)
+		max_age_seconds = 600;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		return false;
@@ -55,6 +61,14 @@ ndb_llm_cache_lookup(const char *key, int max_age_seconds, char **out_text)
 
 	if (exec_res == SPI_OK_SELECT && SPI_processed > 0)
 	{
+		/* Defensive: Validate SPI_tuptable */
+		if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL
+			|| SPI_tuptable->vals == NULL)
+		{
+			SPI_finish();
+			return false;
+		}
+
 		d = SPI_getbinval(SPI_tuptable->vals[0],
 			SPI_tuptable->tupdesc,
 			1,
@@ -84,7 +98,12 @@ ndb_llm_cache_store(const char *key, const char *text)
 	Datum values[2];
 	StringInfoData val;
 
-	/* All declarations above */
+	/* Defensive: Check NULL inputs */
+	if (key == NULL)
+		return;
+	if (text == NULL)
+		text = "";
+
 	argtypes[0] = TEXTOID;
 	argtypes[1] = JSONBOID;
 
@@ -134,15 +153,29 @@ ndb_llm_cache_test(PG_FUNCTION_ARGS)
 	bool hit;
 	text *out;
 
-	/* All declarations above */
+	CHECK_NARGS(3);
 	result = NULL;
 
 	key_in = PG_GETARG_TEXT_PP(0);
 	val_in = PG_GETARG_TEXT_PP(1);
 	max_age = PG_GETARG_INT32(2);
 
+	/* Defensive: Check NULL inputs */
+	if (key_in == NULL || val_in == NULL)
+		PG_RETURN_NULL();
+
+	/* Defensive: Validate max_age */
+	if (max_age < 0)
+		max_age = 600;
+
 	key = text_to_cstring(key_in);
 	val = text_to_cstring(val_in);
+
+	/* Defensive: Validate allocations */
+	if (key == NULL || val == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
 
 	ndb_llm_cache_store(key, val);
 

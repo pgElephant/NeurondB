@@ -827,22 +827,51 @@ train_decision_tree_classifier(PG_FUNCTION_ARGS)
 	Jsonb	   *metrics_jsonb = NULL;
 	int			i;
 
+	CHECK_NARGS(5);
+
 	table_name = PG_GETARG_TEXT_PP(0);
 	feature_col = PG_GETARG_TEXT_PP(1);
 	label_col = PG_GETARG_TEXT_PP(2);
 	max_depth = PG_GETARG_INT32(3);
 	min_samples_split = PG_GETARG_INT32(4);
 
-	if (max_depth <= 0)
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("dt: max_depth must be positive, got %d", max_depth)));
-	if (min_samples_split < 2)
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("dt: min_samples_split must be at least 2, got %d", min_samples_split)));
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || label_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_decision_tree_classifier: table_name, feature_col, and label_col cannot be NULL")));
+
+	/* Defensive: Validate parameters */
+	if (max_depth <= 0 || max_depth > 1000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("dt: max_depth must be between 1 and 1000, got %d", max_depth)));
+
+	if (min_samples_split < 2 || min_samples_split > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("dt: min_samples_split must be between 2 and 100000, got %d", min_samples_split)));
 
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
 	label_str = text_to_cstring(label_col);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || feat_str == NULL || label_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (feat_str)
+			pfree(feat_str);
+		if (label_str)
+			pfree(label_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	elog(DEBUG1, "train_decision_tree_classifier: Starting training (max_depth=%d, min_samples_split=%d)",
+		max_depth, min_samples_split);
 
 	dt_dataset_init(&dataset);
 

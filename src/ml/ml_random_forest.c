@@ -855,6 +855,18 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 	StringInfoData query;
 
+	CHECK_NARGS_RANGE(3, 8);
+
+	/* Defensive: Check NULL inputs */
+	table_name_text = PG_GETARG_TEXT_PP(0);
+	feature_col_text = PG_GETARG_TEXT_PP(1);
+	label_col_text = PG_GETARG_TEXT_PP(2);
+
+	if (table_name_text == NULL || feature_col_text == NULL || label_col_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_random_forest_classifier: table_name, feature_col, and label_col cannot be NULL")));
+
 	int feature_dim = 0;
 	int n_classes = 0;
 	int majority_count = 0;

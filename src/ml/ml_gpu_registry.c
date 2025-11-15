@@ -95,5 +95,7 @@ neurondb_gpu_register_models(void)
 	neurondb_gpu_register_davies_bouldin_model();
 
 	registered = true;
-	elog(DEBUG1, "All GPU Model Ops registered successfully (30 algorithms)");
+	elog(DEBUG1,
+	     "neurondb: all GPU model ops registered successfully "
+	     "(30 algorithms)");
 }

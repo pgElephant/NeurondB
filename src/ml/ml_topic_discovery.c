@@ -94,20 +94,46 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 	bool typbyval;
 	char typalign;
 
+	CHECK_NARGS_RANGE(2, 4);
+
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("discover_topics_simple: table_name and vector_column cannot be NULL")));
+
 	num_topics = PG_ARGISNULL(2) ? 10 : PG_GETARG_INT32(2);
 	max_iters = PG_ARGISNULL(3) ? 50 : PG_GETARG_INT32(3);
 
+	/* Defensive: Validate parameters */
 	if (num_topics < 2 || num_topics > 100)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("num_topics must be between 2 and "
-				       "100")));
+				errmsg("num_topics must be between 2 and 100, got %d", num_topics)));
+
+	if (max_iters < 1 || max_iters > 10000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("max_iters must be between 1 and 10000, got %d", max_iters)));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_column);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (col_str)
+			pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
 
 	elog(DEBUG1, "neurondb: Topic discovery (k=%d)", num_topics);
 

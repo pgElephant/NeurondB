@@ -113,9 +113,22 @@ matrix_invert(double **matrix, int n, double **result)
 			}
 		}
 
+		/* Defensive: Check for division by zero */
+		if (fabs(pivot) < 1e-20)
+		{
+			elog(WARNING, "matrix_invert: pivot too small: %e", pivot);
+		}
+
 		/* Normalize pivot row */
 		for (j = 0; j < 2 * n; j++)
+		{
 			augmented[i][j] /= pivot;
+			/* Defensive: Check for NaN/Inf after division */
+			if (isnan(augmented[i][j]) || isinf(augmented[i][j]))
+			{
+				elog(WARNING, "matrix_invert: NaN or Infinity after normalization at [%d][%d]", i, j);
+			}
+		}
 
 		/* Eliminate column */
 		for (k = 0; k < n; k++)
@@ -542,6 +555,8 @@ train_linear_regression(PG_FUNCTION_ARGS)
 	text *table_name;
 	text *feature_col;
 	text *target_col;
+
+	CHECK_NARGS(3);
 	char *tbl_str;
 	char *feat_str;
 	char *targ_str;

@@ -54,12 +54,47 @@ static double
 gaussian_pdf(double x, double mean, double variance)
 {
 	double exponent;
+	double result;
+
+	/* Defensive: Check for NaN/Inf inputs */
+	if (isnan(x) || isnan(mean) || isnan(variance) ||
+		isinf(x) || isinf(mean) || isinf(variance))
+	{
+		elog(WARNING, "gaussian_pdf: NaN or Infinity in inputs (x=%f, mean=%f, variance=%f)",
+			x, mean, variance);
+		return 0.0;
+	}
+
+	/* Defensive: Validate variance */
+	if (variance < 0.0)
+	{
+		elog(WARNING, "gaussian_pdf: negative variance %f, using absolute value", variance);
+		variance = fabs(variance);
+	}
 
 	if (variance < 1e-9)
 		variance = 1e-9; /* Avoid division by zero */
 
 	exponent = -0.5 * pow((x - mean), 2) / variance;
-	return (1.0 / sqrt(2.0 * M_PI * variance)) * exp(exponent);
+
+	/* Defensive: Check for overflow in exponent */
+	if (isnan(exponent) || isinf(exponent))
+	{
+		elog(WARNING, "gaussian_pdf: exponent overflow (x=%f, mean=%f, variance=%f)",
+			x, mean, variance);
+		return 0.0;
+	}
+
+	result = (1.0 / sqrt(2.0 * M_PI * variance)) * exp(exponent);
+
+	/* Defensive: Validate result */
+	if (isnan(result) || isinf(result))
+	{
+		elog(WARNING, "gaussian_pdf: result is NaN or Infinity");
+		return 0.0;
+	}
+
+	return result;
 }
 
 /*
@@ -96,19 +131,58 @@ train_naive_bayes_classifier(PG_FUNCTION_ARGS)
 	ArrayType *result_array;
 	MemoryContext oldcontext;
 
+	CHECK_NARGS(3);
+
 	table_name = PG_GETARG_TEXT_PP(0);
 	feature_col = PG_GETARG_TEXT_PP(1);
 	label_col = PG_GETARG_TEXT_PP(2);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || label_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_naive_bayes_classifier: table_name, feature_col, and label_col cannot be NULL")));
 
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
 	label_str = text_to_cstring(label_col);
 
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || feat_str == NULL || label_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (feat_str)
+			pfree(feat_str);
+		if (label_str)
+			pfree(label_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	/* Defensive: Validate string lengths */
+	if (strlen(tbl_str) == 0 || strlen(tbl_str) > NAMEDATALEN ||
+		strlen(feat_str) == 0 || strlen(feat_str) > NAMEDATALEN ||
+		strlen(label_str) == 0 || strlen(label_str) > NAMEDATALEN)
+	{
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(label_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_NAME),
+				errmsg("train_naive_bayes_classifier: invalid table or column name length")));
+	}
+
+	elog(DEBUG1, "train_naive_bayes_classifier: Starting training on table '%s'", tbl_str);
+
 	oldcontext = CurrentMemoryContext;
 
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_connect failed")));
 
 	/* Build query */
 	initStringInfo(&query);

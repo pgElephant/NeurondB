@@ -625,7 +625,14 @@ PG_FUNCTION_INFO_V1(vectorp_dims);
 Datum
 vectorp_dims(PG_FUNCTION_ARGS)
 {
-	VectorPacked *vec = (VectorPacked *)PG_GETARG_POINTER(0);
+	VectorPacked *vec;
+
+	CHECK_NARGS(1);
+	vec = (VectorPacked *)PG_GETARG_POINTER(0);
+
+	/* Defensive: Check NULL input */
+	if (vec == NULL)
+		PG_RETURN_NULL();
 
 	PG_RETURN_INT32(vec->dim);
 }
@@ -637,9 +644,18 @@ PG_FUNCTION_INFO_V1(vectorp_validate);
 Datum
 vectorp_validate(PG_FUNCTION_ARGS)
 {
-	VectorPacked *vec = (VectorPacked *)PG_GETARG_POINTER(0);
+	VectorPacked *vec;
 	uint32 expected_fp;
 	uint32 dim;
+
+	CHECK_NARGS(1);
+	vec = (VectorPacked *)PG_GETARG_POINTER(0);
+
+	/* Defensive: Check NULL input */
+	if (vec == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot validate NULL vectorp")));
 
 	dim = vec->dim;
 

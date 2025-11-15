@@ -91,6 +91,8 @@ rerank_cross_encoder(PG_FUNCTION_ARGS)
 	int max_calls;
 	RerankState *state;
 
+	CHECK_NARGS_RANGE(2, 4);
+
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
@@ -107,16 +109,42 @@ rerank_cross_encoder(PG_FUNCTION_ARGS)
 
 		/*-- Prepare multi-call context --*/
 		funcctx = SRF_FIRSTCALL_INIT();
+
+		/* Defensive: Validate funcctx */
+		if (funcctx == NULL)
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("SRF_FIRSTCALL_INIT failed")));
+
 		oldcontext =
 			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		/*--- 1. Parse Inputs ---*/
 		query_text = PG_GETARG_TEXT_PP(0);
 		candidates_array = PG_GETARG_ARRAYTYPE_P(1);
+
+		/* Defensive: Check NULL inputs */
+		if (query_text == NULL || candidates_array == NULL)
+			ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					errmsg("rerank_cross_encoder: query_text and candidates_array cannot be NULL")));
+
 		model_text = (PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2));
 		top_k = PG_GETARG_INT32(3);
 
+		/* Defensive: Validate top_k */
+		if (top_k < 1 || top_k > 100000)
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("top_k must be between 1 and 100000, got %d", top_k)));
+
 		query_str = text_to_cstring(query_text);
+
+		/* Defensive: Validate allocation */
+		if (query_str == NULL)
+			ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+					errmsg("failed to allocate query string")));
 
 		deconstruct_array(candidates_array,
 			TEXTOID,
@@ -127,14 +155,12 @@ rerank_cross_encoder(PG_FUNCTION_ARGS)
 			&candidate_nulls,
 			&ncandidates);
 
-		/* Robustly limit for top_k edge cases */
-		if (top_k < 1)
+		/* Defensive: Validate array deconstruction */
+		if (ncandidates <= 0 || ncandidates > 1000000)
 			ereport(ERROR,
-				(errmsg("top_k must be positive (got %d)",
-					top_k)));
-		if (ncandidates <= 0)
-			ereport(ERROR,
-				(errmsg("candidate array cannot be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("candidate array size must be between 1 and 1000000, got %d", ncandidates)));
+
 		max_calls = (ncandidates < top_k) ? ncandidates : top_k;
 
 		/*--- 2. Allocate Rerank State ---*/

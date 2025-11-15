@@ -104,18 +104,40 @@ similarity_histogram(PG_FUNCTION_ARGS)
 	bool		nulls[9];
 	HeapTuple	tuple;
 
+	CHECK_NARGS_RANGE(2, 3);
+
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("similarity_histogram: table_name and vector_column cannot be NULL")));
+
 	num_samples = PG_ARGISNULL(2) ? 1000 : PG_GETARG_INT32(2);
 
+	/* Defensive: Validate num_samples */
 	if (num_samples < 10 || num_samples > 100000)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("num_samples must be between 10 and 100000")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_samples must be between 10 and 100000, got %d", num_samples)));
 
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || vec_col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (vec_col_str)
+			pfree(vec_col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
 
 	elog(DEBUG1,
 		 "neurondb: Computing similarity histogram (%d samples)",

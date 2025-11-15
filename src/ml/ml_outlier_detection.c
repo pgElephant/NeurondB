@@ -142,21 +142,45 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 	bool typbyval;
 	char typalign;
 
+	CHECK_NARGS_RANGE(2, 4);
+
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("detect_outliers_zscore: table_name and vector_column cannot be NULL")));
+
 	threshold = PG_ARGISNULL(2) ? 3.0 : PG_GETARG_FLOAT8(2);
 	method_text = PG_ARGISNULL(3) ? cstring_to_text("zscore")
 				      : PG_GETARG_TEXT_PP(3);
 
-	if (threshold < 0.0)
+	/* Defensive: Validate threshold */
+	if (threshold < 0.0 || isnan(threshold) || isinf(threshold))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("threshold must be non-negative")));
+				errmsg("threshold must be non-negative, got %f", threshold)));
 
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
 	method = text_to_cstring(method_text);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || vec_col_str == NULL || method == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (vec_col_str)
+			pfree(vec_col_str);
+		if (method)
+			pfree(method);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
 
 	elog(DEBUG1,
 		"neurondb: Outlier detection on %s.%s (method=%s, "

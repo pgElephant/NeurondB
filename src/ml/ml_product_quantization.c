@@ -199,25 +199,46 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 	int result_size;
 	char *result_ptr;
 
+	CHECK_NARGS(4);
+
 	/* Argument parsing and validation */
 	table_name = PG_GETARG_TEXT_PP(0);
 	column_name = PG_GETARG_TEXT_PP(1);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || column_name == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_pq_codebook: table_name and column_name cannot be NULL")));
+
 	m = PG_GETARG_INT32(2);
 	ksub = PG_GETARG_INT32(3);
 
+	/* Defensive: Validate parameters */
 	if (m < 1 || m > 128)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("m (number of subspaces) must be "
-				       "between 1 and 128")));
+				errmsg("m (number of subspaces) must be between 1 and 128, got %d", m)));
+
 	if (ksub < 2 || ksub > 65536)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("ksub (centroids per subspace) must be "
-				       "between 2 and 65536")));
+				errmsg("ksub (centroids per subspace) must be between 2 and 65536, got %d", ksub)));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(column_name);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (col_str)
+			pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
 
 	elog(DEBUG1,
 		"neurondb: Starting PQ training for table = %s.%s, m=%d, "

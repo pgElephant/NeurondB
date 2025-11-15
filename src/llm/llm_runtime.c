@@ -74,36 +74,59 @@ neurondb_llm_shmem_init(void)
 static bool
 llm_acquire_token(void)
 {
-	TimestampTz now = GetCurrentTimestamp();
-	long secs;
-	int usecs;
-	double elapsed;
-	int cap;
+	TimestampTz now;
+	long		secs;
+	int			usecs;
+	double		elapsed;
+	int			cap;
+	double		new_tokens;
 
 	if (llm_rl == NULL || llm_rl_lock == NULL)
-		return true; /* No limiter initialized, always allow. */
+		return true;		/* No limiter initialized, always allow. */
 
+	now = GetCurrentTimestamp();
 	LWLockAcquire(llm_rl_lock, LW_EXCLUSIVE);
 
 	cap = neurondb_llm_rate_limiter_qps > 0 ? neurondb_llm_rate_limiter_qps
-						: llm_rl->capacity;
+		: llm_rl->capacity;
+
+	/* Defensive: Validate capacity */
+	if (cap <= 0 || cap > 1000000)
+	{
+		LWLockRelease(llm_rl_lock);
+		return false;
+	}
 
 	TimestampDifference(llm_rl->last_refill, now, &secs, &usecs);
-	elapsed = (double)secs + ((double)usecs / 1000000.0);
+	elapsed = (double) secs + ((double) usecs / 1000000.0);
+
+	/* Defensive: Validate elapsed time */
+	if (elapsed < 0.0 || elapsed > 3600.0)
+	{
+		LWLockRelease(llm_rl_lock);
+		return false;
+	}
 
 	if (elapsed > 0.0)
 	{
-		llm_rl->tokens =
-			Min((double)cap, llm_rl->tokens + elapsed * cap);
+		new_tokens = llm_rl->tokens + elapsed * (double) cap;
+
+		/* Defensive: Check for overflow */
+		if (isinf(new_tokens) || isnan(new_tokens))
+			new_tokens = (double) cap;
+
+		llm_rl->tokens = Min((double) cap, new_tokens);
 		llm_rl->last_refill = now;
 		llm_rl->capacity = cap;
 	}
+
 	if (llm_rl->tokens >= 1.0)
 	{
 		llm_rl->tokens -= 1.0;
 		LWLockRelease(llm_rl_lock);
 		return true;
 	}
+
 	LWLockRelease(llm_rl_lock);
 	return false;
 }
@@ -112,11 +135,23 @@ llm_acquire_token(void)
 static double
 ndb_elapsed_ms(TimestampTz start, TimestampTz end)
 {
-	long secs;
-	int usecs;
+	long		secs;
+	int			usecs;
+	double		result;
 
 	TimestampDifference(start, end, &secs, &usecs);
-	return ((double)secs * 1000.0) + ((double)usecs / 1000.0);
+
+	/* Defensive: Check for negative time difference */
+	if (secs < 0 || (secs == 0 && usecs < 0))
+		return 0.0;
+
+	result = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
+
+	/* Defensive: Validate result */
+	if (isnan(result) || isinf(result) || result < 0.0)
+		return 0.0;
+
+	return result;
 }
 
 /* Defines the GUC (config) variables. */
@@ -221,60 +256,112 @@ neurondb_llm_init_guc(void)
 /* Computes a unique cache key for LLM requests by hashing input params. */
 static void
 compute_cache_key(StringInfo dst,
-	const char *provider,
-	const char *model,
-	const char *endpoint,
-	const char *payload)
+				  const char *provider,
+				  const char *model,
+				  const char *endpoint,
+				  const char *payload)
 {
 	unsigned char hash[SHA256_DIGEST_LENGTH];
 	StringInfoData src;
-	int i;
+	int			i;
+	size_t		provider_len;
+	size_t		model_len;
+	size_t		endpoint_len;
+	size_t		payload_len;
+
+	/* Defensive: Check NULL dst */
+	if (dst == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("compute_cache_key: dst cannot be NULL")));
+
+	/* Defensive: Limit string lengths to prevent buffer overflow */
+	provider_len = provider ? strlen(provider) : 0;
+	model_len = model ? strlen(model) : 0;
+	endpoint_len = endpoint ? strlen(endpoint) : 0;
+	payload_len = payload ? strlen(payload) : 0;
+
+	if (provider_len > 256 || model_len > 256 || endpoint_len > 512 ||
+		payload_len > 100000)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("compute_cache_key: input string too long")));
 
 	initStringInfo(&src);
-	appendStringInfo(&src,
-		"%s|%s|%s|%s",
-		provider ? provider : "",
-		model ? model : "",
-		endpoint ? endpoint : "",
-		payload ? payload : "");
-	SHA256((unsigned char *)src.data, src.len, hash);
+	appendStringInfo(&src, "%s|%s|%s|%s",
+					 provider ? provider : "",
+					 model ? model : "",
+					 endpoint ? endpoint : "",
+					 payload ? payload : "");
+
+	/* Defensive: Check StringInfo allocation */
+	if (src.data == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("compute_cache_key: failed to allocate StringInfo")));
+
+	SHA256((unsigned char *) src.data, src.len, hash);
 
 	initStringInfo(dst);
 	for (i = 0; i < SHA256_DIGEST_LENGTH; i++)
-		appendStringInfo(&dst[0], "%02x", hash[i]);
+		appendStringInfo(dst, "%02x", hash[i]);
+
+	pfree(src.data);
 }
 
 /* Looks up cache entry for a given key; if found, returns text via out pointer. */
 static bool
 cache_lookup_text(const char *key, char **text_out)
 {
-	bool hit = false;
+	bool		hit = false;
+	int			ret;
+	bool		isnull;
+	Datum		d;
+	Oid			argtypes[2];
+	Datum		values[2];
+
+	/* Defensive: Check NULL inputs */
+	if (key == NULL || text_out == NULL)
+		return false;
+
+	/* Defensive: Validate key length */
+	if (strlen(key) > 1024)
+		return false;
+
 	if (SPI_connect() != SPI_OK_CONNECT)
 		return false;
 
-	if (SPI_execute_with_args(
-		    "SELECT value->>'text' FROM neurondb.neurondb_llm_cache WHERE key = "
-		    "$1 AND now() - created_at < make_interval(secs => $2)",
-		    2,
-		    (Oid[]) { TEXTOID, INT4OID },
-		    (Datum[]) { CStringGetTextDatum(key),
-			    Int32GetDatum(neurondb_llm_cache_ttl) },
-		    (char[]) { 'i', 'i' },
-		    true,
-		    0) == SPI_OK_SELECT
-		&& SPI_processed == 1)
+	argtypes[0] = TEXTOID;
+	argtypes[1] = INT4OID;
+	values[0] = CStringGetTextDatum(key);
+	values[1] = Int32GetDatum(neurondb_llm_cache_ttl);
+
+	ret = SPI_execute_with_args(
+								"SELECT value->>'text' FROM neurondb.neurondb_llm_cache WHERE key = $1 AND now() - created_at < make_interval(secs => $2)",
+								2,
+								argtypes,
+								values,
+								(char[]) { 'i', 'i' },
+								true,
+								0);
+
+	if (ret == SPI_OK_SELECT && SPI_processed == 1)
 	{
-		bool isnull;
-		Datum d = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
-		if (!isnull)
+		/* Defensive: Check SPI_tuptable */
+		if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL &&
+			SPI_tuptable->vals != NULL)
 		{
-			*text_out = TextDatumGetCString(d);
-			hit = true;
+			d = SPI_getbinval(SPI_tuptable->vals[0],
+								SPI_tuptable->tupdesc, 1, &isnull);
+			if (!isnull)
+			{
+				*text_out = TextDatumGetCString(d);
+				if (*text_out != NULL)
+					hit = true;
+			}
 		}
 	}
+
 	SPI_finish();
 	return hit;
 }
@@ -283,47 +370,113 @@ cache_lookup_text(const char *key, char **text_out)
 static void
 cache_store_text(const char *key, const char *text)
 {
-	Oid argtypes[2];
-	Datum values[2];
+	Oid			argtypes[2];
+	Datum		values[2];
 	StringInfoData val;
+	size_t		key_len;
+	size_t		text_len;
+
+	/* Defensive: Check NULL inputs */
+	if (key == NULL || text == NULL)
+		return;
+
+	/* Defensive: Validate key length */
+	key_len = strlen(key);
+	text_len = strlen(text);
+
+	if (key_len > 1024)
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("cache_store_text: key too long (%zu characters, max 1024)",
+						key_len)));
+		return;
+	}
+
+	if (text_len > 1000000)
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("cache_store_text: text too long (%zu characters, max 1000000)",
+						text_len)));
+		return;
+	}
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		return;
+
 	argtypes[0] = TEXTOID;
 	argtypes[1] = JSONBOID;
 	initStringInfo(&val);
 	appendStringInfo(&val, "{\"text\":%s}", quote_literal_cstr(text));
+
+	/* Defensive: Check StringInfo allocation */
+	if (val.data == NULL)
+	{
+		SPI_finish();
+		return;
+	}
+
 	values[0] = CStringGetTextDatum(key);
 	values[1] = CStringGetTextDatum(val.data);
+
 	SPI_execute_with_args(
-		"INSERT INTO neurondb.neurondb_llm_cache(key,value,created_at) "
-		"VALUES($1,$2::jsonb,now()) "
-		"ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, "
-		"created_at=now()",
-		2,
-		argtypes,
-		values,
-		NULL,
-		false,
-		0);
+						  "INSERT INTO neurondb.neurondb_llm_cache(key,value,created_at) VALUES($1,$2::jsonb,now()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, created_at=now()",
+						  2, argtypes, values, NULL, false, 0);
+
+	pfree(val.data);
 	SPI_finish();
 }
 
 /* Record LLM statistics in neurondb_llm_stats table */
 static void
 record_llm_stats(const char *model_name,
-	const char *operation,
-	bool success,
-	bool cache_hit,
-	int64 latency_ms,
-	int tokens_in,
-	int tokens_out,
-	const char *error_type)
+				 const char *operation,
+				 bool success,
+				 bool cache_hit,
+				 int64 latency_ms,
+				 int tokens_in,
+				 int tokens_out,
+				 const char *error_type)
 {
-	int ret;
-	Oid argtypes[8];
-	Datum values[8];
-	char nulls[8];
+	int			ret;
+	Oid			argtypes[8];
+	Datum		values[8];
+	char		nulls[8];
+	size_t		model_name_len;
+	size_t		operation_len;
+	size_t		error_type_len;
+
+	/* Defensive: Validate inputs */
+	if (model_name != NULL)
+	{
+		model_name_len = strlen(model_name);
+		if (model_name_len > 256)
+			return;
+	}
+
+	if (operation != NULL)
+	{
+		operation_len = strlen(operation);
+		if (operation_len > 256)
+			return;
+	}
+
+	if (error_type != NULL)
+	{
+		error_type_len = strlen(error_type);
+		if (error_type_len > 256)
+			return;
+	}
+
+	/* Defensive: Validate token counts */
+	if (tokens_in < 0 || tokens_in > 1000000 || tokens_out < 0 ||
+		tokens_out > 1000000)
+		return;
+
+	/* Defensive: Validate latency */
+	if (latency_ms < 0 || latency_ms > 3600000)
+		return;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		return;
@@ -1318,8 +1471,17 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 		call_opts.require_gpu = cfg.require_gpu;
 		call_opts.fail_open = neurondb_llm_fail_open;
 
+		/* Defensive: Validate prompts array */
+		for (i = 0; i < num_prompts; i++)
+		{
+			if (prompts[i] == NULL)
+				ereport(ERROR,
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+						errmsg("prompt at index %d cannot be NULL",
+							i)));
+		}
+
 		/* Call batch completion router */
-		elog(NOTICE, "neurondb: llm_runtime calling ndb_llm_route_complete_batch with %d prompts", num_prompts);
 		memset(&batch_resp, 0, sizeof(NdbLLMBatchResp));
 		rc = ndb_llm_route_complete_batch(&cfg,
 			&call_opts,
@@ -1327,7 +1489,6 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 			num_prompts,
 			params,
 			&batch_resp);
-		elog(DEBUG1, "neurondb: llm_runtime got rc=%d from ndb_llm_route_complete_batch", rc);
 		if (rc != 0)
 		{
 			/* Free prompts */
@@ -1408,49 +1569,42 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 			(BatchCompleteState *)funcctx->user_fctx;
 		TupleDesc tupdesc_local;
 
-		elog(DEBUG1, "neurondb: llm_runtime SRF_PERCALL_SETUP: state=%p", (void *)state);
+		/* Defensive: Validate state */
 		if (!state || !state->batch_resp || !state->tupdesc)
-		{
-			elog(ERROR, "neurondb: batch completion state is invalid");
-			SRF_RETURN_DONE(funcctx);
-		}
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: batch completion state is invalid")));
 		tupdesc_local = state->tupdesc;
 
-		elog(DEBUG1, "neurondb: llm_runtime SRF: current_idx=%d, num_items=%d", state->current_idx, state->batch_resp->num_items);
 		if (state->current_idx < state->batch_resp->num_items)
 		{
 			int idx = state->current_idx;
 			NdbLLMBatchResp *resp = state->batch_resp;
 
+			/* Defensive: Validate index bounds */
 			if (idx < 0 || idx >= resp->num_items)
-			{
-				elog(ERROR, "neurondb: batch completion index %d out of bounds (0-%d)", idx, resp->num_items - 1);
-				SRF_RETURN_DONE(funcctx);
-			}
+				ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("neurondb: batch completion index %d out of bounds (0-%d)",
+							idx, resp->num_items - 1)));
 
-			elog(DEBUG1, "neurondb: llm_runtime SRF processing idx=%d", idx);
 			values[0] = Int32GetDatum(idx);
 			if (resp->texts && idx < resp->num_items && resp->texts[idx])
 			{
-				elog(DEBUG1, "neurondb: llm_runtime SRF text[%d]=%p, len=%zu", idx, (void *)resp->texts[idx], resp->texts[idx] ? strlen(resp->texts[idx]) : 0);
 				values[1] =
 					CStringGetTextDatum(resp->texts[idx]);
-				elog(DEBUG1, "neurondb: llm_runtime SRF accessing tokens_in[%d]", idx);
 				values[2] = Int32GetDatum(resp->tokens_in
 						&& idx < resp->num_items
 						? resp->tokens_in[idx]
 						: 0);
-				elog(DEBUG1, "neurondb: llm_runtime SRF accessing tokens_out[%d]", idx);
 				values[3] = Int32GetDatum(resp->tokens_out
 						&& idx < resp->num_items
 						? resp->tokens_out[idx]
 						: 0);
-				elog(DEBUG1, "neurondb: llm_runtime SRF accessing http_status[%d]", idx);
 				values[4] = Int32GetDatum(resp->http_status
 						&& idx < resp->num_items
 						? resp->http_status[idx]
 						: 200);
-				elog(DEBUG1, "neurondb: llm_runtime SRF creating tuple for idx=%d", idx);
 				nulls[0] = false;
 				nulls[1] = false;
 				nulls[2] = false;
@@ -1470,7 +1624,6 @@ ndb_llm_complete_batch(PG_FUNCTION_ARGS)
 			}
 
 			tuple = heap_form_tuple(tupdesc_local, values, nulls);
-			elog(DEBUG1, "neurondb: llm_runtime SRF tuple created for idx=%d, returning next", idx);
 			state->current_idx++;
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 		} else

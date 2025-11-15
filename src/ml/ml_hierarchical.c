@@ -156,10 +156,25 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 	bool		typbyval;
 	char		typalign;
 
+	CHECK_NARGS_RANGE(3, 4);
+
 	/* Parse input arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
 	num_clusters = PG_GETARG_INT32(2);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cluster_hierarchical: table_name and vector_column cannot be NULL")));
+
+	/* Defensive: Validate num_clusters */
+	if (num_clusters < 1 || num_clusters > 10000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_clusters must be between 1 and 10000, got %d", num_clusters)));
+
 	linkage_text = PG_ARGISNULL(3) ? cstring_to_text("average")
 								   : PG_GETARG_TEXT_PP(3);
 

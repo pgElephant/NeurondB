@@ -38,13 +38,37 @@ ndb_llm_job_enqueue(const char *job_type, const char *payload)
 	Oid argtypes[2] = { TEXTOID, JSONBOID };
 	Datum values[2];
 	int spi_rc;
+	size_t job_type_len;
+	size_t payload_len;
 
-	/* Validate inputs */
-	if (!job_type || strlen(job_type) == 0)
-		ereport(ERROR, (errmsg("Job type must not be NULL or empty")));
-	if (!payload || strlen(payload) == 0)
+	/* Defensive: Validate inputs */
+	if (job_type == NULL)
 		ereport(ERROR,
-			(errmsg("Payload JSON must not be NULL or empty")));
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("Job type must not be NULL")));
+	job_type_len = strlen(job_type);
+	if (job_type_len == 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Job type must not be empty")));
+	if (job_type_len > 256)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Job type too long (max 256 characters)")));
+
+	if (payload == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("Payload JSON must not be NULL")));
+	payload_len = strlen(payload);
+	if (payload_len == 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Payload JSON must not be empty")));
+	if (payload_len > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Payload JSON too long (max 1000000 characters)")));
 
 	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
 		ereport(ERROR,
@@ -85,18 +109,42 @@ ndb_llm_job_enqueue(const char *job_type, const char *payload)
 		&& SPI_processed == 1)
 	{
 		bool isnull = true;
+
+		/* Defensive: Validate SPI_tuptable */
+		if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL
+			|| SPI_tuptable->vals == NULL)
+		{
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("SPI_tuptable is invalid")));
+		}
+
 		job_id = DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
 			SPI_tuptable->tupdesc,
 			1,
 			&isnull));
 		if (isnull)
+		{
+			SPI_finish();
 			ereport(ERROR,
-				(errmsg("Job ID returned as NULL after "
-					"insert")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					errmsg("Job ID returned as NULL after insert")));
+		}
+		/* Defensive: Validate job_id */
+		if (job_id <= 0)
+		{
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("Invalid job ID returned: %d", job_id)));
+		}
 	} else
 	{
+		SPI_finish();
 		ereport(ERROR,
-			(errmsg("Failed to insert llm job: %s", query.data)));
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("Failed to insert llm job")));
 	}
 
 	SPI_finish();
@@ -149,23 +197,54 @@ ndb_llm_job_acquire(int *job_id, char **job_type, char **payload)
 	if (SPI_execute(query.data, false, 1) == SPI_OK_UPDATE_RETURNING
 		&& SPI_processed > 0)
 	{
-		bool isnull0 = true, isnull1 = true, isnull2 = true;
-		HeapTuple tuple = SPI_tuptable->vals[0];
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+		bool isnull0 = true;
+		bool isnull1 = true;
+		bool isnull2 = true;
+		HeapTuple tuple;
+		TupleDesc tupdesc;
+
+		/* Defensive: Validate SPI_tuptable */
+		if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL
+			|| SPI_tuptable->vals == NULL)
+		{
+			SPI_finish();
+			return false;
+		}
+
+		tuple = SPI_tuptable->vals[0];
+		tupdesc = SPI_tuptable->tupdesc;
 
 		if (job_id)
 			*job_id = DatumGetInt64(
 				SPI_getbinval(tuple, tupdesc, 1, &isnull0));
 		if (job_type)
-			*job_type = isnull1
-				? NULL
-				: pstrdup(TextDatumGetCString(SPI_getbinval(
-					  tuple, tupdesc, 2, &isnull1)));
+		{
+			if (isnull1)
+				*job_type = NULL;
+			else
+			{
+				char *tmp = TextDatumGetCString(SPI_getbinval(
+					tuple, tupdesc, 2, &isnull1));
+				if (tmp == NULL)
+					*job_type = NULL;
+				else
+					*job_type = pstrdup(tmp);
+			}
+		}
 		if (payload)
-			*payload = isnull2
-				? NULL
-				: pstrdup(TextDatumGetCString(SPI_getbinval(
-					  tuple, tupdesc, 3, &isnull2)));
+		{
+			if (isnull2)
+				*payload = NULL;
+			else
+			{
+				char *tmp = TextDatumGetCString(SPI_getbinval(
+					tuple, tupdesc, 3, &isnull2));
+				if (tmp == NULL)
+					*payload = NULL;
+				else
+					*payload = pstrdup(tmp);
+			}
+		}
 		found = !isnull0;
 	}
 
@@ -394,4 +473,4 @@ ndb_llm_job_clear(void)
 	SPI_finish();
 }
 
-// End of all
+/* End of all */

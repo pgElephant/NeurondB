@@ -58,20 +58,76 @@ compute_moving_average(const float *data, int n, int window, float *result)
 	int i, j;
 	float sum;
 
-	if (window <= 0)
-		elog(ERROR,
-			"window length for moving average must be positive");
+	/* Assert: Internal invariants */
+	Assert(data != NULL);
+	Assert(result != NULL);
+	Assert(n > 0);
+	Assert(window > 0);
+
+	/* Defensive: Check NULL pointers */
+	if (data == NULL || result == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: compute_moving_average "
+				       "NULL pointer argument")));
+
+	if (n <= 0 || window <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: compute_moving_average "
+				       "invalid parameters (n=%d, window=%d)",
+				       n, window)));
+
+	if (window > n)
+	{
+		elog(WARNING,
+		     "neurondb: compute_moving_average window (%d) > n (%d), "
+		     "using n", window, n);
+		window = n;
+	}
 
 	for (i = 0; i < n; i++)
 	{
 		if (i < window - 1)
-			result[i] = data[i];
+		{
+			/* Defensive: Check for NaN/Inf */
+			if (isnan(data[i]) || isinf(data[i]))
+			{
+				elog(WARNING,
+				     "neurondb: compute_moving_average NaN or "
+				     "Infinity at index %d, using 0.0", i);
+				result[i] = 0.0f;
+			}
+			else
+			{
+				result[i] = data[i];
+			}
+		}
 		else
 		{
 			sum = 0.0f;
 			for (j = 0; j < window; j++)
+			{
+				/* Defensive: Check for NaN/Inf */
+				if (isnan(data[i - j]) || isinf(data[i - j]))
+				{
+					elog(WARNING,
+					     "neurondb: compute_moving_average NaN or "
+					     "Infinity at index %d, skipping", i - j);
+					continue;
+				}
 				sum += data[i - j];
+			}
 			result[i] = sum / (float)window;
+
+			/* Defensive: Validate result */
+			if (isnan(result[i]) || isinf(result[i]))
+			{
+				elog(WARNING,
+				     "neurondb: compute_moving_average result is "
+				     "NaN or Infinity at index %d, using 0.0", i);
+				result[i] = 0.0f;
+			}
 		}
 	}
 }
@@ -81,14 +137,70 @@ exponential_smoothing(const float *data, int n, float alpha, float *result)
 {
 	int i;
 
+	/* Assert: Internal invariants */
+	Assert(data != NULL);
+	Assert(result != NULL);
+	Assert(n > 0);
+	Assert(alpha >= 0.0f && alpha <= 1.0f);
+
+	/* Defensive: Check NULL pointers */
+	if (data == NULL || result == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: exponential_smoothing "
+				       "NULL pointer argument")));
+
 	if (n <= 0)
 		return;
-	if (alpha < 0.0f || alpha > 1.0f)
-		elog(ERROR, "alpha for exponential smoothing must be in [0,1]");
 
-	result[0] = data[0];
+	if (isnan(alpha) || isinf(alpha) || alpha < 0.0f || alpha > 1.0f)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: exponential_smoothing alpha "
+				       "must be in [0,1], got %f", alpha)));
+
+	/* Defensive: Check for NaN/Inf in first value */
+	if (isnan(data[0]) || isinf(data[0]))
+	{
+		elog(WARNING,
+		     "neurondb: exponential_smoothing NaN or Infinity at "
+		     "index 0, using 0.0");
+		result[0] = 0.0f;
+	}
+	else
+	{
+		result[0] = data[0];
+	}
+
 	for (i = 1; i < n; i++)
-		result[i] = alpha * data[i] + (1.0f - alpha) * result[i - 1];
+	{
+		float new_val;
+
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(data[i]) || isinf(data[i]))
+		{
+			elog(WARNING,
+			     "neurondb: exponential_smoothing NaN or Infinity "
+			     "at index %d, using previous value", i);
+			result[i] = result[i - 1];
+			continue;
+		}
+
+		new_val = alpha * data[i] + (1.0f - alpha) * result[i - 1];
+
+		/* Defensive: Validate result */
+		if (isnan(new_val) || isinf(new_val))
+		{
+			elog(WARNING,
+			     "neurondb: exponential_smoothing result is NaN or "
+			     "Infinity at index %d, using previous value", i);
+			result[i] = result[i - 1];
+		}
+		else
+		{
+			result[i] = new_val;
+		}
+	}
 }
 
 static float *
@@ -97,9 +209,25 @@ compute_differences(const float *data, int n, int order, int *out_n)
 	float *diff;
 	int curr_n, d, i;
 
+	/* Assert: Internal invariants */
 	Assert(data != NULL);
 	Assert(out_n != NULL);
+	Assert(n > 0);
 	Assert(order >= 0);
+
+	/* Defensive: Check NULL pointers */
+	if (data == NULL || out_n == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: compute_differences "
+				       "NULL pointer argument")));
+
+	if (n <= 0 || order < 0 || order > MAX_ARIMA_ORDER_D)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: compute_differences "
+				       "invalid parameters (n=%d, order=%d)",
+				       n, order)));
 
 	if (order == 0)
 	{
@@ -119,9 +247,11 @@ compute_differences(const float *data, int n, int order, int *out_n)
 		float *new_diff;
 
 		if (new_n <= 0)
-			elog(ERROR,
-				"cannot difference data sequence below length "
-				"1");
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: compute_differences "
+					       "cannot difference data sequence "
+					       "below length 1")));
 		new_diff = (float *)palloc(sizeof(float) * new_n);
 		for (i = 0; i < new_n; i++)
 			new_diff[i] = diff[i + 1] - diff[i];
@@ -181,14 +311,22 @@ fit_arima(const float *data, int n, int p, int d, int q)
 	float mean;
 
 	if (n <= 0)
-		elog(ERROR,
-			"number of observations for ARIMA must be positive");
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: fit_arima number of observations "
+				       "must be positive")));
 	if (p < 0 || p > MAX_ARIMA_ORDER_P)
-		elog(ERROR, "arima p out of bounds");
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: fit_arima p out of bounds")));
 	if (d < 0 || d > MAX_ARIMA_ORDER_D)
-		elog(ERROR, "arima d out of bounds");
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: fit_arima d out of bounds")));
 	if (q < 0 || q > MAX_ARIMA_ORDER_Q)
-		elog(ERROR, "arima q out of bounds");
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: fit_arima q out of bounds")));
 
 	model = (TimeSeriesModel *)palloc0(sizeof(TimeSeriesModel));
 	model->p = p;
@@ -239,13 +377,11 @@ fit_arima(const float *data, int n, int p, int d, int q)
 					if (i == j)
 					{
 						if (sum <= 0)
-							elog(ERROR,
-								"Failed to "
-								"decompose "
-								"autocorrelatio"
-								"n matrix: "
-								"non-positive "
-								"definite");
+							ereport(ERROR,
+								(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+									errmsg("neurondb: fit_arima failed to "
+									       "decompose autocorrelation matrix "
+									       "non-positive definite")));
 						L[i][j] = sqrtf(sum);
 					} else
 						L[i][j] = sum / L[j][j];
@@ -339,7 +475,10 @@ arima_forecast(const TimeSeriesModel *model,
 	Assert(forecast != NULL);
 
 	if (n_ahead < 1)
-		elog(ERROR, "Must forecast at least 1 ahead");
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: arima_forecast must forecast "
+				       "at least 1 ahead")));
 
 	p = model->p;
 	d = model->d;
@@ -387,9 +526,9 @@ train_arima(PG_FUNCTION_ARGS)
 	int32 d = PG_ARGISNULL(4) ? 1 : PG_GETARG_INT32(4);
 	int32 q = PG_ARGISNULL(5) ? 1 : PG_GETARG_INT32(5);
 
-	char *table_name_str = text_to_cstring(table_name);
-	char *time_col_str = text_to_cstring(time_col);
-	char *value_col_str = text_to_cstring(value_col);
+	char *table_name_str;
+	char *time_col_str;
+	char *value_col_str;
 
 	StringInfoData sql;
 	int ret, n_samples, i;
@@ -398,24 +537,57 @@ train_arima(PG_FUNCTION_ARGS)
 	float *values = NULL;
 	TimeSeriesModel *model = NULL;
 
+	CHECK_NARGS_RANGE(3, 6);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || time_col == NULL || value_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: train_arima table_name, "
+				       "time_col, and value_col cannot be NULL")));
+
+	/* Defensive: Validate parameters */
 	if (p < 0 || p > MAX_ARIMA_ORDER_P)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("p must be between 0 and %d",
-					MAX_ARIMA_ORDER_P)));
+				errmsg("neurondb: train_arima p must be between "
+				       "0 and %d, got %d", MAX_ARIMA_ORDER_P, p)));
+
 	if (d < 0 || d > MAX_ARIMA_ORDER_D)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("d must be between 0 and %d",
-					MAX_ARIMA_ORDER_D)));
+				errmsg("neurondb: train_arima d must be between "
+				       "0 and %d, got %d", MAX_ARIMA_ORDER_D, d)));
+
 	if (q < 0 || q > MAX_ARIMA_ORDER_Q)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("q must be between 0 and %d",
-					MAX_ARIMA_ORDER_Q)));
+				errmsg("neurondb: train_arima q must be between "
+				       "0 and %d, got %d", MAX_ARIMA_ORDER_Q, q)));
+
+	table_name_str = text_to_cstring(table_name);
+	time_col_str = text_to_cstring(time_col);
+	value_col_str = text_to_cstring(value_col);
+
+	/* Defensive: Validate allocations */
+	if (table_name_str == NULL || time_col_str == NULL || value_col_str == NULL)
+	{
+		if (table_name_str)
+			pfree(table_name_str);
+		if (time_col_str)
+			pfree(time_col_str);
+		if (value_col_str)
+			pfree(value_col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: train_arima failed to allocate "
+				       "strings")));
+	}
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: train_arima SPI_connect failed")));
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
@@ -428,7 +600,8 @@ train_arima(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("failed to execute time series query")));
+				errmsg("neurondb: train_arima failed to execute "
+				       "time series query")));
 
 	tuptable = SPI_tuptable;
 	tupdesc = tuptable->tupdesc;
@@ -445,9 +618,9 @@ train_arima(PG_FUNCTION_ARGS)
 			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("at least %d observations are required "
-				       "for ARIMA",
-					MIN_ARIMA_OBSERVATIONS)));
+				errmsg("neurondb: train_arima at least %d "
+				       "observations are required for ARIMA",
+				       MIN_ARIMA_OBSERVATIONS)));
 	}
 
 	values = (float *)palloc(sizeof(float) * n_samples);
@@ -471,8 +644,8 @@ train_arima(PG_FUNCTION_ARGS)
 				pfree(value_col_str);
 			ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-					errmsg("time series cannot contain "
-					       "NULL values")));
+					errmsg("neurondb: train_arima time series "
+					       "cannot contain NULL values")));
 		}
 		values[i] = (float)DatumGetFloat8(value_datum);
 	}
@@ -508,9 +681,8 @@ PG_FUNCTION_INFO_V1(forecast_arima);
 Datum
 forecast_arima(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	int32 n_ahead = PG_GETARG_INT32(1);
-
+	int32 model_id;
+	int32 n_ahead;
 	StringInfoData sql;
 	TimeSeriesModel model;
 	ArrayType *ar_coeffs_arr = NULL;
@@ -528,14 +700,34 @@ forecast_arima(PG_FUNCTION_ARGS)
 	Datum *outdatums = NULL;
 	ArrayType *arr = NULL;
 
+	CHECK_NARGS(2);
+
+	model_id = PG_GETARG_INT32(0);
+	n_ahead = PG_GETARG_INT32(1);
+
+	/* Defensive: Validate model_id */
+	if (model_id <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: forecast_arima model_id must be "
+				       "positive, got %d", model_id)));
+
+	/* Defensive: Validate n_ahead */
 	if (n_ahead < 1 || n_ahead > MAX_FORECAST_AHEAD)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("n_ahead must be between 1 and %d",
-					MAX_FORECAST_AHEAD)));
+				errmsg("neurondb: forecast_arima n_ahead must be "
+				       "between 1 and %d, got %d",
+				       MAX_FORECAST_AHEAD, n_ahead)));
+
+	elog(DEBUG1,
+	     "neurondb: forecast_arima starting forecast for model_id=%d, "
+	     "n_ahead=%d", model_id, n_ahead);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: train_arima SPI_connect failed")));
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
@@ -547,18 +739,44 @@ forecast_arima(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
 		SPI_finish();
+		pfree(sql.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_OBJECT),
-				errmsg("model_id %d not found in "
-				       "neurondb_arima_models",
-					model_id)));
+				errmsg("neurondb: forecast_arima model_id %d not "
+				       "found in neurondb_arima_models",
+				       model_id)));
 	}
+
+	/* Defensive: Validate SPI_tuptable */
+	if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL ||
+		SPI_tuptable->tupdesc == NULL)
+	{
+		SPI_finish();
+		pfree(sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: forecast_arima SPI_tuptable is "
+				       "invalid")));
+	}
+
 	{
 		HeapTuple modeltuple;
 		TupleDesc modeldesc;
 		bool isnull;
 
 		modeltuple = SPI_tuptable->vals[0];
+
+		/* Defensive: Validate tuple */
+		if (modeltuple == NULL)
+		{
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: forecast_arima NULL tuple "
+					       "returned from SPI")));
+		}
+
 		modeldesc = SPI_tuptable->tupdesc;
 		p = DatumGetInt32(
 			SPI_getbinval(modeltuple, modeldesc, 1, &isnull));
@@ -572,45 +790,201 @@ forecast_arima(PG_FUNCTION_ARGS)
 			SPI_getbinval(modeltuple, modeldesc, 5, &isnull));
 		ma_coeffs_arr = DatumGetArrayTypeP(
 			SPI_getbinval(modeltuple, modeldesc, 6, &isnull));
+
+		/* Defensive: Validate parameters */
+		if (p < 0 || p > MAX_ARIMA_ORDER_P || d < 0 || d > MAX_ARIMA_ORDER_D ||
+			q < 0 || q > MAX_ARIMA_ORDER_Q)
+		{
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: forecast_arima invalid "
+					       "ARIMA parameters: p=%d, d=%d, q=%d",
+					       p, d, q)));
+		}
+
+		/* Defensive: Validate intercept */
+		if (isnan(intercept) || isinf(intercept))
+		{
+			elog(WARNING,
+			     "neurondb: forecast_arima intercept is NaN or "
+			     "Infinity, using 0.0");
+			intercept = 0.0;
+		}
+
+		/* Defensive: Validate arrays */
+		if (ar_coeffs_arr == NULL && p > 0)
+		{
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+					errmsg("neurondb: forecast_arima AR "
+					       "coefficients array is NULL but "
+					       "p=%d", p)));
+		}
+
+		if (ma_coeffs_arr == NULL && q > 0)
+		{
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+					errmsg("neurondb: forecast_arima MA "
+					       "coefficients array is NULL but "
+					       "q=%d", q)));
+		}
 	}
 
-	arr_elem_type = ARR_ELEMTYPE(ar_coeffs_arr);
-	(void)arr_elem_type; /* Suppress unused variable warning */
-	ndims = ARR_NDIM(ar_coeffs_arr);
-	Assert(ndims == 1);
-	(void)ndims; /* Used in Assert only */
-	dims = ARR_DIMS(ar_coeffs_arr);
-	Assert(dims[0] == p);
-	ar_coeffs = (float *)palloc(sizeof(float) * p);
-	for (i = 0; i < p; i++)
+	if (p > 0 && ar_coeffs_arr != NULL)
 	{
-		float8 val;
-		memcpy(&val,
-			(char *)ARR_DATA_PTR(ar_coeffs_arr)
-				+ i * sizeof(float8),
-			sizeof(float8));
-		ar_coeffs[i] = (float)val;
-	}
+		arr_elem_type = ARR_ELEMTYPE(ar_coeffs_arr);
+		(void)arr_elem_type; /* Suppress unused variable warning */
+		ndims = ARR_NDIM(ar_coeffs_arr);
 
-	arr_elem_type = ARR_ELEMTYPE(ma_coeffs_arr);
-	ndims = ARR_NDIM(ma_coeffs_arr);
-	(void)ndims; /* Used in Assert only */
-	dims = ARR_DIMS(ma_coeffs_arr);
-	if (q > 0 && dims[0] == q)
-	{
-		ma_coeffs = (float *)palloc(sizeof(float) * q);
-		for (i = 0; i < q; i++)
+		/* Defensive: Validate array dimensions */
+		if (ndims != 1)
+		{
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: forecast_arima AR "
+					       "coefficients array must be "
+					       "1-dimensional, got %d dimensions",
+					       ndims)));
+		}
+
+		dims = ARR_DIMS(ar_coeffs_arr);
+
+		/* Defensive: Validate array size */
+		if (dims[0] != p)
+		{
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: forecast_arima AR "
+					       "coefficients array size mismatch "
+					       "expected %d, got %d", p, dims[0])));
+		}
+
+		ar_coeffs = (float *)palloc(sizeof(float) * p);
+
+		/* Defensive: Validate allocation */
+		if (ar_coeffs == NULL)
+		{
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+					errmsg("neurondb: forecast_arima failed to "
+					       "allocate AR coefficients array")));
+		}
+
+		for (i = 0; i < p; i++)
 		{
 			float8 val;
 			memcpy(&val,
-				(char *)ARR_DATA_PTR(ma_coeffs_arr)
+				(char *)ARR_DATA_PTR(ar_coeffs_arr)
 					+ i * sizeof(float8),
 				sizeof(float8));
-			ma_coeffs[i] = (float)val;
+
+			/* Defensive: Check for NaN/Inf */
+			if (isnan(val) || isinf(val))
+			{
+				elog(WARNING,
+				     "neurondb: forecast_arima AR coefficient %d "
+				     "is NaN or Infinity, using 0.0", i);
+				ar_coeffs[i] = 0.0f;
+			}
+			else
+			{
+				ar_coeffs[i] = (float)val;
+			}
 		}
-	} else if (q > 0)
+	}
+
+	if (q > 0 && ma_coeffs_arr != NULL)
 	{
-		ma_coeffs = (float *)palloc0(sizeof(float) * q);
+		arr_elem_type = ARR_ELEMTYPE(ma_coeffs_arr);
+		ndims = ARR_NDIM(ma_coeffs_arr);
+		dims = ARR_DIMS(ma_coeffs_arr);
+
+		/* Defensive: Validate array dimensions */
+		if (ndims != 1)
+		{
+			if (ar_coeffs)
+				pfree(ar_coeffs);
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: forecast_arima MA "
+					       "coefficients array must be "
+					       "1-dimensional, got %d dimensions",
+					       ndims)));
+		}
+
+		if (dims[0] == q)
+		{
+			ma_coeffs = (float *)palloc(sizeof(float) * q);
+
+			/* Defensive: Validate allocation */
+			if (ma_coeffs == NULL)
+			{
+				if (ar_coeffs)
+					pfree(ar_coeffs);
+				SPI_finish();
+				pfree(sql.data);
+				ereport(ERROR,
+					(errcode(ERRCODE_OUT_OF_MEMORY),
+						errmsg("neurondb: forecast_arima failed "
+						       "to allocate MA coefficients "
+						       "array")));
+			}
+
+			for (i = 0; i < q; i++)
+			{
+				float8 val;
+				memcpy(&val,
+					(char *)ARR_DATA_PTR(ma_coeffs_arr)
+						+ i * sizeof(float8),
+					sizeof(float8));
+
+				/* Defensive: Check for NaN/Inf */
+				if (isnan(val) || isinf(val))
+				{
+					elog(WARNING,
+					     "neurondb: forecast_arima MA "
+					     "coefficient %d is NaN or Infinity, "
+					     "using 0.0", i);
+					ma_coeffs[i] = 0.0f;
+				}
+				else
+				{
+					ma_coeffs[i] = (float)val;
+				}
+			}
+		} else
+		{
+			ma_coeffs = (float *)palloc0(sizeof(float) * q);
+
+			/* Defensive: Validate allocation */
+			if (ma_coeffs == NULL)
+			{
+				if (ar_coeffs)
+					pfree(ar_coeffs);
+				SPI_finish();
+				pfree(sql.data);
+				ereport(ERROR,
+					(errcode(ERRCODE_OUT_OF_MEMORY),
+						errmsg("neurondb: forecast_arima failed "
+						       "to allocate MA coefficients "
+						       "array")));
+			}
+		}
 	} else
 	{
 		ma_coeffs = NULL;
@@ -630,24 +1004,123 @@ forecast_arima(PG_FUNCTION_ARGS)
 		if (ma_coeffs)
 			pfree(ma_coeffs);
 		SPI_finish();
+		pfree(sql.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_OBJECT),
-				errmsg("recent observed values for model_id %d "
-				       "not found",
-					model_id)));
+				errmsg("neurondb: forecast_arima recent observed "
+				       "values for model_id %d not found",
+				       model_id)));
+	}
+
+	/* Defensive: Validate SPI_tuptable */
+	if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL ||
+		SPI_tuptable->tupdesc == NULL)
+	{
+		if (ar_coeffs)
+			pfree(ar_coeffs);
+		if (ma_coeffs)
+			pfree(ma_coeffs);
+		SPI_finish();
+		pfree(sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: forecast_arima SPI_tuptable is "
+				       "invalid")));
 	}
 
 	{
 		bool isnull;
 		HeapTuple observedtuple = SPI_tuptable->vals[0];
 		TupleDesc observeddesc = SPI_tuptable->tupdesc;
+
+		/* Defensive: Validate tuple */
+		if (observedtuple == NULL)
+		{
+			if (ar_coeffs)
+				pfree(ar_coeffs);
+			if (ma_coeffs)
+				pfree(ma_coeffs);
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: forecast_arima NULL tuple "
+					       "returned from SPI")));
+		}
+
 		last_values_arr = DatumGetArrayTypeP(
 			SPI_getbinval(observedtuple, observeddesc, 1, &isnull));
+
+		/* Defensive: Validate array */
+		if (isnull || last_values_arr == NULL)
+		{
+			if (ar_coeffs)
+				pfree(ar_coeffs);
+			if (ma_coeffs)
+				pfree(ma_coeffs);
+			SPI_finish();
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					errmsg("neurondb: forecast_arima last_values "
+					       "array is NULL")));
+		}
 	}
+
 	ndims = ARR_NDIM(last_values_arr);
 	dims = ARR_DIMS(last_values_arr);
+
+	/* Defensive: Validate array dimensions */
+	if (ndims != 1)
+	{
+		if (ar_coeffs)
+			pfree(ar_coeffs);
+		if (ma_coeffs)
+			pfree(ma_coeffs);
+		SPI_finish();
+		pfree(sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: forecast_arima last_values array "
+				       "must be 1-dimensional, got %d dimensions",
+				       ndims)));
+	}
+
 	n_last = dims[0];
+
+	/* Defensive: Validate array size */
+	if (n_last <= 0 || n_last > 10000)
+	{
+		if (ar_coeffs)
+			pfree(ar_coeffs);
+		if (ma_coeffs)
+			pfree(ma_coeffs);
+		SPI_finish();
+		pfree(sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: forecast_arima last_values array "
+				       "size must be between 1 and 10000, got %d",
+				       n_last)));
+	}
+
 	last_values = (float *)palloc(sizeof(float) * n_last);
+
+	/* Defensive: Validate allocation */
+	if (last_values == NULL)
+	{
+		if (ar_coeffs)
+			pfree(ar_coeffs);
+		if (ma_coeffs)
+			pfree(ma_coeffs);
+		SPI_finish();
+		pfree(sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: forecast_arima failed to allocate "
+				       "last_values array")));
+	}
+
 	for (i = 0; i < n_last; i++)
 	{
 		float8 val;
@@ -655,7 +1128,19 @@ forecast_arima(PG_FUNCTION_ARGS)
 			(char *)ARR_DATA_PTR(last_values_arr)
 				+ i * sizeof(float8),
 			sizeof(float8));
-		last_values[i] = (float)val;
+
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(val) || isinf(val))
+		{
+			elog(WARNING,
+			     "neurondb: forecast_arima last_value[%d] is NaN or "
+			     "Infinity, using 0.0", i);
+			last_values[i] = 0.0f;
+		}
+		else
+		{
+			last_values[i] = (float)val;
+		}
 	}
 
 	model.p = p;
@@ -725,7 +1210,10 @@ detect_anomalies(PG_FUNCTION_ARGS)
 	float mean, stddev, sum = 0.0f, sum_sq = 0.0f;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: detect_anomalies SPI_connect "
+				       "failed")));
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
@@ -746,8 +1234,8 @@ detect_anomalies(PG_FUNCTION_ARGS)
 			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("failed to execute anomaly detection "
-				       "query")));
+				errmsg("neurondb: detect_anomalies failed to execute "
+				       "anomaly detection query")));
 	}
 
 	tuptable = SPI_tuptable;
@@ -858,9 +1346,10 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("period must be between %d and %d",
-					MIN_SEASONAL_PERIOD,
-					MAX_SEASONAL_PERIOD)));
+				errmsg("neurondb: seasonal_decompose period must be "
+				       "between %d and %d",
+				       MIN_SEASONAL_PERIOD,
+				       MAX_SEASONAL_PERIOD)));
 	}
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -869,7 +1358,10 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 			pfree(table_name_str);
 		if (value_col_str)
 			pfree(value_col_str);
-		elog(ERROR, "SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: seasonal_decompose SPI_connect "
+				       "failed")));
 	}
 
 	initStringInfo(&sql);
@@ -888,8 +1380,8 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("failed to execute seasonal "
-				       "decomposition query")));
+				errmsg("neurondb: seasonal_decompose failed to "
+				       "execute seasonal decomposition query")));
 	}
 
 	tuptable = SPI_tuptable;
@@ -905,8 +1397,9 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 			pfree(value_col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("at least 2 values required for "
-				       "seasonal decomposition")));
+				errmsg("neurondb: seasonal_decompose at least 2 "
+				       "values required for seasonal "
+				       "decomposition")));
 	}
 
 	values = (float *)palloc(sizeof(float) * n);
@@ -1023,9 +1516,11 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 		if (value_col_str)
 			pfree(value_col_str);
 		SPI_finish();
-		elog(ERROR,
-			"return type must be composite (trend float8[], "
-			"seasonal float8[], residual float8[])");
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: seasonal_decompose return type "
+				       "must be composite (trend float8[], "
+				       "seasonal float8[], residual float8[])")));
 	}
 
 	result_values[0] = PointerGetDatum(trend_arr);
@@ -1072,5 +1567,7 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_timeseries_model(void)
 {
-	elog(DEBUG1, "Timeseries GPU Model Ops registration skipped - not yet implemented");
+	elog(DEBUG1,
+	     "neurondb: timeseries GPU model ops registration skipped "
+	     "not yet implemented");
 }

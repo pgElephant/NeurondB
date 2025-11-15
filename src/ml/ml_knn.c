@@ -61,11 +61,38 @@ euclidean_distance(float *a, float *b, int dim)
 	double sum = 0.0;
 	int i;
 
+	/* Assert: Internal invariants */
+	Assert(a != NULL);
+	Assert(b != NULL);
+	Assert(dim > 0);
+
+	/* Defensive: Check for NULL pointers */
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("euclidean_distance: NULL vector pointer")));
+
+	if (dim <= 0 || dim > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("euclidean_distance: invalid dimension: %d", dim)));
+
 	for (i = 0; i < dim; i++)
 	{
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(a[i]) || isnan(b[i]) || isinf(a[i]) || isinf(b[i]))
+		{
+			elog(WARNING, "euclidean_distance: NaN or Infinity detected at index %d", i);
+		}
 		double diff = a[i] - b[i];
 		sum += diff * diff;
 	}
+
+	/* Defensive: Check for overflow */
+	if (isnan(sum) || isinf(sum))
+		ereport(ERROR,
+			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				errmsg("euclidean_distance: distance calculation overflow")));
 
 	return sqrt(sum);
 }
@@ -99,26 +126,76 @@ knn_classify(PG_FUNCTION_ARGS)
 	int i;
 	MemoryContext oldcontext;
 
+	CHECK_NARGS(5);
+
 	table_name = PG_GETARG_TEXT_PP(0);
 	feature_col = PG_GETARG_TEXT_PP(1);
 	label_col = PG_GETARG_TEXT_PP(2);
 	query_vector = PG_GETARG_VECTOR_P(3);
 	k = PG_GETARG_INT32(4);
 
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || label_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("knn_classify: table_name, feature_col, and label_col cannot be NULL")));
+
+	if (query_vector == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("knn_classify: query_vector cannot be NULL")));
+
+	/* Defensive: Validate k */
+	if (k < 1)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("k must be at least 1, got %d", k)));
+
+	if (k > 1000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("k must be at most 1000, got %d", k)));
+
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
 	label_str = text_to_cstring(label_col);
 
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || feat_str == NULL || label_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (feat_str)
+			pfree(feat_str);
+		if (label_str)
+			pfree(label_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
 	dim = query_vector->dim;
 
-	if (k < 1)
-		ereport(ERROR, (errmsg("k must be at least 1, got %d", k)));
+	/* Defensive: Validate vector dimension */
+	if (dim <= 0 || dim > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("knn_classify: invalid query vector dimension: %d", dim)));
+
+	elog(DEBUG1, "knn_classify: Starting classification with k=%d, dim=%d", k, dim);
 
 	oldcontext = CurrentMemoryContext;
 
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+	{
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(label_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_connect failed")));
+	}
 
 	/* Build query to fetch all training samples */
 	initStringInfo(&query);
@@ -132,19 +209,69 @@ knn_classify(PG_FUNCTION_ARGS)
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errmsg("Query failed: %s", query.data)));
+	{
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(label_str);
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("Query failed: %s", query.data)));
+	}
 
 	nvec = SPI_processed;
 
+	/* Defensive: Validate sample count */
 	if (nvec < k)
+	{
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(label_str);
+		SPI_finish();
 		ereport(ERROR,
-			(errmsg("Need at least k=%d samples, but found only %d",
-				k,
-				nvec)));
+			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				errmsg("Need at least k=%d samples, but found only %d",
+					k,
+					nvec)));
+	}
+
+	if (nvec > 10000000)
+	{
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(label_str);
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Too many samples: %d (maximum 10000000)", nvec)));
+	}
+
+	/* Assert: SPI_tuptable should be valid after SPI_OK_SELECT */
+	Assert(SPI_tuptable != NULL);
+	Assert(SPI_tuptable->tupdesc != NULL);
+	Assert(SPI_tuptable->vals != NULL);
+
+	elog(DEBUG1, "knn_classify: Loaded %d training samples", nvec);
 
 	/* Allocate samples array in caller's context */
 	MemoryContextSwitchTo(oldcontext);
 	samples = (KNNSample *)palloc(sizeof(KNNSample) * nvec);
+
+	/* Defensive: Validate allocation */
+	if (samples == NULL)
+	{
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(label_str);
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate samples array")));
+	}
 
 	/* Extract data and compute distances */
 	for (i = 0; i < nvec; i++)

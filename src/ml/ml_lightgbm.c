@@ -32,12 +32,29 @@ train_lightgbm_classifier(PG_FUNCTION_ARGS)
 	int32 num_leaves = PG_ARGISNULL(4) ? 31 : PG_GETARG_INT32(4);
 	float8 learning_rate = PG_ARGISNULL(5) ? 0.1 : PG_GETARG_FLOAT8(5);
 
-	(void)table_name;
-	(void)feature_col;
-	(void)label_col;
-	(void)n_estimators;
-	(void)num_leaves;
-	(void)learning_rate;
+	CHECK_NARGS_RANGE(3, 6);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || label_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_lightgbm_classifier: table_name, feature_col, and label_col cannot be NULL")));
+
+	/* Defensive: Validate parameters */
+	if (n_estimators < 1 || n_estimators > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("n_estimators must be between 1 and 100000, got %d", n_estimators)));
+
+	if (num_leaves < 1 || num_leaves > 32768)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_leaves must be between 1 and 32768, got %d", num_leaves)));
+
+	if (isnan(learning_rate) || isinf(learning_rate) || learning_rate <= 0.0 || learning_rate > 1.0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("learning_rate must be between 0.0 and 1.0, got %f", learning_rate)));
 
 	ereport(ERROR,
 		(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),

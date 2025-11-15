@@ -184,12 +184,34 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 	bool isnull = false;
 	StringInfoData cmd;
 
+	/* Assert: Internal invariants */
+	Assert(algo != NULL);
+	Assert(param_json != NULL);
+	Assert(folds > 0);
+
+	/* Defensive: Check NULL inputs */
+	if (algo == NULL || param_json == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("actual_crossval: algo and param_json cannot be NULL")));
+
+	/* Defensive: Validate folds */
+	if (folds < 2 || folds > 20)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("folds must be between 2 and 20, got %d", folds)));
+
 	initStringInfo(&cmd);
 	appendStringInfoString(
 		&cmd, "SELECT neurondb_train_and_score($1, $2, $3)");
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+	{
+		pfree(cmd.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_connect failed")));
+	}
 
 	{
 		Datum values[3];
@@ -207,6 +229,17 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 			true,
 			1);
 
+		/* Defensive: Validate SPI_tuptable */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL ||
+			SPI_tuptable->tupdesc == NULL)
+		{
+			SPI_finish();
+			pfree(cmd.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("SPI_tuptable is invalid")));
+		}
+
 		if (ret == SPI_OK_SELECT && SPI_processed == 1)
 		{
 			Datum dval;
@@ -216,23 +249,31 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 				1,
 				&isnull);
 			if (!isnull)
+			{
 				mean_score = DatumGetFloat8(dval);
+				/* Defensive: Validate score */
+				if (isnan(mean_score) || isinf(mean_score))
+				{
+					elog(WARNING, "actual_crossval: score is NaN or Infinity, using 0.0");
+					mean_score = 0.0;
+				}
+			}
 			else
 			{
 				SPI_finish();
 				pfree(cmd.data);
 				ereport(ERROR,
-					(errmsg("Returned value from "
-						"neurondb_train_and_score is "
-						"null")));
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+						errmsg("Returned value from neurondb_train_and_score is null")));
 			}
 		} else
 		{
 			SPI_finish();
 			pfree(cmd.data);
 			ereport(ERROR,
-				(errmsg("Failed to obtain score from "
-					"neurondb_train_and_score")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("Failed to obtain score from neurondb_train_and_score (ret=%d, processed=%ld)",
+						ret, (long)SPI_processed)));
 		}
 	}
 

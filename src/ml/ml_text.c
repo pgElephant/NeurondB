@@ -112,6 +112,17 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 	int32 model_id = PG_GETARG_INT32(0);
 	text *input_text = PG_GETARG_TEXT_PP(1);
 
+	CHECK_NARGS(2);
+
+	/* Assert: Internal invariants */
+	Assert(input_text != NULL);
+
+	/* Defensive: Check NULL inputs */
+	if (input_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: text_classify input_text cannot be NULL")));
+
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
@@ -130,11 +141,24 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 		oldcontext =
 			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
+		/* Assert: Internal invariants */
+		Assert(model_id > 0);
+
+		/* Defensive: Validate model_id */
 		if (model_id <= 0)
 			ereport(ERROR,
-				(errmsg("model_id must be positive integer")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: text_classify model_id must be "
+					       "positive integer, got %d", model_id)));
 
 		input_str = text_to_cstring(input_text);
+
+		/* Defensive: Validate allocation */
+		if (input_str == NULL)
+			ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+					errmsg("neurondb: text_classify failed to allocate "
+					       "input string")));
 		simple_tokenize(input_str, tokens, &num_tokens);
 
 		snprintf(qry,
@@ -147,14 +171,19 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 			model_id);
 
 		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-			ereport(ERROR, (errmsg("SPI_connect failed: %d", ret)));
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: text_classify SPI_connect failed: %d",
+					       ret)));
 
 		ret = SPI_exec(qry, 0);
 		if (ret != SPI_OK_SELECT)
 		{
 			SPI_finish();
 			ereport(ERROR,
-				(errmsg("Could not fetch model word lists")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: text_classify could not fetch "
+					       "model word lists")));
 		}
 
 		/* Prepare category lists */
@@ -190,8 +219,9 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 			for (t = 0; t < num_tokens; t++)
 				pfree(tokens[t]);
 			ereport(ERROR,
-				(errmsg("No categories found for model_id %d",
-					model_id)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+					errmsg("neurondb: text_classify no categories found "
+					       "for model_id %d", model_id)));
 		}
 
 		/* Tally up word matches for each category */
@@ -349,7 +379,9 @@ neurondb_sentiment_analysis(PG_FUNCTION_ARGS)
 			for (t = 0; t < num_tokens; t++)
 				pfree(tokens[t]);
 			pfree(model_name);
-			ereport(ERROR, (errmsg("SPI_connect failed")));
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: sentiment_analysis SPI_connect failed")));
 		}
 		ret = SPI_exec(qry, 0);
 		if (ret != SPI_OK_SELECT)
@@ -359,8 +391,9 @@ neurondb_sentiment_analysis(PG_FUNCTION_ARGS)
 				pfree(tokens[t]);
 			pfree(model_name);
 			ereport(ERROR,
-				(errmsg("Could not execute sentiment lexicon "
-					"fetch")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: sentiment_analysis could not execute "
+					       "sentiment lexicon fetch")));
 		}
 
 		for (t = 0; t < num_tokens; t++)
@@ -510,7 +543,10 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 		{
 			for (t = 0; t < num_tokens; t++)
 				pfree(tokens[t]);
-			ereport(ERROR, (errmsg("SPI_connect failed")));
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: named_entity_recognition "
+					       "SPI_connect failed")));
 		}
 		ret = SPI_exec("SELECT entity, entity_type, confidence FROM "
 			       "neurondb_ner_entities",
@@ -521,7 +557,9 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 			for (t = 0; t < num_tokens; t++)
 				pfree(tokens[t]);
 			ereport(ERROR,
-				(errmsg("NER entity table fetch failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: named_entity_recognition NER "
+					       "entity table fetch failed")));
 		}
 
 		entities =
@@ -739,7 +777,10 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 			for (s = 0; s < n_sentences; s++)
 				pfree(sentence_ptrs[s]);
 			pfree(method);
-			ereport(ERROR, (errmsg("SPI_connect failed")));
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: text_summarize SPI_connect "
+					       "failed")));
 		}
 		ret = SPI_exec(
 			"SELECT stopword FROM neurondb_summarizer_stopwords",
@@ -751,7 +792,9 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 				pfree(sentence_ptrs[s]);
 			pfree(method);
 			ereport(ERROR,
-				(errmsg("could not query stopword table")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: text_summarize could not query "
+					       "stopword table")));
 		}
 		{
 			int n_stopwords;
@@ -869,5 +912,7 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_text_model(void)
 {
-	elog(DEBUG1, "Text GPU Model Ops registration skipped - not yet implemented");
+	elog(DEBUG1,
+	     "neurondb: text GPU model ops registration skipped "
+	     "not yet implemented");
 }

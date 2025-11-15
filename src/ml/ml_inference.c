@@ -226,54 +226,112 @@ load_model(PG_FUNCTION_ARGS)
 	text *model_path = PG_GETARG_TEXT_PP(1);
 	text *model_type = PG_GETARG_TEXT_PP(2);
 
-	char *name_str = text_to_cstring(model_name);
-	char *path_str = text_to_cstring(model_path);
-	char *type_str = text_to_cstring(model_type);
+	char *name_str;
+	char *path_str;
+	char *type_str;
 	ModelType t;
 	ModelHandle *handle;
 	ModelEntry *entry;
 	struct stat statbuf;
 
-	if (find_model(name_str) != NULL)
+	CHECK_NARGS(3);
+
+	/* Defensive: Check NULL inputs */
+	if (model_name == NULL || model_path == NULL || model_type == NULL)
 		ereport(ERROR,
-			(errmsg("neurondb: Model with name '%s' is already "
-				"registered.",
-				name_str)));
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("load_model: model_name, model_path, and model_type cannot be NULL")));
+
+	name_str = text_to_cstring(model_name);
+	path_str = text_to_cstring(model_path);
+	type_str = text_to_cstring(model_type);
+
+	/* Defensive: Validate allocations */
+	if (name_str == NULL || path_str == NULL || type_str == NULL)
+	{
+		if (name_str)
+			pfree(name_str);
+		if (path_str)
+			pfree(path_str);
+		if (type_str)
+			pfree(type_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	/* Defensive: Validate string lengths */
+	if (strlen(name_str) == 0 || strlen(name_str) > 256 ||
+		strlen(path_str) == 0 || strlen(path_str) > 4096 ||
+		strlen(type_str) == 0 || strlen(type_str) > 64)
+	{
+		pfree(name_str);
+		pfree(path_str);
+		pfree(type_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("load_model: invalid string length")));
+	}
+
+	if (find_model(name_str) != NULL)
+	{
+		pfree(name_str);
+		pfree(path_str);
+		pfree(type_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_DUPLICATE_OBJECT),
+				errmsg("neurondb: Model with name '%s' is already registered", name_str)));
+	}
 
 	t = parse_model_type(type_str);
 	if (t == MODEL_UNKNOWN)
+	{
+		pfree(name_str);
+		pfree(path_str);
+		pfree(type_str);
 		ereport(ERROR,
-			(errmsg("neurondb: Unknown model type '%s'. Use "
-				"'onnx', 'tensorflow', or 'pytorch'.",
-				type_str)));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: Unknown model type '%s'. Use 'onnx', 'tensorflow', or 'pytorch'", type_str)));
+	}
 
 	if (stat(path_str, &statbuf) != 0 || !S_ISREG(statbuf.st_mode))
 	{
 		int saved_errno = errno;
+		pfree(name_str);
+		pfree(path_str);
+		pfree(type_str);
 		ereport(ERROR,
-			(errmsg("neurondb: Model path '%s' does not exist or "
-				"is not a regular file (errno=%d: %s)",
-				path_str,
-				saved_errno,
-				strerror(saved_errno))));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: Model path '%s' does not exist or is not a regular file (errno=%d: %s)",
+					path_str, saved_errno, strerror(saved_errno))));
 	}
+
 	if (access(path_str, R_OK) != 0)
 	{
 		int saved_errno = errno;
+		pfree(name_str);
+		pfree(path_str);
+		pfree(type_str);
 		ereport(ERROR,
-			(errmsg("neurondb: Model file '%s' is not readable "
-				"(errno=%d: %s)",
-				path_str,
-				saved_errno,
-				strerror(saved_errno))));
+			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				errmsg("neurondb: Model file '%s' is not readable (errno=%d: %s)",
+					path_str, saved_errno, strerror(saved_errno))));
 	}
 
 	handle = model_backend_load(path_str, t);
 	if (handle == NULL)
+	{
+		pfree(name_str);
+		pfree(path_str);
+		pfree(type_str);
 		ereport(ERROR,
-			(errmsg("[FATAL] neurondb: Model backend failed to "
-				"load '%s'",
-				path_str)));
+			(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+				errmsg("neurondb: Model backend failed to load '%s'", path_str)));
+	}
+
+	/* Assert: Internal invariants */
+	Assert(handle != NULL);
+	Assert(handle->model_size_bytes > 0);
 
 	entry = (ModelEntry *)MemoryContextAlloc(
 		TopMemoryContext, sizeof(ModelEntry));
@@ -305,24 +363,57 @@ predict(PG_FUNCTION_ARGS)
 {
 	text *model_name = PG_GETARG_TEXT_PP(0);
 	Vector *input = PG_GETARG_VECTOR_P(1);
-	char *name_str = text_to_cstring(model_name);
+	char *name_str;
 	ModelEntry *m;
 	Vector *result;
 
-	m = find_model(name_str);
-	if (m == NULL)
+	CHECK_NARGS(2);
+
+	/* Defensive: Check NULL inputs */
+	if (model_name == NULL)
 		ereport(ERROR,
-			(errmsg("neurondb: Model '%s' not found; must load "
-				"first.",
-				name_str)));
-	if (!m->loaded || m->model_handle == NULL)
-		ereport(ERROR,
-			(errmsg("neurondb: Model '%s' not loaded or handle "
-				"invalid.",
-				name_str)));
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("predict: model_name cannot be NULL")));
 
 	if (input == NULL)
-		ereport(ERROR, (errmsg("neurondb: Input vector is NULL.")));
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("predict: input vector cannot be NULL")));
+
+	/* Defensive: Validate input vector dimension */
+	if (input->dim <= 0 || input->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("predict: invalid input vector dimension: %d", input->dim)));
+
+	name_str = text_to_cstring(model_name);
+
+	/* Defensive: Validate allocation */
+	if (name_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate model name string")));
+
+	m = find_model(name_str);
+	if (m == NULL)
+	{
+		pfree(name_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_OBJECT),
+				errmsg("neurondb: Model '%s' not found; must load first", name_str)));
+	}
+
+	if (!m->loaded || m->model_handle == NULL)
+	{
+		pfree(name_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: Model '%s' not loaded or handle invalid", name_str)));
+	}
+
+	/* Assert: Internal invariants */
+	Assert(m != NULL);
+	Assert(m->model_handle != NULL);
 
 	elog(INFO,
 		"neurondb: [predict] Model '%s' (type=%s) on %d-dim vector; "
@@ -347,40 +438,81 @@ predict_batch(PG_FUNCTION_ARGS)
 {
 	text *model_name = PG_GETARG_TEXT_PP(0);
 	ArrayType *inputs = PG_GETARG_ARRAYTYPE_P(1);
-	char *name_str = text_to_cstring(model_name);
+	char *name_str;
 	ModelEntry *m;
 	int ndim;
 	int64 nvecs;
 
-	m = find_model(name_str);
-	if (m == NULL)
+	CHECK_NARGS(2);
+
+	/* Defensive: Check NULL inputs */
+	if (model_name == NULL)
 		ereport(ERROR,
-			(errmsg("neurondb: Model '%s' for batch predict not "
-				"found.",
-				name_str)));
-	if (!m->loaded || m->model_handle == NULL)
-		ereport(ERROR,
-			(errmsg("neurondb: Model '%s' is not ready for batch "
-				"inference.",
-				name_str)));
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("predict_batch: model_name cannot be NULL")));
 
 	if (inputs == NULL)
 		ereport(ERROR,
-			(errmsg("neurondb: Input array for batch predict is "
-				"NULL.")));
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("predict_batch: inputs array cannot be NULL")));
+
+	name_str = text_to_cstring(model_name);
+
+	/* Defensive: Validate allocation */
+	if (name_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate model name string")));
+
+	m = find_model(name_str);
+	if (m == NULL)
+	{
+		pfree(name_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_OBJECT),
+				errmsg("neurondb: Model '%s' for batch predict not found", name_str)));
+	}
+
+	if (!m->loaded || m->model_handle == NULL)
+	{
+		pfree(name_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: Model '%s' is not ready for batch inference", name_str)));
+	}
 
 	ndim = ARR_NDIM(inputs);
 	nvecs = ArrayGetNItems(ndim, ARR_DIMS(inputs));
 
+	/* Defensive: Validate array dimensions */
 	if (ndim != 1)
+	{
+		pfree(name_str);
 		ereport(ERROR,
-			(errmsg("neurondb: Input array for batch inference "
-				"must be 1-dimensional")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("predict_batch: Input array must be 1-dimensional, got %d dimensions", ndim)));
+	}
+
+	if (nvecs <= 0 || nvecs > 1000000)
+	{
+		pfree(name_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("predict_batch: Invalid number of vectors: %ld (must be between 1 and 1000000)", (long)nvecs)));
+	}
 
 	if (ARR_HASNULL(inputs))
+	{
+		pfree(name_str);
 		ereport(ERROR,
-			(errmsg("neurondb: Input array for predict_batch "
-				"contains nulls. Not supported.")));
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("predict_batch: Input array contains nulls, which is not supported")));
+	}
+
+	/* Assert: Internal invariants */
+	Assert(m != NULL);
+	Assert(m->model_handle != NULL);
+	Assert(inputs != NULL);
 
 	elog(INFO,
 		"neurondb: [predict_batch] Model '%s' on batch: %ld vectors "

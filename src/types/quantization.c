@@ -41,27 +41,73 @@ quantize_vector_i8(Vector *v)
 	float4 scale;
 	int i;
 
+	/* Defensive: Check NULL input */
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot quantize NULL vector")));
+
+	/* Defensive: Validate vector dimension */
+	if (v->dim <= 0 || v->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid vector dimension %d", v->dim)));
+
+	/* Defensive: Validate vector size */
+	if (VARSIZE_ANY(v) < (int)offsetof(Vector, data) + (int)(sizeof(float4) * v->dim))
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("vector size %d does not match dimension %d",
+					VARSIZE_ANY(v), v->dim)));
+
 	/* Find maximum absolute value for scaling */
 	for (i = 0; i < v->dim; i++)
 	{
-		float4 abs_val = fabsf(v->data[i]);
+		float4 abs_val;
+
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(v->data[i]) || isinf(v->data[i]))
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("vector contains NaN or Infinity at index %d", i)));
+		abs_val = fabsf(v->data[i]);
 		if (abs_val > max_abs)
 			max_abs = abs_val;
 	}
 
 	size = offsetof(VectorI8, data) + sizeof(int8) * v->dim;
 	result = (VectorI8 *)palloc0(size);
+	if (result == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate quantized vector")));
 	SET_VARSIZE(result, size);
 	result->dim = v->dim;
 
 	if (max_abs == 0.0f)
 		return result;
 
+	/* Defensive: Check for division by zero */
+	if (max_abs <= 0.0f || isnan(max_abs) || isinf(max_abs))
+		return result;
+
 	scale = 127.0f / max_abs;
+
+	/* Defensive: Validate scale */
+	if (isnan(scale) || isinf(scale))
+		ereport(ERROR,
+			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				errmsg("quantization scale is NaN or Infinity")));
 
 	for (i = 0; i < v->dim; i++)
 	{
 		float4 val = v->data[i] * scale;
+
+		/* Defensive: Check for overflow */
+		if (isnan(val) || isinf(val))
+			ereport(ERROR,
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					errmsg("quantization resulted in NaN or Infinity at index %d", i)));
 
 		if (val > 127.0f)
 			val = 127.0f;
@@ -80,6 +126,7 @@ PG_FUNCTION_INFO_V1(vector_to_int8);
 Datum
 vector_to_int8(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	VectorI8 *result;
 
@@ -96,9 +143,24 @@ PG_FUNCTION_INFO_V1(int8_to_vector);
 Datum
 int8_to_vector(PG_FUNCTION_ARGS)
 {
-	VectorI8 *v8 = (VectorI8 *)PG_GETARG_POINTER(0);
+	VectorI8 *v8;
 	Vector *result;
 	int i;
+
+	CHECK_NARGS(1);
+	v8 = (VectorI8 *)PG_GETARG_POINTER(0);
+
+	/* Defensive: Check NULL input */
+	if (v8 == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot dequantize NULL vector")));
+
+	/* Defensive: Validate vector dimension */
+	if (v8->dim <= 0 || v8->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid quantized vector dimension %d", v8->dim)));
 
 	result = new_vector(v8->dim);
 
@@ -197,13 +259,43 @@ quantize_vector_f16(Vector *v)
 	int size;
 	int i;
 
+	/* Defensive: Check NULL input */
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot quantize NULL vector")));
+
+	/* Defensive: Validate vector dimension */
+	if (v->dim <= 0 || v->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid vector dimension %d", v->dim)));
+
+	/* Defensive: Validate vector size */
+	if (VARSIZE_ANY(v) < (int)offsetof(Vector, data) + (int)(sizeof(float4) * v->dim))
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("vector size %d does not match dimension %d",
+					VARSIZE_ANY(v), v->dim)));
+
 	size = offsetof(VectorF16, data) + sizeof(uint16) * v->dim;
 	result = (VectorF16 *)palloc0(size);
+	if (result == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate quantized vector")));
 	SET_VARSIZE(result, size);
 	result->dim = v->dim;
 
 	for (i = 0; i < v->dim; i++)
+	{
+		/* Defensive: Check for NaN/Inf before quantization */
+		if (isnan(v->data[i]) || isinf(v->data[i]))
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("vector contains NaN or Infinity at index %d", i)));
 		result->data[i] = float_to_fp16(v->data[i]);
+	}
 
 	return result;
 }
@@ -212,6 +304,7 @@ PG_FUNCTION_INFO_V1(vector_to_float16);
 Datum
 vector_to_float16(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	VectorF16 *result;
 
@@ -223,9 +316,24 @@ PG_FUNCTION_INFO_V1(float16_to_vector);
 Datum
 float16_to_vector(PG_FUNCTION_ARGS)
 {
-	VectorF16 *vf16 = (VectorF16 *)PG_GETARG_POINTER(0);
+	VectorF16 *vf16;
 	Vector *result;
 	int i;
+
+	CHECK_NARGS(1);
+	vf16 = (VectorF16 *)PG_GETARG_POINTER(0);
+
+	/* Defensive: Check NULL input */
+	if (vf16 == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot dequantize NULL vector")));
+
+	/* Defensive: Validate vector dimension */
+	if (vf16->dim <= 0 || vf16->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid quantized vector dimension %d", vf16->dim)));
 
 	result = new_vector(vf16->dim);
 	for (i = 0; i < vf16->dim; i++)
@@ -247,19 +355,53 @@ quantize_vector_binary(Vector *v)
 	int byte_idx;
 	int bit_idx;
 
+	/* Defensive: Check NULL input */
+	if (v == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot quantize NULL vector")));
+
+	/* Defensive: Validate vector dimension */
+	if (v->dim <= 0 || v->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid vector dimension %d", v->dim)));
+
+	/* Defensive: Validate vector size */
+	if (VARSIZE_ANY(v) < (int)offsetof(Vector, data) + (int)(sizeof(float4) * v->dim))
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("vector size %d does not match dimension %d",
+					VARSIZE_ANY(v), v->dim)));
+
 	nbytes = (v->dim + 7) / 8;
 	size = offsetof(VectorBinary, data) + nbytes;
 	result = (VectorBinary *)palloc0(size);
+	if (result == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate quantized vector")));
 	SET_VARSIZE(result, size);
 	result->dim = v->dim;
 	memset(result->data, 0, nbytes);
 
 	for (i = 0; i < v->dim; i++)
 	{
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(v->data[i]) || isinf(v->data[i]))
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("vector contains NaN or Infinity at index %d", i)));
+
 		if (v->data[i] > 0.0f)
 		{
 			byte_idx = i / 8;
 			bit_idx = i % 8;
+			/* Defensive: Validate byte index */
+			if (byte_idx >= nbytes)
+				ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("byte index %d out of bounds", byte_idx)));
 			result->data[byte_idx] |= (1 << bit_idx);
 		}
 	}
@@ -288,6 +430,7 @@ PG_FUNCTION_INFO_V1(binary_quantize);
 Datum
 binary_quantize(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	return vector_to_binary(fcinfo);
 }
 
@@ -298,11 +441,26 @@ PG_FUNCTION_INFO_V1(binary_to_vector);
 Datum
 binary_to_vector(PG_FUNCTION_ARGS)
 {
-	VectorBinary *vb = (VectorBinary *)PG_GETARG_POINTER(0);
+	VectorBinary *vb;
 	Vector *result;
 	int i;
 	int byte_idx;
 	int bit_idx;
+
+	CHECK_NARGS(1);
+	vb = (VectorBinary *)PG_GETARG_POINTER(0);
+
+	/* Defensive: Check NULL input */
+	if (vb == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot dequantize NULL vector")));
+
+	/* Defensive: Validate vector dimension */
+	if (vb->dim <= 0 || vb->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid quantized vector dimension %d", vb->dim)));
 
 	result = new_vector(vb->dim);
 
@@ -325,11 +483,32 @@ PG_FUNCTION_INFO_V1(binary_hamming_distance);
 Datum
 binary_hamming_distance(PG_FUNCTION_ARGS)
 {
-	VectorBinary *a = (VectorBinary *)PG_GETARG_POINTER(0);
-	VectorBinary *b = (VectorBinary *)PG_GETARG_POINTER(1);
+	VectorBinary *a;
+	VectorBinary *b;
 	int count = 0;
 	int nbytes;
 	int i;
+
+	CHECK_NARGS(2);
+	a = (VectorBinary *)PG_GETARG_POINTER(0);
+	b = (VectorBinary *)PG_GETARG_POINTER(1);
+
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute distance with NULL vectors")));
+
+	/* Defensive: Validate vector dimensions */
+	if (a->dim <= 0 || a->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid vector A dimension %d", a->dim)));
+
+	if (b->dim <= 0 || b->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid vector B dimension %d", b->dim)));
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
@@ -338,9 +517,17 @@ binary_hamming_distance(PG_FUNCTION_ARGS)
 
 	nbytes = (a->dim + 7) / 8;
 
+	/* Defensive: Validate nbytes */
+	if (nbytes <= 0 || nbytes > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid byte count %d", nbytes)));
+
 	for (i = 0; i < nbytes; i++)
 	{
-		uint8 xor_val = a->data[i] ^ b->data[i];
+		uint8 xor_val;
+
+		xor_val = a->data[i] ^ b->data[i];
 #if defined(__GNUC__) && (__GNUC__ >= 4)
 		count += __builtin_popcount(xor_val);
 #else
@@ -1195,6 +1382,7 @@ PG_FUNCTION_INFO_V1(vector_to_uint8);
 Datum
 vector_to_uint8(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	VectorU8 *result;
 
@@ -1206,6 +1394,7 @@ PG_FUNCTION_INFO_V1(uint8_to_vector);
 Datum
 uint8_to_vector(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	VectorU8 *vu8 = (VectorU8 *)PG_GETARG_POINTER(0);
 	Vector *result;
 	int i;
@@ -1274,6 +1463,7 @@ PG_FUNCTION_INFO_V1(vector_to_ternary);
 Datum
 vector_to_ternary(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	VectorTernary *result;
 
@@ -1285,6 +1475,7 @@ PG_FUNCTION_INFO_V1(ternary_to_vector);
 Datum
 ternary_to_vector(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	VectorTernary *vt = (VectorTernary *)PG_GETARG_POINTER(0);
 	Vector *result;
 	int i;
@@ -1386,6 +1577,7 @@ PG_FUNCTION_INFO_V1(vector_to_int4);
 Datum
 vector_to_int4(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	VectorI4 *result;
 
@@ -1397,6 +1589,7 @@ PG_FUNCTION_INFO_V1(int4_to_vector);
 Datum
 int4_to_vector(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	VectorI4 *vi4 = (VectorI4 *)PG_GETARG_POINTER(0);
 	Vector *result;
 	int i;
@@ -1601,6 +1794,7 @@ PG_FUNCTION_INFO_V1(halfvec_eq);
 Datum
 halfvec_eq(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	VectorF16 *a = (VectorF16 *)PG_GETARG_POINTER(0);
 	VectorF16 *b = (VectorF16 *)PG_GETARG_POINTER(1);
 	int i;
@@ -1631,6 +1825,7 @@ PG_FUNCTION_INFO_V1(halfvec_ne);
 Datum
 halfvec_ne(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	return DirectFunctionCall2(
 		       halfvec_eq, PG_GETARG_DATUM(0), PG_GETARG_DATUM(1))
 		? BoolGetDatum(false)
@@ -1644,6 +1839,7 @@ PG_FUNCTION_INFO_V1(halfvec_hash);
 Datum
 halfvec_hash(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	VectorF16 *v = (VectorF16 *)PG_GETARG_POINTER(0);
 	uint32 hash = 5381;
 	int i;
@@ -1684,6 +1880,7 @@ PG_FUNCTION_INFO_V1(halfvec_l2_distance);
 Datum
 halfvec_l2_distance(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	VectorF16 *a = (VectorF16 *)PG_GETARG_POINTER(0);
 	VectorF16 *b = (VectorF16 *)PG_GETARG_POINTER(1);
 	double sum = 0.0;
@@ -1721,6 +1918,7 @@ PG_FUNCTION_INFO_V1(halfvec_cosine_distance);
 Datum
 halfvec_cosine_distance(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	VectorF16 *a = (VectorF16 *)PG_GETARG_POINTER(0);
 	VectorF16 *b = (VectorF16 *)PG_GETARG_POINTER(1);
 	double dot = 0.0, norm_a = 0.0, norm_b = 0.0;
@@ -1760,6 +1958,7 @@ PG_FUNCTION_INFO_V1(halfvec_inner_product);
 Datum
 halfvec_inner_product(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	VectorF16 *a = (VectorF16 *)PG_GETARG_POINTER(0);
 	VectorF16 *b = (VectorF16 *)PG_GETARG_POINTER(1);
 	double sum = 0.0;
@@ -1798,6 +1997,7 @@ PG_FUNCTION_INFO_V1(vector_to_bit);
 Datum
 vector_to_bit(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	VectorBinary *vb;
 	VarBit *result;
@@ -1846,6 +2046,7 @@ PG_FUNCTION_INFO_V1(bit_to_vector);
 Datum
 bit_to_vector(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	VarBit *bit_vec = PG_GETARG_VARBIT_P(0);
 	Vector *result;
 	int nbits;
@@ -1884,6 +2085,7 @@ PG_FUNCTION_INFO_V1(bit_hamming_distance);
 Datum
 bit_hamming_distance(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	VarBit *a = PG_GETARG_VARBIT_P(0);
 	VarBit *b = PG_GETARG_VARBIT_P(1);
 	int nbits;

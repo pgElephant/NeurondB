@@ -97,9 +97,18 @@ load_training_data(const char *table,
 	tupdesc = SPI_tuptable->tupdesc;
 	tuple = SPI_tuptable->vals[0];
 
+	/* Defensive: Validate SPI_tuptable */
+	if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL
+		|| SPI_tuptable->vals == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_tuptable is invalid")));
+
 	feat_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
 	if (isnull)
-		elog(ERROR, "Null feature vector found");
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("Null feature vector found")));
 
 	if (tupdesc->attrs[0]->atttypid == FLOAT4ARRAYOID
 		|| tupdesc->attrs[0]->atttypid == FLOAT8ARRAYOID)
@@ -111,8 +120,21 @@ load_training_data(const char *table,
 		ncols = 1;
 	}
 
+	/* Defensive: Validate dimensions */
+	if (ncols <= 0 || ncols > 100000 || nrows > 10000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid training data dimensions: %d rows, %d cols",
+					nrows, ncols)));
+
 	features = (float *)palloc(sizeof(float) * nrows * ncols);
 	labels = (float *)palloc(sizeof(float) * nrows);
+
+	/* Defensive: Validate allocations */
+	if (features == NULL || labels == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate training data arrays")));
 
 	for (i = 0; i < nrows; i++)
 	{
@@ -125,10 +147,18 @@ load_training_data(const char *table,
 		current_tuple = SPI_tuptable->vals[i];
 
 		/* Features */
+		/* Defensive: Validate tuple */
+		if (current_tuple == NULL)
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("NULL tuple at row %d", i)));
+
 		featval =
 			SPI_getbinval(current_tuple, tupdesc, 1, &isnull_feat);
 		if (isnull_feat)
-			elog(ERROR, "Null feature vector in row %d", i);
+			ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					errmsg("Null feature vector in row %d", i)));
 
 		if (feat_arr)
 		{
@@ -138,32 +168,65 @@ load_training_data(const char *table,
 
 			curr_arr = DatumGetArrayTypeP(featval);
 
+			/* Defensive: Check NULL array */
+			if (curr_arr == NULL)
+				ereport(ERROR,
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+						errmsg("Null feature array in row %d", i)));
+
 			if (ARR_NDIM(curr_arr) == 1)
 			{
 				arr_len = ArrayGetNItems(
 					ARR_NDIM(curr_arr), ARR_DIMS(curr_arr));
 				if (arr_len != ncols)
-					elog(ERROR,
-						"Unexpected dimension of "
-						"feature array");
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("Unexpected dimension of feature array: expected %d, got %d",
+								ncols, arr_len)));
 				fdat = (float8 *)ARR_DATA_PTR(curr_arr);
+
+				/* Defensive: Validate pointer */
+				if (fdat == NULL)
+					ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+							errmsg("NULL array data pointer in row %d", i)));
+
 				for (j = 0; j < ncols; j++)
-					features[i * ncols + j] =
-						(float)fdat[j];
+				{
+					/* Defensive: Check for NaN/Inf */
+					if (isnan(fdat[j]) || isinf(fdat[j]))
+						ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+								errmsg("Feature contains NaN or Infinity in row %d, col %d",
+									i, j)));
+					features[i * ncols + j] = (float)fdat[j];
+				}
 			} else
 			{
-				elog(ERROR, "Feature arrays must be 1D");
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("Feature arrays must be 1D")));
 			}
 		} else
 		{
+			float8 feat_val;
+
 			if (tupdesc->attrs[0]->atttypid == FLOAT8OID)
-				features[i * ncols] =
-					(float)DatumGetFloat8(featval);
+				feat_val = DatumGetFloat8(featval);
 			else if (tupdesc->attrs[0]->atttypid == FLOAT4OID)
-				features[i * ncols] =
-					(float)DatumGetFloat4(featval);
+				feat_val = (float8)DatumGetFloat4(featval);
 			else
-				elog(ERROR, "Unsupported feature column type");
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("Unsupported feature column type")));
+
+			/* Defensive: Check for NaN/Inf */
+			if (isnan(feat_val) || isinf(feat_val))
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("Feature contains NaN or Infinity in row %d", i)));
+
+			features[i * ncols] = (float)feat_val;
 		}
 
 		/* Labels */
@@ -173,13 +236,39 @@ load_training_data(const char *table,
 			elog(ERROR, "Null label/target in row %d", i);
 
 		if (tupdesc->attrs[1]->atttypid == INT4OID)
+		{
 			labels[i] = (float)DatumGetInt32(labelval);
+		}
 		else if (tupdesc->attrs[1]->atttypid == FLOAT4OID)
-			labels[i] = (float)DatumGetFloat4(labelval);
+		{
+			float4 label_val = DatumGetFloat4(labelval);
+
+			/* Defensive: Check for NaN/Inf */
+			if (isnan(label_val) || isinf(label_val))
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("Label contains NaN or Infinity in row %d", i)));
+
+			labels[i] = (float)label_val;
+		}
 		else if (tupdesc->attrs[1]->atttypid == FLOAT8OID)
-			labels[i] = (float)DatumGetFloat8(labelval);
+		{
+			float8 label_val = DatumGetFloat8(labelval);
+
+			/* Defensive: Check for NaN/Inf */
+			if (isnan(label_val) || isinf(label_val))
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("Label contains NaN or Infinity in row %d", i)));
+
+			labels[i] = (float)label_val;
+		}
 		else
-			elog(ERROR, "Unsupported label/target column type");
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("Unsupported label/target column type")));
+		}
 	}
 
 	*out_features = features;
@@ -259,29 +348,70 @@ fetch_xgboost_model(int32 model_id, size_t *model_size)
 		"SELECT model FROM ml_models WHERE id = %d",
 		model_id);
 
+	/* Defensive: Validate model_id */
+	if (model_id <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("model_id must be positive, got %d", model_id)));
+
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed for model fetch");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_connect failed for model fetch")));
 
 	ret = SPI_execute(select_cmd, true, 1);
 
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "SPI_execute failed for model select");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_execute failed for model select")));
 
 	if (SPI_processed == 0)
-		elog(ERROR,
-			"Model with id %d not found in ml_models",
-			model_id);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Model with id %d not found in ml_models",
+					model_id)));
+
+	/* Defensive: Validate SPI_tuptable */
+	if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL
+		|| SPI_tuptable->vals == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_tuptable is invalid")));
 
 	tup = SPI_tuptable->vals[0];
 	tupdesc = SPI_tuptable->tupdesc;
 
 	modeldat = SPI_getbinval(tup, tupdesc, 1, &isnull);
 	if (isnull)
-		elog(ERROR, "Null model returned");
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("Null model returned")));
 
 	model_bytea = DatumGetByteaP(modeldat);
+
+	/* Defensive: Validate bytea */
+	if (model_bytea == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("Invalid model bytea")));
+
 	len = VARSIZE(model_bytea) - VARHDRSZ;
+
+	/* Defensive: Validate size */
+	if (len <= 0 || len > 100000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Invalid model size: %zu", len)));
+
 	data = palloc(len);
+
+	/* Defensive: Validate allocation */
+	if (data == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate model buffer")));
+
 	memcpy(data, VARDATA(model_bytea), len);
 
 	*model_size = len;
@@ -304,17 +434,15 @@ fetch_xgboost_model(int32 model_id, size_t *model_size)
 Datum
 train_xgboost_classifier(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_PP(0);
-	text *feature_col = PG_GETARG_TEXT_PP(1);
-	text *label_col = PG_GETARG_TEXT_PP(2);
-	int32 n_estimators = PG_ARGISNULL(3) ? 100 : PG_GETARG_INT32(3);
-	int32 max_depth = PG_ARGISNULL(4) ? 6 : PG_GETARG_INT32(4);
-	float8 learning_rate = PG_ARGISNULL(5) ? 0.3 : PG_GETARG_FLOAT8(5);
-
-	char *table_str = text_to_cstring(table_name);
-	char *feature_str = text_to_cstring(feature_col);
-	char *label_str = text_to_cstring(label_col);
-
+	text *table_name;
+	text *feature_col;
+	text *label_col;
+	int32 n_estimators;
+	int32 max_depth;
+	float8 learning_rate;
+	char *table_str;
+	char *feature_str;
+	char *label_str;
 	float *features = NULL;
 	float *labels = NULL;
 	int nrows = 0;
@@ -327,22 +455,55 @@ train_xgboost_classifier(PG_FUNCTION_ARGS)
 	const char *keys[6];
 	const char *vals[6];
 	int param_count = 6;
-	int i, iter;
+	int i;
+	int iter;
 	float max_label = 0.0f;
 	int num_class;
 	bst_ulong out_len = 0;
 	char *out_bytes = NULL;
 	int32 model_id;
 
-	elog(NOTICE,
-		"XGBoost Classifier: table=%s, feature=%s, label=%s, "
-		"n_estimators=%d, max_depth=%d, learning_rate=%.3f",
-		table_str,
-		feature_str,
-		label_str,
-		n_estimators,
-		max_depth,
-		learning_rate);
+	CHECK_NARGS_RANGE(3, 6);
+	table_name = PG_GETARG_TEXT_PP(0);
+	feature_col = PG_GETARG_TEXT_PP(1);
+	label_col = PG_GETARG_TEXT_PP(2);
+	n_estimators = PG_ARGISNULL(3) ? 100 : PG_GETARG_INT32(3);
+	max_depth = PG_ARGISNULL(4) ? 6 : PG_GETARG_INT32(4);
+	learning_rate = PG_ARGISNULL(5) ? 0.3 : PG_GETARG_FLOAT8(5);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || label_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("table_name, feature_col, and label_col cannot be NULL")));
+
+	/* Defensive: Validate parameters */
+	if (n_estimators <= 0 || n_estimators > 10000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("n_estimators must be in range [1, 10000], got %d",
+					n_estimators)));
+	if (max_depth <= 0 || max_depth > 100)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("max_depth must be in range [1, 100], got %d",
+					max_depth)));
+	if (learning_rate <= 0.0 || learning_rate > 10.0 || isnan(learning_rate)
+		|| isinf(learning_rate))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("learning_rate must be in range (0, 10], got %f",
+					learning_rate)));
+
+	table_str = text_to_cstring(table_name);
+	feature_str = text_to_cstring(feature_col);
+	label_str = text_to_cstring(label_col);
+
+	/* Defensive: Validate allocations */
+	if (table_str == NULL || feature_str == NULL || label_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
 
 	load_training_data(table_str,
 		feature_str,
@@ -351,6 +512,36 @@ train_xgboost_classifier(PG_FUNCTION_ARGS)
 		&labels,
 		&nrows,
 		&ncols);
+
+	/* Defensive: Validate training data */
+	if (features == NULL || labels == NULL)
+	{
+		if (table_str)
+			pfree(table_str);
+		if (feature_str)
+			pfree(feature_str);
+		if (label_str)
+			pfree(label_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("failed to load training data")));
+	}
+	if (nrows <= 0 || ncols <= 0)
+	{
+		if (features)
+			pfree(features);
+		if (labels)
+			pfree(labels);
+		if (table_str)
+			pfree(table_str);
+		if (feature_str)
+			pfree(feature_str);
+		if (label_str)
+			pfree(label_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("training data must have at least one row and column")));
+	}
 
 	if (XGDMatrixCreateFromMat(features, nrows, ncols, (float)NAN, &dtrain)
 		!= 0)
@@ -432,16 +623,73 @@ train_xgboost_classifier(PG_FUNCTION_ARGS)
 Datum
 train_xgboost_regressor(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_PP(0);
-	text *feature_col = PG_GETARG_TEXT_PP(1);
-	text *target_col = PG_GETARG_TEXT_PP(2);
-	int32 n_estimators = PG_ARGISNULL(3) ? 100 : PG_GETARG_INT32(3);
-	int32 max_depth = PG_ARGISNULL(4) ? 6 : PG_GETARG_INT32(4);
-	float8 learning_rate = PG_ARGISNULL(5) ? 0.3 : PG_GETARG_FLOAT8(5);
+	text *table_name;
+	text *feature_col;
+	text *target_col;
+	int32 n_estimators;
+	int32 max_depth;
+	float8 learning_rate;
+	char *table_str;
+	char *feature_str;
+	char *target_str;
+	float *features = NULL;
+	float *labels = NULL;
+	int nrows = 0;
+	int ncols = 0;
+	DMatrixHandle dtrain = NULL;
+	BoosterHandle booster = NULL;
+	char eta_str[32];
+	char md_str[16];
+	const char *keys[5];
+	const char *vals[5];
+	int param_count = 5;
+	int i;
+	int iter;
+	bst_ulong out_len = 0;
+	char *out_bytes = NULL;
+	int32 model_id;
 
-	char *table_str = text_to_cstring(table_name);
-	char *feature_str = text_to_cstring(feature_col);
-	char *target_str = text_to_cstring(target_col);
+	CHECK_NARGS_RANGE(3, 6);
+	table_name = PG_GETARG_TEXT_PP(0);
+	feature_col = PG_GETARG_TEXT_PP(1);
+	target_col = PG_GETARG_TEXT_PP(2);
+	n_estimators = PG_ARGISNULL(3) ? 100 : PG_GETARG_INT32(3);
+	max_depth = PG_ARGISNULL(4) ? 6 : PG_GETARG_INT32(4);
+	learning_rate = PG_ARGISNULL(5) ? 0.3 : PG_GETARG_FLOAT8(5);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || target_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("table_name, feature_col, and target_col cannot be NULL")));
+
+	/* Defensive: Validate parameters */
+	if (n_estimators <= 0 || n_estimators > 10000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("n_estimators must be in range [1, 10000], got %d",
+					n_estimators)));
+	if (max_depth <= 0 || max_depth > 100)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("max_depth must be in range [1, 100], got %d",
+					max_depth)));
+	if (learning_rate <= 0.0 || learning_rate > 10.0 || isnan(learning_rate)
+		|| isinf(learning_rate))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("learning_rate must be in range (0, 10], got %f",
+					learning_rate)));
+
+	table_str = text_to_cstring(table_name);
+	feature_str = text_to_cstring(feature_col);
+	target_str = text_to_cstring(target_col);
+
+	/* Defensive: Validate allocations */
+	if (table_str == NULL || feature_str == NULL || target_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
 
 	float *features = NULL;
 	float *labels = NULL;
@@ -541,8 +789,8 @@ train_xgboost_regressor(PG_FUNCTION_ARGS)
 Datum
 predict_xgboost(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	ArrayType *features_array = PG_GETARG_ARRAYTYPE_P(1);
+	int32 model_id;
+	ArrayType *features_array;
 	int n_dims;
 	float8 *features = NULL;
 	float *feat_f = NULL;
@@ -555,16 +803,59 @@ predict_xgboost(PG_FUNCTION_ARGS)
 	int i;
 	float8 pred;
 
+	CHECK_NARGS(2);
+	model_id = PG_GETARG_INT32(0);
+	features_array = PG_GETARG_ARRAYTYPE_P(1);
+
+	/* Defensive: Check NULL input */
+	if (features_array == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("features array cannot be NULL")));
+
+	/* Defensive: Validate model_id */
+	if (model_id <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("model_id must be positive, got %d", model_id)));
+
 	if (ARR_NDIM(features_array) != 1)
-		elog(ERROR, "features must be a 1-dimensional array");
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("features must be a 1-dimensional array")));
 
 	n_dims = (int)ArrayGetNItems(
 		ARR_NDIM(features_array), ARR_DIMS(features_array));
+
+	/* Defensive: Validate dimensions */
+	if (n_dims <= 0 || n_dims > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("feature dimension must be in range [1, 100000], got %d",
+					n_dims)));
+
 	features = (float8 *)ARR_DATA_PTR(features_array);
 
 	feat_f = (float *)palloc(sizeof(float) * n_dims);
+
+	/* Defensive: Validate allocation */
+	if (feat_f == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate feature array")));
+
 	for (i = 0; i < n_dims; i++)
+	{
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(features[i]) || isinf(features[i]))
+		{
+			pfree(feat_f);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("features cannot contain NaN or Infinity")));
+		}
 		feat_f[i] = (float)features[i];
+	}
 
 	mod_bytes = fetch_xgboost_model(model_id, &model_size);
 

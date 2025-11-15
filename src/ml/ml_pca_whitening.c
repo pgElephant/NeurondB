@@ -196,18 +196,40 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 	int dims[2];
 	int lbs[2];
 
+	CHECK_NARGS_RANGE(2, 3);
+
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("whiten_embeddings: table_name and vector_column cannot be NULL")));
+
 	epsilon = PG_ARGISNULL(2) ? WHITENING_EPSILON : PG_GETARG_FLOAT8(2);
 
-	if (epsilon < 0.0 || epsilon > 1.0)
+	/* Defensive: Validate epsilon */
+	if (epsilon < 0.0 || epsilon > 1.0 || isnan(epsilon) || isinf(epsilon))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("epsilon must be in [0, 1]")));
+				errmsg("epsilon must be in [0, 1], got %f", epsilon)));
 
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || vec_col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (vec_col_str)
+			pfree(vec_col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
 
 	elog(DEBUG1,
 		"neurondb: PCA whitening on %s.%s (epsilon=%.2e)",

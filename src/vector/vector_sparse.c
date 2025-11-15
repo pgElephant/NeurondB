@@ -28,6 +28,23 @@
 static inline void
 check_vecmap_dimensions(const VectorMap *a, const VectorMap *b)
 {
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute distance with NULL vectors")));
+
+	/* Defensive: Validate dimensions */
+	if (a->total_dim <= 0 || a->total_dim > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid vector A dimension %d", a->total_dim)));
+
+	if (b->total_dim <= 0 || b->total_dim > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid vector B dimension %d", b->total_dim)));
+
 	if (a->total_dim != b->total_dim)
 		ereport(ERROR,
 			(errcode(ERRCODE_DATA_EXCEPTION),
@@ -44,8 +61,8 @@ PG_FUNCTION_INFO_V1(vecmap_l2_distance);
 Datum
 vecmap_l2_distance(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
+	VectorMap *a;
+	VectorMap *b;
 	int32 *a_indices;
 	float4 *a_values;
 	int32 *b_indices;
@@ -60,7 +77,23 @@ vecmap_l2_distance(PG_FUNCTION_ARGS)
 	double y;
 	double t;
 
+	CHECK_NARGS(2);
+	a = (VectorMap *)PG_GETARG_POINTER(0);
+	b = (VectorMap *)PG_GETARG_POINTER(1);
+
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute distance with NULL vectors")));
+
 	check_vecmap_dimensions(a, b);
+
+	/* Defensive: Validate nnz */
+	if (a->nnz < 0 || a->nnz > 1000000 || b->nnz < 0 || b->nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid nnz values: %d, %d", a->nnz, b->nnz)));
 
 	a_indices = VECMAP_INDICES(a);
 	a_values = VECMAP_VALUES(a);
@@ -144,8 +177,8 @@ PG_FUNCTION_INFO_V1(vecmap_inner_product);
 Datum
 vecmap_inner_product(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
+	VectorMap *a;
+	VectorMap *b;
 	int32 *a_indices;
 	float4 *a_values;
 	int32 *b_indices;
@@ -154,7 +187,23 @@ vecmap_inner_product(PG_FUNCTION_ARGS)
 	int i;
 	int j;
 
+	CHECK_NARGS(2);
+	a = (VectorMap *)PG_GETARG_POINTER(0);
+	b = (VectorMap *)PG_GETARG_POINTER(1);
+
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute inner product with NULL vectors")));
+
 	check_vecmap_dimensions(a, b);
+
+	/* Defensive: Validate nnz */
+	if (a->nnz < 0 || a->nnz > 1000000 || b->nnz < 0 || b->nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid nnz values: %d, %d", a->nnz, b->nnz)));
 
 	a_indices = VECMAP_INDICES(a);
 	a_values = VECMAP_VALUES(a);
@@ -194,8 +243,8 @@ PG_FUNCTION_INFO_V1(vecmap_cosine_distance);
 Datum
 vecmap_cosine_distance(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
+	VectorMap *a;
+	VectorMap *b;
 	int32 *a_indices;
 	float4 *a_values;
 	int32 *b_indices;
@@ -208,7 +257,23 @@ vecmap_cosine_distance(PG_FUNCTION_ARGS)
 	int32 idx_a;
 	int32 idx_b;
 
+	CHECK_NARGS(2);
+	a = (VectorMap *)PG_GETARG_POINTER(0);
+	b = (VectorMap *)PG_GETARG_POINTER(1);
+
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute cosine distance with NULL vectors")));
+
 	check_vecmap_dimensions(a, b);
+
+	/* Defensive: Validate nnz */
+	if (a->nnz < 0 || a->nnz > 1000000 || b->nnz < 0 || b->nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid nnz values: %d, %d", a->nnz, b->nnz)));
 
 	a_indices = VECMAP_INDICES(a);
 	a_values = VECMAP_VALUES(a);
@@ -276,8 +341,8 @@ PG_FUNCTION_INFO_V1(vecmap_l1_distance);
 Datum
 vecmap_l1_distance(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
+	VectorMap *a;
+	VectorMap *b;
 	int32 *a_indices;
 	float4 *a_values;
 	int32 *b_indices;
@@ -286,7 +351,23 @@ vecmap_l1_distance(PG_FUNCTION_ARGS)
 	int i;
 	int j;
 
+	CHECK_NARGS(2);
+	a = (VectorMap *)PG_GETARG_POINTER(0);
+	b = (VectorMap *)PG_GETARG_POINTER(1);
+
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute L1 distance with NULL vectors")));
+
 	check_vecmap_dimensions(a, b);
+
+	/* Defensive: Validate nnz */
+	if (a->nnz < 0 || a->nnz > 1000000 || b->nnz < 0 || b->nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid nnz values: %d, %d", a->nnz, b->nnz)));
 
 	a_indices = VECMAP_INDICES(a);
 	a_values = VECMAP_VALUES(a);
@@ -343,8 +424,8 @@ PG_FUNCTION_INFO_V1(vecmap_add);
 Datum
 vecmap_add(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
+	VectorMap *a;
+	VectorMap *b;
 	int32 *a_indices;
 	float4 *a_values;
 	int32 *b_indices;
@@ -359,7 +440,23 @@ vecmap_add(PG_FUNCTION_ARGS)
 	int k;
 	int size;
 
+	CHECK_NARGS(2);
+	a = (VectorMap *)PG_GETARG_POINTER(0);
+	b = (VectorMap *)PG_GETARG_POINTER(1);
+
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot add NULL vectors")));
+
 	check_vecmap_dimensions(a, b);
+
+	/* Defensive: Validate nnz */
+	if (a->nnz < 0 || a->nnz > 1000000 || b->nnz < 0 || b->nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid nnz values: %d, %d", a->nnz, b->nnz)));
 
 	a_indices = VECMAP_INDICES(a);
 	a_values = VECMAP_VALUES(a);
@@ -368,8 +465,21 @@ vecmap_add(PG_FUNCTION_ARGS)
 
 	/* Maximum possible nnz is sum of both (if no overlap) */
 	max_nnz = a->nnz + b->nnz;
+
+	/* Defensive: Check for overflow */
+	if (max_nnz < 0 || max_nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				errmsg("result nnz %d exceeds maximum", max_nnz)));
+
 	result_indices = (int32 *)palloc(sizeof(int32) * max_nnz);
 	result_values = (float4 *)palloc(sizeof(float4) * max_nnz);
+
+	/* Defensive: Validate allocation */
+	if (result_indices == NULL || result_values == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate vecmap arrays")));
 
 	/* Merge-like addition */
 	i = 0;
@@ -429,7 +539,25 @@ vecmap_add(PG_FUNCTION_ARGS)
 	/* Allocate result */
 	size = sizeof(VectorMap) + sizeof(int32) * result_nnz +
 		sizeof(float4) * result_nnz;
+
+	/* Defensive: Validate size calculation */
+	if (size < (int)sizeof(VectorMap) || size > 100000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("vecmap size %d out of valid range", size)));
+
 	result = (VectorMap *)palloc0(size);
+
+	/* Defensive: Validate allocation */
+	if (result == NULL)
+	{
+		pfree(result_indices);
+		pfree(result_values);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate vecmap")));
+	}
+
 	SET_VARSIZE(result, size);
 
 	result->total_dim = a->total_dim;
@@ -451,8 +579,8 @@ PG_FUNCTION_INFO_V1(vecmap_sub);
 Datum
 vecmap_sub(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
+	VectorMap *a;
+	VectorMap *b;
 	int32 *a_indices;
 	float4 *a_values;
 	int32 *b_indices;
@@ -467,7 +595,23 @@ vecmap_sub(PG_FUNCTION_ARGS)
 	int k;
 	int size;
 
+	CHECK_NARGS(2);
+	a = (VectorMap *)PG_GETARG_POINTER(0);
+	b = (VectorMap *)PG_GETARG_POINTER(1);
+
+	/* Defensive: Check NULL inputs */
+	if (a == NULL || b == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot subtract NULL vectors")));
+
 	check_vecmap_dimensions(a, b);
+
+	/* Defensive: Validate nnz */
+	if (a->nnz < 0 || a->nnz > 1000000 || b->nnz < 0 || b->nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid nnz values: %d, %d", a->nnz, b->nnz)));
 
 	a_indices = VECMAP_INDICES(a);
 	a_values = VECMAP_VALUES(a);
@@ -475,8 +619,21 @@ vecmap_sub(PG_FUNCTION_ARGS)
 	b_values = VECMAP_VALUES(b);
 
 	max_nnz = a->nnz + b->nnz;
+
+	/* Defensive: Check for overflow */
+	if (max_nnz < 0 || max_nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				errmsg("result nnz %d exceeds maximum", max_nnz)));
+
 	result_indices = (int32 *)palloc(sizeof(int32) * max_nnz);
 	result_values = (float4 *)palloc(sizeof(float4) * max_nnz);
+
+	/* Defensive: Validate allocation */
+	if (result_indices == NULL || result_values == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate vecmap arrays")));
 
 	/* Merge-like subtraction */
 	i = 0;
@@ -557,19 +714,46 @@ PG_FUNCTION_INFO_V1(vecmap_mul_scalar);
 Datum
 vecmap_mul_scalar(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	float4 scalar = PG_GETARG_FLOAT4(1);
+	VectorMap *a;
 	VectorMap *result;
+	float4 scalar;
 	int32 *a_indices;
 	float4 *a_values;
 	int32 *result_indices;
 	float4 *result_values;
-	int32 result_nnz;
 	int i;
 	int size;
 
+	CHECK_NARGS(2);
+	a = (VectorMap *)PG_GETARG_POINTER(0);
+	scalar = PG_GETARG_FLOAT4(1);
+
+	/* Defensive: Check NULL input */
+	if (a == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot multiply NULL vector")));
+
+	/* Defensive: Check for NaN/Inf scalar */
+	if (isnan(scalar) || isinf(scalar))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("scalar cannot be NaN or Infinity")));
+
 	a_indices = VECMAP_INDICES(a);
 	a_values = VECMAP_VALUES(a);
+
+	/* Defensive: Validate pointers */
+	if (a_indices == NULL || a_values == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("vecmap has NULL indices or values")));
+
+	/* Defensive: Validate nnz */
+	if (a->nnz < 0 || a->nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid nnz value: %d", a->nnz)));
 
 	/* Count non-zero results */
 	result_nnz = 0;
@@ -614,12 +798,33 @@ PG_FUNCTION_INFO_V1(vecmap_norm);
 Datum
 vecmap_norm(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
+	VectorMap *a;
 	float4 *values;
 	double sum = 0.0;
 	int i;
 
+	CHECK_NARGS(1);
+	a = (VectorMap *)PG_GETARG_POINTER(0);
+
+	/* Defensive: Check NULL input */
+	if (a == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cannot compute norm of NULL vector")));
+
+	/* Defensive: Validate nnz */
+	if (a->nnz < 0 || a->nnz > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("invalid nnz value: %d", a->nnz)));
+
 	values = VECMAP_VALUES(a);
+
+	/* Defensive: Validate pointer */
+	if (values == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("vecmap has NULL values")));
 
 	for (i = 0; i < a->nnz; i++)
 		sum += (double)values[i] * (double)values[i];

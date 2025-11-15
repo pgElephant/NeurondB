@@ -68,11 +68,30 @@ static bool lr_load_model_from_catalog(int32 model_id, LRModel **out);
 static inline double
 sigmoid(double z)
 {
+	double result;
+
+	/* Defensive: Check for NaN/Inf */
+	if (isnan(z) || isinf(z))
+	{
+		elog(WARNING, "sigmoid: NaN or Infinity input: %f", z);
+		return 0.5; /* Return neutral value */
+	}
+
 	if (z > 500)
 		return 1.0;
 	if (z < -500)
 		return 0.0;
-	return 1.0 / (1.0 + exp(-z));
+
+	result = 1.0 / (1.0 + exp(-z));
+
+	/* Defensive: Validate result */
+	if (isnan(result) || isinf(result))
+	{
+		elog(WARNING, "sigmoid: result is NaN or Infinity for input %f", z);
+		return 0.5;
+	}
+
+	return result;
 }
 
 /*
@@ -84,9 +103,33 @@ compute_log_loss(double *y_true, double *y_pred, int n)
 	double loss = 0.0;
 	int i;
 
+	/* Assert: Internal invariants */
+	Assert(y_true != NULL);
+	Assert(y_pred != NULL);
+	Assert(n > 0);
+
+	/* Defensive: Check for NULL pointers */
+	if (y_true == NULL || y_pred == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("compute_log_loss: NULL pointer argument")));
+
+	if (n <= 0 || n > 100000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("compute_log_loss: invalid n: %d", n)));
+
 	for (i = 0; i < n; i++)
 	{
 		double pred = y_pred[i];
+
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(y_true[i]) || isnan(pred) || isinf(y_true[i]) || isinf(pred))
+		{
+			elog(WARNING, "compute_log_loss: NaN or Infinity at index %d", i);
+			continue;
+		}
+
 		/* Clip predictions to avoid log(0) */
 		pred = fmax(1e-15, fmin(1.0 - 1e-15, pred));
 
@@ -96,7 +139,20 @@ compute_log_loss(double *y_true, double *y_pred, int n)
 			loss -= log(1.0 - pred);
 	}
 
-	return loss / n;
+	/* Defensive: Check for division by zero */
+	if (n == 0)
+		return 0.0;
+
+	loss = loss / n;
+
+	/* Defensive: Validate result */
+	if (isnan(loss) || isinf(loss))
+	{
+		elog(WARNING, "compute_log_loss: result is NaN or Infinity");
+		return 0.0;
+	}
+
+	return loss;
 }
 
 /*
@@ -138,15 +194,17 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 	StringInfoData hyperbuf;
 	int32 model_id = 0;
 
-	if (PG_NARGS() != 6)
-		ereport(ERROR,
-			(errmsg("Usage: train_logistic_regression(table_name, "
-				"feature_col, target_col, max_iters, "
-				"learning_rate, lambda)")));
+	CHECK_NARGS(6);
 
 	table_name = PG_GETARG_TEXT_PP(0);
 	feature_col = PG_GETARG_TEXT_PP(1);
 	target_col = PG_GETARG_TEXT_PP(2);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || feature_col == NULL || target_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_logistic_regression: table_name, feature_col, and target_col cannot be NULL")));
 
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);

@@ -135,11 +135,26 @@ ltr_rerank_pointwise(PG_FUNCTION_ARGS)
 	bool typbyval;
 	char typalign;
 
+	CHECK_NARGS_RANGE(3, 4);
+
 	/* Parse arguments */
 	doc_ids_array = PG_GETARG_ARRAYTYPE_P(0);
 	feature_matrix_array = PG_GETARG_ARRAYTYPE_P(1);
 	weights_array = PG_GETARG_ARRAYTYPE_P(2);
+
+	/* Defensive: Check NULL inputs */
+	if (doc_ids_array == NULL || feature_matrix_array == NULL || weights_array == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("ltr_rerank_pointwise: doc_ids_array, feature_matrix_array, and weights_array cannot be NULL")));
+
 	bias = PG_ARGISNULL(3) ? 0.0 : PG_GETARG_FLOAT8(3);
+
+	/* Defensive: Validate bias */
+	if (isnan(bias) || isinf(bias))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("bias must be finite, got %f", bias)));
 
 	/* Validate arrays */
 	if (ARR_NDIM(doc_ids_array) != 1)

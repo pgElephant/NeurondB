@@ -52,11 +52,43 @@ feedback_loop_integrate(PG_FUNCTION_ARGS)
 	const char *tbl_def;
 	int ret;
 
+	CHECK_NARGS(3);
+
+	/* Defensive: Check NULL inputs */
+	if (query == NULL || result == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("feedback_loop_integrate: query and result cannot be NULL")));
+
+	/* Defensive: Validate user_rating */
+	if (isnan(user_rating) || isinf(user_rating) || user_rating < 0.0f || user_rating > 1.0f)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("user_rating must be between 0.0 and 1.0, got %f", user_rating)));
+
 	query_str = text_to_cstring(query);
 	result_str = text_to_cstring(result);
 
+	/* Defensive: Validate allocations */
+	if (query_str == NULL || result_str == NULL)
+	{
+		if (query_str)
+			pfree(query_str);
+		if (result_str)
+			pfree(result_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+	{
+		pfree(query_str);
+		pfree(result_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("SPI_connect failed")));
+	}
 
 	tbl_def = "CREATE TABLE IF NOT EXISTS neurondb_feedback ("
 		  "id SERIAL PRIMARY KEY, "
@@ -69,7 +101,11 @@ feedback_loop_integrate(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_UTILITY)
 	{
 		SPI_finish();
-		elog(ERROR, "Failed to create neurondb_feedback table");
+		pfree(query_str);
+		pfree(result_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("Failed to create neurondb_feedback table")));
 	}
 
 	/* Insert feedback row. */
@@ -84,7 +120,12 @@ feedback_loop_integrate(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_INSERT)
 	{
 		SPI_finish();
-		elog(ERROR, "Failed to insert feedback row");
+		pfree(query_str);
+		pfree(result_str);
+		pfree(sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("Failed to insert feedback row")));
 	}
 
 	SPI_finish();
@@ -198,18 +239,40 @@ reduce_pca(PG_FUNCTION_ARGS)
 	Datum *result_datums;
 	float *mean;
 
+	CHECK_NARGS(3);
+
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	column_name = PG_GETARG_TEXT_PP(1);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || column_name == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("reduce_pca: table_name and column_name cannot be NULL")));
+
 	n_components = PG_GETARG_INT32(2);
 
-	if (n_components < 1)
+	/* Defensive: Validate n_components */
+	if (n_components < 1 || n_components > 10000)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("n_components must be at least 1")));
+				errmsg("n_components must be between 1 and 10000, got %d", n_components)));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(column_name);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (col_str)
+			pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
 
 	elog(DEBUG1,
 		"neurondb: PCA dimensionality reduction on %s.%s "

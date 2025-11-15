@@ -42,21 +42,52 @@ generate_text_embedding(PG_FUNCTION_ARGS)
 	text *model_name = PG_ARGISNULL(1) ? NULL : PG_GETARG_TEXT_PP(1);
 	int32 embedding_dim = PG_ARGISNULL(2) ? 384 : PG_GETARG_INT32(2);
 
-	char *text_str = text_to_cstring(input_text);
-	char *model_str =
-		model_name ? text_to_cstring(model_name) : pstrdup("default");
+	char *text_str;
+	char *model_str;
 	ArrayType *result_array;
 	float *embedding;
 	Datum *elems;
 	int i;
-	int text_len = strlen(text_str);
+	int text_len;
 
-	/* Validate parameters */
+	CHECK_NARGS_RANGE(1, 3);
+
+	/* Defensive: Check NULL inputs */
+	if (input_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: generate_text_embedding "
+				       "input_text cannot be NULL")));
+
+	/* Defensive: Validate parameters */
 	if (embedding_dim <= 0 || embedding_dim > 4096)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("embedding_dim must be between 1 and "
-				       "4096")));
+				errmsg("neurondb: generate_text_embedding "
+				       "embedding_dim must be between 1 and 4096, "
+				       "got %d", embedding_dim)));
+
+	text_str = text_to_cstring(input_text);
+
+	/* Defensive: Validate allocation */
+	if (text_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate input string")));
+
+	model_str = model_name ? text_to_cstring(model_name) : pstrdup("default");
+
+	/* Defensive: Validate model_str allocation */
+	if (model_str == NULL)
+	{
+		pfree(text_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: generate_text_embedding failed to "
+				       "allocate model string")));
+	}
+
+	text_len = strlen(text_str);
 
 	/* Generate embedding (simplified - production would use transformer models) */
 	embedding = (float *)palloc(embedding_dim * sizeof(float));
@@ -104,23 +135,53 @@ classify_text_production(PG_FUNCTION_ARGS)
 	ArrayType *labels_array = PG_GETARG_ARRAYTYPE_P(1);
 	int32 model_id = PG_ARGISNULL(2) ? 0 : PG_GETARG_INT32(2);
 
-	char *text_str = text_to_cstring(input_text);
+	char *text_str;
 	int n_labels;
-	int text_len = strlen(text_str);
+	int text_len;
 	int best_label_idx = 0;
 	float best_score = 0.0f;
 	ArrayType *result_array;
 	Datum *result_elems;
 	int i;
 
+	CHECK_NARGS_RANGE(2, 3);
+
+	/* Defensive: Check NULL inputs */
+	if (input_text == NULL || labels_array == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: classify_text_production "
+				       "input_text and labels_array cannot be NULL")));
+
+	/* Defensive: Validate model_id */
+	if (model_id < 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: classify_text_production model_id "
+				       "must be non-negative, got %d", model_id)));
+
+	text_str = text_to_cstring(input_text);
+
+	/* Defensive: Validate allocation */
+	if (text_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: classify_text_production failed "
+				       "to allocate input string")));
+
 	/* Get number of labels */
 	n_labels =
 		ArrayGetNItems(ARR_NDIM(labels_array), ARR_DIMS(labels_array));
 
-	if (n_labels == 0)
+	/* Defensive: Validate array size */
+	if (n_labels == 0 || n_labels > 10000)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("labels array cannot be empty")));
+				errmsg("neurondb: classify_text_production labels "
+				       "array size must be between 1 and 10000, "
+				       "got %d", n_labels)));
+
+	text_len = strlen(text_str);
 
 	/* Classify (simplified - production would use trained model) */
 	(void)model_id;
@@ -161,17 +222,59 @@ analyze_sentiment_advanced(PG_FUNCTION_ARGS)
 	text *input_text = PG_GETARG_TEXT_PP(0);
 	bool return_aspects = PG_ARGISNULL(1) ? false : PG_GETARG_BOOL(1);
 
-	char *text_str = text_to_cstring(input_text);
+	char *text_str;
 	char *lower_text;
-	int text_len = strlen(text_str);
+	int text_len;
 	float sentiment_score = 0.0f;
 	int positive_words = 0;
 	int negative_words = 0;
 	StringInfoData result;
 	int i;
 
+	CHECK_NARGS_RANGE(1, 2);
+
+	/* Defensive: Check NULL input */
+	if (input_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: analyze_sentiment_advanced "
+				       "input_text cannot be NULL")));
+
+	text_str = text_to_cstring(input_text);
+
+	/* Defensive: Validate allocation */
+	if (text_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: analyze_sentiment_advanced "
+				       "failed to allocate input string")));
+
+	text_len = strlen(text_str);
+
+	/* Defensive: Validate text length */
+	if (text_len < 0 || text_len > 1000000)
+	{
+		pfree(text_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: analyze_sentiment_advanced input "
+				       "text length must be between 0 and 1000000, "
+				       "got %d", text_len)));
+	}
+
 	/* Convert to lowercase for analysis */
 	lower_text = (char *)palloc(text_len + 1);
+
+	/* Defensive: Validate allocation */
+	if (lower_text == NULL)
+	{
+		pfree(text_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: analyze_sentiment_advanced failed "
+				       "to allocate lower_text buffer")));
+	}
+
 	for (i = 0; i < text_len; i++)
 		lower_text[i] = tolower((unsigned char)text_str[i]);
 	lower_text[text_len] = '\0';
@@ -231,8 +334,26 @@ extract_entities(PG_FUNCTION_ARGS)
 	ArrayType *entity_types =
 		PG_ARGISNULL(1) ? NULL : PG_GETARG_ARRAYTYPE_P(1);
 
-	char *text_str = text_to_cstring(input_text);
+	char *text_str;
 	StringInfoData result;
+
+	CHECK_NARGS_RANGE(1, 2);
+
+	/* Defensive: Check NULL input */
+	if (input_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: extract_entities input_text "
+				       "cannot be NULL")));
+
+	text_str = text_to_cstring(input_text);
+
+	/* Defensive: Validate allocation */
+	if (text_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: extract_entities failed to "
+				       "allocate input string")));
 
 	/* Simple entity extraction (production would use NER model) */
 	(void)entity_types;
@@ -245,6 +366,7 @@ extract_entities(PG_FUNCTION_ARGS)
 		"\"confidence\": 0.98}]");
 
 	pfree(text_str);
+	pfree(result.data);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -260,16 +382,36 @@ summarize_text(PG_FUNCTION_ARGS)
 	text *input_text = PG_GETARG_TEXT_PP(0);
 	int32 max_length = PG_ARGISNULL(1) ? 100 : PG_GETARG_INT32(1);
 
-	char *text_str = text_to_cstring(input_text);
-	int text_len = strlen(text_str);
+	char *text_str;
+	int text_len;
 	char *summary;
 
-	/* Validate */
+	CHECK_NARGS_RANGE(1, 2);
+
+	/* Defensive: Check NULL input */
+	if (input_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: summarize_text input_text cannot "
+				       "be NULL")));
+
+	/* Defensive: Validate max_length */
 	if (max_length <= 0 || max_length > 10000)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("max_length must be between 1 and "
-				       "10000")));
+				errmsg("neurondb: summarize_text max_length must be "
+				       "between 1 and 10000, got %d", max_length)));
+
+	text_str = text_to_cstring(input_text);
+
+	/* Defensive: Validate allocation */
+	if (text_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: summarize_text failed to allocate "
+				       "input string")));
+
+	text_len = strlen(text_str);
 
 	/* Simple summarization - take first N characters (production would use abstractive summarization) */
 	if (text_len <= max_length)
@@ -372,9 +514,34 @@ answer_question(PG_FUNCTION_ARGS)
 	text *context = PG_GETARG_TEXT_PP(0);
 	text *question = PG_GETARG_TEXT_PP(1);
 
-	char *context_str = text_to_cstring(context);
-	char *question_str = text_to_cstring(question);
+	char *context_str;
+	char *question_str;
 	StringInfoData answer;
+
+	CHECK_NARGS(2);
+
+	/* Defensive: Check NULL inputs */
+	if (context == NULL || question == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: answer_question context and "
+				       "question cannot be NULL")));
+
+	context_str = text_to_cstring(context);
+	question_str = text_to_cstring(question);
+
+	/* Defensive: Validate allocations */
+	if (context_str == NULL || question_str == NULL)
+	{
+		if (context_str)
+			pfree(context_str);
+		if (question_str)
+			pfree(question_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: answer_question failed to "
+				       "allocate strings")));
+	}
 
 	/* Simple QA (production would use transformer model) */
 	(void)context_str;
@@ -387,6 +554,7 @@ answer_question(PG_FUNCTION_ARGS)
 
 	pfree(context_str);
 	pfree(question_str);
+	pfree(answer.data);
 
 	PG_RETURN_TEXT_P(cstring_to_text(answer.data));
 }
@@ -400,5 +568,7 @@ answer_question(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_nlp_production_model(void)
 {
-	elog(DEBUG1, "NlpProduction GPU Model Ops registration skipped - not yet implemented");
+	elog(DEBUG1,
+	     "neurondb: nlp_production GPU model ops registration skipped "
+	     "not yet implemented");
 }

@@ -102,10 +102,10 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 	int32 n_factors =
 		PG_ARGISNULL(4) ? ALS_DEFAULT_NFACTORS : PG_GETARG_INT32(4);
 
-	char *table_name_str = text_to_cstring(table_name);
-	char *user_col_str = text_to_cstring(user_col);
-	char *item_col_str = text_to_cstring(item_col);
-	char *rating_col_str = text_to_cstring(rating_col);
+	char *table_name_str;
+	char *user_col_str;
+	char *item_col_str;
+	char *rating_col_str;
 
 	int ret;
 	MemoryContext oldcontext = NULL, model_mcxt = NULL;
@@ -116,12 +116,60 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 	StringInfoData sql;
 	SPIPlanPtr plan = NULL;
 
+	CHECK_NARGS_RANGE(4, 5);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || user_col == NULL || item_col == NULL || rating_col == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_collaborative_filter: table_name, user_col, item_col, and rating_col cannot be NULL")));
+
+	/* Defensive: Validate n_factors */
 	if (n_factors < ALS_MIN_NFACTORS || n_factors > ALS_MAX_NFACTORS)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("n_factors must be between %d and %d",
+				errmsg("n_factors must be between %d and %d, got %d",
 					ALS_MIN_NFACTORS,
-					ALS_MAX_NFACTORS)));
+					ALS_MAX_NFACTORS,
+					n_factors)));
+
+	table_name_str = text_to_cstring(table_name);
+	user_col_str = text_to_cstring(user_col);
+	item_col_str = text_to_cstring(item_col);
+	rating_col_str = text_to_cstring(rating_col);
+
+	/* Defensive: Validate allocations */
+	if (table_name_str == NULL || user_col_str == NULL || item_col_str == NULL || rating_col_str == NULL)
+	{
+		if (table_name_str)
+			pfree(table_name_str);
+		if (user_col_str)
+			pfree(user_col_str);
+		if (item_col_str)
+			pfree(item_col_str);
+		if (rating_col_str)
+			pfree(rating_col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	/* Defensive: Validate string lengths */
+	if (strlen(table_name_str) == 0 || strlen(table_name_str) > NAMEDATALEN ||
+		strlen(user_col_str) == 0 || strlen(user_col_str) > NAMEDATALEN ||
+		strlen(item_col_str) == 0 || strlen(item_col_str) > NAMEDATALEN ||
+		strlen(rating_col_str) == 0 || strlen(rating_col_str) > NAMEDATALEN)
+	{
+		pfree(table_name_str);
+		pfree(user_col_str);
+		pfree(item_col_str);
+		pfree(rating_col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_NAME),
+				errmsg("train_collaborative_filter: invalid table or column name length")));
+	}
+
+	elog(DEBUG1, "train_collaborative_filter: Starting training with n_factors=%d", n_factors);
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,

@@ -69,11 +69,43 @@ gaussian_pdf(const float *x, const double *mean, const double *variance, int dim
 	double		log_likelihood = 0.0;
 	double		log_det = 0.0;
 	int			d;
+	double		result;
+
+	/* Assert: Internal invariants */
+	Assert(x != NULL);
+	Assert(mean != NULL);
+	Assert(variance != NULL);
+	Assert(dim > 0);
+
+	/* Defensive: Check for NULL pointers */
+	if (x == NULL || mean == NULL || variance == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("gaussian_pdf: NULL pointer argument")));
+
+	if (dim <= 0 || dim > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("gaussian_pdf: invalid dimension: %d", dim)));
 
 	for (d = 0; d < dim; d++)
 	{
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(x[d]) || isnan(mean[d]) || isnan(variance[d]) ||
+			isinf(x[d]) || isinf(mean[d]) || isinf(variance[d]))
+		{
+			elog(WARNING, "gaussian_pdf: NaN or Infinity detected at dimension %d", d);
+		}
+
 		double	diff = (double)x[d] - mean[d];
 		double	var = variance[d] + GMM_EPSILON;
+
+		/* Defensive: Ensure variance is positive */
+		if (var <= 0.0)
+		{
+			elog(WARNING, "gaussian_pdf: non-positive variance at dimension %d: %f", d, var);
+			var = GMM_EPSILON;
+		}
 
 		log_likelihood -= 0.5 * (diff * diff) / var;
 		log_det += log(var);
@@ -81,7 +113,23 @@ gaussian_pdf(const float *x, const double *mean, const double *variance, int dim
 
 	log_likelihood -= 0.5 * (dim * log(2.0 * M_PI) + log_det);
 
-	return exp(log_likelihood);
+	/* Defensive: Check for overflow */
+	if (isnan(log_likelihood) || isinf(log_likelihood))
+	{
+		elog(WARNING, "gaussian_pdf: log_likelihood overflow");
+		return 0.0;
+	}
+
+	result = exp(log_likelihood);
+
+	/* Defensive: Validate result */
+	if (isnan(result) || isinf(result))
+	{
+		elog(WARNING, "gaussian_pdf: result is NaN or Infinity");
+		return 0.0;
+	}
+
+	return result;
 }
 
 PG_FUNCTION_INFO_V1(cluster_gmm);
@@ -111,21 +159,61 @@ cluster_gmm(PG_FUNCTION_ARGS)
 	int			dims[2];
 	int			lbs[2];
 
+	CHECK_NARGS_RANGE(3, 4);
+
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
 	num_components = PG_GETARG_INT32(2);
 	max_iters = PG_ARGISNULL(3) ? 100 : PG_GETARG_INT32(3);
 
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("cluster_gmm: table_name and vector_column cannot be NULL")));
+
+	/* Defensive: Validate parameters */
 	if (num_components < 1 || num_components > 100)
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("num_components must be between 1 and 100")));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("num_components must be between 1 and 100, got %d", num_components)));
 
 	if (max_iters < 1)
+	{
+		elog(WARNING, "cluster_gmm: max_iters < 1, using default 100");
 		max_iters = 100;
+	}
+
+	if (max_iters > 10000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("max_iters must be at most 10000, got %d", max_iters)));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_column);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (col_str)
+			pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	/* Defensive: Validate string lengths */
+	if (strlen(tbl_str) == 0 || strlen(tbl_str) > NAMEDATALEN ||
+		strlen(col_str) == 0 || strlen(col_str) > NAMEDATALEN)
+	{
+		pfree(tbl_str);
+		pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_NAME),
+				errmsg("cluster_gmm: invalid table or column name length")));
+	}
 
 	elog(DEBUG1, "neurondb: GMM clustering (k=%d, max_iters=%d)",
 		 num_components, max_iters);

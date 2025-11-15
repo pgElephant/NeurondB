@@ -189,13 +189,28 @@ embed_text(PG_FUNCTION_ARGS)
 	int			dim = 0;
 	int			i;
 
+	CHECK_NARGS_RANGE(1, 2);
+
 	input_text = PG_GETARG_TEXT_PP(0);
+
+	/* Defensive: Check NULL input */
+	if (input_text == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("embed_text: input_text cannot be NULL")));
+
 	if (PG_ARGISNULL(1))
 		model_text = NULL;
 	else
 		model_text = PG_GETARG_TEXT_PP(1);
 
 	input_str = text_to_cstring(input_text);
+
+	/* Defensive: Validate allocation */
+	if (input_str == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate input string")));
 
 	if (model_text != NULL)
 		model_str = text_to_cstring(model_text);
@@ -234,14 +249,67 @@ embed_text(PG_FUNCTION_ARGS)
 			 (input_str != NULL) ? input_str : "(null)");
 		dim = 384;
 		vec_data = (float *) palloc0(dim * sizeof(float));
+
+		/* Defensive: Validate allocation */
+		if (vec_data == NULL)
+		{
+			pfree(input_str);
+			if (model_str)
+				pfree(model_str);
+			ereport(ERROR,
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+					errmsg("failed to allocate fallback embedding vector")));
+		}
+	}
+
+	/* Defensive: Validate dimension */
+	if (dim <= 0 || dim > VECTOR_MAX_DIM)
+	{
+		if (vec_data)
+			pfree(vec_data);
+		pfree(input_str);
+		if (model_str)
+			pfree(model_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("embed_text: invalid embedding dimension: %d", dim)));
 	}
 
 	result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+
+	/* Defensive: Validate allocation */
+	if (result == NULL)
+	{
+		if (vec_data)
+			pfree(vec_data);
+		pfree(input_str);
+		if (model_str)
+			pfree(model_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate result vector")));
+	}
+
 	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 	result->dim = dim;
 
+	/* Assert: Internal invariants */
+	Assert(vec_data != NULL);
+	Assert(dim > 0);
+
 	for (i = 0; i < dim; i++)
-		result->data[i] = vec_data[i];
+	{
+		/* Defensive: Check for NaN/Inf */
+		if (isnan(vec_data[i]) || isinf(vec_data[i]))
+		{
+			elog(WARNING, "embed_text: NaN or Infinity detected at index %d, using 0.0", i);
+			result->data[i] = 0.0f;
+		}
+		else
+		{
+			result->data[i] = vec_data[i];
+		}
+	}
 
 	SAFE_PFREE(input_str);
 	SAFE_PFREE(model_str);
@@ -274,7 +342,16 @@ embed_text_batch(PG_FUNCTION_ARGS)
 	Oid			vector_oid;
 	static Oid	cached_vector_oid = InvalidOid;
 
+	CHECK_NARGS_RANGE(1, 2);
+
 	input_array = PG_GETARG_ARRAYTYPE_P(0);
+
+	/* Defensive: Check NULL input */
+	if (input_array == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("embed_text_batch: input_array cannot be NULL")));
+
 	if (PG_ARGISNULL(1))
 		model_text = NULL;
 	else
@@ -289,7 +366,19 @@ embed_text_batch(PG_FUNCTION_ARGS)
 					  &text_nulls,
 					  &nitems);
 
+	/* Defensive: Validate array size */
+	if (nitems <= 0 || nitems > 100000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("embed_text_batch: array size must be between 1 and 100000, got %d", nitems)));
+
 	result_datums = (Datum *) palloc0(nitems * sizeof(Datum));
+
+	/* Defensive: Validate allocation */
+	if (result_datums == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate result_datums array")));
 
 	for (i = 0; i < nitems; i++)
 	{

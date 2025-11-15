@@ -189,8 +189,12 @@ PG_FUNCTION_INFO_V1(vector_in);
 Datum
 vector_in(PG_FUNCTION_ARGS)
 {
-	char *str = PG_GETARG_CSTRING(0);
-	Vector *result = vector_in_internal(str, NULL, true);
+	char *str;
+	Vector *result;
+
+	CHECK_NARGS_RANGE(1, 3);
+	str = PG_GETARG_CSTRING(0);
+	result = vector_in_internal(str, NULL, true);
 
 	/* Enforce typmod dimension if provided: third arg is typmod */
 	if (PG_NARGS() >= 3)
@@ -212,8 +216,12 @@ PG_FUNCTION_INFO_V1(vector_out);
 Datum
 vector_out(PG_FUNCTION_ARGS)
 {
-	Vector *vector = PG_GETARG_VECTOR_P(0);
-	char *result = vector_out_internal(vector);
+	Vector *vector;
+	char *result;
+
+	CHECK_NARGS(1);
+	vector = PG_GETARG_VECTOR_P(0);
+	result = vector_out_internal(vector);
 
 	PG_RETURN_CSTRING(result);
 }
@@ -222,6 +230,7 @@ PG_FUNCTION_INFO_V1(vector_recv);
 Datum
 vector_recv(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS_RANGE(1, 3);
 	StringInfo buf = (StringInfo)PG_GETARG_POINTER(0);
 	Vector *result;
 	int16 dim;
@@ -253,9 +262,12 @@ PG_FUNCTION_INFO_V1(vector_send);
 Datum
 vector_send(PG_FUNCTION_ARGS)
 {
-	Vector *vec = PG_GETARG_VECTOR_P(0);
+	Vector *vec;
 	StringInfoData buf;
 	int i;
+
+	CHECK_NARGS(1);
+	vec = PG_GETARG_VECTOR_P(0);
 
 	pq_begintypsend(&buf);
 	pq_sendint(&buf, vec->dim, sizeof(int16));
@@ -271,6 +283,7 @@ PG_FUNCTION_INFO_V1(vector_dims);
 Datum
 vector_dims(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *vector = PG_GETARG_VECTOR_P(0);
 
 	PG_RETURN_INT32(vector->dim);
@@ -281,6 +294,7 @@ PG_FUNCTION_INFO_V1(vector_norm);
 Datum
 vector_norm(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *vector = PG_GETARG_VECTOR_P(0);
 	double sum = 0.0;
 	int i;
@@ -368,6 +382,7 @@ PG_FUNCTION_INFO_V1(vector_normalize);
 Datum
 vector_normalize(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	Vector *result = normalize_vector_new(v);
 
@@ -379,6 +394,7 @@ PG_FUNCTION_INFO_V1(vector_concat);
 Datum
 vector_concat(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	Vector *result;
@@ -410,6 +426,7 @@ PG_FUNCTION_INFO_V1(vector_add);
 Datum
 vector_add(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	Vector *result;
@@ -445,6 +462,7 @@ PG_FUNCTION_INFO_V1(vector_sub);
 Datum
 vector_sub(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	Vector *result;
@@ -480,6 +498,7 @@ PG_FUNCTION_INFO_V1(vector_mul);
 Datum
 vector_mul(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(2);
 	Vector *v = PG_GETARG_VECTOR_P(0);
 	float8 scalar = PG_GETARG_FLOAT8(1);
 	Vector *result;
@@ -513,6 +532,7 @@ PG_FUNCTION_INFO_V1(array_to_vector);
 Datum
 array_to_vector(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	ArrayType *array = PG_GETARG_ARRAYTYPE_P(0);
 	Vector *result;
 	int16 typlen;
@@ -565,6 +585,7 @@ PG_FUNCTION_INFO_V1(vector_typmod_in);
 Datum
 vector_typmod_in(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	ArrayType *ta = (ArrayType *)PG_GETARG_POINTER(0);
 	Datum *elem_values;
 	int nelems;
@@ -605,6 +626,7 @@ PG_FUNCTION_INFO_V1(vector_typmod_out);
 Datum
 vector_typmod_out(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	int32 typmod = PG_GETARG_INT32(0);
 	StringInfoData buf;
 
@@ -618,6 +640,7 @@ vector_typmod_out(PG_FUNCTION_ARGS)
 Datum
 vector_to_array(PG_FUNCTION_ARGS)
 {
+	CHECK_NARGS(1);
 	Vector *vec = PG_GETARG_VECTOR_P(0);
 	Datum *elems;
 	ArrayType *result;

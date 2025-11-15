@@ -39,28 +39,50 @@ create_ab_test(PG_FUNCTION_ARGS)
 	ArrayType *model_ids = PG_GETARG_ARRAYTYPE_P(1);
 	ArrayType *traffic_split = PG_GETARG_ARRAYTYPE_P(2);
 
-	char *name = text_to_cstring(experiment_name);
+	char *name;
 	int n_models;
 	int n_splits;
 	StringInfoData result;
 	int experiment_id;
+
+	CHECK_NARGS(3);
+
+	/* Defensive: Check NULL inputs */
+	if (experiment_name == NULL || model_ids == NULL || traffic_split == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("create_ab_test: experiment_name, model_ids, and traffic_split cannot be NULL")));
+
+	name = text_to_cstring(experiment_name);
+
+	/* Defensive: Validate allocation */
+	if (name == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate experiment name")));
 
 	/* Get array sizes */
 	n_models = ArrayGetNItems(ARR_NDIM(model_ids), ARR_DIMS(model_ids));
 	n_splits = ArrayGetNItems(
 		ARR_NDIM(traffic_split), ARR_DIMS(traffic_split));
 
-	/* Validate */
-	if (n_models < 2)
+	/* Defensive: Validate */
+	if (n_models < 2 || n_models > 100)
+	{
+		pfree(name);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("A/B test requires at least 2 models")));
+				errmsg("A/B test requires between 2 and 100 models, got %d", n_models)));
+	}
 
 	if (n_models != n_splits)
+	{
+		pfree(name);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("traffic_split must match number of "
-				       "models")));
+				errmsg("traffic_split must match number of models: %d models but %d splits",
+					n_models, n_splits)));
+	}
 
 	/* Create experiment (simplified - production would insert into database) */
 	experiment_id = 12345; /* Placeholder */

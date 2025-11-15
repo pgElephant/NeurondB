@@ -60,9 +60,9 @@ mdl_http(PG_FUNCTION_ARGS)
 	int32 timeout_ms = PG_GETARG_INT32(3);
 	int32 max_retries = PG_GETARG_INT32(4);
 
-	char *url_str = text_to_cstring(url);
-	char *method_str = text_to_cstring(method);
-	char *body_str = text_to_cstring(body);
+	char *url_str;
+	char *method_str;
+	char *body_str;
 	curl_buffer cb;
 	CURL *curl;
 	CURLcode res;
@@ -73,11 +73,48 @@ mdl_http(PG_FUNCTION_ARGS)
 	struct timespec ts;
 	struct curl_slist *headers = NULL;
 
+	CHECK_NARGS(5);
+
+	/* Defensive: Check NULL inputs */
+	if (url == NULL || method == NULL || body == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("mdl_http: url, method, and body cannot be NULL")));
+
+	/* Defensive: Validate parameters */
+	if (timeout_ms < 0 || timeout_ms > 3600000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("timeout_ms must be between 0 and 3600000, got %d", timeout_ms)));
+
+	if (max_retries < 0 || max_retries > 100)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("max_retries must be between 0 and 100, got %d", max_retries)));
+
+	url_str = text_to_cstring(url);
+	method_str = text_to_cstring(method);
+	body_str = text_to_cstring(body);
+
+	/* Defensive: Validate allocations */
+	if (url_str == NULL || method_str == NULL || body_str == NULL)
+	{
+		if (url_str)
+			pfree(url_str);
+		if (method_str)
+			pfree(method_str);
+		if (body_str)
+			pfree(body_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
 	initStringInfo(&response);
 	cb.buf = &response;
 
-	elog(NOTICE,
-		"neurondb: HTTP %s %s (timeout=%dms, max_retries=%d)",
+	elog(DEBUG1,
+		"mdl_http: HTTP %s %s (timeout=%dms, max_retries=%d)",
 		method_str,
 		url_str,
 		timeout_ms,
@@ -215,15 +252,49 @@ mdl_llm(PG_FUNCTION_ARGS)
 	int32 max_tokens = PG_GETARG_INT32(2);
 	float4 temperature = PG_GETARG_FLOAT4(3);
 
-	char *model_str = text_to_cstring(model);
-	char *prompt_str = text_to_cstring(prompt);
+	char *model_str;
+	char *prompt_str;
 	int32 tokens_in = 0;
 	int32 tokens_out;
 	int32 estimated_cost_microcents;
 	StringInfoData result;
 
-	elog(NOTICE,
-		"neurondb: LLM call: model=%s; max_tokens=%d; temperature=%.2f",
+	CHECK_NARGS(4);
+
+	/* Defensive: Check NULL inputs */
+	if (model == NULL || prompt == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("mdl_llm: model and prompt cannot be NULL")));
+
+	/* Defensive: Validate parameters */
+	if (max_tokens < 0 || max_tokens > 1000000)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("max_tokens must be between 0 and 1000000, got %d", max_tokens)));
+
+	if (isnan(temperature) || isinf(temperature) || temperature < 0.0f || temperature > 10.0f)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("temperature must be between 0.0 and 10.0, got %f", temperature)));
+
+	model_str = text_to_cstring(model);
+	prompt_str = text_to_cstring(prompt);
+
+	/* Defensive: Validate allocations */
+	if (model_str == NULL || prompt_str == NULL)
+	{
+		if (model_str)
+			pfree(model_str);
+		if (prompt_str)
+			pfree(prompt_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	elog(DEBUG1,
+		"mdl_llm: LLM call: model=%s; max_tokens=%d; temperature=%.2f",
 		model_str,
 		max_tokens,
 		temperature);
@@ -314,16 +385,45 @@ mdl_cache(PG_FUNCTION_ARGS)
 	text *cache_value = PG_GETARG_TEXT_PP(1);
 	int32 ttl_seconds = PG_GETARG_INT32(2);
 
-	char *key_str = text_to_cstring(cache_key);
-	char *value_str = text_to_cstring(cache_value);
+	char *key_str;
+	char *value_str;
 	Datum values[3];
 	Oid argtypes[3] = { TEXTOID, TEXTOID, INT8OID };
 	struct timeval tv;
 	time_t expires_at;
 	bool success = false;
 
-	elog(NOTICE,
-		"neurondb: Insert/Update cache: key='%s' ttl=%d",
+	CHECK_NARGS(3);
+
+	/* Defensive: Check NULL inputs */
+	if (cache_key == NULL || cache_value == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("mdl_cache: cache_key and cache_value cannot be NULL")));
+
+	/* Defensive: Validate ttl_seconds */
+	if (ttl_seconds < 0 || ttl_seconds > 31536000) /* Max 1 year */
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("ttl_seconds must be between 0 and 31536000, got %d", ttl_seconds)));
+
+	key_str = text_to_cstring(cache_key);
+	value_str = text_to_cstring(cache_value);
+
+	/* Defensive: Validate allocations */
+	if (key_str == NULL || value_str == NULL)
+	{
+		if (key_str)
+			pfree(key_str);
+		if (value_str)
+			pfree(value_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	elog(DEBUG1,
+		"mdl_cache: Insert/Update cache: key='%s' ttl=%d",
 		key_str,
 		ttl_seconds);
 

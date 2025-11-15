@@ -132,12 +132,27 @@ hybrid_search_fusion(PG_FUNCTION_ARGS)
 	bool typbyval;
 	char typalign;
 
+	CHECK_NARGS_RANGE(3, 5);
+
 	/* Parse arguments */
 	doc_ids_array = PG_GETARG_ARRAYTYPE_P(0);
 	semantic_scores_array = PG_GETARG_ARRAYTYPE_P(1);
 	lexical_scores_array = PG_GETARG_ARRAYTYPE_P(2);
+
+	/* Defensive: Check NULL inputs */
+	if (doc_ids_array == NULL || semantic_scores_array == NULL || lexical_scores_array == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("hybrid_search_fusion: doc_ids_array, semantic_scores_array, and lexical_scores_array cannot be NULL")));
+
 	semantic_weight = PG_ARGISNULL(3) ? 0.5 : PG_GETARG_FLOAT8(3);
 	normalize = PG_ARGISNULL(4) ? true : PG_GETARG_BOOL(4);
+
+	/* Defensive: Validate semantic_weight */
+	if (semantic_weight < 0.0 || semantic_weight > 1.0 || isnan(semantic_weight) || isinf(semantic_weight))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("semantic_weight must be between 0.0 and 1.0, got %f", semantic_weight)));
 
 	/* Validate */
 	if (ARR_NDIM(doc_ids_array) != 1 || ARR_NDIM(semantic_scores_array) != 1

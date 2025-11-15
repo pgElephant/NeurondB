@@ -39,20 +39,54 @@ import_pytorch_model(PG_FUNCTION_ARGS)
 	text *model_name = PG_GETARG_TEXT_PP(1);
 	text *model_type = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
 
-	char *path = text_to_cstring(model_path);
-	char *name = text_to_cstring(model_name);
-	char *type = model_type ? text_to_cstring(model_type)
-				: pstrdup("classifier");
+	char *path;
+	char *name;
+	char *type;
 	StringInfoData result;
 	int model_id;
 
-	/* Validate model type */
+	CHECK_NARGS_RANGE(2, 3);
+
+	/* Defensive: Check NULL inputs */
+	if (model_path == NULL || model_name == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: import_pytorch_model model_path "
+				       "and model_name cannot be NULL")));
+
+	path = text_to_cstring(model_path);
+	name = text_to_cstring(model_name);
+	type = model_type ? text_to_cstring(model_type)
+				: pstrdup("classifier");
+
+	/* Defensive: Validate allocations */
+	if (path == NULL || name == NULL || type == NULL)
+	{
+		if (path)
+			pfree(path);
+		if (name)
+			pfree(name);
+		if (type)
+			pfree(type);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: import_pytorch_model failed to "
+				       "allocate strings")));
+	}
+
+	/* Defensive: Validate model type */
 	if (strcmp(type, "classifier") != 0 && strcmp(type, "regressor") != 0
 		&& strcmp(type, "transformer") != 0)
+	{
+		pfree(path);
+		pfree(name);
+		pfree(type);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("model_type must be 'classifier', "
-				       "'regressor', or 'transformer'")));
+				errmsg("neurondb: import_pytorch_model model_type "
+				       "must be 'classifier', 'regressor', or "
+				       "'transformer', got '%s'", type)));
+	}
 
 	/* Import model (production would load PyTorch model) */
 	(void)path;
@@ -86,13 +120,37 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 	ArrayType *input_shapes =
 		PG_ARGISNULL(2) ? NULL : PG_GETARG_ARRAYTYPE_P(2);
 
-	char *path = text_to_cstring(model_path);
-	char *name = text_to_cstring(model_name);
+	char *path;
+	char *name;
 	StringInfoData result;
 	int model_id;
 
+	CHECK_NARGS_RANGE(2, 3);
+
+	/* Defensive: Check NULL inputs */
+	if (model_path == NULL || model_name == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: import_tensorflow_model model_path "
+				       "and model_name cannot be NULL")));
+
+	path = text_to_cstring(model_path);
+	name = text_to_cstring(model_name);
+
+	/* Defensive: Validate allocations */
+	if (path == NULL || name == NULL)
+	{
+		if (path)
+			pfree(path);
+		if (name)
+			pfree(name);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: import_tensorflow_model failed "
+				       "to allocate strings")));
+	}
+
 	/* Import model (production would load TensorFlow SavedModel) */
-	(void)path;
 	(void)input_shapes;
 	model_id = 9002; /* Placeholder */
 
@@ -104,6 +162,7 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 
 	pfree(path);
 	pfree(name);
+	pfree(result.data);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -120,13 +179,37 @@ import_onnx_model(PG_FUNCTION_ARGS)
 	text *model_name = PG_GETARG_TEXT_PP(1);
 	bool optimize = PG_ARGISNULL(2) ? true : PG_GETARG_BOOL(2);
 
-	char *path = text_to_cstring(model_path);
-	char *name = text_to_cstring(model_name);
+	char *path;
+	char *name;
 	StringInfoData result;
 	int model_id;
 
+	CHECK_NARGS_RANGE(2, 3);
+
+	/* Defensive: Check NULL inputs */
+	if (model_path == NULL || model_name == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: import_onnx_model model_path and "
+				       "model_name cannot be NULL")));
+
+	path = text_to_cstring(model_path);
+	name = text_to_cstring(model_name);
+
+	/* Defensive: Validate allocations */
+	if (path == NULL || name == NULL)
+	{
+		if (path)
+			pfree(path);
+		if (name)
+			pfree(name);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: import_onnx_model failed to "
+				       "allocate strings")));
+	}
+
 	/* Import and optionally optimize ONNX model */
-	(void)path;
 	(void)optimize;
 	model_id = 9003; /* Placeholder */
 
@@ -139,6 +222,7 @@ import_onnx_model(PG_FUNCTION_ARGS)
 
 	pfree(path);
 	pfree(name);
+	pfree(result.data);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -168,7 +252,8 @@ dl_predict(PG_FUNCTION_ARGS)
 	if (n_inputs == 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("input_data cannot be empty")));
+				errmsg("neurondb: dl_predict input_data cannot be "
+				       "empty")));
 
 	/* Run inference (production would use actual model) */
 	(void)model_id;
@@ -210,20 +295,48 @@ finetune_dl_model(PG_FUNCTION_ARGS)
 	int32 epochs = PG_ARGISNULL(2) ? 5 : PG_GETARG_INT32(2);
 	float8 learning_rate = PG_ARGISNULL(3) ? 0.0001 : PG_GETARG_FLOAT8(3);
 
-	char *table = text_to_cstring(training_table);
+	char *table;
 	StringInfoData result;
 
-	/* Validate */
+	CHECK_NARGS_RANGE(2, 4);
+
+	/* Defensive: Check NULL input */
+	if (training_table == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: finetune_dl_model training_table "
+				       "cannot be NULL")));
+
+	/* Defensive: Validate model_id */
+	if (model_id <= 0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: finetune_dl_model model_id must "
+				       "be positive, got %d", model_id)));
+
+	/* Defensive: Validate epochs */
 	if (epochs <= 0 || epochs > 1000)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("epochs must be between 1 and 1000")));
+				errmsg("neurondb: finetune_dl_model epochs must be "
+				       "between 1 and 1000, got %d", epochs)));
 
-	if (learning_rate <= 0.0 || learning_rate > 1.0)
+	/* Defensive: Validate learning_rate */
+	if (isnan(learning_rate) || isinf(learning_rate) || learning_rate <= 0.0 || learning_rate > 1.0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("learning_rate must be between 0 and "
-				       "1")));
+				errmsg("neurondb: finetune_dl_model learning_rate "
+				       "must be between 0 and 1, got %f",
+				       learning_rate)));
+
+	table = text_to_cstring(training_table);
+
+	/* Defensive: Validate allocation */
+	if (table == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: finetune_dl_model failed to "
+				       "allocate table name string")));
 
 	/* Fine-tune model (production would perform transfer learning) */
 	(void)model_id;
@@ -252,17 +365,54 @@ export_dl_model(PG_FUNCTION_ARGS)
 	text *export_format = PG_GETARG_TEXT_PP(1);
 	text *output_path = PG_GETARG_TEXT_PP(2);
 
-	char *format = text_to_cstring(export_format);
-	char *path = text_to_cstring(output_path);
+	char *format;
+	char *path;
 	StringInfoData result;
 
-	/* Validate format */
-	if (strcmp(format, "onnx") != 0 && strcmp(format, "torchscript") != 0
-		&& strcmp(format, "savedmodel") != 0)
+	CHECK_NARGS(3);
+
+	/* Defensive: Check NULL inputs */
+	if (export_format == NULL || output_path == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: export_dl_model export_format "
+				       "and output_path cannot be NULL")));
+
+	/* Defensive: Validate model_id */
+	if (model_id <= 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("export_format must be 'onnx', "
-				       "'torchscript', or 'savedmodel'")));
+				errmsg("neurondb: export_dl_model model_id must be "
+				       "positive, got %d", model_id)));
+
+	format = text_to_cstring(export_format);
+	path = text_to_cstring(output_path);
+
+	/* Defensive: Validate allocations */
+	if (format == NULL || path == NULL)
+	{
+		if (format)
+			pfree(format);
+		if (path)
+			pfree(path);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("neurondb: export_dl_model failed to "
+				       "allocate strings")));
+	}
+
+	/* Defensive: Validate format */
+	if (strcmp(format, "onnx") != 0 && strcmp(format, "torchscript") != 0
+		&& strcmp(format, "savedmodel") != 0)
+	{
+		pfree(format);
+		pfree(path);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: export_dl_model export_format "
+				       "must be 'onnx', 'torchscript', or "
+				       "'savedmodel', got '%s'", format)));
+	}
 
 	/* Export model (production would convert and save) */
 	(void)model_id;
@@ -326,8 +476,8 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 	if (batch_size <= 0 || batch_size > 10000)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("batch_size must be between 1 and "
-				       "10000")));
+				errmsg("neurondb: dl_predict_batch batch_size must "
+				       "be between 1 and 10000")));
 
 	/* Process batches (production would run inference on batches) */
 	(void)model_id;
@@ -364,7 +514,8 @@ quantize_dl_model(PG_FUNCTION_ARGS)
 		&& strcmp(quant_type, "dynamic") != 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("quantization_type must be 'int8', "
+				errmsg("neurondb: quantize_dl_model "
+				       "quantization_type must be 'int8', "
 				       "'fp16', or 'dynamic'")));
 
 	/* Quantize model (production would apply quantization) */

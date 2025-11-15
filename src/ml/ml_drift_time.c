@@ -83,19 +83,42 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 	char *col_str;
 	char *ts_col_str;
 
+	CHECK_NARGS_RANGE(3, 4);
+
 	/* This is a placeholder implementation */
 	/* Full implementation would require temporal SQL queries */
 
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
 	timestamp_column = PG_GETARG_TEXT_PP(2);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_column == NULL || timestamp_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("monitor_drift_timeseries: table_name, vector_column, and timestamp_column cannot be NULL")));
+
 	/* window_size = PG_GETARG_INTERVAL_P(3); */ /* Unused in placeholder */
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_column);
 	ts_col_str = text_to_cstring(timestamp_column);
 
-	elog(NOTICE,
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || col_str == NULL || ts_col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (col_str)
+			pfree(col_str);
+		if (ts_col_str)
+			pfree(ts_col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
+
+	elog(DEBUG1,
 		"neurondb: Drift monitoring over time for table %s (column %s, "
 		"timestamp %s)",
 		tbl_str,

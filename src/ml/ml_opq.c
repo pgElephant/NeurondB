@@ -85,19 +85,40 @@ train_opq_rotation(PG_FUNCTION_ARGS)
 	ArrayType *result;
 	Datum *result_datums;
 
+	CHECK_NARGS_RANGE(2, 3);
+
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
+
+	/* Defensive: Check NULL inputs */
+	if (table_name == NULL || vector_column == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("train_opq_rotation: table_name and vector_column cannot be NULL")));
+
 	num_subspaces = PG_ARGISNULL(2) ? 8 : PG_GETARG_INT32(2);
 
+	/* Defensive: Validate num_subspaces */
 	if (num_subspaces < 2 || num_subspaces > 64)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("num_subspaces must be between 2 and "
-				       "64")));
+				errmsg("num_subspaces must be between 2 and 64, got %d", num_subspaces)));
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_column);
+
+	/* Defensive: Validate allocations */
+	if (tbl_str == NULL || col_str == NULL)
+	{
+		if (tbl_str)
+			pfree(tbl_str);
+		if (col_str)
+			pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_OUT_OF_MEMORY),
+				errmsg("failed to allocate strings")));
+	}
 
 	elog(DEBUG1,
 		"neurondb: Training OPQ rotation (m=%d subspaces)",
