@@ -444,8 +444,6 @@ train_naive_bayes_classifier_model_id(PG_FUNCTION_ARGS)
 	Jsonb *metrics;
 	StringInfoData metrics_json;
 	int32 model_id;
-	int project_id = 1; /* Default project */
-	int version = 1;
 
 	table_name = PG_GETARG_TEXT_PP(0);
 	feature_col = PG_GETARG_TEXT_PP(1);
@@ -753,7 +751,6 @@ predict_naive_bayes_model_id(PG_FUNCTION_ARGS)
 	double log_probs[2] = { 0.0, 0.0 };
 	int predicted_class;
 	int i, j;
-	int ret;
 
 	model_id = PG_GETARG_INT32(0);
 	features = PG_GETARG_VECTOR_P(1);
@@ -987,21 +984,41 @@ nb_gpu_predict(const MLGpuModel *model,
 	return true;
 }
 
-static bool
+static __attribute__((unused)) bool
 nb_gpu_evaluate(const MLGpuModel *model,
-				const float *features,
-				const double *labels,
-				int n_samples,
-				int feature_dim,
-				Jsonb **metrics_out,
+				const MLGpuEvalSpec *spec,
+				MLGpuMetrics *out,
 				char **errstr)
 {
+	/* Defensive: validate inputs */
+	if (model == NULL)
+	{
+		if (errstr != NULL)
+			*errstr = pstrdup("nb_gpu_evaluate: model is NULL");
+		return false;
+	}
+
+	if (spec == NULL)
+	{
+		if (errstr != NULL)
+			*errstr = pstrdup("nb_gpu_evaluate: spec is NULL");
+		return false;
+	}
+
+	if (out == NULL)
+	{
+		if (errstr != NULL)
+			*errstr = pstrdup("nb_gpu_evaluate: out is NULL");
+		return false;
+	}
+
 	if (errstr != NULL)
 		*errstr = NULL;
-	if (metrics_out != NULL)
-		*metrics_out = NULL;
+	memset(out, 0, sizeof(MLGpuMetrics));
 
 	/* Evaluation not implemented for GPU models yet */
+	if (errstr != NULL)
+		*errstr = pstrdup("GPU evaluation not yet implemented for Naive Bayes");
 	return false;
 }
 
@@ -1053,11 +1070,13 @@ static const MLGpuModelOps nb_gpu_model_ops = {
 	.algorithm = "naive_bayes",
 	.train = nb_gpu_train,
 	.predict = nb_gpu_predict,
-	.evaluate = nb_gpu_evaluate,
+	.evaluate = NULL, /* Not yet implemented with correct signature */
 	.serialize = nb_gpu_serialize,
 	.deserialize = nb_gpu_deserialize,
 	.destroy = nb_gpu_destroy,
 };
+
+#include "ml_gpu_registry.h"
 
 void
 neurondb_gpu_register_nb_model(void)

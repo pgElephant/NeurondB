@@ -29,6 +29,9 @@
 #include <ctype.h>
 #include <stdint.h>
 
+/* Forward declaration */
+PGDLLEXPORT float fp16_to_float(uint16 h);
+
 /* PG_MODULE_MAGIC already defined in neurondb.c */
 
 /* Helper function: float32 -> int8 quantization (max-abs scaling) */
@@ -142,7 +145,7 @@ float_to_fp16(float f)
 	}
 }
 
-static float
+PGDLLEXPORT float
 fp16_to_float(uint16 h)
 {
 	uint32 sign = (h & 0x8000) << 16;
@@ -926,7 +929,6 @@ quantize_analyze_ternary(PG_FUNCTION_ARGS)
 	Vector *original = PG_GETARG_VECTOR_P(0);
 	VectorTernary *quantized;
 	Vector *dequantized;
-	float4 threshold = 0.0f;
 	double mse = 0.0;
 	double mae = 0.0;
 	double max_error = 0.0;
@@ -950,7 +952,6 @@ quantize_analyze_ternary(PG_FUNCTION_ARGS)
 		if (abs_val > max_abs)
 			max_abs = abs_val;
 	}
-	threshold = max_abs / 3.0f;
 
 	/* Quantize the vector */
 	quantized = quantize_vector_ternary(original);
@@ -1352,31 +1353,34 @@ quantize_vector_int4(Vector *v)
 	SET_VARSIZE(result, size);
 	result->dim = v->dim;
 
-	for (i = 0; i < v->dim; i++)
 	{
-		int8 value;
-		float4 scaled = v->data[i] * scale;
-
-		if (scaled > 7.0f)
-			value = 7;
-		else if (scaled < -8.0f)
-			value = -8;
-		else
-			value = (int8)rintf(scaled);
-
-		/* Convert signed to unsigned 4-bit (0-7 = -8 to -1, 8-15 = 0 to 7) */
 		uint8 uvalue;
-		if (value < 0)
-			uvalue = (uint8)(8 + value); /* -8 to -1 -> 0 to 7 */
-		else
-			uvalue = (uint8)(8 + value); /* 0 to 7 -> 8 to 15 */
-		if (uvalue > 15)
-			uvalue = 15;
 
-		/* Pack 2 values per byte */
-		byte_idx = i / 2;
-		bit_idx = (i % 2) * 4;
-		result->data[byte_idx] |= (uvalue << bit_idx);
+		for (i = 0; i < v->dim; i++)
+		{
+			int8 value;
+			float4 scaled = v->data[i] * scale;
+
+			if (scaled > 7.0f)
+				value = 7;
+			else if (scaled < -8.0f)
+				value = -8;
+			else
+				value = (int8)rintf(scaled);
+
+			/* Convert signed to unsigned 4-bit (0-7 = -8 to -1, 8-15 = 0 to 7) */
+			if (value < 0)
+				uvalue = (uint8)(8 + value); /* -8 to -1 -> 0 to 7 */
+			else
+				uvalue = (uint8)(8 + value); /* 0 to 7 -> 8 to 15 */
+			if (uvalue > 15)
+				uvalue = 15;
+
+			/* Pack 2 values per byte */
+			byte_idx = i / 2;
+			bit_idx = (i % 2) * 4;
+			result->data[byte_idx] |= (uvalue << bit_idx);
+		}
 	}
 
 	return result;

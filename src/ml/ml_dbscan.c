@@ -248,6 +248,7 @@ cluster_dbscan(PG_FUNCTION_ARGS)
  *-------------------------------------------------------------------------
  */
 #include "neurondb_gpu_model.h"
+void neurondb_gpu_register_dbscan_model(void);
 
 void
 neurondb_gpu_register_dbscan_model(void)

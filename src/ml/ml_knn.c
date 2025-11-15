@@ -27,6 +27,7 @@
 #include "ml_catalog.h"
 #include "neurondb_cuda_knn.h"
 #include "vector/vector_types.h"
+#include "ml_gpu_registry.h"
 
 #include <math.h>
 #include <float.h>
@@ -550,7 +551,7 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 		int ret;
 		Vector *first_vec;
 		bool isnull;
-		Datum vec_datum, label_datum;
+		Datum vec_datum;
 		
 		if (SPI_connect() != SPI_OK_CONNECT)
 			ereport(ERROR, (errmsg("SPI_connect failed")));
@@ -804,8 +805,10 @@ predict_knn_model_id(PG_FUNCTION_ARGS)
 			int k_cpu, n_samples_cpu, n_features_cpu;
 			char *table_name_cpu, *feature_col_cpu, *label_col_cpu;
 			const char *str_ptr;
-			Vector *query_vector;
-			text *table_text, *feat_text, *label_text;
+			StringInfoData sql_query;
+			StringInfoData tbl_lit, feat_lit, label_lit;
+			int ret;
+			int k;
 			
 			memcpy(&k_cpu, base, sizeof(int));
 			memcpy(&n_samples_cpu, base + sizeof(int), sizeof(int));
@@ -834,39 +837,35 @@ predict_knn_model_id(PG_FUNCTION_ARGS)
 			
 			/* Call knn_classify via SPI SQL to avoid memory context issues */
 			/* knn_classify uses SPI internally, so calling it via SQL is safer */
-			StringInfoData sql_query;
-			StringInfoData tbl_lit, feat_lit, label_lit;
-			int ret;
-			int j;
 			
 			/* Quote strings for SQL */
 			initStringInfo(&tbl_lit);
 			appendStringInfoChar(&tbl_lit, '\'');
-			for (j = 0; table_name_cpu[j]; j++)
+			for (k = 0; table_name_cpu[k]; k++)
 			{
-				if (table_name_cpu[j] == '\'')
+				if (table_name_cpu[k] == '\'')
 					appendStringInfoChar(&tbl_lit, '\'');
-				appendStringInfoChar(&tbl_lit, table_name_cpu[j]);
+				appendStringInfoChar(&tbl_lit, table_name_cpu[k]);
 			}
 			appendStringInfoChar(&tbl_lit, '\'');
 			
 			initStringInfo(&feat_lit);
 			appendStringInfoChar(&feat_lit, '\'');
-			for (j = 0; feature_col_cpu[j]; j++)
+			for (k = 0; feature_col_cpu[k]; k++)
 			{
-				if (feature_col_cpu[j] == '\'')
+				if (feature_col_cpu[k] == '\'')
 					appendStringInfoChar(&feat_lit, '\'');
-				appendStringInfoChar(&feat_lit, feature_col_cpu[j]);
+				appendStringInfoChar(&feat_lit, feature_col_cpu[k]);
 			}
 			appendStringInfoChar(&feat_lit, '\'');
 			
 			initStringInfo(&label_lit);
 			appendStringInfoChar(&label_lit, '\'');
-			for (j = 0; label_col_cpu[j]; j++)
+			for (k = 0; label_col_cpu[k]; k++)
 			{
-				if (label_col_cpu[j] == '\'')
+				if (label_col_cpu[k] == '\'')
 					appendStringInfoChar(&label_lit, '\'');
-				appendStringInfoChar(&label_lit, label_col_cpu[j]);
+				appendStringInfoChar(&label_lit, label_col_cpu[k]);
 			}
 			appendStringInfoChar(&label_lit, '\'');
 			

@@ -29,6 +29,7 @@
 
 #include "neurondb.h"
 #include "neurondb_ml.h"
+#include "ml_gpu_registry.h"
 
 #include <math.h>
 #include <string.h>

@@ -516,15 +516,16 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 				responsibilities[i][k] = model.mixing_coeffs[k] * pdf;
 				sum += responsibilities[i][k];
 			}
-			if (sum > GMM_MIN_PROB)
-			{
-				for (k = 0; k < num_components; k++)
-					responsibilities[i][k] /= sum;
-				double point_likelihood = 0.0;
-				for (k = 0; k < num_components; k++)
-					point_likelihood += model.mixing_coeffs[k] * gaussian_pdf(data[i], model.means[k], model.variances[k], dim);
-				log_likelihood += log(point_likelihood + GMM_MIN_PROB);
-			}
+		if (sum > GMM_MIN_PROB)
+		{
+			double point_likelihood = 0.0;
+
+			for (k = 0; k < num_components; k++)
+				responsibilities[i][k] /= sum;
+			for (k = 0; k < num_components; k++)
+				point_likelihood += model.mixing_coeffs[k] * gaussian_pdf(data[i], model.means[k], model.variances[k], dim);
+			log_likelihood += log(point_likelihood + GMM_MIN_PROB);
+		}
 		}
 
 		/* Check convergence */
@@ -728,6 +729,7 @@ predict_gmm_model_id(PG_FUNCTION_ARGS)
  *-------------------------------------------------------------------------
  */
 #include "neurondb_gpu_model.h"
+#include "ml_gpu_registry.h"
 
 /* Stub function to satisfy linker - full implementation needed */
 void

@@ -365,57 +365,19 @@ CREATE OPERATOR <-> (
     COMMUTATOR = '<->'
 );
 
--- Distance operators for halfvec type
-CREATE OPERATOR <-> (
-    LEFTARG = halfvec,
-    RIGHTARG = halfvec,
-    PROCEDURE = halfvec_l2_distance,
-    COMMUTATOR = '<->'
-);
+-- Distance operators for halfvec type (moved after function definitions)
+-- CREATE OPERATOR <-> (
+--     LEFTARG = halfvec,
+--     RIGHTARG = halfvec,
+--     PROCEDURE = halfvec_l2_distance,
+--     COMMUTATOR = '<->'
+-- );
 
-CREATE OPERATOR <=> (
-    LEFTARG = halfvec,
-    RIGHTARG = halfvec,
-    PROCEDURE = halfvec_cosine_distance,
-    COMMUTATOR = '<=>'
-);
+-- Halfvec operators moved after function definitions (see line ~1927)
 
-CREATE OPERATOR <#> (
-    LEFTARG = halfvec,
-    RIGHTARG = halfvec,
-    PROCEDURE = halfvec_inner_product,
-    COMMUTATOR = '<#>'
-);
+-- Distance operators for sparsevec type (moved after function definitions, see line ~1934)
 
--- Distance operators for sparsevec type
-CREATE OPERATOR <-> (
-    LEFTARG = sparsevec,
-    RIGHTARG = sparsevec,
-    PROCEDURE = sparsevec_l2_distance,
-    COMMUTATOR = '<->'
-);
-
-CREATE OPERATOR <=> (
-    LEFTARG = sparsevec,
-    RIGHTARG = sparsevec,
-    PROCEDURE = sparsevec_cosine_distance,
-    COMMUTATOR = '<=>'
-);
-
-CREATE OPERATOR <#> (
-    LEFTARG = sparsevec,
-    RIGHTARG = sparsevec,
-    PROCEDURE = sparsevec_inner_product,
-    COMMUTATOR = '<#>'
-);
-
--- Distance operator for bit type (Hamming distance)
-CREATE OPERATOR <-> (
-    LEFTARG = bit,
-    RIGHTARG = bit,
-    PROCEDURE = bit_hamming_distance,
-    COMMUTATOR = '<->'
-);
+-- Distance operator for bit type (moved after function definition, see line ~1960)
 
 -- Inner Product (Negative for ordering)
 CREATE FUNCTION vector_inner_product(vector, vector) RETURNS real
@@ -1925,6 +1887,28 @@ CREATE FUNCTION halfvec_inner_product(halfvec, halfvec) RETURNS real
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION halfvec_inner_product IS 'Inner product (negative for distance ordering) between halfvec vectors';
 
+-- Distance operators for halfvec type (defined after functions)
+CREATE OPERATOR <-> (
+    LEFTARG = halfvec,
+    RIGHTARG = halfvec,
+    PROCEDURE = halfvec_l2_distance,
+    COMMUTATOR = '<->'
+);
+
+CREATE OPERATOR <=> (
+    LEFTARG = halfvec,
+    RIGHTARG = halfvec,
+    PROCEDURE = halfvec_cosine_distance,
+    COMMUTATOR = '<=>'
+);
+
+CREATE OPERATOR <#> (
+    LEFTARG = halfvec,
+    RIGHTARG = halfvec,
+    PROCEDURE = halfvec_inner_product,
+    COMMUTATOR = '<#>'
+);
+
 -- Distance functions for sparsevec type
 CREATE FUNCTION sparsevec_l2_distance(sparsevec, sparsevec) RETURNS real
     AS 'MODULE_PATHNAME', 'sparsevec_l2_distance'
@@ -1941,11 +1925,41 @@ CREATE FUNCTION sparsevec_inner_product(sparsevec, sparsevec) RETURNS real
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION sparsevec_inner_product IS 'Inner product (negative for distance ordering) between sparsevec vectors';
 
+-- Distance operators for sparsevec type (defined after functions)
+CREATE OPERATOR <-> (
+    LEFTARG = sparsevec,
+    RIGHTARG = sparsevec,
+    PROCEDURE = sparsevec_l2_distance,
+    COMMUTATOR = '<->'
+);
+
+CREATE OPERATOR <=> (
+    LEFTARG = sparsevec,
+    RIGHTARG = sparsevec,
+    PROCEDURE = sparsevec_cosine_distance,
+    COMMUTATOR = '<=>'
+);
+
+CREATE OPERATOR <#> (
+    LEFTARG = sparsevec,
+    RIGHTARG = sparsevec,
+    PROCEDURE = sparsevec_inner_product,
+    COMMUTATOR = '<#>'
+);
+
 -- Distance function for bit type (Hamming distance)
 CREATE FUNCTION bit_hamming_distance(bit, bit) RETURNS integer
     AS 'MODULE_PATHNAME', 'bit_hamming_distance'
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION bit_hamming_distance IS 'Hamming distance between bit vectors';
+
+-- Distance operator for bit type (defined after function)
+CREATE OPERATOR <-> (
+    LEFTARG = bit,
+    RIGHTARG = bit,
+    PROCEDURE = bit_hamming_distance,
+    COMMUTATOR = '<->'
+);
 
 -- Vector preprocessing
 CREATE FUNCTION vector_clip(vector, double precision, double precision) RETURNS vector
@@ -4630,6 +4644,89 @@ BEGIN
 						'error', 'Evaluation failed: ' || SQLERRM
 					);
 			END;
+		WHEN 'gmm' THEN
+			/* Compute clustering metrics (inertia and silhouette approximation) */
+			BEGIN
+				EXECUTE format(
+				'WITH preds AS (
+					SELECT %I AS features, neurondb.predict(%L, %I) AS c
+					FROM %I
+					WHERE %I IS NOT NULL
+				),
+				arr AS (
+					SELECT c, vector_to_array(features)::real[] AS a
+					FROM preds
+				),
+				dims AS (
+					SELECT COALESCE(MAX(array_length(a,1)), 0) AS d FROM arr
+				),
+				centroid_elems AS (
+					SELECT c, idx, AVG(a[idx])::real AS avg_val
+					FROM arr, LATERAL generate_subscripts(a,1) AS idx
+					GROUP BY c, idx
+				),
+				centroids AS (
+					SELECT c,
+						   ARRAY_AGG(avg_val ORDER BY idx)::real[] AS centroid
+					FROM centroid_elems
+					GROUP BY c
+				),
+				inertia_calc AS (
+					SELECT SUM(
+						(SELECT SUM( ((a[i] - centroid[i])::float8 * (a[i] - centroid[i])::float8) )
+						 FROM generate_subscripts(a,1) AS i)
+					)::float8 AS inertia
+					FROM arr
+					JOIN centroids USING (c)
+				),
+				silhouette_point AS (
+					/* Approximate silhouette using centroid distances */
+					SELECT a.c,
+						   /* a: distance to own centroid */
+						   (SELECT sqrt(SUM(((a.a[i]-centroids.centroid[i])::float8)^2))
+							FROM generate_subscripts(a.a,1) AS i
+						   )::float8 AS a_dist,
+						   /* b: min distance to any other centroid */
+						   (SELECT MIN(
+								(SELECT sqrt(SUM(((a.a[i]-c2.centroid[i])::float8)^2))
+								 FROM generate_subscripts(a.a,1) AS i)
+							)
+							FROM centroids c2
+							WHERE c2.c <> a.c
+						   )::float8 AS b_dist
+					FROM arr a
+					JOIN centroids ON centroids.c = a.c
+				),
+				silhouette_agg AS (
+					SELECT CASE
+								WHEN COUNT(*) = 0 THEN 0.0::float8
+								ELSE AVG(
+									CASE
+										WHEN GREATEST(a_dist, b_dist) > 0 THEN (b_dist - a_dist) / GREATEST(a_dist, b_dist)
+										ELSE 0.0
+									END
+								)::float8
+						   END AS silhouette_score
+					FROM silhouette_point
+				)
+				SELECT i.inertia, s.silhouette_score
+				FROM inertia_calc i, silhouette_agg s',
+					feature_col, model_id_param, feature_col, table_name, feature_col
+				)
+				INTO mse_val, r2_val;  /* reuse holders: mse_val=inertia, r2_val=silhouette */
+				
+				result := jsonb_build_object(
+					'inertia', COALESCE(mse_val, 0.0),
+					'silhouette_score', COALESCE(r2_val, 0.0)
+				);
+			EXCEPTION
+				WHEN OTHERS THEN
+					result := jsonb_build_object(
+						'inertia', 0.0,
+						'silhouette_score', 0.0,
+						'warning', 'GMM metrics fallback due to error: ' || SQLERRM
+					);
+			END;
 		WHEN 'ridge' THEN
 			/* Compute regression metrics: R², MSE, MAE, RMSE (same as linear_regression) */
 			BEGIN
@@ -6073,7 +6170,7 @@ LANGUAGE sql STABLE AS $$
 $$;
 COMMENT ON FUNCTION neurondb.version IS 'Get NeuronDB version and capabilities';
 
-CREATE OR REPLACE FUNCTION auto_train(
+CREATE FUNCTION auto_train(
 	table_name text,
 	feature_col text,
 	label_col text,

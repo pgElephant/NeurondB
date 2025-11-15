@@ -20,6 +20,7 @@
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "utils/array.h"
+#include "utils/memutils.h"
 #include "lib/stringinfo.h"
 #include "libpq/pqformat.h"
 
@@ -1788,25 +1789,243 @@ train_elastic_net(PG_FUNCTION_ARGS)
 	double l1_ratio =
 		PG_GETARG_FLOAT8(4); /* L1 vs L2 ratio (0=Ridge, 1=Lasso) */
 
-	Datum *result_datums;
-	ArrayType *result_array;
+	char	   *tbl_str;
+	char	   *feat_str;
+	char	   *targ_str;
+	RidgeDataset dataset;
+	const char *quoted_tbl;
+	const char *quoted_feat;
+	const char *quoted_target;
+	int			nvec;
+	int			dim;
+	int			i;
+	int			j;
+	double	   *coefficients = NULL;
+	double		intercept = 0.0;
+	double		l1_penalty;
+	double		l2_penalty;
+	double	   *Xty = NULL;
+	double	   *beta = NULL;
+	Datum	   *result_datums;
+	ArrayType  *result_array;
+	MemoryContext oldcontext;
+	MemoryContext elastic_context;
 
-	/* Placeholder implementation - would combine Ridge and Lasso */
-	elog(NOTICE, "Elastic Net: alpha=%.4f, l1_ratio=%.4f", alpha, l1_ratio);
-	elog(NOTICE,
-		"Training on table: %s, features: %s, target: %s",
-		text_to_cstring(table_name),
-		text_to_cstring(feature_col),
-		text_to_cstring(target_col));
+	/* Defensive: validate inputs */
+	if (alpha < 0.0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("elastic_net: alpha must be non-negative")));
 
-	/* Return dummy coefficients */
-	result_datums = (Datum *)palloc(sizeof(Datum) * 6);
-	result_datums[0] = Float8GetDatum(0.0); /* bias */
-	for (int i = 1; i < 6; i++)
-		result_datums[i] = Float8GetDatum(0.1);
+	if (l1_ratio < 0.0 || l1_ratio > 1.0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("elastic_net: l1_ratio must be between 0 and 1")));
 
-	result_array = construct_array(
-		result_datums, 6, FLOAT8OID, 8, FLOAT8PASSBYVAL, 'd');
+	tbl_str = text_to_cstring(table_name);
+	feat_str = text_to_cstring(feature_col);
+	targ_str = text_to_cstring(target_col);
+
+	/* Create memory context */
+	elastic_context = AllocSetContextCreate(CurrentMemoryContext,
+										   "elastic net training context",
+										   ALLOCSET_DEFAULT_SIZES);
+	oldcontext = MemoryContextSwitchTo(elastic_context);
+
+	ridge_dataset_init(&dataset);
+
+	quoted_tbl = quote_identifier(tbl_str);
+	quoted_feat = quote_identifier(feat_str);
+	quoted_target = quote_identifier(targ_str);
+
+	ridge_dataset_load(quoted_tbl, quoted_feat, quoted_target, &dataset);
+
+	nvec = dataset.n_samples;
+	dim = dataset.feature_dim;
+
+	if (nvec < 10)
+	{
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(elastic_context);
+		ridge_dataset_free(&dataset);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("elastic_net: need at least 10 samples, got %d",
+						nvec)));
+	}
+
+	/* Calculate penalty terms */
+	l1_penalty = alpha * l1_ratio;
+	l2_penalty = alpha * (1.0 - l1_ratio);
+
+	/* Allocate coefficient arrays */
+	coefficients = (double *)palloc0(dim * sizeof(double));
+	beta = (double *)palloc0((dim + 1) * sizeof(double));
+
+	/* Build X'X + regularization matrix */
+	/* Allocate as double ** for matrix_invert compatibility */
+	{
+		double	   **XtX_2d = NULL;
+		double	   **XtX_inv_2d = NULL;
+		int			dim_with_intercept = dim + 1;
+		int			k;
+
+		XtX_2d = (double **)palloc(sizeof(double *) * dim_with_intercept);
+		XtX_inv_2d = (double **)palloc(
+			sizeof(double *) * dim_with_intercept);
+
+		for (i = 0; i < dim_with_intercept; i++)
+		{
+			XtX_2d[i] = (double *)palloc0(
+				sizeof(double) * dim_with_intercept);
+			XtX_inv_2d[i] = (double *)palloc0(
+				sizeof(double) * dim_with_intercept);
+		}
+
+		Xty = (double *)palloc0((dim + 1) * sizeof(double));
+
+		/* Compute X'X with L2 regularization */
+		for (i = 0; i < dim; i++)
+		{
+			for (j = 0; j < dim; j++)
+			{
+				double		sum = 0.0;
+
+				for (k = 0; k < nvec; k++)
+					sum += dataset.features[k * dim + i] *
+						dataset.features[k * dim + j];
+
+				XtX_2d[i + 1][j + 1] = sum;
+				if (i == j)
+					XtX_2d[i + 1][j + 1] += l2_penalty;
+			}
+		}
+
+		/* Add intercept column (all ones) */
+		for (i = 0; i < dim; i++)
+		{
+			double		sum = 0.0;
+
+			for (k = 0; k < nvec; k++)
+				sum += dataset.features[k * dim + i];
+			XtX_2d[i + 1][0] = sum;
+			XtX_2d[0][i + 1] = sum;
+		}
+		XtX_2d[0][0] = nvec;
+
+		/* Compute X'y */
+		for (i = 0; i < dim; i++)
+		{
+			double		sum = 0.0;
+
+			for (k = 0; k < nvec; k++)
+				sum += dataset.features[k * dim + i] * dataset.targets[k];
+			Xty[i + 1] = sum;
+		}
+		{
+			double		sum = 0.0;
+
+			for (k = 0; k < nvec; k++)
+				sum += dataset.targets[k];
+			Xty[0] = sum;
+		}
+
+		/* Solve (X'X + λI)β = X'y using coordinate descent for Elastic Net */
+		/* Simplified: use Ridge solution as starting point, then apply L1 shrinkage */
+		{
+			bool		invert_ok;
+
+			invert_ok = matrix_invert(XtX_2d, dim_with_intercept,
+									  XtX_inv_2d);
+
+			if (invert_ok)
+			{
+				/* Compute beta = (X'X + λI)^(-1)X'y */
+				for (i = 0; i < dim_with_intercept; i++)
+				{
+					beta[i] = 0.0;
+					for (j = 0; j < dim_with_intercept; j++)
+						beta[i] += XtX_inv_2d[i][j] * Xty[j];
+				}
+
+				/* Apply L1 shrinkage (soft thresholding) */
+				for (i = 1; i < dim_with_intercept; i++)
+				{
+					if (beta[i] > l1_penalty)
+						beta[i] -= l1_penalty;
+					else if (beta[i] < -l1_penalty)
+						beta[i] += l1_penalty;
+					else
+						beta[i] = 0.0;
+				}
+
+				intercept = beta[0];
+				for (i = 0; i < dim; i++)
+					coefficients[i] = beta[i + 1];
+			}
+			else
+			{
+				/* Cleanup on inversion failure */
+				for (i = 0; i < dim_with_intercept; i++)
+				{
+					pfree(XtX_2d[i]);
+					pfree(XtX_inv_2d[i]);
+				}
+				pfree(XtX_2d);
+				pfree(XtX_inv_2d);
+				pfree(Xty);
+				pfree(beta);
+				pfree(coefficients);
+				MemoryContextSwitchTo(oldcontext);
+				MemoryContextDelete(elastic_context);
+				ridge_dataset_free(&dataset);
+				pfree(tbl_str);
+				pfree(feat_str);
+				pfree(targ_str);
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("elastic_net: failed to solve linear system")));
+			}
+
+			/* Cleanup matrix allocations */
+			for (i = 0; i < dim_with_intercept; i++)
+			{
+				pfree(XtX_2d[i]);
+				pfree(XtX_inv_2d[i]);
+			}
+			pfree(XtX_2d);
+			pfree(XtX_inv_2d);
+		}
+	}
+
+
+	/* Build result array */
+	result_datums = (Datum *)palloc((dim + 1) * sizeof(Datum));
+	result_datums[0] = Float8GetDatum(intercept);
+	for (i = 0; i < dim; i++)
+		result_datums[i + 1] = Float8GetDatum(coefficients[i]);
+
+	result_array = construct_array(result_datums,
+								   dim + 1,
+								   FLOAT8OID,
+								   8,
+								   FLOAT8PASSBYVAL,
+								   'd');
+
+	/* Cleanup */
+	MemoryContextSwitchTo(oldcontext);
+	MemoryContextDelete(elastic_context);
+	ridge_dataset_free(&dataset);
+	pfree(tbl_str);
+	pfree(feat_str);
+	pfree(targ_str);
+	pfree(Xty);
+	pfree(beta);
+	pfree(coefficients);
+	pfree(result_datums);
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }

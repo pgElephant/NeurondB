@@ -107,7 +107,8 @@ neurondb_load_training_data(const char *table_name,
 	{
 		/* Make a copy of target_column before quoting to avoid memory corruption */
 		char *target_copy = pstrdup(target_column);
-		char *target_quoted = quote_identifier(target_copy);
+		const char *target_quoted_const = quote_identifier(target_copy);
+		char *target_quoted = (char *)target_quoted_const;
 		appendStringInfo(&sql, "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL", feature_list_str, target_quoted, table_name, feature_list_str, target_quoted);
 		pfree(target_quoted);
 		pfree(target_copy);
@@ -254,6 +255,8 @@ neurondb_load_training_data(const char *table_name,
 		/* Labels (if target_column provided) */
 		if (target_column)
 		{
+			Oid label_type;
+
 			labelval = SPI_getbinval(current_tuple, tupdesc, 2, &isnull_label);
 			if (isnull_label)
 			{
@@ -263,7 +266,7 @@ neurondb_load_training_data(const char *table_name,
 				return false;
 			}
 
-			Oid label_type = SPI_gettypeid(tupdesc, 2);
+			label_type = SPI_gettypeid(tupdesc, 2);
 			if (label_type == INT4OID)
 				label_vector[i] = (double)DatumGetInt32(labelval);
 			else if (label_type == INT8OID)
@@ -819,8 +822,6 @@ neurondb_train(PG_FUNCTION_ARGS)
 		bytea *gpu_model_data = NULL;
 		Jsonb *gpu_metrics = NULL;
 		char *gpu_errstr = NULL;
-		const ndb_gpu_backend *backend = NULL;
-		int gpu_rc = -1;
 		bool gpu_trained = false;
 
 		/* Load training data */
@@ -1004,8 +1005,6 @@ neurondb_train(PG_FUNCTION_ARGS)
 		bytea *gpu_model_data = NULL;
 		Jsonb *gpu_metrics = NULL;
 		char *gpu_errstr = NULL;
-		const ndb_gpu_backend *backend = NULL;
-		int gpu_rc = -1;
 		bool gpu_trained = false;
 
 		/* Parse hyperparameters */
@@ -1271,8 +1270,6 @@ neurondb_train(PG_FUNCTION_ARGS)
 		bytea *gpu_model_data = NULL;
 		Jsonb *gpu_metrics = NULL;
 		char *gpu_errstr = NULL;
-		const ndb_gpu_backend *backend = NULL;
-		int gpu_rc = -1;
 		bool gpu_trained = false;
 
 		/* Parse hyperparameters */
@@ -2039,10 +2036,33 @@ neurondb_predict(PG_FUNCTION_ARGS)
 		char	   *errstr = NULL;
 		int			rc;
 
-		if (!ml_catalog_fetch_model_payload(model_id, &model_data, NULL, &metrics))
+		/* Fetch model_data and metrics directly within this SPI session to avoid nested SPI usage */
+		resetStringInfo(&sql);
+		appendStringInfo(&sql,
+						 "SELECT model_data, metrics FROM neurondb.ml_models WHERE model_id = %d",
+						 model_id);
+		ret = SPI_execute(sql.data, true, 1);
+		if (ret != SPI_OK_SELECT || SPI_processed == 0 || SPI_tuptable == NULL)
 		{
 			neurondb_cleanup(oldcontext, callcontext, true);
-			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("GMM model %d not found", model_id)));
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("GMM model %d not found", model_id)));
+		}
+		{
+			bool isnull_local;
+			Datum d;
+			/* Detoast model_data into current context if present */
+			d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull_local);
+			if (!isnull_local)
+			{
+				bytea *tmp = DatumGetByteaP(d);
+				tmp = (bytea *) PG_DETOAST_DATUM_COPY((Datum) tmp);
+				model_data = tmp;
+			}
+			/* Copy metrics if present */
+			d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull_local);
+			if (!isnull_local)
+				metrics = DatumGetJsonbP(d);
 		}
 
 		if (model_data == NULL)
@@ -2131,7 +2151,7 @@ neurondb_predict(PG_FUNCTION_ARGS)
 						pfree(model_data);
 					if (metrics)
 						pfree(metrics);
-					neurondb_cleanup(oldcontext, callcontext, false);
+					neurondb_cleanup(oldcontext, callcontext, true);
 					PG_RETURN_FLOAT8(prediction);
 				}
 				else

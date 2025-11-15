@@ -396,6 +396,7 @@ answer_question(PG_FUNCTION_ARGS)
  *-------------------------------------------------------------------------
  */
 #include "neurondb_gpu_model.h"
+#include "ml_gpu_registry.h"
 
 void
 neurondb_gpu_register_nlp_production_model(void)

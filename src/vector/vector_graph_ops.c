@@ -280,22 +280,25 @@ vgraph_bfs(PG_FUNCTION_ARGS)
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
-	funcctx = SRF_PERCALL_SETUP();
-	fctx = (bfs_fctx *)funcctx->user_fctx;
-
-	if (fctx->current_idx < fctx->result_count)
+	if (SRF_PERCALL_SETUP())
 	{
-		Datum values[3];
-		bool nulls[3] = { false, false, false };
+		bfs_fctx *fctx;
 		HeapTuple tuple;
+		Datum values[3];
+		bool nulls[3] = {false, false, false};
 
-		values[0] = Int32GetDatum(fctx->result_nodes[fctx->current_idx]);
-		values[1] = Int32GetDatum(fctx->result_depths[fctx->current_idx]);
-		values[2] = Int32GetDatum(fctx->result_parents[fctx->current_idx]);
+		fctx = (bfs_fctx *)funcctx->user_fctx;
 
-		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
-		fctx->current_idx++;
-		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		if (fctx->current_idx < fctx->result_count)
+		{
+			values[0] = Int32GetDatum(fctx->result_nodes[fctx->current_idx]);
+			values[1] = Int32GetDatum(fctx->result_depths[fctx->current_idx]);
+			values[2] = Int32GetDatum(fctx->result_parents[fctx->current_idx]);
+
+			tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+			fctx->current_idx++;
+			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		}
 	}
 
 	SRF_RETURN_DONE(funcctx);
@@ -437,23 +440,25 @@ vgraph_dfs(PG_FUNCTION_ARGS)
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
-	funcctx = SRF_PERCALL_SETUP();
-	fctx = (dfs_fctx *)funcctx->user_fctx;
-
-	if (fctx->current_idx < fctx->result_count)
+	if (SRF_PERCALL_SETUP())
 	{
-		Datum values[4];
-		bool nulls[4] = { false, false, false, false };
+		dfs_fctx *fctx;
 		HeapTuple tuple;
+		Datum values[4];
+		bool nulls[4] = {false, false, false, false};
 
-		values[0] = Int32GetDatum(fctx->result_nodes[fctx->current_idx]);
-		values[1] = Int32GetDatum(fctx->result_discovery[fctx->current_idx]);
-		values[2] = Int32GetDatum(fctx->result_finish[fctx->current_idx]);
-		values[3] = Int32GetDatum(fctx->result_parents[fctx->current_idx]);
+		fctx = (dfs_fctx *)funcctx->user_fctx;
 
-		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
-		fctx->current_idx++;
-		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		if (fctx->current_idx < fctx->result_count)
+		{
+			values[0] = Int32GetDatum(fctx->result_nodes[fctx->current_idx]);
+			values[1] = Int32GetDatum(fctx->result_discovery[fctx->current_idx]);
+			values[2] = Int32GetDatum(fctx->result_finish[fctx->current_idx]);
+			values[3] = Int32GetDatum(fctx->result_parents[fctx->current_idx]);
+
+			tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+			fctx->current_idx++;
+			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 		}
 	}
 
@@ -596,21 +601,23 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
-	funcctx = SRF_PERCALL_SETUP();
-	fctx = (pagerank_fctx *)funcctx->user_fctx;
-
-	if (fctx->current_idx < fctx->result_count)
+	if (SRF_PERCALL_SETUP())
 	{
-		Datum values[2];
-		bool nulls[2] = { false, false };
+		pagerank_fctx *fctx;
 		HeapTuple tuple;
+		Datum values[2];
+		bool nulls[2] = {false, false};
 
-		values[0] = Int32GetDatum(fctx->result_nodes[fctx->current_idx]);
-		values[1] = Float8GetDatum(fctx->result_scores[fctx->current_idx]);
+		fctx = (pagerank_fctx *)funcctx->user_fctx;
 
-		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
-		fctx->current_idx++;
-		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		if (fctx->current_idx < fctx->result_count)
+		{
+			values[0] = Int32GetDatum(fctx->result_nodes[fctx->current_idx]);
+			values[1] = Float8GetDatum(fctx->result_scores[fctx->current_idx]);
+
+			tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+			fctx->current_idx++;
+			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 		}
 	}
 
@@ -645,7 +652,6 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 		GraphEdge *edges;
 		int32 i;
 		int32 iter;
-		int32 num_communities;
 		double total_edges;
 		double modularity;
 
@@ -766,22 +772,25 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
-	funcctx = SRF_PERCALL_SETUP();
-	fctx = (community_fctx *)funcctx->user_fctx;
-
-	if (fctx->current_idx < fctx->result_count)
+	if (SRF_PERCALL_SETUP())
 	{
-		Datum values[3];
-		bool nulls[3] = { false, false, false };
+		community_fctx *fctx;
 		HeapTuple tuple;
+		Datum values[3];
+		bool nulls[3] = {false, false, false};
 
-		values[0] = Int32GetDatum(fctx->result_nodes[fctx->current_idx]);
-		values[1] = Int32GetDatum(fctx->result_communities[fctx->current_idx]);
-		values[2] = Float8GetDatum(fctx->result_modularity[fctx->current_idx]);
+		fctx = (community_fctx *)funcctx->user_fctx;
 
-		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
-		fctx->current_idx++;
-		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		if (fctx->current_idx < fctx->result_count)
+		{
+			values[0] = Int32GetDatum(fctx->result_nodes[fctx->current_idx]);
+			values[1] = Int32GetDatum(fctx->result_communities[fctx->current_idx]);
+			values[2] = Float8GetDatum(fctx->result_modularity[fctx->current_idx]);
+
+			tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+			fctx->current_idx++;
+			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		}
 	}
 
 	SRF_RETURN_DONE(funcctx);

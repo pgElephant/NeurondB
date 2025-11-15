@@ -24,8 +24,13 @@
 #include "access/htup_details.h"
 #include "access/relation.h"
 #include "access/genam.h"
+#include "access/amapi.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_index.h"
+#include "catalog/pg_am.h"
+#include "catalog/pg_namespace.h"
+#include "catalog/index.h"
+#include "utils/syscache.h"
 #include "storage/bufmgr.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
@@ -457,7 +462,24 @@ index_statistics(PG_FUNCTION_ARGS)
 	idx_name = text_to_cstring(index_name);
 
 	/* Look up index OID */
-	indexOid = get_relname_relid(idx_name, get_namespace_oid("public", false));
+	{
+		Oid namespaceOid;
+		HeapTuple nstuple;
+		Form_pg_namespace nsform;
+		
+		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetDatum("public"));
+		if (HeapTupleIsValid(nstuple))
+		{
+			nsform = (Form_pg_namespace) GETSTRUCT(nstuple);
+			namespaceOid = nsform->oid;
+			ReleaseSysCache(nstuple);
+			indexOid = get_relname_relid(idx_name, namespaceOid);
+		}
+		else
+		{
+			indexOid = InvalidOid;
+		}
+	}
 	if (!OidIsValid(indexOid))
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_OBJECT),
@@ -477,14 +499,18 @@ index_statistics(PG_FUNCTION_ARGS)
 	/* Get index type */
 	{
 		Oid amOid = indexRel->rd_rel->relam;
-		char *amName = get_am_name(amOid);
-		if (amName)
+		HeapTuple amtup;
+		Form_pg_am amform;
+		
+		amtup = SearchSysCache1(AMOID, ObjectIdGetDatum(amOid));
+		if (HeapTupleIsValid(amtup))
 		{
-			if (strcmp(amName, "hnsw") == 0)
+			amform = (Form_pg_am) GETSTRUCT(amtup);
+			if (strcmp(NameStr(amform->amname), "hnsw") == 0)
 				index_type = "hnsw";
-			else if (strcmp(amName, "ivfflat") == 0)
+			else if (strcmp(NameStr(amform->amname), "ivfflat") == 0)
 				index_type = "ivf";
-			pfree(amName);
+			ReleaseSysCache(amtup);
 		}
 	}
 
@@ -496,7 +522,7 @@ index_statistics(PG_FUNCTION_ARGS)
 
 	/* Get heap relation stats */
 	{
-		Oid heapOid = IndexGetRelation(indexOid, false);
+		Oid heapOid = indexRel->rd_index->indrelid;
 		if (OidIsValid(heapOid))
 		{
 			Relation heapRel = relation_open(heapOid, AccessShareLock);
@@ -577,7 +603,24 @@ index_health(PG_FUNCTION_ARGS)
 	idx_name = text_to_cstring(index_name);
 
 	/* Look up index OID */
-	indexOid = get_relname_relid(idx_name, get_namespace_oid("public", false));
+	{
+		Oid namespaceOid;
+		HeapTuple nstuple;
+		Form_pg_namespace nsform;
+		
+		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetDatum("public"));
+		if (HeapTupleIsValid(nstuple))
+		{
+			nsform = (Form_pg_namespace) GETSTRUCT(nstuple);
+			namespaceOid = nsform->oid;
+			ReleaseSysCache(nstuple);
+			indexOid = get_relname_relid(idx_name, namespaceOid);
+		}
+		else
+		{
+			indexOid = InvalidOid;
+		}
+	}
 	if (!OidIsValid(indexOid))
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_OBJECT),
@@ -668,7 +711,24 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 	idx_name = text_to_cstring(index_name);
 
 	/* Look up index OID */
-	indexOid = get_relname_relid(idx_name, get_namespace_oid("public", false));
+	{
+		Oid namespaceOid;
+		HeapTuple nstuple;
+		Form_pg_namespace nsform;
+		
+		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetDatum("public"));
+		if (HeapTupleIsValid(nstuple))
+		{
+			nsform = (Form_pg_namespace) GETSTRUCT(nstuple);
+			namespaceOid = nsform->oid;
+			ReleaseSysCache(nstuple);
+			indexOid = get_relname_relid(idx_name, namespaceOid);
+		}
+		else
+		{
+			indexOid = InvalidOid;
+		}
+	}
 	if (!OidIsValid(indexOid))
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_OBJECT),

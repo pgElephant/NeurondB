@@ -78,7 +78,7 @@ cluster_distance_average(float **data, ClusterNode *c1, ClusterNode *c2, int dim
 	double		sum = 0.0;
 	int			i;
 	int			j;
-
+#include "ml_gpu_registry.h"
 	for (i = 0; i < c1->size; i++)
 	{
 		for (j = 0; j < c2->size; j++)

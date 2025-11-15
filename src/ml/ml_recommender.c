@@ -1307,6 +1307,7 @@ recommend_hybrid(PG_FUNCTION_ARGS)
  *-------------------------------------------------------------------------
  */
 #include "neurondb_gpu_model.h"
+#include "ml_gpu_registry.h"
 
 void
 neurondb_gpu_register_recommender_model(void)

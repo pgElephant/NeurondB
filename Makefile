@@ -20,7 +20,9 @@ OBJS += \
 	src/vector/vector_distance.o \
 	src/vector/vector_types.o \
 	src/vector/vector_ops.o \
-	src/vector/vector_wal.o
+	src/vector/vector_wal.o \
+	src/vector/vector_sparse.o \
+	src/vector/vector_graph_ops.o \
 
 # Index access methods
 OBJS += \
@@ -32,6 +34,7 @@ OBJS += \
 	src/index/hnsw_am.o \
 	src/index/ivf_am.o \
 	src/index/opclass.o \
+	src/index/index_tuning.o \
 	src/index/index_validator.o \
 	src/index/index_cache.o
 

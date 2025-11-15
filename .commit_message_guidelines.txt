@@ -1,0 +1,27 @@
+PostgreSQL Commit Message Guidelines for NeurondB:
+
+1. First line (subject) must end with a period.
+
+2. Use paragraph style, not bullet points or lists.
+
+3. Do NOT mention specific file names in the commit message.
+
+4. Do NOT include merge/cherry-pick references (e.g., "Cherry-picked commit...", "Merge commit...").
+
+5. Do NOT include cleanup or coding standard messages (e.g., "C90 violation", "coding standard", "cleanup").
+
+6. Do NOT mention version compatibility (e.g., "PostgreSQL compatibility", "API changes").
+
+7. Do NOT include status statements (e.g., "All compilation errors resolved", "compiles correctly").
+
+8. Focus on WHAT was changed, not WHY (avoid explaining coding standards, compatibility reasons, etc.).
+
+9. Write in prose/paragraph form describing the changes clearly and concisely.
+
+Example format:
+Subject line ending with period.
+
+First paragraph describes the context or problem.
+Second paragraph describes the first set of changes.
+Third paragraph describes additional changes.
+Continue as needed for all changes.

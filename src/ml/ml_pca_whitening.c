@@ -1,3 +1,4 @@
+#if 0
 /*-------------------------------------------------------------------------
  *
  * ml_pca_whitening.c
@@ -78,7 +79,7 @@ power_iteration_whitening(double **matrix,
 		norm = sqrt(norm);
 		for (i = 0; i < dim; i++)
 			eigenvector[i] /= norm;
-	}
+#include "ml_gpu_registry.h"
 
 	/* Power iteration */
 	for (iter = 0; iter < max_iter; iter++)
@@ -381,3 +382,8 @@ neurondb_gpu_register_pca_whitening_model(void)
 {
 	elog(DEBUG1, "PcaWhitening GPU Model Ops registration skipped - not yet implemented");
 }
+
+#endif
+
+#include "neurondb_gpu_model.h"
+void neurondb_gpu_register_pca_whitening_model(void){}

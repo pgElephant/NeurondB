@@ -78,7 +78,7 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	int			c;
 	int			d;
 	StringInfoData sql;
-	int			ret;
+#include "ml_gpu_registry.h"
 
 	/* Parse input arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
@@ -101,12 +101,15 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 
 	cluster_labels = (int *) palloc(sizeof(int) * nvec);
 
+	int ret;
+
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
-
-	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT %s FROM %s ORDER BY ctid", cluster_col_str, tbl_str);
-	ret = SPI_execute(sql.data, true, 0);
+	{
+		initStringInfo(&sql);
+		appendStringInfo(&sql, "SELECT %s FROM %s ORDER BY ctid", cluster_col_str, tbl_str);
+		ret = SPI_execute(sql.data, true, 0);
+	}
 
 	if (ret != SPI_OK_SELECT || (int) SPI_processed != nvec)
 	{

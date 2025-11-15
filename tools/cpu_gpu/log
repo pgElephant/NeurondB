@@ -417,3 +417,5 @@
 2025-11-14 16:36:30.216 PKT [679563] LOG:  checkpoint starting: shutdown immediate
 2025-11-14 16:36:30.229 PKT [679563] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.006 s, total=0.014 s; sync files=4, longest=0.006 s, average=0.002 s; distance=8 kB, estimate=8 kB; lsn=41/E7FD5D58, redo lsn=41/E7FD5D58
 2025-11-14 16:36:30.251 PKT [679559] LOG:  database system is shut down
+2025-11-15 10:58:12.595 PKT [916769] FATAL:  could not load library "/usr/local/pgsql.18/lib/neurondb.so": /usr/local/pgsql.18/lib/neurondb.so: undefined symbol: fp16_to_float
+2025-11-15 10:58:12.595 PKT [916769] LOG:  database system is shut down

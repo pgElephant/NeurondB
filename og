@@ -1,0 +1,592 @@
+2025-11-15 12:35:25.507 PKT [990797] LOG:  neurondb: initializing background workers
+2025-11-15 12:35:25.514 PKT [990797] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-15 12:35:25.514 PKT [990797] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-15 12:35:25.514 PKT [990797] LOG:  neurondb: registered neuranq background worker
+2025-11-15 12:35:25.514 PKT [990797] LOG:  neurondb: registered neuranmon background worker
+2025-11-15 12:35:25.514 PKT [990797] LOG:  neurondb: registered neurandefrag background worker
+2025-11-15 12:35:25.514 PKT [990797] LOG:  neurondb: registered neuranllm background worker
+2025-11-15 12:35:25.514 PKT [990797] LOG:  neurondb: all background workers registered successfully
+2025-11-15 12:35:25.542 PKT [990797] LOG:  neurondb: shared memory initialized for all workers
+2025-11-15 12:35:25.543 PKT [990797] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-15 12:35:25.543 PKT [990797] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-15 12:35:25.544 PKT [990797] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-15 12:35:25.549 PKT [990803] LOG:  database system was shut down at 2025-11-15 12:35:25 PKT
+2025-11-15 12:35:25.561 PKT [990797] LOG:  database system is ready to accept connections
+2025-11-15 12:35:25.565 PKT [990807] LOG:  neurondb: neurandefrag worker started (PID 990807)
+2025-11-15 12:35:25.573 PKT [990806] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-15 12:35:25.573 PKT [990809] LOG:  neurondb: neuranq worker started (PID 990809)
+2025-11-15 12:35:25.574 PKT [990808] LOG:  neurondb: neuranmon worker started (PID 990808)
+2025-11-15 12:35:25.578 PKT [990808] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-15 12:35:31.597 PKT [990801] LOG:  checkpoint starting: immediate force wait
+2025-11-15 12:35:31.606 PKT [990801] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.001 s, total=0.009 s; sync files=4, longest=0.001 s, average=0.001 s; distance=6 kB, estimate=6 kB; lsn=41/F36613D8, redo lsn=41/F3661380
+2025-11-15 12:35:31.607 PKT [990808] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-15 12:35:31.847 PKT [990808] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-15 12:36:06.072 PKT [991035] ERROR:  canceling statement due to user request
+2025-11-15 12:36:06.072 PKT [991035] CONTEXT:  SQL statement "INSERT INTO neurondb.ml_projects  (project_name, model_type, description) VALUES ($1, $2::neurondb.ml_model_type, $3) ON CONFLICT (project_name) DO UPDATE   SET updated_at = NOW() RETURNING project_id"
+	PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 47 at RETURN
+2025-11-15 12:36:06.072 PKT [991035] STATEMENT:  CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'random_forest',
+		'sample_train',
+		'features',
+		'label',
+		'{}'::jsonb
+	)::integer AS model_id;
+2025-11-15 12:36:06.073 PKT [991035] LOG:  could not send data to client: Broken pipe
+2025-11-15 12:36:06.073 PKT [991035] STATEMENT:  CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'random_forest',
+		'sample_train',
+		'features',
+		'label',
+		'{}'::jsonb
+	)::integer AS model_id;
+2025-11-15 12:36:06.075 PKT [991035] FATAL:  connection to client lost
+2025-11-15 12:36:31.910 PKT [990808] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-15 12:37:26.218 PKT [992930] ERROR:  column "features" does not exist at character 8
+2025-11-15 12:37:26.218 PKT [992930] QUERY:  SELECT features, label FROM sample_train WHERE features IS NOT NULL AND label IS NOT NULL
+2025-11-15 12:37:26.218 PKT [992930] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 78 at RETURN
+2025-11-15 12:37:26.218 PKT [992930] STATEMENT:  CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'linear_regression',
+		'sample_train',
+		'features',
+		'label',
+		'{}'::jsonb
+	)::integer AS model_id;
+2025-11-15 12:37:31.973 PKT [990808] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-15 12:38:32.072 PKT [990808] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-15 12:39:20.364 PKT [993515] ERROR:  lr_dataset_load: binary target required (0 or 1)
+2025-11-15 12:39:20.364 PKT [993515] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 58 at RETURN
+2025-11-15 12:39:20.364 PKT [993515] STATEMENT:  CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'logistic_regression',
+		'sample_train',
+		'features',
+		'label',
+		'{"max_iters": 1000, "learning_rate": 0.01, "lambda": 0.001}'::jsonb
+	)::integer AS model_id;
+2025-11-15 12:39:32.130 PKT [990808] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-15 12:40:00.028 PKT [993745] NOTICE:  neurondb: GPU acceleration enabled (lazy initialization)
+2025-11-15 12:40:00.029 PKT [993745] DEBUG:  relation "gpu_model_temp" does not exist
+2025-11-15 12:40:00.029 PKT [993745] NOTICE:  table "gpu_model_temp" does not exist, skipping
+2025-11-15 12:40:00.036 PKT [993745] DEBUG:  svm: label validation passed (class0=63, class1=37, first=0.000000, second=1.000000)
+2025-11-15 12:40:00.036 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 54 at RETURN
+2025-11-15 12:40:00.036 PKT [993745] DEBUG:  svm: using CPU training path (n_samples=100, feature_dim=10, C=1.000000, max_iters=1000)
+2025-11-15 12:40:00.036 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 54 at RETURN
+2025-11-15 12:40:00.036 PKT [993745] DEBUG:  svm: CPU training limits: actual_max_iters=1000, sample_limit=100, kernel_limit=100
+2025-11-15 12:40:00.036 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 54 at RETURN
+2025-11-15 12:40:00.036 PKT [993745] DEBUG:  svm: CPU SMO completed after 1 iterations, 0 support vectors
+2025-11-15 12:40:00.036 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 54 at RETURN
+2025-11-15 12:40:00.036 PKT [993745] DEBUG:  svm: building model with n_features=10, n_samples=100, sv_count=0
+2025-11-15 12:40:00.036 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 54 at RETURN
+2025-11-15 12:40:00.036 PKT [993745] WARNING:  svm: no support vectors found, using default model with single support vector
+2025-11-15 12:40:00.036 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 54 at RETURN
+2025-11-15 12:40:00.036 PKT [993745] DEBUG:  svm: serializing model with n_features=10, n_support_vectors=1
+2025-11-15 12:40:00.036 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 54 at RETURN
+2025-11-15 12:40:00.036 PKT [993745] DEBUG:  ml_catalog_register_model: received metrics: {"C": 1.000000, "bias": 0.000000, "accuracy": 0.370000, "algorithm": "svm", "max_iters": 1000, "n_samples": 100, "n_features": 10, "actual_iters": 1, "n_support_vectors": 1}
+2025-11-15 12:40:00.036 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 54 at RETURN
+2025-11-15 12:40:00.039 PKT [993745] DEBUG:  svm: CPU training completed, model_id=4
+2025-11-15 12:40:00.039 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 54 at RETURN
+2025-11-15 12:40:00.077 PKT [993745] DEBUG:  probing availability of JIT provider at /usr/local/pgsql.18/lib/llvmjit.so
+2025-11-15 12:40:00.077 PKT [993745] DEBUG:  provider not available, disabling JIT for current session
+2025-11-15 12:40:00.198 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.198 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.198 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.198 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.198 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.198 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.198 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.198 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.199 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.199 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.199 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.199 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.199 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.199 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.199 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.199 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.199 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.199 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.199 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.199 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.199 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.199 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.199 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.199 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.200 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.200 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.200 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.200 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.200 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.200 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.200 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.200 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.200 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.200 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.200 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.200 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.200 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.200 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.200 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.200 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+2025-11-15 12:40:00.202 PKT [993745] DEBUG:  building index "pg_toast_1108686_index" on table "pg_toast_1108686" serially
+2025-11-15 12:40:00.202 PKT [993745] DEBUG:  index "pg_toast_1108686_index" can safely use deduplication
+2025-11-15 12:40:00.405 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.405 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.405 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.405 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.405 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.405 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.405 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.405 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.405 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.405 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.406 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.406 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.406 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.406 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.406 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.406 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.406 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.406 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.406 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.406 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.406 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.406 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.406 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.406 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.406 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.406 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.407 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.407 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.407 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.407 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.407 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.407 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.407 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.407 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.407 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.407 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.407 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.407 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:00.407 PKT [993745] DEBUG:  svm: GPU prediction failed or not available, trying CPU
+2025-11-15 12:40:00.407 PKT [993745] CONTEXT:  PL/pgSQL function neurondb.predict(integer,vector) line 25 at RETURN
+	SQL statement "WITH predictions AS (
+						SELECT 
+							CASE WHEN neurondb.predict('4', features) >= 0.5 THEN 1 ELSE 0 END AS pred,
+							label::int AS actual
+						FROM sample_test
+					)
+					SELECT 
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+						COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+						COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+					FROM predictions"
+	PL/pgSQL function neurondb.evaluate(integer,text,text,text) line 150 at EXECUTE
+	PL/pgSQL function inline_code_block line 7 at assignment
+2025-11-15 12:40:31.616 PKT [990801] LOG:  checkpoint starting: time
+2025-11-15 12:40:32.229 PKT [990808] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-15 12:40:32.362 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'Machine learning in databases is powerful', returning zero vector
+2025-11-15 12:40:32.873 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'Machine learning in databases is powerful', returning zero vector
+2025-11-15 12:40:33.392 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL extensions enable ML capabilities', returning zero vector
+2025-11-15 12:40:34.002 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL extensions enable ML capabilities', returning zero vector
+2025-11-15 12:40:34.602 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'Vector search with HNSW indexes is fast', returning zero vector
+2025-11-15 12:40:35.186 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'Vector search with HNSW indexes is fast', returning zero vector
+2025-11-15 12:40:35.838 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL is a powerful open-source relational database management system. It provides advanced features including ACID compliance, full-text search, and extensibility through extensions.', returning zero vector
+2025-11-15 12:40:36.547 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:40:37.058 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'NeuronDB extends PostgreSQL with vector search, machine learning inference, and RAG pipeline support. This enables building AI-powered applications directly within the database.', returning zero vector
+2025-11-15 12:40:37.643 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:40:38.158 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'Vector search enables semantic similarity queries. HNSW indexes provide fast approximate nearest neighbor search for high-dimensional vectors.', returning zero vector
+2025-11-15 12:40:38.692 PKT [993899] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:40:38.935 PKT [993917] LOG:  neurondb: selected GPU backend: CUDA
+2025-11-15 12:40:38.935 PKT [993917] STATEMENT:  SELECT 
+		vector_l2_distance_gpu('[1,2,3]'::vector, '[4,5,6]'::vector) AS gpu_l2_distance,
+		vector_cosine_distance_gpu('[1,2,3]'::vector, '[4,5,6]'::vector) AS gpu_cosine_distance;
+2025-11-15 12:40:38.935 PKT [993917] LOG:  neurondb: GPU backend CUDA (NVIDIA) initialized on device 0
+2025-11-15 12:40:38.935 PKT [993917] STATEMENT:  SELECT 
+		vector_l2_distance_gpu('[1,2,3]'::vector, '[4,5,6]'::vector) AS gpu_l2_distance,
+		vector_cosine_distance_gpu('[1,2,3]'::vector, '[4,5,6]'::vector) AS gpu_cosine_distance;
+2025-11-15 12:40:39.929 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL is a powerful open-source relational database management system', returning zero vector
+2025-11-15 12:40:40.577 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'Machine learning algorithms learn patterns from data to make predictions', returning zero vector
+2025-11-15 12:40:41.262 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'Vector databases enable semantic similarity search using embeddings', returning zero vector
+2025-11-15 12:40:41.976 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'GPU acceleration speeds up parallel processing tasks significantly', returning zero vector
+2025-11-15 12:40:42.767 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'Database systems store and manage structured data efficiently', returning zero vector
+2025-11-15 12:40:43.259 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:40:43.792 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:40:44.436 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:40:44.891 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:40:45.383 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:40:45.886 PKT [993930] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:40:46.353 PKT [993953] ERROR:  NULL vector in first row
+2025-11-15 12:40:46.353 PKT [993953] CONTEXT:  SQL statement "SELECT train_gmm_model_id('sample_train'::text, 'features'::text, 3, 100)"
+	PL/pgSQL function neurondb.train(text,text,text,text,jsonb) line 20 at RETURN
+2025-11-15 12:40:46.353 PKT [993953] STATEMENT:  CREATE TEMP TABLE gpu_model_temp AS
+	SELECT neurondb.train(
+		'gmm',
+		'sample_train',
+		'features',
+		NULL,
+		'{"k": 3, "max_iters": 100}'::jsonb
+	)::integer AS model_id;
+2025-11-15 12:41:04.588 PKT [994088] ERROR:  syntax error at or near "FROM" at character 127
+2025-11-15 12:41:04.588 PKT [994088] STATEMENT:  UPDATE sample_train SET features = ('[' || string_agg((random() * 10 - 5)::text, ',') || ']')::vector 
+	WHERE features IS NULL
+	FROM generate_series(1, 10) AS dim
+	GROUP BY sample_train.ctid;
+2025-11-15 12:41:10.246 PKT [994128] WARNING:  transaction left non-empty SPI stack
+2025-11-15 12:41:10.246 PKT [994128] HINT:  Check for missing "SPI_finish" calls.
+2025-11-15 12:41:32.287 PKT [990808] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-15 12:41:40.163 PKT [994300] WARNING:  svm: no support vectors found, using default model with single support vector
+2025-11-15 12:41:40.163 PKT [994300] CONTEXT:  SQL statement "SELECT train_svm_classifier('sample_train', 'features', 'label', 1.000000, 1000)"
+	SQL statement "SELECT neurondb.train('default', 'svm', 'sample_train', 'label', ARRAY['features']::text[], '{}'::jsonb)::integer"
+2025-11-15 12:41:40.180 PKT [994300] WARNING:  auto_train: Could not find metric 'accuracy' for knn, using default score
+2025-11-15 12:41:40.198 PKT [994300] WARNING:  auto_train: Could not find metric 'r2' for ridge, using default score
+2025-11-15 12:41:40.207 PKT [994300] WARNING:  auto_train: Could not find metric 'r2' for lasso, using default score
+2025-11-15 12:41:40.215 PKT [994300] WARNING:  auto_train: Could not find metric 'r2' for decision_tree, using default score
+2025-11-15 12:41:40.221 PKT [994300] WARNING:  auto_train: Could not find metric 'r2' for random_forest, using default score
+2025-11-15 12:41:40.256 PKT [994300] WARNING:  svm: no support vectors found, using default model with single support vector
+2025-11-15 12:41:40.256 PKT [994300] CONTEXT:  SQL statement "SELECT train_svm_classifier('sample_train', 'features', 'label', 1.000000, 1000)"
+	SQL statement "SELECT neurondb.train('default', 'svm', 'sample_train', 'label', ARRAY['features']::text[], '{}'::jsonb)::integer"
+2025-11-15 12:41:40.272 PKT [994300] WARNING:  auto_train: Could not find metric 'f1' for knn, using default score
+2025-11-15 12:41:40.293 PKT [994300] WARNING:  auto_train: Could not find metric 'mse' for ridge, using default score
+2025-11-15 12:41:40.301 PKT [994300] WARNING:  auto_train: Could not find metric 'mse' for lasso, using default score
+2025-11-15 12:41:40.311 PKT [994300] WARNING:  auto_train: Could not find metric 'mse' for decision_tree, using default score
+2025-11-15 12:41:40.316 PKT [994300] WARNING:  auto_train: Could not find metric 'mse' for random_forest, using default score
+2025-11-15 12:42:32.362 PKT [990808] LOG:  neurondb: tuned ef_search=385 (latency=0.00ms, recall=0.000)
+2025-11-15 12:43:32.461 PKT [990808] LOG:  neurondb: tuned ef_search=462 (latency=0.00ms, recall=0.000)
+2025-11-15 12:44:28.466 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'Machine learning in databases is powerful', returning zero vector
+2025-11-15 12:44:28.982 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'Machine learning in databases is powerful', returning zero vector
+2025-11-15 12:44:29.501 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL extensions enable ML capabilities', returning zero vector
+2025-11-15 12:44:29.906 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL extensions enable ML capabilities', returning zero vector
+2025-11-15 12:44:30.341 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'Vector search with HNSW indexes is fast', returning zero vector
+2025-11-15 12:44:30.903 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'Vector search with HNSW indexes is fast', returning zero vector
+2025-11-15 12:44:31.329 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL is a powerful open-source relational database management system. It provides advanced features including ACID compliance, full-text search, and extensibility through extensions.', returning zero vector
+2025-11-15 12:44:31.858 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:44:32.282 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'NeuronDB extends PostgreSQL with vector search, machine learning inference, and RAG pipeline support. This enables building AI-powered applications directly within the database.', returning zero vector
+2025-11-15 12:44:32.561 PKT [990808] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-15 12:44:32.704 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:44:33.131 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'Vector search enables semantic similarity queries. HNSW indexes provide fast approximate nearest neighbor search for high-dimensional vectors.', returning zero vector
+2025-11-15 12:44:33.599 PKT [994780] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:44:39.221 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL is a powerful open-source relational database management system', returning zero vector
+2025-11-15 12:44:39.787 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'Machine learning algorithms learn patterns from data to make predictions', returning zero vector
+2025-11-15 12:44:40.358 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'Vector databases enable semantic similarity search using embeddings', returning zero vector
+2025-11-15 12:44:40.973 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'GPU acceleration speeds up parallel processing tasks significantly', returning zero vector
+2025-11-15 12:44:41.489 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'Database systems store and manage structured data efficiently', returning zero vector
+2025-11-15 12:44:41.996 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:44:42.814 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:44:43.346 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:44:43.755 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:44:44.183 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:44:44.659 PKT [994832] WARNING:  neurondb: embed_text() failed for input: 'database systems', returning zero vector
+2025-11-15 12:45:01.105 PKT [990801] LOG:  checkpoint complete: wrote 3865 buffers (1.5%), wrote 28 SLRU buffers; 0 WAL file(s) added, 0 removed, 2 recycled; write=269.440 s, sync=0.009 s, total=269.489 s; sync files=507, longest=0.001 s, average=0.001 s; distance=38654 kB, estimate=38654 kB; lsn=41/F620FA18, redo lsn=41/F5C20BA8
+2025-11-15 12:45:32.624 PKT [990808] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-15 12:46:32.723 PKT [990808] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-15 12:47:32.625 PKT [997012] WARNING:  neurondb: embed_text() failed for input: 'test', returning zero vector
+2025-11-15 12:47:32.784 PKT [990808] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-15 12:48:01.083 PKT [997161] WARNING:  neurondb: embed_text() failed for input: 'test', returning zero vector
+2025-11-15 12:48:08.436 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'Machine learning in databases is powerful', returning zero vector
+2025-11-15 12:48:08.874 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'Machine learning in databases is powerful', returning zero vector
+2025-11-15 12:48:09.361 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL extensions enable ML capabilities', returning zero vector
+2025-11-15 12:48:09.873 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL extensions enable ML capabilities', returning zero vector
+2025-11-15 12:48:10.337 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'Vector search with HNSW indexes is fast', returning zero vector
+2025-11-15 12:48:10.895 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'Vector search with HNSW indexes is fast', returning zero vector
+2025-11-15 12:48:11.509 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL is a powerful open-source relational database management system. It provides advanced features including ACID compliance, full-text search, and extensibility through extensions.', returning zero vector
+2025-11-15 12:48:11.930 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:48:12.454 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'NeuronDB extends PostgreSQL with vector search, machine learning inference, and RAG pipeline support. This enables building AI-powered applications directly within the database.', returning zero vector
+2025-11-15 12:48:12.892 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:48:13.343 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'Vector search enables semantic similarity queries. HNSW indexes provide fast approximate nearest neighbor search for high-dimensional vectors.', returning zero vector
+2025-11-15 12:48:13.866 PKT [997204] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:48:32.854 PKT [990808] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-15 12:48:47.713 PKT [998896] WARNING:  neurondb: embed_text() failed for input: 'test', returning zero vector
+2025-11-15 12:48:54.620 PKT [999000] WARNING:  neurondb: embed_text() failed for input: 'test', returning zero vector
+2025-11-15 12:49:00.775 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'Machine learning in databases is powerful', returning zero vector
+2025-11-15 12:49:01.276 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'Machine learning in databases is powerful', returning zero vector
+2025-11-15 12:49:01.728 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL extensions enable ML capabilities', returning zero vector
+2025-11-15 12:49:02.197 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL extensions enable ML capabilities', returning zero vector
+2025-11-15 12:49:02.722 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'Vector search with HNSW indexes is fast', returning zero vector
+2025-11-15 12:49:03.262 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'Vector search with HNSW indexes is fast', returning zero vector
+2025-11-15 12:49:03.737 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'PostgreSQL is a powerful open-source relational database management system. It provides advanced features including ACID compliance, full-text search, and extensibility through extensions.', returning zero vector
+2025-11-15 12:49:04.167 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:49:04.759 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'NeuronDB extends PostgreSQL with vector search, machine learning inference, and RAG pipeline support. This enables building AI-powered applications directly within the database.', returning zero vector
+2025-11-15 12:49:05.274 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:49:05.698 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'Vector search enables semantic similarity queries. HNSW indexes provide fast approximate nearest neighbor search for high-dimensional vectors.', returning zero vector
+2025-11-15 12:49:06.119 PKT [999041] WARNING:  neurondb: embed_text() failed for input: 'What is PostgreSQL?', returning zero vector
+2025-11-15 12:49:18.840 PKT [990797] LOG:  received fast shutdown request
+2025-11-15 12:49:18.877 PKT [990797] LOG:  aborting any active transactions
+2025-11-15 12:49:18.877 PKT [990807] LOG:  neurondb: neurandefrag worker shutting down (PID 990807)
+2025-11-15 12:49:18.877 PKT [990809] LOG:  neurondb: neuranq worker shutting down
+2025-11-15 12:49:18.877 PKT [990806] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-15 12:49:18.877 PKT [990808] LOG:  neurondb: neuranmon worker shutting down
+2025-11-15 12:49:18.887 PKT [990797] LOG:  background worker "logical replication launcher" (PID 990810) exited with exit code 1
+2025-11-15 12:49:18.889 PKT [990801] LOG:  shutting down
+2025-11-15 12:49:18.890 PKT [990801] LOG:  checkpoint starting: shutdown immediate
+2025-11-15 12:49:18.906 PKT [990801] LOG:  checkpoint complete: wrote 201 buffers (0.1%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 1 recycled; write=0.011 s, sync=0.004 s, total=0.017 s; sync files=72, longest=0.003 s, average=0.001 s; distance=6078 kB, estimate=35396 kB; lsn=41/F6210660, redo lsn=41/F6210660
+2025-11-15 12:49:18.939 PKT [990797] LOG:  database system is shut down

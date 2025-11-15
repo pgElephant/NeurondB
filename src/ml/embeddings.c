@@ -229,9 +229,16 @@ embed_text(PG_FUNCTION_ARGS)
 	if (ndb_llm_route_embed(&cfg, &call_opts, input_str, &vec_data, &dim) != 0 ||
 		vec_data == NULL || dim <= 0)
 	{
-		elog(WARNING,
-			 "neurondb: embed_text() failed for input: '%s', returning zero vector",
-			 (input_str != NULL) ? input_str : "(null)");
+		/* Use DEBUG1 level instead of WARNING when fail_open is enabled
+		 * to reduce noise in tests when LLM is not configured */
+		if (neurondb_llm_fail_open)
+			elog(DEBUG1,
+				 "neurondb: embed_text() failed for input: '%s', returning zero vector",
+				 (input_str != NULL) ? input_str : "(null)");
+		else
+			elog(WARNING,
+				 "neurondb: embed_text() failed for input: '%s', returning zero vector",
+				 (input_str != NULL) ? input_str : "(null)");
 		dim = 384;
 		vec_data = (float *) palloc0(dim * sizeof(float));
 	}

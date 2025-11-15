@@ -49,13 +49,6 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 	int32 chunk_size;
 	int32 overlap;
 	text *separator_text;
-
-	if (PG_NARGS() < 1 || PG_NARGS() > 4)
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_chunk_text: expected 1-4 arguments, got %d",
-					PG_NARGS())));
-
 	char *input_str;
 	char *separator;
 	int input_len;
@@ -63,12 +56,18 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 	Datum *chunk_datums;
 	ArrayType *result_array;
 	int i, start, end, chunk_len;
+	int max_chunks;
+
+	if (PG_NARGS() < 1 || PG_NARGS() > 4)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb_chunk_text: expected 1-4 arguments, got %d",
+					PG_NARGS())));
 
 	input_text = PG_GETARG_TEXT_PP(0);
 	chunk_size = PG_ARGISNULL(1) ? 512 : PG_GETARG_INT32(1);
 	overlap = PG_ARGISNULL(2) ? 128 : PG_GETARG_INT32(2);
 	separator_text = PG_ARGISNULL(3) ? NULL : PG_GETARG_TEXT_PP(3);
-	int max_chunks;
 
 	/* Convert input and separator to C string */
 	input_str = text_to_cstring(input_text);
@@ -166,12 +165,6 @@ neurondb_embed_text(PG_FUNCTION_ARGS)
 	text *input_text;
 	bool use_gpu;
 
-	if (PG_NARGS() < 2 || PG_NARGS() > 3)
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_embed_text: expected 2-3 arguments, got %d",
-					PG_NARGS())));
-
 	char *model_name;
 	char *input_str;
 	int input_len;
@@ -180,6 +173,12 @@ neurondb_embed_text(PG_FUNCTION_ARGS)
 	Vector *result;
 	uint32 hash = 5381;
 	int i;
+
+	if (PG_NARGS() < 2 || PG_NARGS() > 3)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb_embed_text: expected 2-3 arguments, got %d",
+					PG_NARGS())));
 
 	model_text = PG_GETARG_TEXT_PP(0);
 	input_text = PG_GETARG_TEXT_PP(1);
@@ -393,12 +392,6 @@ neurondb_rank_documents(PG_FUNCTION_ARGS)
 	ArrayType *documents_array;
 	text *algorithm_text;
 
-	if (PG_NARGS() < 2 || PG_NARGS() > 3)
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_rank_documents: expected 2-3 arguments, got %d",
-					PG_NARGS())));
-
 	char *query;
 	char *algorithm;
 	int ndims, nelems, *dims;
@@ -406,11 +399,17 @@ neurondb_rank_documents(PG_FUNCTION_ARGS)
 	bool *elem_nulls;
 	doc_with_score *ranklist;
 	int i, limit = 10, count = 0;
+	StringInfoData json_result;
+
+	if (PG_NARGS() < 2 || PG_NARGS() > 3)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb_rank_documents: expected 2-3 arguments, got %d",
+					PG_NARGS())));
 
 	query_text = PG_GETARG_TEXT_PP(0);
 	documents_array = PG_GETARG_ARRAYTYPE_P(1);
 	algorithm_text = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
-	StringInfoData json_result;
 
 	query = text_to_cstring(query_text);
 	algorithm = algorithm_text ? text_to_cstring(algorithm_text)
@@ -500,12 +499,6 @@ neurondb_transform_data(PG_FUNCTION_ARGS)
 	text *pipeline_text;
 	ArrayType *input_array;
 
-	if (PG_NARGS() != 2)
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_transform_data: expected 2 arguments, got %d",
-					PG_NARGS())));
-
 	char *pipeline_name;
 	int ndims, nelems, *dims;
 	Oid element_type;
@@ -513,13 +506,19 @@ neurondb_transform_data(PG_FUNCTION_ARGS)
 	bool *elem_nulls = NULL;
 	float8 *transformed_data;
 	Datum *result_datums;
-
-	pipeline_text = PG_GETARG_TEXT_PP(0);
-	input_array = PG_GETARG_ARRAYTYPE_P(1);
 	ArrayType *result_array;
 	int i;
 	float8 sum = 0.0, sum_sq = 0.0, min_v = DBL_MAX, max_v = -DBL_MAX, mean,
 	       stddev, range;
+
+	if (PG_NARGS() != 2)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb_transform_data: expected 2 arguments, got %d",
+					PG_NARGS())));
+
+	pipeline_text = PG_GETARG_TEXT_PP(0);
+	input_array = PG_GETARG_ARRAYTYPE_P(1);
 
 	pipeline_name = text_to_cstring(pipeline_text);
 

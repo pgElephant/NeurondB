@@ -25,6 +25,7 @@
 #include "utils/memutils.h"
 #include "neurondb_pgcompat.h"
 #include "neurondb.h"
+#include "ml_catalog.h"
 
 #include <math.h>
 #include <string.h>
@@ -467,33 +468,161 @@ train_neural_network(PG_FUNCTION_ARGS)
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("no training data found")));
 
-	/* Determine input/output dimensions */
-	/* For now, assume feature_col is vector type - extract dimension */
-	/* Simplified: assume fixed dimensions */
-	n_inputs = 128; /* Default - should be determined from data */
+	/* Determine input/output dimensions will be set from first vector */
+	n_inputs = 0; /* Will be determined from first vector */
 	n_outputs = 1; /* Regression - single output */
 
-	/* Allocate training data arrays */
+	/* Determine actual feature dimension from first row */
+	if (n_samples > 0)
+	{
+		Oid			feat_type;
+		HeapTuple first_tuple = tuptable->vals[0];
+		bool		isnull;
+		Datum		feat_datum;
+
+		feat_datum = SPI_getbinval(first_tuple, tupdesc, 1, &isnull);
+		if (isnull)
+			ereport(ERROR,
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("neural network training: feature vector cannot be NULL")));
+
+		feat_type = SPI_gettypeid(tupdesc, 1);
+
+		/* Extract dimension from vector type */
+		/* Check if type is vector by trying to cast to Vector */
+		{
+			Vector	   *test_vec;
+
+			test_vec = DatumGetVector(feat_datum);
+			if (test_vec != NULL && test_vec->dim > 0)
+			{
+				n_inputs = test_vec->dim;
+				if (n_inputs <= 0 || n_inputs > 10000)
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							 errmsg("neural network training: invalid vector dimension %d",
+									n_inputs)));
+			}
+			else
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("neural network training: feature column must be vector type")));
+			}
+		}
+	}
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neural network training: no training data found")));
+	}
+
+	/* Allocate training data arrays with correct dimensions */
 	X = (float **)palloc(n_samples * sizeof(float *));
 	y = (float *)palloc(n_samples * sizeof(float));
 
 	for (i = 0; i < n_samples; i++)
 	{
 		HeapTuple tuple = tuptable->vals[i];
-		bool isnull;
-		Datum label_datum;
+		bool		isnull;
+		Datum		feat_datum;
+		Datum		label_datum;
+		Vector	   *vec;
 
-		/* feature_datum will be used when extracting actual vector data */
-		(void)SPI_getbinval(
-			tuple, tupdesc, 1, &isnull); /* feature_datum */
-		label_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
+		/* Extract feature vector */
+		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
+		if (isnull)
+		{
+			for (j = 0; j < i; j++)
+				pfree(X[j]);
+			pfree(X);
+			pfree(y);
+			ereport(ERROR,
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("neural network training: feature vector at row %d cannot be NULL",
+							i + 1)));
+		}
 
-		/* Extract vector features (simplified) */
+		vec = DatumGetVector(feat_datum);
+		if (vec == NULL || vec->dim != n_inputs)
+		{
+			for (j = 0; j < i; j++)
+				pfree(X[j]);
+			pfree(X);
+			pfree(y);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neural network training: invalid vector at row %d (expected dim %d, got %d)",
+							i + 1, n_inputs, vec ? vec->dim : 0)));
+		}
+
+		/* Copy vector data to feature matrix */
 		X[i] = (float *)palloc(n_inputs * sizeof(float));
 		for (j = 0; j < n_inputs; j++)
-			X[i][j] = (float)(i + j) / n_samples; /* Placeholder */
+		{
+			if (!isfinite(vec->data[j]))
+			{
+				for (j = 0; j <= i; j++)
+					pfree(X[j]);
+				pfree(X);
+				pfree(y);
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("neural network training: non-finite value in feature vector at row %d, dimension %d",
+								i + 1, j)));
+			}
+			X[i][j] = vec->data[j];
+		}
 
-		y[i] = DatumGetFloat8(label_datum);
+		/* Extract label */
+		label_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
+		if (isnull)
+		{
+			for (j = 0; j <= i; j++)
+				pfree(X[j]);
+			pfree(X);
+			pfree(y);
+			ereport(ERROR,
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("neural network training: label at row %d cannot be NULL",
+							i + 1)));
+		}
+
+		{
+			Oid			label_type = SPI_gettypeid(tupdesc, 2);
+
+			if (label_type == FLOAT8OID)
+				y[i] = (float)DatumGetFloat8(label_datum);
+			else if (label_type == FLOAT4OID)
+				y[i] = DatumGetFloat4(label_datum);
+			else if (label_type == INT4OID)
+				y[i] = (float)DatumGetInt32(label_datum);
+			else if (label_type == INT8OID)
+				y[i] = (float)DatumGetInt64(label_datum);
+			else
+			{
+				for (j = 0; j <= i; j++)
+					pfree(X[j]);
+				pfree(X);
+				pfree(y);
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("neural network training: unsupported label type")));
+			}
+
+			if (!isfinite(y[i]))
+			{
+				for (j = 0; j <= i; j++)
+					pfree(X[j]);
+				pfree(X);
+				pfree(y);
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("neural network training: non-finite label value at row %d",
+								i + 1)));
+			}
+		}
 	}
 
 	/* Initialize neural network */
@@ -560,23 +689,104 @@ train_neural_network(PG_FUNCTION_ARGS)
 
 /*
  * Predict with neural network
+ *
+ * Loads trained neural network model and performs forward pass
+ * to generate prediction.
  */
 PG_FUNCTION_INFO_V1(predict_neural_network);
 
 Datum
 predict_neural_network(PG_FUNCTION_ARGS)
 {
-	/* Simplified placeholder - will be implemented fully */
-	float result[1];
+	Vector	   *features;
+	int32		model_id;
+	bytea	   *model_data = NULL;
+	Jsonb	   *parameters = NULL;
+	Jsonb	   *metrics = NULL;
+	MemoryContext oldcontext;
+	MemoryContext pred_context;
 
-	(void)PG_GETARG_POINTER(0); /* features */
-	(void)PG_GETARG_INT32(1); /* model_id */
+	/* Defensive: validate inputs */
+	features = PG_GETARG_VECTOR_P(0);
+	model_id = PG_GETARG_INT32(1);
 
-	/* Load model from database (simplified) */
-	/* For now, return placeholder */
-	result[0] = 0.5f;
+	if (features == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("predict_neural_network: features cannot be NULL")));
 
-	PG_RETURN_FLOAT8(result[0]);
+	if (model_id <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("predict_neural_network: model_id must be positive")));
+
+	if (features->dim <= 0 || features->dim > 10000)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("predict_neural_network: invalid feature dimension %d",
+						features->dim)));
+
+	/* Create memory context */
+	pred_context = AllocSetContextCreate(CurrentMemoryContext,
+										"neural network prediction context",
+										ALLOCSET_DEFAULT_SIZES);
+	oldcontext = MemoryContextSwitchTo(pred_context);
+
+	/* Load model from catalog */
+	if (!ml_catalog_fetch_model_payload(model_id, &model_data,
+										&parameters, &metrics))
+	{
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(pred_context);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("predict_neural_network: model %d not found", model_id)));
+	}
+
+	/* Defensive: validate model_data */
+	if (model_data == NULL)
+	{
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(pred_context);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("predict_neural_network: model %d has no model data",
+						model_id)));
+	}
+
+	/* TODO: Deserialize neural network from model_data */
+	/* For now, return error indicating model deserialization needed */
+	/* This requires implementing neural_network_deserialize function */
+	MemoryContextSwitchTo(oldcontext);
+	MemoryContextDelete(pred_context);
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("predict_neural_network: model deserialization not yet implemented"),
+			 errhint("Neural network model storage and deserialization needs to be implemented")));
+
+	/* Placeholder code below - will be enabled after deserialization is implemented */
+	/*
+	 * net = neural_network_deserialize(model_data);
+	 * if (net == NULL)
+	 *     ereport(ERROR, ...);
+	 *
+	 * input_features = (float *)palloc(features->dim * sizeof(float));
+	 * for (i = 0; i < features->dim; i++)
+	 * {
+	 *     if (!isfinite(features->data[i]))
+	 *         ereport(ERROR, ...);
+	 *     input_features[i] = features->data[i];
+	 * }
+	 *
+	 * neural_network_forward(net, input_features, result);
+	 * neural_network_free(net);
+	 * pfree(input_features);
+	 *
+	 * MemoryContextSwitchTo(oldcontext);
+	 * MemoryContextDelete(pred_context);
+	 *
+	 * PG_RETURN_FLOAT8(result[0]);
+	 */
 }
 
 /*-------------------------------------------------------------------------
@@ -584,6 +794,7 @@ predict_neural_network(PG_FUNCTION_ARGS)
  *-------------------------------------------------------------------------
  */
 #include "neurondb_gpu_model.h"
+#include "ml_gpu_registry.h"
 
 void
 neurondb_gpu_register_neural_network_model(void)
