@@ -22,6 +22,7 @@
 
 #include "postgres.h"
 #include "neurondb.h"
+#include "neurondb_types.h"
 #include "fmgr.h"
 #include "access/amapi.h"
 #include "access/generic_xlog.h"
@@ -36,6 +37,9 @@
 #include "utils/rel.h"
 #include "utils/varbit.h"
 #include "utils/lsyscache.h"
+#include "parser/parse_type.h"
+#include "nodes/parsenodes.h"
+#include "nodes/makefuncs.h"
 #include <math.h>
 #include <float.h>
 
@@ -109,16 +113,22 @@ ivfExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 	/* Type OIDs are cached at index build time in build state */
 	bitOid = BITOID; /* PostgreSQL built-in type */
 	
-	/* Get type OIDs - cache lookup (should be cached at index creation) */
-	vectorOid = GetSysCacheOid2(TYPENAMENSP,
-		CStringGetDatum("vector"),
-		ObjectIdGetDatum(get_namespace_oid("public", false)));
-	halfvecOid = GetSysCacheOid2(TYPENAMENSP,
-		CStringGetDatum("halfvec"),
-		ObjectIdGetDatum(get_namespace_oid("public", false)));
-	sparsevecOid = GetSysCacheOid2(TYPENAMENSP,
-		CStringGetDatum("sparsevec"),
-		ObjectIdGetDatum(get_namespace_oid("public", false)));
+	/* Get type OIDs - use LookupTypeNameOid for proper namespace lookup */
+	{
+		List *names;
+		
+		names = list_make2(makeString("public"), makeString("vector"));
+		vectorOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
+		list_free(names);
+		
+		names = list_make2(makeString("public"), makeString("halfvec"));
+		halfvecOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
+		list_free(names);
+		
+		names = list_make2(makeString("public"), makeString("sparsevec"));
+		sparsevecOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
+		list_free(names);
+	}
 
 	oldctx = MemoryContextSwitchTo(ctx);
 

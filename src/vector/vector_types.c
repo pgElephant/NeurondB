@@ -26,6 +26,7 @@
 #include <zlib.h>
 #include <ctype.h>
 #include <string.h>
+#include <math.h>
 
 /* Forward declarations for vecmap distance functions */
 extern Datum vecmap_l2_distance(PG_FUNCTION_ARGS);
@@ -701,8 +702,9 @@ sparsevec_hash(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < v->nnz && i < 16; i++)
 	{
+		int32 tmp;
 		hash = ((hash << 5) + hash) + (uint32)indices[i];
-		int32 tmp = (int32)(values[i] * 1000000.0f);
+		tmp = (int32)(values[i] * 1000000.0f);
 		hash = ((hash << 5) + hash) + (uint32)tmp;
 	}
 

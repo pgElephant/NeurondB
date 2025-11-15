@@ -24,6 +24,7 @@
 
 #include "postgres.h"
 #include "neurondb.h"
+#include "neurondb_types.h"
 #include "fmgr.h"
 #include "access/amapi.h"
 #include "access/generic_xlog.h"
@@ -34,6 +35,7 @@
 #include "catalog/index.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_namespace.h"
 #include "commands/vacuum.h"
 #include "miscadmin.h"
 #include "nodes/execnodes.h"
@@ -45,11 +47,13 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
+#include "utils/syscache.h"
+#include "utils/lsyscache.h"
+#include "parser/parse_type.h"
+#include "nodes/parsenodes.h"
+#include "nodes/makefuncs.h"
 #include "funcapi.h"
 #include "utils/varbit.h"
-#include "catalog/pg_type.h"
-#include "utils/lsyscache.h"
-#include "utils/typcache.h"
 #include <math.h>
 #include <float.h>
 
@@ -142,17 +146,22 @@ hnswExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 	/* TODO: Cache type OIDs in build state for better performance */
 	bitOid = BITOID; /* PostgreSQL built-in type */
 	
-	/* Get type OIDs - cache lookup (should be cached at index creation) */
-	/* Use GetSysCacheOid2 with proper namespace */
-	vectorOid = GetSysCacheOid2(TYPENAMENSP,
-		CStringGetDatum("vector"),
-		ObjectIdGetDatum(get_namespace_oid("public", false)));
-	halfvecOid = GetSysCacheOid2(TYPENAMENSP,
-		CStringGetDatum("halfvec"),
-		ObjectIdGetDatum(get_namespace_oid("public", false)));
-	sparsevecOid = GetSysCacheOid2(TYPENAMENSP,
-		CStringGetDatum("sparsevec"),
-		ObjectIdGetDatum(get_namespace_oid("public", false)));
+	/* Get type OIDs - use LookupTypeNameOid for proper namespace lookup */
+	{
+		List *names;
+		
+		names = list_make2(makeString("public"), makeString("vector"));
+		vectorOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
+		list_free(names);
+		
+		names = list_make2(makeString("public"), makeString("halfvec"));
+		halfvecOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
+		list_free(names);
+		
+		names = list_make2(makeString("public"), makeString("sparsevec"));
+		sparsevecOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
+		list_free(names);
+	}
 
 	oldctx = MemoryContextSwitchTo(ctx);
 
@@ -637,7 +646,7 @@ hnswrescan(IndexScanDesc scan,
 		MemoryContext oldctx;
 
 		/* Get query type from scan descriptor */
-		queryType = scan->indexRelation->rd_att->attrs[0].atttypid;
+		queryType = TupleDescAttr(scan->indexRelation->rd_att, 0)->atttypid;
 
 		/* Extract vector data (handles vector, halfvec, sparsevec, bit) */
 		oldctx = MemoryContextSwitchTo(scan->indexRelation->rd_indexcxt);

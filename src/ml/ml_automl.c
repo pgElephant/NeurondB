@@ -112,16 +112,16 @@ PG_FUNCTION_INFO_V1(auto_train);
 Datum
 auto_train(PG_FUNCTION_ARGS)
 {
-	text	   *table_name = PG_GETARG_TEXT_PP(0);
-	text	   *feature_col = PG_GETARG_TEXT_PP(1);
-	text	   *label_col = PG_GETARG_TEXT_PP(2);
-	text	   *task = PG_GETARG_TEXT_PP(3);
+	text	   *table_name = PG_ARGISNULL(0) ? NULL : PG_GETARG_TEXT_PP(0);
+	text	   *feature_col = PG_ARGISNULL(1) ? NULL : PG_GETARG_TEXT_PP(1);
+	text	   *label_col = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
+	text	   *task = PG_ARGISNULL(3) ? NULL : PG_GETARG_TEXT_PP(3);
 	text	   *metric_text = PG_ARGISNULL(4) ? NULL : PG_GETARG_TEXT_PP(4);
 
-	char	   *table_name_str = text_to_cstring(table_name);
-	char	   *feature_col_str = text_to_cstring(feature_col);
-	char	   *label_col_str = text_to_cstring(label_col);
-	char	   *task_str = text_to_cstring(task);
+	char	   *table_name_str;
+	char	   *feature_col_str;
+	char	   *label_col_str;
+	char	   *task_str;
 	char	   *metric;
 	MemoryContext oldcontext;
 	MemoryContext automl_context;
@@ -136,6 +136,29 @@ auto_train(PG_FUNCTION_ARGS)
 	ModelScore *scores = NULL;
 	int			ret;
 	bool		isnull;
+
+	/* Validate required parameters */
+	if (table_name == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("table_name cannot be NULL")));
+	if (feature_col == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("feature_col cannot be NULL")));
+	if (label_col == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("label_col cannot be NULL")));
+	if (task == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("task cannot be NULL")));
+
+	table_name_str = text_to_cstring(table_name);
+	feature_col_str = text_to_cstring(feature_col);
+	label_col_str = text_to_cstring(label_col);
+	task_str = text_to_cstring(task);
 
 	if (metric_text)
 		metric = text_to_cstring(metric_text);
@@ -207,7 +230,7 @@ auto_train(PG_FUNCTION_ARGS)
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
 						 "SELECT neurondb.train("
-						 "'automl_project', "
+						 "'default', "
 						 "'%s', "
 						 "'%s', "
 						 "'%s', "
@@ -295,7 +318,13 @@ auto_train(PG_FUNCTION_ARGS)
 
 				r = JsonbIteratorNext(&it, &v, false);
 
-				if (strcmp(key, metric) == 0 && v.type == jbvNumeric)
+				/* Handle metric name variations */
+				if ((strcmp(key, metric) == 0 ||
+					 (strcmp(metric, "f1_score") == 0 && strcmp(key, "f1") == 0) ||
+					 (strcmp(metric, "f1") == 0 && strcmp(key, "f1_score") == 0) ||
+					 (strcmp(metric, "r2") == 0 && strcmp(key, "r_squared") == 0) ||
+					 (strcmp(metric, "r_squared") == 0 && strcmp(key, "r2") == 0)) &&
+					v.type == jbvNumeric)
 				{
 					score = (float) DatumGetFloat8(
 						DirectFunctionCall1(numeric_float8,
@@ -328,6 +357,10 @@ auto_train(PG_FUNCTION_ARGS)
 					if (strcmp(metric, "r2") == 0 && strcmp(key, "r_squared") == 0)
 						matches_metric = true;
 					else if (strcmp(metric, "r_squared") == 0 && strcmp(key, "r2") == 0)
+						matches_metric = true;
+					else if (strcmp(metric, "f1_score") == 0 && strcmp(key, "f1") == 0)
+						matches_metric = true;
+					else if (strcmp(metric, "f1") == 0 && strcmp(key, "f1_score") == 0)
 						matches_metric = true;
 					else if (strcmp(key, metric) == 0)
 						matches_metric = true;
