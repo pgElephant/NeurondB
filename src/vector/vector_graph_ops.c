@@ -280,7 +280,7 @@ vgraph_bfs(PG_FUNCTION_ARGS)
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
-	if (SRF_PERCALL_SETUP())
+	funcctx = SRF_PERCALL_SETUP();
 	{
 		bfs_fctx *fctx;
 		HeapTuple tuple;
@@ -440,7 +440,7 @@ vgraph_dfs(PG_FUNCTION_ARGS)
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
-	if (SRF_PERCALL_SETUP())
+	funcctx = SRF_PERCALL_SETUP();
 	{
 		dfs_fctx *fctx;
 		HeapTuple tuple;
@@ -601,7 +601,7 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
-	if (SRF_PERCALL_SETUP())
+	funcctx = SRF_PERCALL_SETUP();
 	{
 		pagerank_fctx *fctx;
 		HeapTuple tuple;
@@ -772,7 +772,7 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
-	if (SRF_PERCALL_SETUP())
+	funcctx = SRF_PERCALL_SETUP();
 	{
 		community_fctx *fctx;
 		HeapTuple tuple;

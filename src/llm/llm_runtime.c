@@ -1788,14 +1788,16 @@ ndb_llm_rerank_batch(PG_FUNCTION_ARGS)
 				/* Unexpected dimension - treat as 1D array of arrays */
 handle_as_1d:
 				/* Handle as 1D array of arrays */
-				int nrows = ARR_DIMS(documents_arr)[0];
+				{
+					int nrows = ARR_DIMS(documents_arr)[0];
 
-				if (nrows != num_queries)
-					ereport(ERROR,
-						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("documents array size mismatch: expected %d rows, got %d",
-								num_queries,
-								nrows)));
+					if (nrows != num_queries)
+						ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+								errmsg("documents array size mismatch: expected %d rows, got %d",
+									num_queries,
+									nrows)));
+				}
 
 				/* Get element type of outer array for array_ref */
 				outer_elem_type = ARR_ELEMTYPE(documents_arr);

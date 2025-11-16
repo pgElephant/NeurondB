@@ -1,2 +1,0 @@
-2025-11-15 11:07:03.467 PKT [927641] FATAL:  could not load library "/usr/local/pgsql.18/lib/neurondb.so": /usr/local/pgsql.18/lib/neurondb.so: undefined symbol: vecmap_inner_product
-2025-11-15 11:07:03.467 PKT [927641] LOG:  database system is shut down

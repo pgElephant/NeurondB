@@ -78,6 +78,7 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	int			c;
 	int			d;
 	StringInfoData sql;
+	int			ret;
 #include "ml_gpu_registry.h"
 
 	/* Parse input arguments */
@@ -100,8 +101,6 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 				 errmsg("Need at least 2 vectors for DBI calculation")));
 
 	cluster_labels = (int *) palloc(sizeof(int) * nvec);
-
-	int ret;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -263,6 +262,8 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
  *-------------------------------------------------------------------------
  */
 #include "neurondb_gpu_model.h"
+/* Forward declaration to avoid missing-prototypes warning */
+void neurondb_gpu_register_davies_bouldin_model(void);
 
 void
 neurondb_gpu_register_davies_bouldin_model(void)

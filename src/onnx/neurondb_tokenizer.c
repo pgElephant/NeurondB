@@ -678,7 +678,7 @@ neurondb_hf_tokenize(PG_FUNCTION_ARGS)
 	bool *dnulls = NULL;
 	ArrayType *result;
 	int i;
-	Oid arg1_type;
+	Oid arg1_type = InvalidOid;
 
 	/* Determine which overloaded version based on argument types and count */
 	if (PG_NARGS() == 3)

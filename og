@@ -590,3 +590,136 @@
 2025-11-15 12:49:18.890 PKT [990801] LOG:  checkpoint starting: shutdown immediate
 2025-11-15 12:49:18.906 PKT [990801] LOG:  checkpoint complete: wrote 201 buffers (0.1%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 1 recycled; write=0.011 s, sync=0.004 s, total=0.017 s; sync files=72, longest=0.003 s, average=0.001 s; distance=6078 kB, estimate=35396 kB; lsn=41/F6210660, redo lsn=41/F6210660
 2025-11-15 12:49:18.939 PKT [990797] LOG:  database system is shut down
+2025-11-16 12:29:22.423 PKT [1150847] LOG:  neurondb: initializing background workers
+2025-11-16 12:29:22.430 PKT [1150847] LOG:  ONNX Runtime initialized for NeuronDB
+2025-11-16 12:29:22.430 PKT [1150847] DETAIL:  ONNX Runtime version: ONNX Runtime 1.17.0+
+2025-11-16 12:29:22.430 PKT [1150847] LOG:  neurondb: registered neuranq background worker
+2025-11-16 12:29:22.430 PKT [1150847] LOG:  neurondb: registered neuranmon background worker
+2025-11-16 12:29:22.430 PKT [1150847] LOG:  neurondb: registered neurandefrag background worker
+2025-11-16 12:29:22.430 PKT [1150847] LOG:  neurondb: registered neuranllm background worker
+2025-11-16 12:29:22.430 PKT [1150847] LOG:  neurondb: all background workers registered successfully
+2025-11-16 12:29:22.456 PKT [1150847] LOG:  neurondb: shared memory initialized for all workers
+2025-11-16 12:29:22.456 PKT [1150847] LOG:  starting PostgreSQL 18.0 on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0, 64-bit
+2025-11-16 12:29:22.457 PKT [1150847] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2025-11-16 12:29:22.458 PKT [1150847] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2025-11-16 12:29:22.463 PKT [1150853] LOG:  database system was shut down at 2025-11-16 12:29:22 PKT
+2025-11-16 12:29:22.472 PKT [1150847] LOG:  database system is ready to accept connections
+2025-11-16 12:29:22.474 PKT [1150857] LOG:  neurondb: neurandefrag worker started (PID 1150857)
+2025-11-16 12:29:22.481 PKT [1150859] LOG:  neurondb: neuranq worker started (PID 1150859)
+2025-11-16 12:29:22.485 PKT [1150858] LOG:  neurondb: neuranmon worker started (PID 1150858)
+2025-11-16 12:29:22.485 PKT [1150856] LOG:  neurondb: LLM worker started (all crashes handled)
+2025-11-16 12:29:22.489 PKT [1150858] LOG:  neurondb: tuned ef_search=76 (latency=0.00ms, recall=0.000)
+2025-11-16 12:29:27.257 PKT [1150885] ERROR:  could not find function "whiten_embeddings" in file "/usr/local/pgsql.18/lib/neurondb.so"
+2025-11-16 12:29:27.257 PKT [1150885] CONTEXT:  SQL statement "CREATE FUNCTION whiten_embeddings(text, text, double precision DEFAULT 1e-5)
+	    RETURNS real[][]
+	    AS '$libdir/neurondb', 'whiten_embeddings'
+	    LANGUAGE C STABLE STRICT"
+	extension script file "neurondb--1.0.sql", near line 1455
+2025-11-16 12:29:27.257 PKT [1150885] STATEMENT:  create extension neurondb 
+	;
+2025-11-16 12:30:22.498 PKT [1150858] LOG:  neurondb: tuned ef_search=91 (latency=0.00ms, recall=0.000)
+2025-11-16 12:31:22.560 PKT [1150858] LOG:  neurondb: tuned ef_search=109 (latency=0.00ms, recall=0.000)
+2025-11-16 12:31:37.459 PKT [1151793] ERROR:  could not find function "whiten_embeddings" in file "/usr/local/pgsql.18/lib/neurondb.so"
+2025-11-16 12:31:37.459 PKT [1151793] CONTEXT:  SQL statement "CREATE FUNCTION whiten_embeddings(text, text, double precision DEFAULT 1e-5)
+	    RETURNS real[][]
+	    AS '$libdir/neurondb', 'whiten_embeddings'
+	    LANGUAGE C STABLE STRICT"
+	extension script file "neurondb--1.0.sql", near line 1455
+2025-11-16 12:31:37.459 PKT [1151793] STATEMENT:  DROP EXTENSION IF EXISTS neurondb CASCADE; CREATE EXTENSION neurondb;
+2025-11-16 12:32:19.608 PKT [1151965] ERROR:  could not access file "/neurondb": No such file or directory
+2025-11-16 12:32:19.608 PKT [1151965] STATEMENT:  DROP FUNCTION IF EXISTS whiten_embeddings(text, text, double precision); CREATE FUNCTION whiten_embeddings(text, text, double precision) RETURNS real[][] AS '/neurondb', 'whiten_embeddings' LANGUAGE C STABLE STRICT; SELECT 'ok' as created;
+2025-11-16 12:32:22.647 PKT [1150858] LOG:  neurondb: tuned ef_search=130 (latency=0.00ms, recall=0.000)
+2025-11-16 12:32:38.959 PKT [1152032] ERROR:  could not find function "whiten_embeddings" in file "/usr/local/pgsql.18/lib/neurondb.so"
+2025-11-16 12:32:38.959 PKT [1152032] STATEMENT:  DROP FUNCTION IF EXISTS whiten_embeddings(text, text, double precision); CREATE FUNCTION whiten_embeddings(text, text, double precision) RETURNS real[][] AS '/usr/local/pgsql.18/lib/neurondb', 'whiten_embeddings' LANGUAGE C STABLE STRICT; SELECT 'ok' as created;
+2025-11-16 12:33:11.243 PKT [1152282] ERROR:  could not find function "whiten_embeddings" in file "/usr/local/pgsql.18/lib/neurondb.so"
+2025-11-16 12:33:11.243 PKT [1152282] STATEMENT:  DROP FUNCTION IF EXISTS whiten_embeddings(text, text, double precision); CREATE FUNCTION whiten_embeddings(text, text, double precision) RETURNS real[][] AS '/usr/local/pgsql.18/lib/neurondb', 'whiten_embeddings' LANGUAGE C STABLE STRICT; SELECT 'ok' as created;
+2025-11-16 12:33:22.678 PKT [1150858] LOG:  neurondb: tuned ef_search=156 (latency=0.00ms, recall=0.000)
+2025-11-16 12:34:22.562 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 12:34:22.777 PKT [1150858] LOG:  neurondb: tuned ef_search=187 (latency=0.00ms, recall=0.000)
+2025-11-16 12:34:37.584 PKT [1150851] LOG:  checkpoint complete: wrote 148 buffers (0.1%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=14.945 s, sync=0.038 s, total=15.022 s; sync files=59, longest=0.037 s, average=0.001 s; distance=1480 kB, estimate=1480 kB; lsn=43/71A9BD40, redo lsn=43/71A9B270
+2025-11-16 12:35:22.875 PKT [1150858] LOG:  neurondb: tuned ef_search=224 (latency=0.00ms, recall=0.000)
+2025-11-16 12:36:22.959 PKT [1150858] LOG:  neurondb: tuned ef_search=268 (latency=0.00ms, recall=0.000)
+2025-11-16 12:37:23.010 PKT [1150858] LOG:  neurondb: tuned ef_search=321 (latency=0.00ms, recall=0.000)
+2025-11-16 12:38:23.076 PKT [1150858] LOG:  neurondb: tuned ef_search=385 (latency=0.00ms, recall=0.000)
+2025-11-16 12:39:22.684 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 12:39:22.906 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.081 s, total=0.223 s; sync files=2, longest=0.080 s, average=0.041 s; distance=5 kB, estimate=1333 kB; lsn=43/71A9C9E8, redo lsn=43/71A9C990
+2025-11-16 12:39:23.175 PKT [1150858] LOG:  neurondb: tuned ef_search=462 (latency=0.00ms, recall=0.000)
+2025-11-16 12:40:23.241 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:41:23.316 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:42:23.415 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:43:23.513 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:44:22.938 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 12:44:23.161 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.081 s, total=0.223 s; sync files=2, longest=0.081 s, average=0.041 s; distance=7 kB, estimate=1200 kB; lsn=43/71A9E760, redo lsn=43/71A9E708
+2025-11-16 12:44:23.572 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:45:23.671 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:46:23.738 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:47:23.836 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:48:23.865 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:49:22.261 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 12:49:22.412 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.008 s, total=0.152 s; sync files=2, longest=0.005 s, average=0.004 s; distance=9 kB, estimate=1081 kB; lsn=43/71AA0B70, redo lsn=43/71AA0B18
+2025-11-16 12:49:23.964 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:50:24.063 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:51:24.162 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:52:24.262 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:53:24.274 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:54:22.512 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 12:54:22.660 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.105 s, sync=0.006 s, total=0.148 s; sync files=2, longest=0.006 s, average=0.003 s; distance=10 kB, estimate=974 kB; lsn=43/71AA3760, redo lsn=43/71AA3708
+2025-11-16 12:54:24.372 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:55:24.432 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:56:24.495 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:57:24.593 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:58:24.693 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 12:59:22.760 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 12:59:22.910 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.105 s, sync=0.007 s, total=0.151 s; sync files=2, longest=0.005 s, average=0.004 s; distance=5 kB, estimate=877 kB; lsn=43/71AA4F18, redo lsn=43/71AA4EC0
+2025-11-16 12:59:24.791 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:00:24.897 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:01:24.995 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:02:25.067 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:03:25.165 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:04:22.993 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 13:04:23.147 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.009 s, total=0.155 s; sync files=2, longest=0.009 s, average=0.005 s; distance=7 kB, estimate=790 kB; lsn=43/71AA6D40, redo lsn=43/71AA6CE8
+2025-11-16 13:04:25.227 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:05:25.323 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:06:25.399 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:07:25.480 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:08:25.557 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:09:22.223 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 13:09:22.383 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.013 s, total=0.161 s; sync files=2, longest=0.013 s, average=0.007 s; distance=9 kB, estimate=712 kB; lsn=43/71AA91C8, redo lsn=43/71AA9170
+2025-11-16 13:09:25.656 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:10:25.755 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:11:25.815 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:12:25.912 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:13:25.955 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:14:22.392 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 13:14:22.584 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.012 s, total=0.192 s; sync files=2, longest=0.010 s, average=0.006 s; distance=11 kB, estimate=642 kB; lsn=43/71AABDD0, redo lsn=43/71AABD78
+2025-11-16 13:14:26.054 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:15:26.105 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:16:26.203 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:17:26.302 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:18:26.426 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:19:22.617 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 13:19:22.772 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.104 s, sync=0.012 s, total=0.156 s; sync files=2, longest=0.010 s, average=0.006 s; distance=5 kB, estimate=578 kB; lsn=43/71AAD5A8, redo lsn=43/71AAD550
+2025-11-16 13:19:26.525 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:20:26.625 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:21:26.723 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:22:26.818 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:23:26.916 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:24:22.872 PKT [1150851] LOG:  checkpoint starting: time
+2025-11-16 13:24:23.027 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.105 s, sync=0.010 s, total=0.155 s; sync files=2, longest=0.010 s, average=0.005 s; distance=7 kB, estimate=521 kB; lsn=43/71AAF3B0, redo lsn=43/71AAF358
+2025-11-16 13:24:27.014 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:25:27.113 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:26:27.175 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:27:27.274 PKT [1150858] LOG:  neurondb: tuned ef_search=512 (latency=0.00ms, recall=0.000)
+2025-11-16 13:27:54.038 PKT [1150847] LOG:  received fast shutdown request
+2025-11-16 13:27:54.075 PKT [1150847] LOG:  aborting any active transactions
+2025-11-16 13:27:54.075 PKT [1150856] LOG:  neurondb: LLM worker shutting down gracefully
+2025-11-16 13:27:54.075 PKT [1150859] LOG:  neurondb: neuranq worker shutting down
+2025-11-16 13:27:54.075 PKT [1150857] LOG:  neurondb: neurandefrag worker shutting down (PID 1150857)
+2025-11-16 13:27:54.075 PKT [1150858] LOG:  neurondb: neuranmon worker shutting down
+2025-11-16 13:27:54.087 PKT [1150847] LOG:  background worker "logical replication launcher" (PID 1150860) exited with exit code 1
+2025-11-16 13:27:54.088 PKT [1150851] LOG:  shutting down
+2025-11-16 13:27:54.088 PKT [1150851] LOG:  checkpoint starting: shutdown immediate
+2025-11-16 13:27:54.103 PKT [1150851] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.008 s, total=0.015 s; sync files=2, longest=0.008 s, average=0.004 s; distance=8 kB, estimate=470 kB; lsn=43/71AB14E8, redo lsn=43/71AB14E8
+2025-11-16 13:27:54.143 PKT [1150847] LOG:  database system is shut down
+2025-11-16 13:27:54.314 PKT [1188368] FATAL:  could not load library "/usr/local/pgsql.18/lib/neurondb.so": /usr/local/pgsql.18/lib/neurondb.so: undefined symbol: neurondb_gpu_register_cuda_backend
+2025-11-16 13:27:54.314 PKT [1188368] LOG:  database system is shut down

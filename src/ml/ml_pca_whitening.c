@@ -1,4 +1,3 @@
-#if 0
 /*-------------------------------------------------------------------------
  *
  * ml_pca_whitening.c
@@ -79,7 +78,8 @@ power_iteration_whitening(double **matrix,
 		norm = sqrt(norm);
 		for (i = 0; i < dim; i++)
 			eigenvector[i] /= norm;
-#include "ml_gpu_registry.h"
+	}
+/* GPU registry not needed here */
 
 	/* Power iteration */
 	for (iter = 0; iter < max_iter; iter++)
@@ -174,6 +174,7 @@ deflate_matrix(double **matrix,
  *   - epsilon prevents numerical instability with near-zero eigenvalues
  */
 PG_FUNCTION_INFO_V1(whiten_embeddings);
+PGDLLEXPORT Datum whiten_embeddings(PG_FUNCTION_ARGS);
 
 Datum
 whiten_embeddings(PG_FUNCTION_ARGS)
@@ -371,19 +372,8 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 	PG_RETURN_ARRAYTYPE_P(result);
 }
 
-/*-------------------------------------------------------------------------
- * GPU Model Ops Registration Stub for PcaWhitening
- *-------------------------------------------------------------------------
- */
+/* Optional: GPU registration noop to satisfy linkage in builds */
 #include "neurondb_gpu_model.h"
-
-void
-neurondb_gpu_register_pca_whitening_model(void)
-{
-	elog(DEBUG1, "PcaWhitening GPU Model Ops registration skipped - not yet implemented");
-}
-
-#endif
-
-#include "neurondb_gpu_model.h"
-void neurondb_gpu_register_pca_whitening_model(void){}
+/* Forward declaration to avoid missing-prototypes warning */
+void neurondb_gpu_register_pca_whitening_model(void);
+void neurondb_gpu_register_pca_whitening_model(void) {}

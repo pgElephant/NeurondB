@@ -38,11 +38,8 @@ SELECT neurondb.train(
 -- Debug: Show model_id
 SELECT model_id FROM gpu_model_temp;
 
--- Calculate accuracy by direct prediction
-SELECT
-	AVG((CASE WHEN neurondb.predict(m.model_id, features) >= 0.5
-			THEN 1 ELSE 0 END = label::int)::int)::float8 AS accuracy
-FROM sample_test, gpu_model_temp m;
+-- Use optimized batch evaluation instead of per-row predictions
+-- (Accuracy is already computed in evaluate() below)
 
 -- Evaluate model and store result
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);

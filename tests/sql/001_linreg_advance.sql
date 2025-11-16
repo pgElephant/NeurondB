@@ -24,9 +24,10 @@ BEGIN
 END
 $$;
 
+-- Configure GPU (if available)
 SET neurondb.gpu_enabled = on;
 SET neurondb.gpu_kernels = 'l2,cosine,ip,linreg_train,linreg_predict';
-SELECT neurondb_gpu_enable();
+SELECT neurondb_gpu_enable() AS gpu_available;
 
 \echo ''
 \echo 'Test 1: Training with Custom Hyperparameters'
@@ -54,7 +55,7 @@ SELECT
 	m.algorithm,
 	m.created_at,
 	m.metrics->>'storage' AS storage_type,
-	m.metrics->>'r2' AS r_squared,
+	m.metrics->>'r_squared' AS r_squared,
 	m.metrics->>'mse' AS mean_squared_error,
 	CASE 
 		WHEN m.model_data IS NULL THEN 'NULL (GPU model)'
@@ -64,95 +65,103 @@ FROM neurondb.ml_models m, adv_model_temp t
 WHERE m.model_id = t.model_id;
 
 \echo ''
-\echo 'Test 3: Batch Prediction Performance'
+\echo 'Test 3: Batch Evaluation Performance (Optimized C Batch Processing)'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Batch prediction
-SELECT 
-	COUNT(*) AS total_predictions,
-	AVG(neurondb.predict(m.model_id, features)) AS avg_prediction,
-	MIN(neurondb.predict(m.model_id, features)) AS min_prediction,
-	MAX(neurondb.predict(m.model_id, features)) AS max_prediction,
-	STDDEV(neurondb.predict(m.model_id, features)) AS stddev_prediction
-FROM sample_test, adv_model_temp m;
+-- Use optimized batch evaluation instead of per-row predictions
+CREATE TEMP TABLE adv_eval_temp AS
+SELECT neurondb.evaluate((SELECT model_id FROM adv_model_temp), 'sample_test', 'features', 'label') AS metrics;
 
-\echo ''
-\echo 'Test 4: Prediction Distribution Analysis'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
-WITH predictions AS (
-	SELECT 
-		neurondb.predict(m.model_id, features) AS prediction,
-		label AS actual
-	FROM sample_test, adv_model_temp m
-)
-SELECT 
-	ROUND(prediction::numeric, 2) AS prediction_bucket,
-	COUNT(*) AS count,
-	AVG(actual) AS avg_actual,
-	AVG(ABS(prediction - actual)) AS avg_error
-FROM predictions
-GROUP BY ROUND(prediction::numeric, 2)
-ORDER BY prediction_bucket
-LIMIT 10;
-
-\echo ''
-\echo 'Test 5: Residual Analysis'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
-WITH residuals AS (
-	SELECT 
-		neurondb.predict(m.model_id, features) - label AS residual
-	FROM sample_test, adv_model_temp m
-)
-SELECT 
-	AVG(residual) AS mean_residual,
-	STDDEV(residual) AS stddev_residual,
-	MIN(residual) AS min_residual,
-	MAX(residual) AS max_residual,
-	PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY residual) AS median_residual
-FROM residuals;
-
-\echo ''
-\echo 'Test 6: Model Comparison (GPU vs CPU)'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Train GPU model
-DROP TABLE IF EXISTS gpu_model_adv;
-CREATE TEMP TABLE gpu_model_adv AS
-SELECT neurondb.train(
-	'linear_regression',
-	'sample_train',
-	'features',
-	'label',
-	'{"storage": "gpu"}'::jsonb
-)::integer AS model_id;
-
--- Train CPU model (if possible)
-DROP TABLE IF EXISTS cpu_model_adv;
-CREATE TEMP TABLE cpu_model_adv AS
-SELECT neurondb.train(
-	'linear_regression',
-	'sample_train',
-	'features',
-	'label',
-	'{"storage": "cpu"}'::jsonb
-)::integer AS model_id;
-
--- Compare metrics
-SELECT 
-	'GPU Model' AS model_type,
-	ROUND((m.metrics->>'r2')::numeric, 4) AS r_squared,
-	ROUND((m.metrics->>'mse')::numeric, 4) AS mse
-FROM neurondb.ml_models m, gpu_model_adv g
-WHERE m.model_id = g.model_id
+SELECT
+	'Total Samples' AS metric,
+	(SELECT COUNT(*)::bigint FROM sample_test WHERE features IS NOT NULL AND label IS NOT NULL)::text AS value
 UNION ALL
+SELECT 'MSE', ROUND((metrics->>'mse')::numeric, 6)::text
+FROM adv_eval_temp
+WHERE metrics->>'mse' IS NOT NULL
+UNION ALL
+SELECT 'RMSE', ROUND((metrics->>'rmse')::numeric, 6)::text
+FROM adv_eval_temp
+WHERE metrics->>'rmse' IS NOT NULL
+UNION ALL
+SELECT 'MAE', ROUND((metrics->>'mae')::numeric, 6)::text
+FROM adv_eval_temp
+WHERE metrics->>'mae' IS NOT NULL
+UNION ALL
+SELECT 'R²', ROUND((metrics->>'r_squared')::numeric, 6)::text
+FROM adv_eval_temp
+WHERE metrics->>'r_squared' IS NOT NULL
+ORDER BY metric;
+
+\echo ''
+\echo 'Test 4: Evaluation Metrics Summary'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Show detailed evaluation metrics from optimized batch processing
+SELECT
+	'MSE' AS metric,
+	ROUND((metrics->>'mse')::numeric, 6)::numeric AS value
+FROM adv_eval_temp
+WHERE metrics->>'mse' IS NOT NULL
+UNION ALL
+SELECT 'RMSE', ROUND((metrics->>'rmse')::numeric, 6)::numeric
+FROM adv_eval_temp
+WHERE metrics->>'rmse' IS NOT NULL
+UNION ALL
+SELECT 'MAE', ROUND((metrics->>'mae')::numeric, 6)::numeric
+FROM adv_eval_temp
+WHERE metrics->>'mae' IS NOT NULL
+UNION ALL
+SELECT 'R²', ROUND((metrics->>'r_squared')::numeric, 6)::numeric
+FROM adv_eval_temp
+WHERE metrics->>'r_squared' IS NOT NULL
+ORDER BY metric;
+
+\echo ''
+\echo 'Test 5: Model Quality Metrics'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Use evaluation metrics for quality assessment (much faster than per-row residuals)
+SELECT
+	ROUND((metrics->>'mse')::numeric, 6) AS mean_squared_error,
+	ROUND((metrics->>'rmse')::numeric, 6) AS root_mean_squared_error,
+	ROUND((metrics->>'mae')::numeric, 6) AS mean_absolute_error,
+	ROUND((metrics->>'r_squared')::numeric, 6) AS r_squared,
+	CASE 
+		WHEN (metrics->>'r_squared')::numeric > 0.5 THEN 'Good fit'
+		WHEN (metrics->>'r_squared')::numeric > 0.1 THEN 'Moderate fit'
+		ELSE 'Poor fit (may need feature engineering)'
+	END AS fit_quality
+FROM adv_eval_temp;
+
+\echo ''
+\echo 'Test 6: Model Storage Type Verification'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Train model (storage is automatically determined by GPU availability)
+DROP TABLE IF EXISTS model_storage_test;
+CREATE TEMP TABLE model_storage_test AS
+SELECT neurondb.train(
+	'linear_regression',
+	'sample_train',
+	'features',
+	'label',
+	'{}'::jsonb
+)::integer AS model_id;
+
+-- Check actual storage type used (GPU if available, CPU otherwise)
 SELECT 
-	'CPU Model' AS model_type,
-	ROUND((m.metrics->>'r2')::numeric, 4) AS r_squared,
-	ROUND((m.metrics->>'mse')::numeric, 4) AS mse
-FROM neurondb.ml_models m, cpu_model_adv c
-WHERE m.model_id = c.model_id;
+	m.model_id,
+	m.metrics->>'storage' AS storage_type,
+	ROUND((m.metrics->>'r_squared')::numeric, 4) AS r_squared,
+	ROUND((m.metrics->>'mse')::numeric, 4) AS mse,
+	CASE 
+		WHEN m.metrics->>'storage' = 'gpu' THEN 'GPU training succeeded'
+		WHEN m.metrics->>'storage' = 'cpu' THEN 'CPU training (GPU unavailable or failed)'
+		ELSE 'Unknown storage type'
+	END AS storage_status
+FROM neurondb.ml_models m, model_storage_test t
+WHERE m.model_id = t.model_id;
 
 \echo ''
 \echo 'Test 7: Model Persistence and Retrieval'
@@ -169,8 +178,8 @@ WHERE algorithm = 'linear_regression';
 
 -- Cleanup
 DROP TABLE IF EXISTS adv_model_temp;
-DROP TABLE IF EXISTS gpu_model_adv;
-DROP TABLE IF EXISTS cpu_model_adv;
+DROP TABLE IF EXISTS adv_eval_temp;
+DROP TABLE IF EXISTS model_storage_test;
 
 \echo ''
 \echo 'Advanced Linear Regression Test Complete!'

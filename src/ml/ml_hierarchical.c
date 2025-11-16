@@ -338,6 +338,8 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
  *-------------------------------------------------------------------------
  */
 #include "neurondb_gpu_model.h"
+/* Forward declaration to avoid missing-prototypes warning */
+void neurondb_gpu_register_hierarchical_model(void);
 
 void
 neurondb_gpu_register_hierarchical_model(void)

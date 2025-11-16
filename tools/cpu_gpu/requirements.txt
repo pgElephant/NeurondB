@@ -1,4 +1,0 @@
-psycopg2-binary>=2.9.0
-pmlb>=1.0.0
-pandas>=1.0.0
-

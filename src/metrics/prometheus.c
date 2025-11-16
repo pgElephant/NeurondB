@@ -357,14 +357,20 @@ handle_http_request(int client_socket)
 				       "<p>Metrics available at <a "
 				       "href=\"/metrics\">/metrics</a></p>"
 				       "</body></html>";
-		write(client_socket, response, strlen(response));
+		{
+			ssize_t __w = write(client_socket, response, strlen(response));
+			(void)__w;
+		}
 	} else
 	{
 		/* Anything else gets a 404 Not Found */
 		const char *response = "HTTP/1.1 404 Not Found\r\n"
 				       "Content-Type: text/plain\r\n\r\n"
 				       "Not Found";
-		write(client_socket, response, strlen(response));
+		{
+			ssize_t __w = write(client_socket, response, strlen(response));
+			(void)__w;
+		}
 	}
 }
 
@@ -473,7 +479,10 @@ send_metrics(int socket)
 	/* Send HTTP/Prometheus response to socket as a single buffer.
      * (No chunked encoding, blocking I/O)
      */
-	write(socket, metrics.data, metrics.len);
+	{
+		ssize_t __w = write(socket, metrics.data, metrics.len);
+		(void)__w;
+	}
 	pfree(metrics.data);
 }
 

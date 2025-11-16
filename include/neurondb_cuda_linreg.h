@@ -66,6 +66,17 @@ extern int ndb_cuda_linreg_predict(const bytea *model_data,
 	double *prediction_out,
 	char **errstr);
 
+extern int ndb_cuda_linreg_evaluate(const bytea *model_data,
+	const float *features,
+	const double *targets,
+	int n_samples,
+	int feature_dim,
+	double *mse_out,
+	double *mae_out,
+	double *rmse_out,
+	double *r_squared_out,
+	char **errstr);
+
 /* CUDA kernel declarations */
 extern void ndb_cuda_linreg_compute_xtx_kernel(const float *features,
 	const double *targets,

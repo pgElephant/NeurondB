@@ -2,6 +2,7 @@
 \pset footer off
 \pset pager off
 
+
 -- This test uses sample_train and sample_test tables created by ml_dataset.py
 -- Run: python ml_dataset.py <dataset_name> to populate the database first
 -- Or use the test runner: python run_ml_tests.py
@@ -18,8 +19,9 @@ BEGIN
 END
 $$;
 
+SET log_min_messages = debug1;
 SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,dt_train,dt_predict';
+SET neurondb.gpu_kernels = 'l2,cosine,ip,svm_train,svm_predict';
 SELECT neurondb_gpu_enable();
 
 \set ON_ERROR_STOP on
@@ -27,22 +29,19 @@ SELECT neurondb_gpu_enable();
 -- Train model once and store in temp table to reuse
 DROP TABLE IF EXISTS gpu_model_temp;
 CREATE TEMP TABLE gpu_model_temp AS
-SELECT train_decision_tree_classifier(
+SELECT neurondb.train(
+	'svm',
 	'sample_train',
 	'features',
 	'label',
-	10,  -- max_depth
-	2    -- min_samples_split
+	'{"C": 1.0, "max_iters": 1000}'::jsonb
 )::integer AS model_id;
 
 -- Debug: Show model_id
 SELECT model_id FROM gpu_model_temp;
 
--- Calculate accuracy by direct prediction
-SELECT
-	AVG((CASE WHEN predict_decision_tree_model_id(m.model_id, features) >= 0.5
-			THEN 1 ELSE 0 END = label::int)::int)::float8 AS accuracy
-FROM sample_test, gpu_model_temp m;
+-- Use optimized batch evaluation instead of per-row predictions
+-- (Accuracy is already computed in evaluate() below)
 
 -- Evaluate model and store result
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);

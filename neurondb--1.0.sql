@@ -820,6 +820,12 @@ CREATE FUNCTION evaluate_linear_regression(text, text, text, float8[])
     LANGUAGE C STABLE;
 COMMENT ON FUNCTION evaluate_linear_regression IS 'Evaluate linear regression. Built for macos_pg16.';
 
+CREATE FUNCTION evaluate_linear_regression_by_model_id(integer, text, text, text)
+    RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'evaluate_linear_regression_by_model_id'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION evaluate_linear_regression_by_model_id IS 'One-shot evaluation: loads model, processes all rows in C, returns metrics jsonb. Much faster than per-row SQL evaluation.';
+
 CREATE FUNCTION train_ridge_regression(text, text, text, float8)
     RETURNS integer
     AS 'MODULE_PATHNAME', 'train_ridge_regression'
@@ -1657,6 +1663,13 @@ CREATE FUNCTION array_to_vector(real[]) RETURNS vector
     AS 'MODULE_PATHNAME', 'array_to_vector'
     LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION array_to_vector IS 'Convert float array to vector';
+
+-- Overload to accept double precision[] by casting to real[]
+CREATE OR REPLACE FUNCTION array_to_vector(double precision[]) RETURNS vector
+LANGUAGE sql IMMUTABLE STRICT AS $$
+	SELECT array_to_vector($1::real[]);
+$$;
+COMMENT ON FUNCTION array_to_vector(double precision[]) IS 'Convert double precision array to vector via real[] cast';
 
 CREATE FUNCTION vector_to_array(vector) RETURNS real[]
     AS 'MODULE_PATHNAME', 'vector_to_array'
@@ -4264,6 +4277,25 @@ END;
 $$;
 COMMENT ON FUNCTION neurondb.predict(integer, vector) IS 'Unified prediction function: predict(model_id, features) - works for all algorithms';
 
+-- Backward-compatible overloads to accept arrays and route to vector variant
+CREATE OR REPLACE FUNCTION neurondb.predict(
+	model_id integer,
+	features real[]
+) RETURNS double precision
+LANGUAGE sql STABLE STRICT AS $$
+	SELECT neurondb.predict(model_id, array_to_vector(features));
+$$;
+COMMENT ON FUNCTION neurondb.predict(integer, real[]) IS 'Overload: route real[] features to vector variant';
+
+CREATE OR REPLACE FUNCTION neurondb.predict(
+	model_id integer,
+	features double precision[]
+) RETURNS double precision
+LANGUAGE sql STABLE STRICT AS $$
+	SELECT neurondb.predict(model_id, array_to_vector(features::real[]));
+$$;
+COMMENT ON FUNCTION neurondb.predict(integer, double precision[]) IS 'Overload: route double precision[] features to vector variant';
+
 CREATE OR REPLACE FUNCTION neurondb.evaluate(
 	model_id integer,
 	table_name text,
@@ -4591,58 +4623,66 @@ BEGIN
 				'f1_score', f1_score_val
 			);
 		WHEN 'linear_regression' THEN
-			/* Compute regression metrics: R², MSE, MAE, RMSE */
+			/* Use optimized one-shot C evaluation function */
 			BEGIN
-				EXECUTE format(
-					'WITH predictions AS (
-						SELECT 
-							neurondb.predict(%L, %I) AS pred,
-							%I::float8 AS actual
-						FROM %I
-					),
-					avg_actual AS (
-						SELECT AVG(actual)::float8 AS y_avg FROM predictions
-					),
-					stats AS (
-						SELECT 
-							COUNT(*)::int AS n,
-							SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
-							SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
-							SUM((p.actual - (SELECT y_avg FROM avg_actual)) * (p.actual - (SELECT y_avg FROM avg_actual)))::float8 AS var_tot
-						FROM predictions p
-					)
-					SELECT n, err_sq, err_abs, var_tot FROM stats',
-					model_id_param, feature_col, label_col, table_name
-				) INTO n_samples, total_error_sq, total_error_abs, total_var;
-				
-				IF n_samples > 0 THEN
-					mse_val := total_error_sq / n_samples;
-					mae_val := total_error_abs / n_samples;
-					rmse_val := SQRT(mse_val);
-					
-					IF total_var > 0 THEN
-						r2_val := 1.0 - (total_error_sq / total_var);
-					ELSE
-						r2_val := 0.0;
-					END IF;
-				ELSE
-					mse_val := 0.0;
-					mae_val := 0.0;
-					rmse_val := 0.0;
-					r2_val := 0.0;
-				END IF;
-				
-				result := jsonb_build_object(
-					'r_squared', r2_val,
-					'mse', mse_val,
-					'mae', mae_val,
-					'rmse', rmse_val
-				);
+				result := evaluate_linear_regression_by_model_id(model_id_param, table_name, feature_col, label_col);
 			EXCEPTION
 				WHEN OTHERS THEN
-					result := jsonb_build_object(
-						'error', 'Evaluation failed: ' || SQLERRM
-					);
+					/* Fallback to SQL-based evaluation if C function fails */
+					BEGIN
+						EXECUTE format(
+							'WITH predictions AS (
+								SELECT 
+									neurondb.predict(%L, %I) AS pred,
+									%I::float8 AS actual
+								FROM %I
+								WHERE %I IS NOT NULL AND %I IS NOT NULL
+								LIMIT 1000000
+							),
+							avg_actual AS (
+								SELECT AVG(actual)::float8 AS y_avg FROM predictions
+							),
+							stats AS (
+								SELECT 
+									COUNT(*)::int AS n,
+									SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
+									SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
+									SUM((p.actual - (SELECT y_avg FROM avg_actual)) * (p.actual - (SELECT y_avg FROM avg_actual)))::float8 AS var_tot
+								FROM predictions p
+							)
+							SELECT n, err_sq, err_abs, var_tot FROM stats',
+							model_id_param, feature_col, label_col, table_name, feature_col, label_col
+						) INTO n_samples, total_error_sq, total_error_abs, total_var;
+						
+						IF n_samples > 0 THEN
+							mse_val := total_error_sq / n_samples;
+							mae_val := total_error_abs / n_samples;
+							rmse_val := SQRT(mse_val);
+							
+							IF total_var > 0 THEN
+								r2_val := 1.0 - (total_error_sq / total_var);
+							ELSE
+								r2_val := 0.0;
+							END IF;
+						ELSE
+							mse_val := 0.0;
+							mae_val := 0.0;
+							rmse_val := 0.0;
+							r2_val := 0.0;
+						END IF;
+						
+						result := jsonb_build_object(
+							'r_squared', r2_val,
+							'mse', mse_val,
+							'mae', mae_val,
+							'rmse', rmse_val
+						);
+					EXCEPTION
+						WHEN OTHERS THEN
+							result := jsonb_build_object(
+								'error', 'Evaluation failed: ' || SQLERRM
+							);
+					END;
 			END;
 		WHEN 'gmm' THEN
 			/* Compute clustering metrics (inertia and silhouette approximation) */

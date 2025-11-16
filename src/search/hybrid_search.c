@@ -132,7 +132,7 @@ hybrid_search(PG_FUNCTION_ARGS)
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("hybrid_search: invalid vector size")));
 	
-	if (query_vec->dim <= 0 || query_vec->dim > 100000)
+	if (query_vec->dim <= 0 || query_vec->dim > 32767)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("hybrid_search: invalid vector dimension %d", query_vec->dim)));

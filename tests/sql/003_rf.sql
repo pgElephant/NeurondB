@@ -19,7 +19,7 @@ END
 $$;
 
 SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,ridge_train,ridge_predict';
+SET neurondb.gpu_kernels = 'l2,cosine,ip,rf_split,rf_predict,rf_train';
 SELECT neurondb_gpu_enable();
 
 \set ON_ERROR_STOP on
@@ -27,22 +27,19 @@ SELECT neurondb_gpu_enable();
 -- Train model once and store in temp table to reuse
 DROP TABLE IF EXISTS gpu_model_temp;
 CREATE TEMP TABLE gpu_model_temp AS
-SELECT train_ridge_regression(
+SELECT neurondb.train(
+	'random_forest',
 	'sample_train',
 	'features',
 	'label',
-	0.01  -- lambda
+	'{}'::jsonb
 )::integer AS model_id;
 
 -- Debug: Show model_id
 SELECT model_id FROM gpu_model_temp;
 
--- Calculate predictions and metrics
-SELECT
-	AVG(POWER(predict_ridge_regression_model_id(m.model_id, features) - label, 2))::float8 AS mse,
-	SQRT(AVG(POWER(predict_ridge_regression_model_id(m.model_id, features) - label, 2)))::float8 AS rmse,
-	AVG(ABS(predict_ridge_regression_model_id(m.model_id, features) - label))::float8 AS mae
-FROM sample_test, gpu_model_temp m;
+-- Use optimized batch evaluation instead of per-row predictions
+-- (Accuracy is already computed in evaluate() below)
 
 -- Evaluate model and store result
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);
@@ -57,36 +54,35 @@ BEGIN
 END
 $$;
 
--- Show metrics (for regression, we show different metrics)
+-- Show metrics
 SELECT
-	format('%-15s', 'MSE') AS metric,
-	CASE WHEN (m.metrics::jsonb ? 'mse')
-		THEN ROUND((m.metrics::jsonb ->> 'mse')::numeric, 4)
+	format('%-15s', 'Accuracy') AS metric,
+	CASE WHEN (m.metrics::jsonb ? 'accuracy')
+		THEN ROUND((m.metrics::jsonb ->> 'accuracy')::numeric, 4)
 		ELSE NULL END AS value
 FROM gpu_metrics_temp m
 UNION ALL
 SELECT
-	format('%-15s', 'RMSE'),
-	CASE WHEN (m.metrics::jsonb ? 'rmse')
-		THEN ROUND((m.metrics::jsonb ->> 'rmse')::numeric, 4)
+	format('%-15s', 'Precision'),
+	CASE WHEN (m.metrics::jsonb ? 'precision')
+		THEN ROUND((m.metrics::jsonb ->> 'precision')::numeric, 4)
 		ELSE NULL END
 FROM gpu_metrics_temp m
 UNION ALL
 SELECT
-	format('%-15s', 'MAE'),
-	CASE WHEN (m.metrics::jsonb ? 'mae')
-		THEN ROUND((m.metrics::jsonb ->> 'mae')::numeric, 4)
+	format('%-15s', 'Recall'),
+	CASE WHEN (m.metrics::jsonb ? 'recall')
+		THEN ROUND((m.metrics::jsonb ->> 'recall')::numeric, 4)
 		ELSE NULL END
 FROM gpu_metrics_temp m
 UNION ALL
 SELECT
-	format('%-15s', 'R²'),
-	CASE WHEN (m.metrics::jsonb ? 'r_squared')
-		THEN ROUND((m.metrics::jsonb ->> 'r_squared')::numeric, 4)
+	format('%-15s', 'F1 Score'),
+	CASE WHEN (m.metrics::jsonb ? 'f1_score')
+		THEN ROUND((m.metrics::jsonb ->> 'f1_score')::numeric, 4)
 		ELSE NULL END
 FROM gpu_metrics_temp m;
 
 -- Cleanup
 DROP TABLE IF EXISTS gpu_model_temp;
 DROP TABLE IF EXISTS gpu_metrics_temp;
-

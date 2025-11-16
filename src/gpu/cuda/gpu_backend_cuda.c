@@ -285,6 +285,14 @@ ndb_cuda_set_device(int device_id)
 	return 0;
 }
 
+cublasHandle_t
+ndb_cuda_get_cublas_handle(void)
+{
+	if (!cuda_ctx.initialized)
+		return NULL;
+	return cuda_ctx.handle;
+}
+
 static int
 ndb_cuda_mem_alloc(void **ptr, size_t bytes)
 {

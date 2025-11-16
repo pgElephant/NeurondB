@@ -27,6 +27,11 @@
 #include "ml_logistic_regression_internal.h"
 #include "neurondb_cuda_lr.h"
 
+#include <cublas_v2.h>
+
+/* Forward declaration for cuBLAS handle access */
+extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
+
 int
 ndb_cuda_lr_pack_model(const LRModel *model,
 					  bytea **model_data,
@@ -343,43 +348,126 @@ ndb_cuda_lr_train(const float *features,
 			}
 		}
 
-		/* Forward pass: compute z = X * w + b directly on GPU */
+		/* Forward pass: compute z = X * w + b using cuBLAS SGEMV (optimized) */
 		{
-			int ret;
+			cublasHandle_t handle = ndb_cuda_get_cublas_handle();
+			cublasStatus_t cublas_err;
+			float alpha = 1.0f;
+			float beta_bias = (float)bias;
+			float *d_z_float = NULL;
+			size_t z_float_bytes = sizeof(float) * (size_t)n_samples;
 
-			/* Use the GPU wrapper function that accepts pre-allocated GPU memory */
-			ret = ndb_cuda_lr_forward_pass_gpu(d_features,
-											   d_weights,
-											   (float) bias,
-											   n_samples,
-											   feature_dim,
-											   d_z);
-			if (ret != 0)
+			/* Try cuBLAS path first for maximum GPU utilization */
+			if (handle != NULL)
 			{
-				elog(DEBUG1,
-					 "ndb_cuda_lr_train: forward_pass_gpu failed at iter %d",
-					 iter);
-				if (errstr && *errstr == NULL)
-					*errstr = psprintf("forward_pass_gpu failed at iter %d",
-									   iter);
-				goto gpu_fail;
+				/* Allocate float buffer for z (cuBLAS works with float) */
+				status = cudaMalloc((void **)&d_z_float, z_float_bytes);
+				if (status == cudaSuccess)
+				{
+					/* Initialize z with bias: z = bias (broadcast to all elements) */
+					/* Use a simple kernel to set all elements to bias, or use cuBLAS scalar */
+					/* For now, initialize to bias using memset-like approach */
+					/* Actually, we'll compute X*w first, then add bias */
+					status = cudaMemset(d_z_float, 0, z_float_bytes);
+					if (status == cudaSuccess)
+					{
+						/* Use cuBLAS SGEMV: z = alpha * X * w + beta * z */
+						/* X is (n_samples x feature_dim), w is (feature_dim x 1) */
+						/* Result z is (n_samples x 1) */
+						/* CUBLAS_OP_N: no transpose, so X * w */
+						/* z = 1.0 * X * w + 0.0 * z (z starts as zeros) */
+						cublas_err = cublasSgemv(handle,
+							CUBLAS_OP_N,  /* No transpose X */
+							n_samples,    /* M: rows of X */
+							feature_dim,  /* N: cols of X */
+							&alpha,       /* alpha = 1.0 */
+							d_features,   /* X: (n_samples x feature_dim), leading dim = n_samples */
+							n_samples,    /* lda: leading dimension of X */
+							d_weights,    /* w: (feature_dim x 1) */
+							1,            /* incx: stride of w */
+							&alpha,       /* beta = 1.0: add to existing (but z is zero, so this is just X*w) */
+							d_z_float,    /* z: (n_samples x 1) */
+							1);           /* incy: stride of z */
+
+						if (cublas_err == CUBLAS_STATUS_SUCCESS)
+						{
+							/* Add bias to all elements: z = z + bias */
+							/* Use a simple kernel or cuBLAS scalar add */
+							/* For now, convert to double and add bias */
+							status = cudaDeviceSynchronize();
+							if (status == cudaSuccess)
+							{
+								/* Convert float z to double z and add bias */
+								float *h_z_float = (float *)palloc(sizeof(float) * (size_t)n_samples);
+								int conv_i;
+
+								status = cudaMemcpy(h_z_float, d_z_float, z_float_bytes, cudaMemcpyDeviceToHost);
+								if (status == cudaSuccess)
+								{
+									/* Convert float z to double z and add bias */
+									for (conv_i = 0; conv_i < n_samples; conv_i++)
+										d_z[conv_i] = (double)h_z_float[conv_i] + bias;
+
+									pfree(h_z_float);
+									cudaFree(d_z_float);
+									elog(DEBUG1,
+										"neurondb: logistic_regression: cuBLAS SGEMV forward pass succeeded at iter %d",
+										iter);
+									goto forward_pass_done;
+								}
+								pfree(h_z_float);
+							}
+						}
+						else
+						{
+							elog(DEBUG1,
+								"neurondb: logistic_regression: cuBLAS SGEMV failed with status %d, falling back to kernel",
+								cublas_err);
+						}
+					}
+					cudaFree(d_z_float);
+				}
 			}
 
-			/* Synchronize to ensure kernel completes */
-			status = cudaDeviceSynchronize();
-			if (status != cudaSuccess)
+			/* Fallback to kernel-based forward pass */
 			{
-				elog(DEBUG1,
-					 "ndb_cuda_lr_train: cudaDeviceSynchronize failed at iter %d: %s",
-					 iter,
-					 cudaGetErrorString(status));
-				if (errstr && *errstr == NULL)
-					*errstr = psprintf("CUDA sync failed: %s",
-									   cudaGetErrorString(status));
-				goto gpu_fail;
+				int ret;
+
+				ret = ndb_cuda_lr_forward_pass_gpu(d_features,
+					d_weights,
+					(float)bias,
+					n_samples,
+					feature_dim,
+					d_z);
+				if (ret != 0)
+				{
+					elog(DEBUG1,
+						"neurondb: logistic_regression: forward_pass_gpu failed at iter %d",
+						iter);
+					if (errstr && *errstr == NULL)
+						*errstr = psprintf("forward_pass_gpu failed at iter %d",
+							iter);
+					goto gpu_fail;
+				}
+
+				status = cudaDeviceSynchronize();
+				if (status != cudaSuccess)
+				{
+					elog(DEBUG1,
+						"neurondb: logistic_regression: cudaDeviceSynchronize failed at iter %d: %s",
+						iter,
+						cudaGetErrorString(status));
+					if (errstr && *errstr == NULL)
+						*errstr = psprintf("CUDA sync failed: %s",
+							cudaGetErrorString(status));
+					goto gpu_fail;
+				}
 			}
 
-			elog(DEBUG1, "ndb_cuda_lr_train: forward_pass succeeded at iter %d", iter);
+forward_pass_done:
+			elog(DEBUG1,
+				"neurondb: logistic_regression: forward_pass succeeded at iter %d",
+				iter);
 		}
 
 		/* Apply sigmoid */
@@ -424,48 +512,166 @@ ndb_cuda_lr_train(const float *features,
 			}
 		}
 
-		/* Copy predictions back to host for gradient computation */
+		/* Compute gradients using cuBLAS SGEMV for maximum GPU utilization */
+		/* grad_w = X' * (predictions - labels) / n_samples */
+		/* grad_bias = sum(predictions - labels) / n_samples */
 		{
-			double *host_predictions;
+			cublasHandle_t handle = ndb_cuda_get_cublas_handle();
+			float *d_errors = NULL;
+			float *d_grad_weights_float = NULL;
+			double *d_labels_double = NULL;
+			size_t error_bytes = sizeof(float) * (size_t)n_samples;
+			size_t grad_weight_bytes_float = sizeof(float) * (size_t)feature_dim;
+			cublasStatus_t cublas_err;
+			float alpha = 1.0f / (float)n_samples; /* Average gradient */
+			float beta = 0.0f;
+			double error_sum = 0.0;
+			int i;
 
-			host_predictions = (double *) palloc(sizeof(double) * (size_t) n_samples);
-
-			status = cudaMemcpy(host_predictions,
-							   d_predictions,
-							   pred_bytes,
-							   cudaMemcpyDeviceToHost);
-			if (status != cudaSuccess)
+			/* Allocate GPU memory for errors */
+			status = cudaMalloc((void **)&d_errors, error_bytes);
+			if (status == cudaSuccess && handle != NULL)
 			{
-				pfree(host_predictions);
-				goto gpu_fail;
+				/* Compute errors = predictions - labels on GPU */
+				/* Copy labels to GPU (double) */
+				status = cudaMalloc((void **)&d_labels_double, label_bytes);
+				if (status == cudaSuccess)
+				{
+					status = cudaMemcpy(d_labels_double, labels, label_bytes, cudaMemcpyHostToDevice);
+					if (status == cudaSuccess)
+					{
+						/* Use a simple kernel to compute errors = predictions - labels */
+						/* For now, compute on host and copy to GPU */
+						float *h_errors = (float *)palloc(sizeof(float) * (size_t)n_samples);
+						double *h_predictions = (double *)palloc(sizeof(double) * (size_t)n_samples);
+						
+						status = cudaMemcpy(h_predictions, d_predictions, pred_bytes, cudaMemcpyDeviceToHost);
+						if (status == cudaSuccess)
+						{
+							for (i = 0; i < n_samples; i++)
+							{
+								h_errors[i] = (float)(h_predictions[i] - labels[i]);
+								error_sum += (double)h_errors[i];
+							}
+							status = cudaMemcpy(d_errors, h_errors, error_bytes, cudaMemcpyHostToDevice);
+							pfree(h_errors);
+							pfree(h_predictions);
+
+							if (status == cudaSuccess)
+							{
+								/* Allocate GPU memory for gradient weights (float) */
+								status = cudaMalloc((void **)&d_grad_weights_float, grad_weight_bytes_float);
+								if (status == cudaSuccess)
+								{
+									/* Initialize gradient weights to zero */
+									status = cudaMemset(d_grad_weights_float, 0, grad_weight_bytes_float);
+									if (status == cudaSuccess)
+									{
+										/* Use cuBLAS SGEMV: grad_w = alpha * X' * errors */
+										/* X' is (feature_dim x n_samples), errors is (n_samples x 1) */
+										/* Result grad_w is (feature_dim x 1) */
+										/* CUBLAS_OP_T: transpose X, so X' * errors */
+										cublas_err = cublasSgemv(handle,
+											CUBLAS_OP_T,  /* Transpose X: X' */
+											n_samples,    /* M: rows of X (before transpose) */
+											feature_dim,  /* N: cols of X (before transpose) */
+											&alpha,       /* alpha = 1/n_samples (average) */
+											d_features,   /* X: (n_samples x feature_dim), leading dim = n_samples */
+											n_samples,    /* lda: leading dimension of X */
+											d_errors,     /* errors: (n_samples x 1) */
+											1,            /* incx: stride of errors */
+											&beta,        /* beta = 0.0: don't add to existing */
+											d_grad_weights_float,  /* grad_w: (feature_dim x 1) */
+											1);           /* incy: stride of grad_w */
+
+										if (cublas_err == CUBLAS_STATUS_SUCCESS)
+										{
+											/* Copy gradient weights back to host and convert to double */
+											float *h_grad_weights_float = (float *)palloc(sizeof(float) * (size_t)feature_dim);
+											status = cudaMemcpy(h_grad_weights_float, d_grad_weights_float, grad_weight_bytes_float, cudaMemcpyDeviceToHost);
+											if (status == cudaSuccess)
+											{
+												/* Convert to double and add L2 regularization */
+												for (i = 0; i < feature_dim; i++)
+												{
+													grad_weights[i] = (double)h_grad_weights_float[i] + lambda * weights[i];
+												}
+												grad_bias = error_sum / (double)n_samples;
+												pfree(h_grad_weights_float);
+												cudaFree(d_errors);
+												cudaFree(d_grad_weights_float);
+												cudaFree(d_labels_double);
+												elog(DEBUG1,
+													"neurondb: logistic_regression: cuBLAS SGEMV gradient computation succeeded at iter %d",
+													iter);
+												goto gradient_done;
+											}
+											pfree(h_grad_weights_float);
+										}
+										else
+										{
+											elog(DEBUG1,
+												"neurondb: logistic_regression: cuBLAS SGEMV gradient failed with status %d, falling back to kernel",
+												cublas_err);
+										}
+									}
+									cudaFree(d_grad_weights_float);
+								}
+								cudaFree(d_errors);
+							}
+						}
+						else
+						{
+							pfree(h_predictions);
+						}
+					}
+					cudaFree(d_labels_double);
+				}
 			}
 
-			/* Compute gradients */
-			/* Note: ndb_cuda_lr_compute_gradients expects host pointers and handles GPU allocation internally */
-			if (ndb_cuda_lr_compute_gradients(features,
-											  labels,
-											  host_predictions,
-											  n_samples,
-											  feature_dim,
-											  grad_weights,
-											  &grad_bias) != 0)
+			/* Fallback to kernel-based gradient computation if cuBLAS failed */
 			{
+				double *host_predictions;
+
+				host_predictions = (double *)palloc(sizeof(double) * (size_t)n_samples);
+
+				status = cudaMemcpy(host_predictions,
+					d_predictions,
+					pred_bytes,
+					cudaMemcpyDeviceToHost);
+				if (status != cudaSuccess)
+				{
+					pfree(host_predictions);
+					goto gpu_fail;
+				}
+
+				if (ndb_cuda_lr_compute_gradients(features,
+					labels,
+					host_predictions,
+					n_samples,
+					feature_dim,
+					grad_weights,
+					&grad_bias) != 0)
+				{
+					pfree(host_predictions);
+					elog(DEBUG1,
+						"neurondb: logistic_regression: compute_gradients failed at iter %d",
+						iter);
+					goto gpu_fail;
+				}
+
 				pfree(host_predictions);
-				elog(DEBUG1,
-					 "ndb_cuda_lr_train: compute_gradients failed at iter %d",
-					 iter);
-				goto gpu_fail;
+
+				/* Average gradients and add L2 regularization */
+				grad_bias /= (double)n_samples;
+				for (i = 0; i < feature_dim; i++)
+				{
+					grad_weights[i] = grad_weights[i] / (double)n_samples + lambda * weights[i];
+				}
 			}
 
-			pfree(host_predictions);
-		}
-
-		/* Average gradients and add L2 regularization */
-		grad_bias /= (double) n_samples;
-		for (i = 0; i < feature_dim; i++)
-		{
-			grad_weights[i] = grad_weights[i] / (double) n_samples +
-							  lambda * weights[i];
+gradient_done:
+			; /* Label must be followed by statement */
 		}
 
 		/* Update weights and bias */

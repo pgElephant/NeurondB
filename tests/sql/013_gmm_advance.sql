@@ -83,17 +83,25 @@ FROM neurondb.ml_models m, gmm_k3 t
 WHERE m.model_id = t.model_id;
 
 \echo ''
-\echo 'Test 3: Cluster Distribution Analysis'
+\echo 'Test 3: Cluster Distribution Analysis (Using Evaluation Metrics)'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Analyze cluster assignments
-SELECT 
-	neurondb.predict(m.model_id, features)::int AS cluster_id,
-	COUNT(*) AS cluster_size,
-	ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM sample_test), 2) AS percentage
-FROM sample_test, gmm_k3 m
-GROUP BY cluster_id
-ORDER BY cluster_id;
+-- Use optimized batch evaluation for clustering metrics
+CREATE TEMP TABLE gmm_eval_temp AS
+SELECT neurondb.evaluate((SELECT model_id FROM gmm_k3), 'sample_test', 'features', NULL) AS metrics;
+
+SELECT
+	'Total Samples' AS metric,
+	(SELECT COUNT(*)::bigint FROM sample_test WHERE features IS NOT NULL)::text AS value
+UNION ALL
+SELECT 'Silhouette Score', ROUND((metrics->>'silhouette_score')::numeric, 6)::text
+FROM gmm_eval_temp
+WHERE metrics->>'silhouette_score' IS NOT NULL
+UNION ALL
+SELECT 'Inertia', ROUND((metrics->>'inertia')::numeric, 6)::text
+FROM gmm_eval_temp
+WHERE metrics->>'inertia' IS NOT NULL
+ORDER BY metric;
 
 \echo ''
 \echo 'Test 4: Cluster Comparison (k=3 vs k=5)'
@@ -115,17 +123,21 @@ FROM neurondb.ml_models m, gmm_k5 g
 WHERE m.model_id = g.model_id;
 
 \echo ''
-\echo 'Test 5: Batch Prediction Performance'
+\echo 'Test 5: Clustering Quality Metrics'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Batch prediction
-SELECT 
-	COUNT(*) AS total_predictions,
-	COUNT(DISTINCT neurondb.predict(m.model_id, features)::int) AS unique_clusters,
-	AVG(neurondb.predict(m.model_id, features)) AS avg_cluster_id,
-	MIN(neurondb.predict(m.model_id, features)) AS min_cluster_id,
-	MAX(neurondb.predict(m.model_id, features)) AS max_cluster_id
-FROM sample_test, gmm_k3 m;
+-- Use evaluation metrics for clustering quality (much faster than per-row predictions)
+SELECT
+	ROUND((metrics->>'silhouette_score')::numeric, 6) AS silhouette_score,
+	ROUND((metrics->>'inertia')::numeric, 6) AS inertia,
+	ROUND((metrics->>'n_components')::numeric, 0)::int AS n_components,
+	CASE 
+		WHEN (metrics->>'silhouette_score')::numeric > 0.5 THEN 'Excellent clustering'
+		WHEN (metrics->>'silhouette_score')::numeric > 0.3 THEN 'Good clustering'
+		WHEN (metrics->>'silhouette_score')::numeric > 0.1 THEN 'Moderate clustering'
+		ELSE 'Poor clustering (may need different k)'
+	END AS clustering_quality
+FROM gmm_eval_temp;
 
 \echo ''
 \echo 'Test 6: Model Persistence and Retrieval'
@@ -143,6 +155,7 @@ WHERE algorithm = 'gmm';
 -- Cleanup
 DROP TABLE IF EXISTS gmm_k3;
 DROP TABLE IF EXISTS gmm_k5;
+DROP TABLE IF EXISTS gmm_eval_temp;
 
 \echo ''
 \echo 'Advanced GMM Test Complete!'

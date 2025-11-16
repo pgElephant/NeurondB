@@ -586,7 +586,7 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 
 	char *in_table = text_to_cstring(input_table);
 	char *out_table = text_to_cstring(output_table);
-	int processed_rows;
+	int processed_rows = 0;
 
 	/* Validate */
 	if (batch_size <= 0 || batch_size > 10000)

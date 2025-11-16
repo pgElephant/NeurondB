@@ -399,7 +399,7 @@ build_iso_tree(float **data,
 		node->split_dim = -1; /* Can't split */
 		return node;
 	}
-	split_val = min_val + ((float)rand() / RAND_MAX) * (max_val - min_val);
+	split_val = min_val + (float)(((double)rand() / (double)RAND_MAX)) * (max_val - min_val);
 	node->split_val = split_val;
 
 	/* Partition indices */

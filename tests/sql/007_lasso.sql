@@ -1,6 +1,7 @@
 \timing on
 \pset footer off
 \pset pager off
+
 -- This test uses sample_train and sample_test tables created by ml_dataset.py
 -- Run: python ml_dataset.py <dataset_name> to populate the database first
 -- Or use the test runner: python run_ml_tests.py
@@ -18,7 +19,7 @@ END
 $$;
 
 SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,lr_train,lr_predict';
+SET neurondb.gpu_kernels = 'l2,cosine,ip,lasso_train,lasso_predict';
 SELECT neurondb_gpu_enable();
 
 \set ON_ERROR_STOP on
@@ -26,22 +27,19 @@ SELECT neurondb_gpu_enable();
 -- Train model once and store in temp table to reuse
 DROP TABLE IF EXISTS gpu_model_temp;
 CREATE TEMP TABLE gpu_model_temp AS
-SELECT neurondb.train(
-	'logistic_regression',
+SELECT train_lasso_regression(
 	'sample_train',
 	'features',
 	'label',
-	'{"max_iters": 1000, "learning_rate": 0.01, "lambda": 0.001}'::jsonb
+	0.01,  -- lambda
+	1000   -- max_iters
 )::integer AS model_id;
 
 -- Debug: Show model_id
 SELECT model_id FROM gpu_model_temp;
 
--- Calculate accuracy by direct prediction
-SELECT
-	AVG((CASE WHEN neurondb.predict(m.model_id, features) >= 0.5
-			THEN 1 ELSE 0 END = label::int)::int)::float8 AS accuracy
-FROM sample_test, gpu_model_temp m;
+-- Use optimized batch evaluation instead of per-row predictions
+-- (MSE, RMSE, MAE are already computed in evaluate() below)
 
 -- Evaluate model and store result
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);
@@ -56,32 +54,32 @@ BEGIN
 END
 $$;
 
--- Show metrics
+-- Show metrics (for regression, we show different metrics)
 SELECT
-	format('%-15s', 'Accuracy') AS metric,
-	CASE WHEN (m.metrics::jsonb ? 'accuracy')
-		THEN ROUND((m.metrics::jsonb ->> 'accuracy')::numeric, 4)
+	format('%-15s', 'MSE') AS metric,
+	CASE WHEN (m.metrics::jsonb ? 'mse')
+		THEN ROUND((m.metrics::jsonb ->> 'mse')::numeric, 4)
 		ELSE NULL END AS value
 FROM gpu_metrics_temp m
 UNION ALL
 SELECT
-	format('%-15s', 'Precision'),
-	CASE WHEN (m.metrics::jsonb ? 'precision')
-		THEN ROUND((m.metrics::jsonb ->> 'precision')::numeric, 4)
+	format('%-15s', 'RMSE'),
+	CASE WHEN (m.metrics::jsonb ? 'rmse')
+		THEN ROUND((m.metrics::jsonb ->> 'rmse')::numeric, 4)
 		ELSE NULL END
 FROM gpu_metrics_temp m
 UNION ALL
 SELECT
-	format('%-15s', 'Recall'),
-	CASE WHEN (m.metrics::jsonb ? 'recall')
-		THEN ROUND((m.metrics::jsonb ->> 'recall')::numeric, 4)
+	format('%-15s', 'MAE'),
+	CASE WHEN (m.metrics::jsonb ? 'mae')
+		THEN ROUND((m.metrics::jsonb ->> 'mae')::numeric, 4)
 		ELSE NULL END
 FROM gpu_metrics_temp m
 UNION ALL
 SELECT
-	format('%-15s', 'F1 Score'),
-	CASE WHEN (m.metrics::jsonb ? 'f1_score')
-		THEN ROUND((m.metrics::jsonb ->> 'f1_score')::numeric, 4)
+	format('%-15s', 'R²'),
+	CASE WHEN (m.metrics::jsonb ? 'r_squared')
+		THEN ROUND((m.metrics::jsonb ->> 'r_squared')::numeric, 4)
 		ELSE NULL END
 FROM gpu_metrics_temp m;
 

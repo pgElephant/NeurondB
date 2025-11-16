@@ -64,55 +64,75 @@ FROM neurondb.ml_models m, adv_model_temp t
 WHERE m.model_id = t.model_id;
 
 \echo ''
-\echo 'Test 3: Batch Prediction Performance'
+\echo 'Test 3: Batch Evaluation Performance (Optimized C Batch Processing)'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Batch prediction
-SELECT 
-	COUNT(*) AS total_predictions,
-	AVG(neurondb.predict(m.model_id, features)) AS avg_prediction,
-	MIN(neurondb.predict(m.model_id, features)) AS min_prediction,
-	MAX(neurondb.predict(m.model_id, features)) AS max_prediction,
-	STDDEV(neurondb.predict(m.model_id, features)) AS stddev_prediction
-FROM sample_test, adv_model_temp m;
+-- Use optimized batch evaluation instead of per-row predictions
+CREATE TEMP TABLE adv_eval_temp AS
+SELECT neurondb.evaluate((SELECT model_id FROM adv_model_temp), 'sample_test', 'features', 'label') AS metrics;
+
+SELECT
+	'Total Samples' AS metric,
+	(SELECT COUNT(*)::bigint FROM sample_test WHERE features IS NOT NULL AND label IS NOT NULL)::text AS value
+UNION ALL
+SELECT 'Accuracy', ROUND((metrics->>'accuracy')::numeric, 6)::text
+FROM adv_eval_temp
+WHERE metrics->>'accuracy' IS NOT NULL
+UNION ALL
+SELECT 'Precision', ROUND((metrics->>'precision')::numeric, 6)::text
+FROM adv_eval_temp
+WHERE metrics->>'precision' IS NOT NULL
+UNION ALL
+SELECT 'Recall', ROUND((metrics->>'recall')::numeric, 6)::text
+FROM adv_eval_temp
+WHERE metrics->>'recall' IS NOT NULL
+UNION ALL
+SELECT 'F1 Score', ROUND((metrics->>'f1_score')::numeric, 6)::text
+FROM adv_eval_temp
+WHERE metrics->>'f1_score' IS NOT NULL
+ORDER BY metric;
 
 \echo ''
-\echo 'Test 4: Prediction Distribution Analysis'
+\echo 'Test 4: Evaluation Metrics Summary'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-WITH predictions AS (
-	SELECT 
-		neurondb.predict(m.model_id, features) AS prediction,
-		label AS actual
-	FROM sample_test, adv_model_temp m
-)
-SELECT 
-	prediction::int AS predicted_class,
-	COUNT(*) AS count,
-	AVG(actual) AS avg_actual,
-	SUM(CASE WHEN prediction::int = actual::int THEN 1 ELSE 0 END) AS correct_predictions
-FROM predictions
-GROUP BY prediction::int
-ORDER BY predicted_class;
+-- Show detailed evaluation metrics from optimized batch processing
+SELECT
+	'Accuracy' AS metric,
+	ROUND((metrics->>'accuracy')::numeric, 6)::numeric AS value
+FROM adv_eval_temp
+WHERE metrics->>'accuracy' IS NOT NULL
+UNION ALL
+SELECT 'Precision', ROUND((metrics->>'precision')::numeric, 6)::numeric
+FROM adv_eval_temp
+WHERE metrics->>'precision' IS NOT NULL
+UNION ALL
+SELECT 'Recall', ROUND((metrics->>'recall')::numeric, 6)::numeric
+FROM adv_eval_temp
+WHERE metrics->>'recall' IS NOT NULL
+UNION ALL
+SELECT 'F1 Score', ROUND((metrics->>'f1_score')::numeric, 6)::numeric
+FROM adv_eval_temp
+WHERE metrics->>'f1_score' IS NOT NULL
+ORDER BY metric;
 
 \echo ''
-\echo 'Test 5: Class Probability Analysis'
+\echo 'Test 5: Model Quality Metrics'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Analyze prediction confidence
-WITH predictions AS (
-	SELECT 
-		neurondb.predict(m.model_id, features) AS prediction,
-		label AS actual
-	FROM sample_test, adv_model_temp m
-)
-SELECT 
-	actual::int AS actual_class,
-	COUNT(*) AS total_samples,
-	AVG(CASE WHEN prediction::int = actual::int THEN 1.0 ELSE 0.0 END) AS class_accuracy
-FROM predictions
-GROUP BY actual::int
-ORDER BY actual_class;
+-- Use evaluation metrics for quality assessment (much faster than per-row predictions)
+SELECT
+	ROUND((metrics->>'accuracy')::numeric, 6) AS accuracy,
+	ROUND((metrics->>'precision')::numeric, 6) AS precision,
+	ROUND((metrics->>'recall')::numeric, 6) AS recall,
+	ROUND((metrics->>'f1_score')::numeric, 6) AS f1_score,
+	CASE 
+		WHEN (metrics->>'accuracy')::numeric > 0.8 THEN 'Excellent'
+		WHEN (metrics->>'accuracy')::numeric > 0.6 THEN 'Good'
+		WHEN (metrics->>'accuracy')::numeric > 0.4 THEN 'Moderate'
+		ELSE 'Poor (may need feature engineering)'
+	END AS fit_quality
+FROM adv_eval_temp;
 
 \echo ''
 \echo 'Test 6: Model Comparison (GPU vs CPU)'
@@ -170,6 +190,7 @@ WHERE algorithm = 'naive_bayes';
 
 -- Cleanup
 DROP TABLE IF EXISTS adv_model_temp;
+DROP TABLE IF EXISTS adv_eval_temp;
 DROP TABLE IF EXISTS gpu_model_adv;
 DROP TABLE IF EXISTS cpu_model_adv;
 

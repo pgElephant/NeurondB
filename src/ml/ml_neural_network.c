@@ -272,7 +272,7 @@ neural_network_init(int n_inputs,
 			/* Initialize weights randomly (small values) */
 			for (k = 0; k <= layer->n_inputs; k++)
 				layer->weights[j][k] =
-					((float)rand() / RAND_MAX) * 0.1f
+					(float)(((double)rand() / (double)RAND_MAX)) * 0.1f
 					- 0.05f;
 		}
 
@@ -296,7 +296,7 @@ neural_network_init(int n_inputs,
 			(output_layer->n_inputs + 1) * sizeof(float));
 		for (k = 0; k <= output_layer->n_inputs; k++)
 			output_layer->weights[j][k] =
-				((float)rand() / RAND_MAX) * 0.1f - 0.05f;
+				(float)(((double)rand() / (double)RAND_MAX)) * 0.1f - 0.05f;
 	}
 
 	return net;
@@ -475,7 +475,6 @@ train_neural_network(PG_FUNCTION_ARGS)
 	/* Determine actual feature dimension from first row */
 	if (n_samples > 0)
 	{
-		Oid			feat_type;
 		HeapTuple first_tuple = tuptable->vals[0];
 		bool		isnull;
 		Datum		feat_datum;
@@ -485,8 +484,6 @@ train_neural_network(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("neural network training: feature vector cannot be NULL")));
-
-		feat_type = SPI_gettypeid(tupdesc, 1);
 
 		/* Extract dimension from vector type */
 		/* Check if type is vector by trying to cast to Vector */

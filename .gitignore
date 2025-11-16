@@ -52,6 +52,10 @@ libneurondb.pc
 /tmp/
 *.log
 test_*.sql
+tests/datasets/
+tests/log/
+tests/error/
+tests/output/
 
 # Documentation build
 site/
