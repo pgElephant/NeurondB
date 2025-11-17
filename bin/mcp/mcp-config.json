@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "neurondb": {
+      "command": "node",
+      "args": ["/Users/ibrarahmed/pgelephant/pge/Neurondb/bin/mcp/dist/index.js"],
+      "env": {
+        "NEURONDB_HOST": "localhost",
+        "NEURONDB_PORT": "5432",
+        "NEURONDB_DATABASE": "postgres",
+        "NEURONDB_USER": "ibrarahmed"
+      }
+    }
+  }
+}
