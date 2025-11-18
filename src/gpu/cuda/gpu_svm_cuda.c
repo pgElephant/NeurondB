@@ -600,4 +600,202 @@ ndb_cuda_svm_predict(const bytea *model_data,
 	return 0;
 }
 
+/*
+ * Batch prediction: predict for multiple samples
+ */
+int
+ndb_cuda_svm_predict_batch(const bytea *model_data,
+	const float *features,
+	int n_samples,
+	int feature_dim,
+	int *predictions_out,
+	char **errstr)
+{
+	const char *base;
+	const NdbCudaSvmModelHeader *hdr;
+	const bytea *detoasted;
+	int i;
+	int rc;
+
+	if (errstr)
+		*errstr = NULL;
+
+	if (model_data == NULL || features == NULL || predictions_out == NULL
+		|| n_samples <= 0 || feature_dim <= 0)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid inputs for CUDA SVM batch predict");
+		return -1;
+	}
+
+	/* Detoast the bytea to ensure we have the full data */
+	detoasted =
+		(const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+
+	/* Validate model_data bytea */
+	if (VARSIZE_ANY_EXHDR(detoasted) < sizeof(NdbCudaSvmModelHeader))
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM batch predict: model_data too small");
+		return -1;
+	}
+
+	base = VARDATA_ANY(detoasted);
+	hdr = (const NdbCudaSvmModelHeader *)base;
+
+	/* Validate model header */
+	if (hdr->feature_dim != feature_dim)
+	{
+		if (errstr)
+			*errstr = psprintf("CUDA SVM batch predict: feature dimension mismatch (expected %d, got %d)",
+				hdr->feature_dim, feature_dim);
+		return -1;
+	}
+
+	/* Predict for each sample */
+	for (i = 0; i < n_samples; i++)
+	{
+		const float *input = features + (i * feature_dim);
+		int class_out = 0;
+		double confidence_out = 0.0;
+
+		rc = ndb_cuda_svm_predict(detoasted,
+			input,
+			feature_dim,
+			&class_out,
+			&confidence_out,
+			errstr);
+
+		if (rc != 0)
+		{
+			/* On error, set default prediction */
+			predictions_out[i] = 0;
+			continue;
+		}
+
+		predictions_out[i] = class_out;
+	}
+
+	return 0;
+}
+
+/*
+ * Batch evaluation: compute metrics for multiple samples
+ */
+int
+ndb_cuda_svm_evaluate_batch(const bytea *model_data,
+	const float *features,
+	const int *labels,
+	int n_samples,
+	int feature_dim,
+	double *accuracy_out,
+	double *precision_out,
+	double *recall_out,
+	double *f1_out,
+	char **errstr)
+{
+	int *predictions = NULL;
+	int tp = 0;
+	int tn = 0;
+	int fp = 0;
+	int fn = 0;
+	int i;
+	int total_correct = 0;
+	int rc;
+
+	if (errstr)
+		*errstr = NULL;
+
+	if (model_data == NULL || features == NULL || labels == NULL
+		|| n_samples <= 0 || feature_dim <= 0)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid inputs for CUDA SVM batch evaluate");
+		return -1;
+	}
+
+	if (accuracy_out == NULL || precision_out == NULL
+		|| recall_out == NULL || f1_out == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("output pointers are NULL");
+		return -1;
+	}
+
+	/* Allocate predictions array */
+	predictions = (int *)palloc(sizeof(int) * (size_t)n_samples);
+	if (predictions == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("failed to allocate predictions array");
+		return -1;
+	}
+
+	/* Batch predict */
+	rc = ndb_cuda_svm_predict_batch(model_data,
+		features,
+		n_samples,
+		feature_dim,
+		predictions,
+		errstr);
+
+	if (rc != 0)
+	{
+		pfree(predictions);
+		return -1;
+	}
+
+	/* Compute confusion matrix for binary classification */
+	for (i = 0; i < n_samples; i++)
+	{
+		int true_label = labels[i];
+		int pred_label = predictions[i];
+
+		if (true_label < 0 || true_label > 1)
+			continue;
+		if (pred_label < 0 || pred_label > 1)
+			continue;
+
+		if (true_label == 1 && pred_label == 1)
+		{
+			tp++;
+			total_correct++;
+		}
+		else if (true_label == 0 && pred_label == 0)
+		{
+			tn++;
+			total_correct++;
+		}
+		else if (true_label == 0 && pred_label == 1)
+			fp++;
+		else if (true_label == 1 && pred_label == 0)
+			fn++;
+	}
+
+	/* Compute metrics */
+	*accuracy_out = (n_samples > 0)
+		? ((double)total_correct / (double)n_samples)
+		: 0.0;
+
+	if ((tp + fp) > 0)
+		*precision_out = (double)tp / (double)(tp + fp);
+	else
+		*precision_out = 0.0;
+
+	if ((tp + fn) > 0)
+		*recall_out = (double)tp / (double)(tp + fn);
+	else
+		*recall_out = 0.0;
+
+	if ((*precision_out + *recall_out) > 0.0)
+		*f1_out = 2.0 * ((*precision_out) * (*recall_out))
+			/ ((*precision_out) + (*recall_out));
+	else
+		*f1_out = 0.0;
+
+	pfree(predictions);
+
+	return 0;
+}
+
 #endif /* NDB_GPU_CUDA */

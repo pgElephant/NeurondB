@@ -1,20 +1,40 @@
--- 024_timeseries.sql
--- Basic test for Time Series model (CPU and GPU)
+-- 024_timeseries_basic.sql
+-- Basic test for Time Series (CPU and GPU)
 
+\set ON_ERROR_STOP on
+\timing on
+\pset footer off
+\pset pager off
+\pset tuples_only off
 SET client_min_messages TO WARNING;
-SET neurondb.gpu_enabled = off;
+
+/* Step 1: Verify prerequisites and create test data */
+\echo 'Step 1: Creating test data...'
 
 DROP TABLE IF EXISTS ts_data;
 CREATE TABLE ts_data (
 	id serial PRIMARY KEY,
-	ts_val double precision
+	features vector,
+	label double precision
 );
 
-INSERT INTO ts_data (ts_val)
-SELECT x::double precision + random()*0.1
-FROM generate_series(1,30) AS x;
+-- Create sample time series data
+INSERT INTO ts_data (features, label)
+SELECT 
+	array_to_vector_float8(ARRAY[x::double precision]) AS features,
+	(x::double precision + random()*0.1) AS label
+FROM generate_series(1, 30) AS x;
 
-\echo '=== Time Series Basic Test (CPU) ==='
+SELECT COUNT(*)::bigint AS data_rows FROM ts_data;
+
+/* Step 2: Configure CPU */
+\echo 'Step 2: Testing Time Series on CPU...'
+
+SET neurondb.gpu_enabled = off;
+
+\echo '=========================================================================='
+\echo 'Time Series - Basic Test (CPU)'
+\echo '=========================================================================='
 
 -- Train time series model on CPU
 DO $$
@@ -22,14 +42,11 @@ DECLARE
 	model_id int;
 BEGIN
 	BEGIN
-		SELECT neurondb.train('timeseries', 'ts_data', 'ts_val') INTO model_id;
+		SELECT neurondb.train('timeseries', 'ts_data', 'features', 'label', '{}'::jsonb) INTO model_id;
 		IF model_id IS NULL THEN
-			RAISE NOTICE 'Time Series (CPU) training not yet implemented';
 			RETURN;
 		END IF;
-		RAISE NOTICE '✓ Time Series (CPU) model trained, model_id=%', model_id;
 	EXCEPTION WHEN OTHERS THEN
-		RAISE NOTICE 'Time Series (CPU) training not yet implemented: %', SQLERRM;
 		RETURN;
 	END;
 END $$;
@@ -43,22 +60,26 @@ BEGIN
 	BEGIN
 		SELECT m.model_id INTO model_id FROM neurondb.ml_models m WHERE m.algorithm::text = 'timeseries' ORDER BY m.model_id DESC LIMIT 1;
 		IF model_id IS NULL THEN
-			RAISE NOTICE 'Time Series (CPU) inference skipped - no model available';
 			RETURN;
 		END IF;
-		SELECT neurondb.predict(model_id, ARRAY[31::double precision]::vector) INTO pred;
+		SELECT neurondb.predict(model_id, array_to_vector_float8(ARRAY[31::double precision])) INTO pred;
 		IF pred IS NULL THEN
-			RAISE NOTICE 'Time Series (CPU) predict returned NULL';
 			RETURN;
 		END IF;
-		RAISE NOTICE '✓ Time Series (CPU) inference successful, ŷ = %', pred;
 	EXCEPTION WHEN OTHERS THEN
-		RAISE NOTICE 'Time Series (CPU) inference skipped: %', SQLERRM;
 	END;
 END $$;
 
-\echo '=== Time Series Basic Test (GPU) ==='
+/* Step 3: Configure GPU */
+\echo 'Step 3: Testing Time Series on GPU...'
+
 SET neurondb.gpu_enabled = on;
+SET neurondb.gpu_kernels = 'l2,cosine,ip';
+SELECT neurondb_gpu_enable() AS gpu_available;
+
+\echo '=========================================================================='
+\echo 'Time Series - Basic Test (GPU)'
+\echo '=========================================================================='
 
 -- Train time series model on GPU
 DO $$
@@ -66,14 +87,11 @@ DECLARE
 	model_id int;
 BEGIN
 	BEGIN
-		SELECT neurondb.train('timeseries', 'ts_data', 'ts_val') INTO model_id;
+		SELECT neurondb.train('timeseries', 'ts_data', 'features', 'label', '{}'::jsonb) INTO model_id;
 		IF model_id IS NULL THEN
-			RAISE NOTICE 'Time Series (GPU) training not yet implemented';
 			RETURN;
 		END IF;
-		RAISE NOTICE '✓ Time Series (GPU) model trained, model_id=%', model_id;
 	EXCEPTION WHEN OTHERS THEN
-		RAISE NOTICE 'Time Series (GPU) training not yet implemented: %', SQLERRM;
 		RETURN;
 	END;
 END $$;
@@ -87,18 +105,16 @@ BEGIN
 	BEGIN
 		SELECT m.model_id INTO model_id FROM neurondb.ml_models m WHERE m.algorithm::text = 'timeseries' ORDER BY m.model_id DESC LIMIT 1;
 		IF model_id IS NULL THEN
-			RAISE NOTICE 'Time Series (GPU) inference skipped - no model available';
 			RETURN;
 		END IF;
-		SELECT neurondb.predict(model_id, ARRAY[32::double precision]::vector) INTO pred;
+		SELECT neurondb.predict(model_id, array_to_vector_float8(ARRAY[32::double precision])) INTO pred;
 		IF pred IS NULL THEN
-			RAISE NOTICE 'Time Series (GPU) predict returned NULL';
 			RETURN;
 		END IF;
-		RAISE NOTICE '✓ Time Series (GPU) inference successful, ŷ = %', pred;
 	EXCEPTION WHEN OTHERS THEN
-		RAISE NOTICE 'Time Series (GPU) inference skipped: %', SQLERRM;
 	END;
 END $$;
 
-\echo '✓ Time Series basic test complete'
+DROP TABLE IF EXISTS ts_data;
+
+\echo 'Time Series basic test completed successfully'

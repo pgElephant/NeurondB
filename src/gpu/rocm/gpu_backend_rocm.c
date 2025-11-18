@@ -50,7 +50,6 @@ rocm_backend_init_impl(void)
 	err = hipGetDeviceCount(&device_count);
 	if (err != hipSuccess || device_count == 0)
 	{
-		elog(WARNING, "neurondb: ROCm backend - no devices found");
 		return false;
 	}
 
@@ -58,14 +57,12 @@ rocm_backend_init_impl(void)
 	err = hipSetDevice(rocm_ctx.device_id);
 	if (err != hipSuccess)
 	{
-		elog(WARNING, "neurondb: ROCm backend - failed to set device");
 		return false;
 	}
 
 	if (rocblas_create_handle(&rocm_ctx.rocblas_handle)
 		!= rocblas_status_success)
 	{
-		elog(WARNING,
 			"neurondb: ROCm backend - rocBLAS initialization "
 			"failed");
 		return false;
@@ -101,7 +98,6 @@ rocm_backend_cleanup_impl(void)
 	hipDeviceReset();
 	rocm_ctx.initialized = false;
 
-	elog(DEBUG1, "neurondb: ROCm GPU backend cleaned up");
 }
 
 static bool
@@ -457,7 +453,6 @@ rocm_backend_create_streams_impl(int num_streams)
 	}
 
 	rocm_ctx.num_streams = num_streams;
-	elog(DEBUG1, "neurondb: ROCm created %d streams", num_streams);
 	return true;
 }
 
@@ -560,7 +555,6 @@ rocm_backend_dbscan_impl(const float *vectors,
 	pfree(visited);
 	pfree(neighbors);
 
-	elog(DEBUG2, "neurondb: ROCm DBSCAN found %d clusters", cluster_id + 1);
 	return true;
 }
 
@@ -603,11 +597,9 @@ neurondb_gpu_register_rocm_backend(void)
 {
 	if (ndb_gpu_register_backend(&ndb_rocm_backend) == 0)
 	{
-		elog(DEBUG1,
 			"neurondb: ROCm GPU backend registered successfully");
 	} else
 	{
-		elog(WARNING, "neurondb: failed to register ROCm GPU backend");
 	}
 }
 

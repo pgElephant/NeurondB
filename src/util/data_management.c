@@ -168,7 +168,6 @@ vector_time_travel(PG_FUNCTION_ARGS)
 		timebuf,
 		timebuf);
 
-	elog(DEBUG1, "neurondb: about to execute SQL: %s", sql.data);
 
 	ret = SPI_execute(sql.data, true, 0);
 
@@ -202,7 +201,6 @@ vector_time_travel(PG_FUNCTION_ARGS)
 		timebuf,
 		NDB_INT64_CAST(row_count));
 
-	elog(NOTICE, "%s", result_msg.data);
 
 	/* Clean up and free all allocated memory */
 	pfree(sql.data);
@@ -327,7 +325,6 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 		"  metadata JSONB"
 		");",
 		cold_tbl_str);
-	elog(DEBUG1, "neurondb: ensure cold tier SQL: %s", sql.data);
 	SPI_execute(sql.data, false, 0);
 
 	/* Always verify cold tier destination table actually exists */
@@ -366,7 +363,6 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 		tbl_str,
 		age_days,
 		age_days);
-	elog(DEBUG1, "neurondb: count candidate SQL: %s", sql.data);
 	ret = SPI_execute(sql.data, true, 1);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
@@ -379,7 +375,7 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 		if (!isnull)
 			compressed_count = DatumGetInt64(d);
 	}
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: found " NDB_INT64_FMT
 		" vector(s) older than threshold for compression in %s",
 		NDB_INT64_CAST(compressed_count),
@@ -414,7 +410,6 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 			age_days,
 			cold_tbl_str,
 			tbl_str);
-		elog(DEBUG1, "neurondb: compress & move SQL: %s", sql.data);
 		ret = SPI_execute(sql.data, false, 0);
 
 		/* If insert succeeds, count moved by how many were inserted */
@@ -440,7 +435,7 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 						d); /* assuming exactly correspondence for batch */
 		}
 
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: attempted to move " NDB_INT64_FMT
 			" vectors; " NDB_INT64_FMT " records processed",
 			NDB_INT64_CAST(compressed_count),
@@ -462,11 +457,10 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 			tbl_str,
 			age_days,
 			age_days);
-		elog(DEBUG1, "neurondb: mark compressed SQL: %s", sql.data);
 		SPI_execute(sql.data, false, 0);
 	} else
 	{
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: no candidate vectors found older than %d "
 			"days in %s",
 			age_days,
@@ -582,7 +576,6 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 		"FROM pg_stat_user_tables WHERE schemaname = 'public' AND "
 		"relname = '%s';",
 		tbl_str);
-	elog(DEBUG1, "neurondb: collecting stats SQL: %s", stat_sql.data);
 	ret = SPI_execute(stat_sql.data, true, 1);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
@@ -597,14 +590,14 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 			SPI_tuptable->tupdesc,
 			2,
 			&isnull);
-		if (!isnull)
-			live_tuples = DatumGetInt64(live_datum);
-		elog(NOTICE,
-			"neurondb: \"%s\" before vacuum - dead tuples: %ld, "
-			"live: %ld",
-			tbl_str,
-			(long)dead_tuples,
-			(long)live_tuples);
+	if (!isnull)
+		live_tuples = DatumGetInt64(live_datum);
+	elog(DEBUG1,
+		"neurondb: \"%s\" before vacuum - dead tuples: %ld, "
+		"live: %ld",
+		tbl_str,
+		(long)dead_tuples,
+		(long)live_tuples);
 	}
 	pfree(stat_sql.data);
 
@@ -620,7 +613,6 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 		"SELECT COUNT(*) FROM deleted_orphaned;",
 		tbl_str,
 		tbl_str);
-	elog(DEBUG1, "neurondb: clean orphaned SQL: %s", sql.data);
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
@@ -634,7 +626,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 	cleaned_count += orphan_count;
 	pfree(sql.data);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: removed %ld orphaned vectors from \"%s\"",
 		(long)orphan_count,
 		tbl_str);
@@ -656,7 +648,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 			"neurondb: PostgreSQL VACUUM failed on \"%s\"",
 			tbl_str);
 	else
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: PostgreSQL VACUUM completed successfully "
 			"for \"%s\"",
 			tbl_str);
@@ -697,7 +689,6 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 		tbl_str,
 		tbl_str,
 		(long)cleaned_count);
-	elog(DEBUG1, "neurondb: update stats SQL: %s", sql.data);
 	SPI_execute(sql.data, false, 0);
 	pfree(sql.data);
 
@@ -709,7 +700,6 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 		tbl_str,
 		(long)dead_tuples,
 		(long)orphan_count);
-	elog(NOTICE, "%s", statmsg.data);
 
 	pfree(statmsg.data);
 	pfree(tbl_str);
@@ -839,7 +829,6 @@ rebalance_index(PG_FUNCTION_ARGS)
 		idx_str);
 	ret = SPI_execute(sql.data, true, 1);
 
-	elog(DEBUG1, "neurondb: metadata lookup SQL: %s", sql.data);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
@@ -853,7 +842,7 @@ rebalance_index(PG_FUNCTION_ARGS)
 		/* Ignore balance factor because we are about to update it */
 	}
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: index \"%s\" original: %ld nodes",
 		idx_str,
 		(long)total_nodes);
@@ -887,7 +876,6 @@ rebalance_index(PG_FUNCTION_ARGS)
 		target_balance,
 		(long)rebalanced_edges,
 		target_balance);
-	elog(DEBUG1, "neurondb: rebalance update metadata SQL: %s", sql.data);
 
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret < 0)
@@ -895,7 +883,7 @@ rebalance_index(PG_FUNCTION_ARGS)
 			"neurondb: updating index metadata failed for \"%s\"",
 			idx_str);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: rebalanced (simulated) %ld edges in index \"%s\" "
 		"(target balance=%.3f)",
 		(long)rebalanced_edges,

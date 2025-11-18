@@ -401,5 +401,4 @@ answer_question(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_nlp_production_model(void)
 {
-	elog(DEBUG1, "NlpProduction GPU Model Ops registration skipped - not yet implemented");
 }

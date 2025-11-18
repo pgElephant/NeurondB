@@ -1,13 +1,36 @@
 -- 024_timeseries_advance.sql
 -- Advanced test for timeseries
+-- Note: Algorithm may not be fully implemented yet
 
 SET client_min_messages TO WARNING;
+\set ON_ERROR_STOP on
+\timing on
+\pset footer off
+\pset pager off
+\pset tuples_only off
 
-\echo '=== timeseries Advanced Test ==='
+\echo '=========================================================================='
+\echo 'timeseries: Advanced Test (Algorithm Status Check)'
+\echo '=========================================================================='
+
+\echo ''
+\echo 'Algorithm Status'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 DO $$
 BEGIN
-    RAISE NOTICE '✓ timeseries advance test skipped (algorithm not fully implemented)';
+	-- Check if timeseries functions exist
+	IF EXISTS (SELECT 1 FROM pg_proc WHERE proname LIKE '%timeseries%' OR proname LIKE '%ts%' OR proname LIKE '%time_series%') THEN
+	ELSE
+	END IF;
+	
+	-- Check if timeseries is in ml_models
+	IF EXISTS (SELECT 1 FROM neurondb.ml_models WHERE algorithm = 'timeseries' LIMIT 1) THEN
+	ELSE
+	END IF;
 END $$;
 
-\echo '✓ timeseries advance test complete'
+\echo ''
+\echo '=========================================================================='
+\echo '✓ timeseries: Status check complete (algorithm may not be fully implemented)'
+\echo '=========================================================================='

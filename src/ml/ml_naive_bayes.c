@@ -20,6 +20,7 @@
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "utils/array.h"
+#include "utils/memutils.h"
 
 #include "neurondb.h"
 #include "neurondb_ml.h"
@@ -125,7 +126,9 @@ train_naive_bayes_classifier(PG_FUNCTION_ARGS)
 
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_connect failed")));
 
 	/* Build query */
 	initStringInfo(&query);
@@ -136,15 +139,20 @@ train_naive_bayes_classifier(PG_FUNCTION_ARGS)
 		tbl_str,
 		feat_str,
 		label_str);
+	elog(DEBUG1, "train_naive_bayes_classifier: executing query: %s", query.data);
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errmsg("Query failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: query failed")));
 
 	nvec = SPI_processed;
 
 	if (nvec < 10)
-		ereport(ERROR, (errmsg("Need at least 10 samples")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				errmsg("neurondb: need at least 10 samples")));
 
 	/* Allocate arrays */
 	MemoryContextSwitchTo(oldcontext);
@@ -169,6 +177,8 @@ train_naive_bayes_classifier(PG_FUNCTION_ARGS)
 			continue;
 
 		vec = DatumGetVector(feat_datum);
+		if (vec == NULL || vec->dim <= 0)
+			continue;
 
 		if (i == 0)
 			dim = vec->dim;
@@ -229,6 +239,18 @@ train_naive_bayes_classifier(PG_FUNCTION_ARGS)
 	for (class = 0; class < 2; class ++)
 	{
 		model.class_priors[class] = (double)class_sizes[class] / nvec;
+
+		/* Check for empty class to avoid division by zero */
+		if (class_sizes[class] == 0)
+		{
+			/* Set default values for empty class */
+			for (j = 0; j < dim; j++)
+			{
+				model.means[class][j] = 0.0;
+				model.variances[class][j] = 1.0;
+			}
+			continue;
+		}
 
 		/* Compute means */
 		for (j = 0; j < dim; j++)
@@ -359,7 +381,9 @@ nb_model_deserialize_from_bytea(const bytea *data)
 	int i, j;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 2)
-		ereport(ERROR, (errmsg("Invalid model data: too small")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: invalid model data: too small")));
 
 	buf = VARDATA(data);
 
@@ -373,11 +397,15 @@ nb_model_deserialize_from_bytea(const bytea *data)
 
 	/* Validate reasonable bounds */
 	if (model->n_classes <= 0 || model->n_classes > 1000)
-		ereport(ERROR, (errmsg("Invalid model data: n_classes=%d (expected 1-1000)",
-			model->n_classes)));
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: invalid model data: n_classes=%d (expected 1-1000)",
+					model->n_classes)));
 	if (model->n_features <= 0 || model->n_features > 100000)
-		ereport(ERROR, (errmsg("Invalid model data: n_features=%d (expected 1-100000)",
-			model->n_features)));
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: invalid model data: n_features=%d (expected 1-100000)",
+					model->n_features)));
 	
 	/* Verify we have enough data */
 	{
@@ -387,8 +415,10 @@ nb_model_deserialize_from_bytea(const bytea *data)
 			sizeof(double) * model->n_classes * model->n_features; /* variances */
 		int actual_size = VARSIZE(data) - VARHDRSZ;
 		if (actual_size < expected_size)
-			ereport(ERROR, (errmsg("Invalid model data: expected %d bytes, got %d bytes",
-				expected_size, actual_size)));
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: invalid model data: expected %d bytes, got %d bytes",
+						expected_size, actual_size)));
 	}
 
 	/* Allocate arrays */
@@ -474,7 +504,9 @@ train_naive_bayes_classifier_model_id(PG_FUNCTION_ARGS)
 
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_connect failed")));
 
 	/* Build query */
 	initStringInfo(&query);
@@ -485,15 +517,20 @@ train_naive_bayes_classifier_model_id(PG_FUNCTION_ARGS)
 		tbl_str,
 		feat_str,
 		label_str);
+	elog(DEBUG1, "train_naive_bayes_classifier_model_id: executing query: %s", query.data);
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errmsg("Query failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: query failed")));
 
 	nvec = SPI_processed;
 
 	if (nvec < 10)
-		ereport(ERROR, (errmsg("Need at least 10 samples")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				errmsg("neurondb: need at least 10 samples")));
 
 	/* Allocate arrays */
 	MemoryContextSwitchTo(oldcontext);
@@ -518,6 +555,8 @@ train_naive_bayes_classifier_model_id(PG_FUNCTION_ARGS)
 			continue;
 
 		vec = DatumGetVector(feat_datum);
+		if (vec == NULL || vec->dim <= 0)
+			continue;
 
 		if (i == 0)
 			dim = vec->dim;
@@ -578,6 +617,18 @@ train_naive_bayes_classifier_model_id(PG_FUNCTION_ARGS)
 	for (class = 0; class < 2; class++)
 	{
 		model.class_priors[class] = (double)class_sizes[class] / nvec;
+
+		/* Check for empty class to avoid division by zero */
+		if (class_sizes[class] == 0)
+		{
+			/* Set default values for empty class */
+			for (j = 0; j < dim; j++)
+			{
+				model.means[class][j] = 0.0;
+				model.variances[class][j] = 1.0;
+			}
+			continue;
+		}
 
 		/* Compute means */
 		for (j = 0; j < dim; j++)
@@ -691,10 +742,8 @@ predict_naive_bayes(PG_FUNCTION_ARGS)
 
 	if (features->dim != n_features)
 		ereport(ERROR,
-			(errmsg("Feature dimension mismatch: expected %d, got "
-				"%d",
-				n_features,
-				features->dim)));
+			(errmsg("neurondb: predict_naive_bayes: feature dimension mismatch: expected %d, got %d",
+				n_features, features->dim)));
 
 	/* Extract model parameters */
 	class_priors = (double *)palloc(sizeof(double) * n_classes);
@@ -976,6 +1025,7 @@ evaluate_naive_bayes_by_model_id(PG_FUNCTION_ARGS)
 	int nvec = 0;
 	int i;
 	int j;
+	int feat_dim = 0;
 	Oid feat_type_oid = InvalidOid;
 	bool feat_is_array = false;
 	double accuracy = 0.0;
@@ -1104,6 +1154,7 @@ evaluate_naive_bayes_by_model_id(PG_FUNCTION_ARGS)
 		quote_identifier(tbl_str),
 		quote_identifier(feat_str),
 		quote_identifier(targ_str));
+	elog(DEBUG1, "evaluate_naive_bayes_by_model_id: executing query: %s", query.data);
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -1137,6 +1188,25 @@ evaluate_naive_bayes_by_model_id(PG_FUNCTION_ARGS)
 	nvec = SPI_processed;
 	if (nvec < 1)
 	{
+		/* Check if table/view exists and has any rows at all */
+		StringInfoData check_query;
+		int check_ret;
+		int total_rows = 0;
+		
+		initStringInfo(&check_query);
+		appendStringInfo(&check_query,
+			"SELECT COUNT(*) FROM %s",
+			quote_identifier(tbl_str));
+		check_ret = SPI_execute(check_query.data, true, 0);
+		if (check_ret == SPI_OK_SELECT && SPI_processed > 0)
+		{
+			bool isnull;
+			Datum count_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+			if (!isnull)
+				total_rows = DatumGetInt64(count_datum);
+		}
+		pfree(check_query.data);
+		
 		pfree(query.data);
 		if (model != NULL)
 		{
@@ -1158,9 +1228,24 @@ evaluate_naive_bayes_by_model_id(PG_FUNCTION_ARGS)
 		pfree(feat_str);
 		pfree(targ_str);
 		SPI_finish();
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_naive_bayes_by_model_id: no valid rows found")));
+		
+		if (total_rows == 0)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_naive_bayes_by_model_id: table/view '%s' has no rows",
+						tbl_str),
+					errhint("Ensure the table/view exists and contains data")));
+		}
+		else
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_naive_bayes_by_model_id: no valid rows found in '%s' (table has %d total rows, but all have NULL values in '%s' or '%s')",
+						tbl_str, total_rows, feat_str, targ_str),
+					errhint("Ensure columns '%s' and '%s' are not NULL for evaluation rows",
+						feat_str, targ_str)));
+		}
 	}
 
 	/* Determine feature column type */
@@ -1173,20 +1258,282 @@ evaluate_naive_bayes_by_model_id(PG_FUNCTION_ARGS)
 	if (is_gpu_model && neurondb_gpu_is_available())
 	{
 #ifdef NDB_GPU_CUDA
-		/* For now, GPU evaluation for Naive Bayes is not implemented, fall back to CPU */
-		elog(DEBUG1,
-			"neurondb: evaluate_naive_bayes_by_model_id: GPU evaluation not yet implemented for Naive Bayes, using CPU batch evaluation");
-		goto gpu_eval_fallback;
+		const NdbCudaNbModelHeader *gpu_hdr;
+		int *h_labels = NULL;
+		float *h_features = NULL;
+		int valid_rows = 0;
+		size_t payload_size;
+
+		/* Defensive check: validate payload size */
+		payload_size = VARSIZE(gpu_payload) - VARHDRSZ;
+		if (payload_size < sizeof(NdbCudaNbModelHeader))
+		{
+				 elog(DEBUG1,
+				 	"neurondb: evaluate_naive_bayes_by_model_id: GPU payload too small (%zu bytes), falling back to CPU",
+				 payload_size);
+			goto cpu_evaluation_path;
+		}
+
+		/* Load GPU model header with defensive checks */
+		gpu_hdr = (const NdbCudaNbModelHeader *)VARDATA(gpu_payload);
+		if (gpu_hdr == NULL)
+		{
+			elog(DEBUG1, "neurondb: evaluate_naive_bayes_by_model_id: NULL GPU header, falling back to CPU");
+			goto cpu_evaluation_path;
+		}
+
+		feat_dim = gpu_hdr->n_features;
+		if (feat_dim <= 0 || feat_dim > 100000)
+		{
+			elog(DEBUG1, "neurondb: evaluate_naive_bayes_by_model_id: invalid feature_dim (%d), falling back to CPU", feat_dim);
+			goto cpu_evaluation_path;
+		}
+
+		/* Allocate host buffers for features and labels with size checks */
+		{
+			size_t features_size = sizeof(float) * (size_t)nvec * (size_t)feat_dim;
+			size_t labels_size = sizeof(int) * (size_t)nvec;
+
+			if (features_size > MaxAllocSize || labels_size > MaxAllocSize)
+			{
+					 elog(DEBUG1,
+					 	"neurondb: evaluate_naive_bayes_by_model_id: allocation size too large (features=%zu, labels=%zu), falling back to CPU",
+					 features_size, labels_size);
+				goto cpu_evaluation_path;
+			}
+
+			h_features = (float *)palloc(features_size);
+			h_labels = (int *)palloc(labels_size);
+
+			if (h_features == NULL || h_labels == NULL)
+			{
+				elog(DEBUG1, "neurondb: evaluate_naive_bayes_by_model_id: memory allocation failed, falling back to CPU");
+				if (h_features)
+					pfree(h_features);
+				if (h_labels)
+					pfree(h_labels);
+				goto cpu_evaluation_path;
+			}
+		}
+
+		/* Extract features and labels from SPI results - optimized batch extraction */
+		/* Cache TupleDesc to avoid repeated lookups */
+		{
+			TupleDesc tupdesc = SPI_tuptable->tupdesc;
+
+			if (tupdesc == NULL)
+			{
+				elog(DEBUG1,
+					"neurondb: evaluate_naive_bayes_by_model_id: NULL TupleDesc, falling back to CPU");
+				pfree(h_features);
+				pfree(h_labels);
+				goto cpu_evaluation_path;
+			}
+
+			for (i = 0; i < nvec; i++)
+			{
+				HeapTuple tuple;
+				Datum feat_datum;
+				Datum targ_datum;
+				bool feat_null;
+				bool targ_null;
+				Vector *vec;
+				ArrayType *arr;
+				float *feat_row;
+
+				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || i >= SPI_processed)
+					break;
+
+				tuple = SPI_tuptable->vals[i];
+				if (tuple == NULL)
+					continue;
+
+				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+
+				if (feat_null || targ_null)
+					continue;
+
+				/* Bounds check */
+				if (valid_rows >= nvec)
+				{
+					elog(DEBUG1,
+						"neurondb: evaluate_naive_bayes_by_model_id: valid_rows overflow, breaking");
+					break;
+				}
+
+				feat_row = h_features + (valid_rows * feat_dim);
+				if (feat_row == NULL || feat_row < h_features || feat_row >= h_features + (nvec * feat_dim))
+				{
+					elog(DEBUG1,
+						"neurondb: evaluate_naive_bayes_by_model_id: feat_row out of bounds, skipping row");
+					continue;
+				}
+
+				h_labels[valid_rows] = (int)rint(DatumGetFloat8(targ_datum));
+
+				/* Extract feature vector - optimized paths */
+				if (feat_is_array)
+				{
+					arr = DatumGetArrayTypeP(feat_datum);
+					if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != feat_dim)
+						continue;
+					if (feat_type_oid == FLOAT8ARRAYOID)
+					{
+						/* Optimized: bulk conversion with loop unrolling hint */
+						float8 *data = (float8 *)ARR_DATA_PTR(arr);
+						int j_remain = feat_dim % 4;
+						int j_end = feat_dim - j_remain;
+
+						/* Process 4 elements at a time for better cache locality */
+						for (j = 0; j < j_end; j += 4)
+						{
+							feat_row[j] = (float)data[j];
+							feat_row[j + 1] = (float)data[j + 1];
+							feat_row[j + 2] = (float)data[j + 2];
+							feat_row[j + 3] = (float)data[j + 3];
+						}
+						/* Handle remaining elements */
+						for (j = j_end; j < feat_dim; j++)
+							feat_row[j] = (float)data[j];
+					}
+					else
+					{
+						/* FLOAT4ARRAYOID: direct memcpy (already optimal) */
+						float4 *data = (float4 *)ARR_DATA_PTR(arr);
+						memcpy(feat_row, data, sizeof(float) * feat_dim);
+					}
+				}
+				else
+				{
+					/* Vector type: direct memcpy (already optimal) */
+					vec = DatumGetVector(feat_datum);
+					if (vec->dim != feat_dim)
+						continue;
+					memcpy(feat_row, vec->data, sizeof(float) * feat_dim);
+				}
+
+				valid_rows++;
+			}
+		}
+
+		if (valid_rows == 0)
+		{
+			pfree(h_features);
+			pfree(h_labels);
+			if (gpu_payload)
+				pfree(gpu_payload);
+			if (gpu_metrics)
+				pfree(gpu_metrics);
+			pfree(query.data);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(targ_str);
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_naive_bayes_by_model_id: no valid rows found in '%s' (query returned %d rows, but all were filtered out due to NULL values or dimension mismatches)",
+						tbl_str, nvec),
+					errhint("Ensure columns '%s' and '%s' are not NULL and feature dimensions match the model (expected %d)",
+						feat_str, targ_str, feat_dim)));
+		}
+
+		/* Use optimized GPU batch evaluation */
+		{
+			int rc;
+			char *gpu_errstr = NULL;
+
+			/* Defensive checks before GPU call */
+			if (h_features == NULL || h_labels == NULL || valid_rows <= 0 || feat_dim <= 0)
+			{
+					 elog(DEBUG1,
+					 	"neurondb: evaluate_naive_bayes_by_model_id: invalid inputs for GPU evaluation (features=%p, labels=%p, rows=%d, dim=%d), falling back to CPU",
+					 (void *)h_features, (void *)h_labels, valid_rows, feat_dim);
+				pfree(h_features);
+				pfree(h_labels);
+				goto cpu_evaluation_path;
+			}
+
+			PG_TRY();
+			{
+				rc = ndb_cuda_nb_evaluate_batch(gpu_payload,
+					h_features,
+					h_labels,
+					valid_rows,
+					feat_dim,
+					&accuracy,
+					&precision,
+					&recall,
+					&f1_score,
+					&gpu_errstr);
+
+				if (rc == 0)
+				{
+					/* Success - build result and return */
+					initStringInfo(&jsonbuf);
+					appendStringInfo(&jsonbuf,
+						"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
+						accuracy,
+						precision,
+						recall,
+						f1_score,
+						valid_rows);
+
+					result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+						CStringGetDatum(jsonbuf.data)));
+
+					pfree(jsonbuf.data);
+					pfree(h_features);
+					pfree(h_labels);
+					if (gpu_payload)
+						pfree(gpu_payload);
+					if (gpu_metrics)
+						pfree(gpu_metrics);
+					if (gpu_errstr)
+						pfree(gpu_errstr);
+					pfree(query.data);
+					pfree(tbl_str);
+					pfree(feat_str);
+					pfree(targ_str);
+					SPI_finish();
+					MemoryContextSwitchTo(oldcontext);
+					PG_RETURN_JSONB_P(result_jsonb);
+				}
+				else
+				{
+					/* GPU evaluation failed - fall back to CPU */
+						 elog(DEBUG1,
+						 	"evaluate_naive_bayes_by_model_id: GPU batch evaluation failed: %s, falling back to CPU",
+						 gpu_errstr ? gpu_errstr : "unknown error");
+					if (gpu_errstr)
+						pfree(gpu_errstr);
+					pfree(h_features);
+					pfree(h_labels);
+					goto cpu_evaluation_path;
+				}
+			}
+			PG_CATCH();
+			{
+				elog(DEBUG1,
+					"evaluate_naive_bayes_by_model_id: exception during GPU evaluation, falling back to CPU");
+				if (h_features)
+					pfree(h_features);
+				if (h_labels)
+					pfree(h_labels);
+				goto cpu_evaluation_path;
+			}
+			PG_END_TRY();
+		}
 #endif	/* NDB_GPU_CUDA */
 	}
 
-gpu_eval_fallback:
-	/* CPU evaluation path (also used as fallback for GPU models) */
+cpu_evaluation_path:
+
+	/* CPU evaluation path */
 	/* Use optimized batch prediction */
 	{
 		float *h_features = NULL;
 		double *h_labels = NULL;
-		int feat_dim = 0;
 		int valid_rows = 0;
 
 		/* Determine feature dimension from model */
@@ -1315,7 +1662,10 @@ gpu_eval_fallback:
 			SPI_finish();
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("neurondb: evaluate_naive_bayes_by_model_id: no valid rows found")));
+					errmsg("neurondb: evaluate_naive_bayes_by_model_id: no valid rows found in '%s' (query returned %d rows, but all were filtered out due to NULL values or dimension mismatches)",
+						tbl_str, nvec),
+					errhint("Ensure columns '%s' and '%s' are not NULL and feature dimensions match the model (expected %d)",
+						feat_str, targ_str, feat_dim)));
 		}
 
 		/* For GPU models, we cannot evaluate on CPU without model conversion */
@@ -1656,8 +2006,6 @@ neurondb_gpu_register_nb_model(void)
 	if (registered)
 		return;
 
-	elog(DEBUG1, "Registering Naive Bayes GPU Model Ops");
 	ndb_gpu_register_model_ops(&nb_gpu_model_ops);
 	registered = true;
-	elog(DEBUG1, "Naive Bayes GPU Model Ops registered successfully");
 }

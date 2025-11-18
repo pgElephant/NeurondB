@@ -155,8 +155,7 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 	if (ARR_DIMS(score_matrix_array)[1] != num_docs)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("score_matrix must have %d columns to "
-				       "match doc_ids",
+				errmsg("score_matrix must have %d columns to match doc_ids",
 					num_docs)));
 
 	doc_ids = (int32 *)ARR_DATA_PTR(doc_ids_array);
@@ -168,8 +167,7 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 		if (ARR_DIMS(weights_array)[0] != num_systems)
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("weights array must have %d "
-					       "elements",
+					errmsg("weights array must have %d elements",
 						num_systems)));
 
 		weights = (float8 *)ARR_DATA_PTR(weights_array);
@@ -193,8 +191,8 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 		weight_sum = 1.0;
 	}
 
-	elog(DEBUG1,
-		"neurondb: Ensemble reranking: %d systems, %d docs",
+		elog(DEBUG1,
+			"neurondb: Ensemble reranking: %d systems, %d docs",
 		num_systems,
 		num_docs);
 
@@ -329,8 +327,8 @@ rerank_ensemble_borda(PG_FUNCTION_ARGS)
 	max_docs = dims[1];
 	ranked_lists = (int32 *)ARR_DATA_PTR(ranked_lists_array);
 
-	elog(DEBUG1,
-		"neurondb: Borda count ensemble: %d systems, max %d docs",
+		elog(DEBUG1,
+			"neurondb: Borda count ensemble: %d systems, max %d docs",
 		num_systems,
 		max_docs);
 

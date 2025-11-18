@@ -63,6 +63,8 @@ neurondb_automl_define_gucs(void)
 							 NULL,
 							 NULL,
 							 NULL);
+	elog(DEBUG1,
+		 "neurondb.automl.use_gpu GUC registered");
 
 	/* placeholder warnings removed */
 }
@@ -180,6 +182,8 @@ auto_train(PG_FUNCTION_ARGS)
 	automl_context = AllocSetContextCreate(CurrentMemoryContext,
 										   "automl memory context",
 										   ALLOCSET_DEFAULT_SIZES);
+	elog(DEBUG1,
+		 "Created AutoML memory context");
 	oldcontext = MemoryContextSwitchTo(automl_context);
 
 	/* Select algorithms based on task */
@@ -224,12 +228,9 @@ auto_train(PG_FUNCTION_ARGS)
 		int			r;
 		bool		found_metric = false;
 
-		scores[i].algorithm = pstrdup(algorithms[i]);
+	scores[i].algorithm = pstrdup(algorithms[i]);
 
-		elog(DEBUG1, "auto_train: Training algorithm %s (%d/%d)",
-			 algorithms[i], i + 1, n_algorithms);
-
-		/* Train model using neurondb.train() */
+	/* Train model using neurondb.train() */
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
 						 "SELECT neurondb.train("
@@ -237,23 +238,24 @@ auto_train(PG_FUNCTION_ARGS)
 						 "'%s', "
 						 "'%s', "
 						 "'%s', "
-						 "ARRAY['%s']::text[], "
-						 "'{}'::jsonb)::integer",
-						 algorithms[i],
-						 table_name_str,
-						 label_col_str,
-						 feature_col_str);
+					 "ARRAY['%s']::text[], "
+					 "'{}'::jsonb)::integer",
+					 algorithms[i],
+					 table_name_str,
+					 label_col_str,
+					 feature_col_str);
+	elog(DEBUG1,
+		 "Training algorithm %s with table %s, label %s, features %s",
+		 algorithms[i], table_name_str, label_col_str, feature_col_str);
 
 		ret = SPI_execute(sql.data, true, 1);
-		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-		{
-			elog(WARNING, "auto_train: Failed to train %s, skipping",
-				 algorithms[i]);
-			pfree(sql.data);
-			scores[i].score = -1.0f;
-			scores[i].model_id = 0;
-			continue;
-		}
+	if (ret != SPI_OK_SELECT || SPI_processed == 0)
+	{
+		pfree(sql.data);
+		scores[i].score = -1.0f;
+		scores[i].model_id = 0;
+		continue;
+	}
 
 		model_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
 											   SPI_tuptable->tupdesc,
@@ -261,14 +263,12 @@ auto_train(PG_FUNCTION_ARGS)
 											   &isnull));
 		pfree(sql.data);
 
-		if (isnull || model_id <= 0)
-		{
-			elog(WARNING, "auto_train: Invalid model_id for %s, skipping",
-				 algorithms[i]);
-			scores[i].score = -1.0f;
-			scores[i].model_id = 0;
-			continue;
-		}
+	if (isnull || model_id <= 0)
+	{
+		scores[i].score = -1.0f;
+		scores[i].model_id = 0;
+		continue;
+	}
 
 		scores[i].model_id = model_id;
 
@@ -284,16 +284,17 @@ auto_train(PG_FUNCTION_ARGS)
 						 table_name_str,
 						 feature_col_str,
 						 label_col_str);
+	elog(DEBUG1,
+		 "Evaluating model %d with table %s, features %s, label %s",
+		 model_id, table_name_str, feature_col_str, label_col_str);
 
 		ret = SPI_execute(sql.data, true, 1);
-		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-		{
-			elog(WARNING, "auto_train: Failed to evaluate %s, skipping",
-				 algorithms[i]);
-			pfree(sql.data);
-			scores[i].score = -1.0f;
-			continue;
-		}
+	if (ret != SPI_OK_SELECT || SPI_processed == 0)
+	{
+		pfree(sql.data);
+		scores[i].score = -1.0f;
+		continue;
+	}
 
 		metrics_datum = SPI_getbinval(SPI_tuptable->vals[0],
 									  SPI_tuptable->tupdesc,
@@ -301,13 +302,11 @@ auto_train(PG_FUNCTION_ARGS)
 									  &metrics_isnull);
 		pfree(sql.data);
 
-		if (metrics_isnull)
-		{
-			elog(WARNING, "auto_train: Null metrics for %s, skipping",
-				 algorithms[i]);
-			scores[i].score = -1.0f;
-			continue;
-		}
+	if (metrics_isnull)
+	{
+		scores[i].score = -1.0f;
+		continue;
+	}
 
 		/* Extract metric value from JSONB */
 		metrics_jsonb = DatumGetJsonbP(metrics_datum);
@@ -399,8 +398,8 @@ auto_train(PG_FUNCTION_ARGS)
 
 		if (!found_metric)
 		{
-			elog(DEBUG1,
-				 "auto_train: Could not find metric '%s' for %s, using default score",
+				 elog(DEBUG1,
+				 	"neurondb: auto_train: Could not find metric '%s' for %s, using default score",
 				 metric, algorithms[i]);
 			score = 0.5f;	/* Default score */
 		}
@@ -415,12 +414,9 @@ auto_train(PG_FUNCTION_ARGS)
 			score = 1.0f / (1.0f + score);
 		}
 
-		scores[i].score = score;
+	scores[i].score = score;
 
-		elog(DEBUG1, "auto_train: %s scored %.4f (model_id: %d)",
-			 algorithms[i], score, model_id);
-
-		/* Track best model */
+	/* Track best model */
 		if (score > best_score)
 		{
 			best_score = score;
@@ -435,24 +431,27 @@ auto_train(PG_FUNCTION_ARGS)
 	initStringInfo(&result);
 	if (best_algorithm != NULL && best_model_id > 0)
 	{
-		appendStringInfo(&result,
-						 "AutoML completed. Best algorithm: %s, %s: %.4f, model_id: %d\n"
-						 "Trained %d algorithms:\n",
-						 best_algorithm, metric, best_score, best_model_id, n_algorithms);
+	appendStringInfo(&result,
+					 "AutoML completed. Best algorithm: %s, %s: %.4f, model_id: %d\n"
+					 "Trained %d algorithms:\n",
+					 best_algorithm, metric, best_score, best_model_id, n_algorithms);
+	elog(DEBUG1,
+		 "AutoML completed. Best algorithm: %s, %s: %.4f, model_id: %d, trained %d algorithms",
+		 best_algorithm, metric, best_score, best_model_id, n_algorithms);
 
 		for (i = 0; i < n_algorithms; i++)
 		{
 			if (scores[i].model_id > 0)
 			{
-				appendStringInfo(&result,
-								 "  %d. %s: %.4f (model_id: %d)\n",
+				elog(DEBUG1,
+								 	"  %d. %s: %.4f (model_id: %d)\n",
 								 i + 1, scores[i].algorithm,
 								 scores[i].score, scores[i].model_id);
 			}
 			else
 			{
-				appendStringInfo(&result,
-								 "  %d. %s: failed\n",
+				elog(DEBUG1,
+								 	"  %d. %s: failed\n",
 								 i + 1, scores[i].algorithm);
 			}
 		}
@@ -746,8 +745,7 @@ optimize_hyperparameters(PG_FUNCTION_ARGS)
 	else
 	{
 		appendStringInfo(&result,
-						 "Hyperparameter optimization failed for %s: "
-						 "No valid combinations found",
+						 "Hyperparameter optimization failed for %s: No valid combinations found",
 						 algorithm_str);
 	}
 
@@ -824,8 +822,7 @@ feature_importance(PG_FUNCTION_ARGS)
 	/* Fetch model metadata from catalog */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-					 "SELECT algorithm, num_features FROM neurondb.ml_models "
-					 "WHERE model_id = %d",
+					 "SELECT algorithm, num_features FROM neurondb.ml_models WHERE model_id = %d",
 					 model_id);
 
 	ret = SPI_execute(sql.data, true, 1);
@@ -1629,8 +1626,8 @@ model_leaderboard(PG_FUNCTION_ARGS)
 	/* Build result */
 	initStringInfo(&result);
 	appendStringInfo(&result,
-					 "Model leaderboard for %s (sorted by %s):\n",
-					 task_str, metric_name);
+		"Model leaderboard for %s (sorted by %s):\n",
+		task_str, metric_name);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
@@ -1667,8 +1664,8 @@ model_leaderboard(PG_FUNCTION_ARGS)
 				if (score_str != NULL)
 					score = (float) atof(score_str);
 
-				appendStringInfo(&result,
-								 "%d. %s (model_id: %d): %.4f\n",
+				elog(DEBUG1,
+								 	"%d. %s (model_id: %d): %.4f\n",
 								 rank, algorithm, model_id, score);
 
 				pfree(algorithm);
@@ -1715,5 +1712,4 @@ model_leaderboard(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_automl_model(void)
 {
-	elog(DEBUG1, "Automl GPU Model Ops registration skipped - not yet implemented");
 }

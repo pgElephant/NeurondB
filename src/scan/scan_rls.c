@@ -77,7 +77,7 @@ ndb_rls_init(Relation rel, EState *estate)
 		/* state->filterExpr = ExecInitQual(...); */
 	} else
 	{
-		elog(DEBUG2,
+		elog(DEBUG1,
 			"neurondb: No RLS policies for relation %s",
 			RelationGetRelationName(rel));
 	}
@@ -109,7 +109,6 @@ ndb_rls_check_tuple(RLSFilterState *state, TupleTableSlot *slot)
 
 		if (!result)
 		{
-			elog(DEBUG2, "neurondb: Tuple filtered by RLS policy");
 		}
 	}
 
@@ -179,11 +178,11 @@ neurondb_test_rls(PG_FUNCTION_ARGS)
 		&& rel->rd_rel->relforcerowsecurity);
 
 	if (hasRLS)
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: Relation %s has RLS enabled",
 			RelationGetRelationName(rel));
 	else
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: Relation %s has NO RLS",
 			RelationGetRelationName(rel));
 
@@ -301,7 +300,6 @@ neurondb_create_tenant_policy(PG_FUNCTION_ARGS)
 		table_str,
 		column_str);
 
-	elog(NOTICE, "neurondb: Generated RLS policy: %s", query.data);
 
 	/* TODO: Execute policy creation */
 	/* SPI_connect();

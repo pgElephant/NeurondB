@@ -134,8 +134,8 @@ import_pytorch_model(PG_FUNCTION_ARGS)
 	}
 
 	initStringInfo(&result);
-	appendStringInfo(&result,
-		"PyTorch model '%s' imported with ID %d (type: %s)",
+	elog(DEBUG1,
+			"PyTorch model '%s' imported with ID %d (type: %s)",
 		name,
 		model_id,
 		type);
@@ -242,8 +242,8 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 	}
 
 	initStringInfo(&result);
-	appendStringInfo(&result,
-		"TensorFlow model '%s' imported with ID %d",
+	elog(DEBUG1,
+			"TensorFlow model '%s' imported with ID %d",
 		name,
 		model_id);
 
@@ -343,8 +343,8 @@ import_onnx_model(PG_FUNCTION_ARGS)
 	}
 
 	initStringInfo(&result);
-	appendStringInfo(&result,
-		"ONNX model '%s' imported with ID %d (optimized: %s)",
+	elog(DEBUG1,
+			"ONNX model '%s' imported with ID %d (optimized: %s)",
 		name,
 		model_id,
 		optimize ? "yes" : "no");
@@ -496,8 +496,8 @@ finetune_dl_model(PG_FUNCTION_ARGS)
 	(void)table;
 
 	initStringInfo(&result);
-	appendStringInfo(&result,
-		"Model fine-tuned for %d epochs with learning rate %.6f",
+	elog(DEBUG1,
+			"Model fine-tuned for %d epochs with learning rate %.6f",
 		epochs,
 		learning_rate);
 
@@ -626,8 +626,8 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 			const char *in_table_quoted = quote_identifier(in_table);
 
 			appendStringInfo(&sql,
-							 "SELECT COUNT(*) FROM %s",
-							 in_table_quoted);
+				"SELECT COUNT(*) FROM %s",
+				in_table_quoted);
 		}
 
 		ret = SPI_execute(sql.data, true, 1);
@@ -732,8 +732,8 @@ quantize_dl_model(PG_FUNCTION_ARGS)
 	quantized_model_id = model_id + 10000;
 
 	initStringInfo(&result);
-	appendStringInfo(&result,
-		"Model quantized to %s, new model ID: %d",
+	elog(DEBUG1,
+			"Model quantized to %s, new model ID: %d",
 		quant_type,
 		quantized_model_id);
 

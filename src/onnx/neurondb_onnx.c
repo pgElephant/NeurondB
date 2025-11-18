@@ -252,7 +252,6 @@ neurondb_onnx_load_model(const char *model_path,
 
 				if (status != NULL)
 				{
-					elog(WARNING,
 						"CUDA provider initialization "
 						"failed; falling back to CPU. "
 						"Model: %s",
@@ -267,7 +266,7 @@ neurondb_onnx_load_model(const char *model_path,
 				}
 			}
 #else
-			elog(WARNING,
+			elog(DEBUG1,
 				"ONNX Runtime CUDA provider not compiled in; "
 				"falling back to CPU for model: %s",
 				model_path);
@@ -284,7 +283,7 @@ neurondb_onnx_load_model(const char *model_path,
 				"provider (CoreML support TBD for ORT 1.17+)");
 			provider = ONNX_PROVIDER_CPU;
 #else
-			elog(WARNING,
+			elog(DEBUG1,
 				"CoreML execution provider not supported "
 				"(non-macOS); falling back to CPU for model: "
 				"%s",

@@ -118,9 +118,8 @@ distributed_knn_search(PG_FUNCTION_ARGS)
 		oldcontext =
 			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-		elog(NOTICE,
-			"neurondb: distributed kNN search across %d shards "
-			"(k=%d)",
+		elog(DEBUG1,
+			"neurondb: distributed kNN search across %d shards (k=%d)",
 			nshards,
 			k);
 
@@ -500,8 +499,7 @@ select_optimal_replica(PG_FUNCTION_ARGS)
 	{
 		scores[i] = latencies[i] * (1.0f - recalls[i]);
 		elog(DEBUG1,
-			"neurondb: replica %s latency=%.2f recall=%.2f "
-			"score=%.5f",
+			"neurondb: replica %s latency=%.2f recall=%.2f score=%.5f",
 			replicas[i],
 			latencies[i],
 			recalls[i],
@@ -543,9 +541,8 @@ sync_index_async(PG_FUNCTION_ARGS)
 	char nulls[3];
 	int i;
 
-	elog(NOTICE,
-		"neurondb: initiating async WAL streaming (index \"%s\" -> "
-		"replica \"%s\")",
+	elog(DEBUG1,
+		"neurondb: initiating async WAL streaming (index \"%s\" -> replica \"%s\")",
 		idx_str,
 		replica_str);
 
@@ -605,7 +602,7 @@ sync_index_async(PG_FUNCTION_ARGS)
 
 	if (!slot_exists)
 	{
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: creating logical replication slot \"%s\"",
 			slot_name.data);
 		resetStringInfo(&sql);
@@ -623,13 +620,12 @@ sync_index_async(PG_FUNCTION_ARGS)
 					       "replication slot \"%s\"",
 						slot_name.data)));
 		}
-		elog(NOTICE,
-			"neurondb: replication slot \"%s\" created "
-			"successfully",
+		elog(DEBUG1,
+			"neurondb: replication slot \"%s\" created successfully",
 			slot_name.data);
 	} else
 	{
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: replication slot \"%s\" already exists",
 			slot_name.data);
 	}
@@ -643,7 +639,7 @@ sync_index_async(PG_FUNCTION_ARGS)
 
 	if (!publication_exists)
 	{
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: creating publication \"%s\" for table %s",
 			pub_name.data,
 			idx_str);
@@ -655,17 +651,15 @@ sync_index_async(PG_FUNCTION_ARGS)
 		ret = SPI_execute(sql.data, false, 0);
 		if (ret != SPI_OK_UTILITY)
 			elog(WARNING,
-				"neurondb: failed to create publication \"%s\" "
-				"(may require manual intervention)",
+				"neurondb: failed to create publication \"%s\" (may require manual intervention)",
 				pub_name.data);
 		else
-			elog(NOTICE,
-				"neurondb: publication \"%s\" created "
-				"successfully",
+			elog(DEBUG1,
+				"neurondb: publication \"%s\" created successfully",
 				pub_name.data);
 	} else
 	{
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: publication \"%s\" already exists",
 			pub_name.data);
 	}
@@ -716,14 +710,14 @@ sync_index_async(PG_FUNCTION_ARGS)
 	}
 	SPI_freeplan(plan);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: async sync setup complete for index \"%s\"",
 		idx_str);
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: slot=\"%s\", publication=\"%s\"",
 		slot_name.data,
 		pub_name.data);
-	elog(NOTICE,
+	elog(INFO,
 		"neurondb: On replica, create subscription with:\n"
 		"  CREATE SUBSCRIPTION neurondb_sub_%s\n"
 		"  CONNECTION 'host=%s dbname=postgres'\n"
@@ -747,7 +741,6 @@ sync_index_async(PG_FUNCTION_ARGS)
 		if (!isnull)
 		{
 			char *lsn_str = TextDatumGetCString(lsn_datum);
-			elog(DEBUG1, "neurondb: current WAL LSN: %s", lsn_str);
 			pfree(lsn_str);
 		}
 	}

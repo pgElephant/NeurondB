@@ -121,7 +121,7 @@ rerank_index_create(PG_FUNCTION_ARGS)
 
 	cache_tbl = get_rerank_cache_table(tbl_str, col_str);
 
-	elog(NOTICE,
+	elog(INFO,
 		 "neurondb: Creating rerank index on %s.%s (cache=%d, k=%d)",
 		 tbl_str, col_str, cache_size, k_candidates);
 
@@ -346,7 +346,7 @@ rerank_index_warm(PG_FUNCTION_ARGS)
 	eltype = ARR_ELEMTYPE(queries);
 	get_typlenbyvalalign(eltype, &elmlen, &elmbyval, &elmalign);
 
-	elog(NOTICE,
+	elog(INFO,
 		 "neurondb: Warming rerank index %s with %d queries",
 		 idx_str, nqueries);
 

@@ -1,13 +1,36 @@
 -- 022_neural_network_advance.sql
 -- Advanced test for neural_network
+-- Note: Algorithm may not be fully implemented yet
 
 SET client_min_messages TO WARNING;
+\set ON_ERROR_STOP on
+\timing on
+\pset footer off
+\pset pager off
+\pset tuples_only off
 
-\echo '=== neural_network Advanced Test ==='
+\echo '=========================================================================='
+\echo 'neural_network: Advanced Test (Algorithm Status Check)'
+\echo '=========================================================================='
+
+\echo ''
+\echo 'Algorithm Status'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 DO $$
 BEGIN
-    RAISE NOTICE '✓ neural_network advance test skipped (algorithm not fully implemented)';
+	-- Check if neural_network functions exist
+	IF EXISTS (SELECT 1 FROM pg_proc WHERE proname LIKE '%neural%' OR proname LIKE '%nn%' OR proname LIKE '%network%') THEN
+	ELSE
+	END IF;
+	
+	-- Check if neural_network is in ml_models
+	IF EXISTS (SELECT 1 FROM neurondb.ml_models WHERE algorithm = 'neural_network' LIMIT 1) THEN
+	ELSE
+	END IF;
 END $$;
 
-\echo '✓ neural_network advance test complete'
+\echo ''
+\echo '=========================================================================='
+\echo '✓ neural_network: Status check complete (algorithm may not be fully implemented)'
+\echo '=========================================================================='

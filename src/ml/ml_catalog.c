@@ -81,13 +81,13 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 
 		meta_txt = DatumGetCString(DirectFunctionCall1(jsonb_out,
 													   JsonbPGetDatum(metrics)));
-		elog(DEBUG1, "ml_catalog_register_model: received metrics: %s",
-			 meta_txt);
+		elog(DEBUG1,
+			"neurondb: ml_catalog_store_metrics: stored metrics: %s",
+			meta_txt);
 		pfree(meta_txt);
 	}
 	else
 	{
-		elog(DEBUG1, "ml_catalog_register_model: metrics is NULL");
 	}
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -131,15 +131,24 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 
 	/* Determine next model version for project */
 	/* Use advisory lock to serialize version calculation, same as neurondb.train */
+	/* Note: pg_advisory_xact_lock blocks until lock is acquired, returns void */
+	if (project_id <= 0)
+		elog(ERROR, "ml_catalog_register_model: invalid project_id %d", project_id);
+	
 	initStringInfo(&sql);
-	appendStringInfo(&sql,
-					 "SELECT pg_advisory_xact_lock(%d)",
-					 project_id);
+	appendStringInfo(&sql, "SELECT pg_advisory_xact_lock(%d)", project_id);
+	elog(DEBUG1, "ml_catalog_register_model: acquiring advisory lock for project_id=%d with query: %s", project_id, sql.data);
 	ret = SPI_execute(sql.data, false, 0);
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "ml_catalog_register_model: failed to acquire advisory lock");
+	{
+		pfree(sql.data);
+		SPI_finish();
+		elog(ERROR,
+			"ml_catalog_register_model: failed to acquire advisory lock (SPI_execute returned %d, project_id=%d)",
+			ret, project_id);
+	}
 
-	/* Now calculate version atomically */
+	/* Now calculate version atomically - reuse sql buffer */
 	resetStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "SELECT COALESCE(MAX(version), 0) + 1 "
@@ -287,8 +296,8 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			if (metrics_txt) pfree(metrics_txt);
 			if (metrics_quoted) pfree(metrics_quoted);
 			elog(ERROR,
-				 "ml_catalog_register_model: failed to insert/update ml_models row "
-				 "(ret=%d, processed=%lu)",
+				"ml_catalog_register_model: failed to insert/update ml_models row "
+				"(ret=%d, processed=%lu)",
 				 ret, (unsigned long) SPI_processed);
 		}
 
@@ -304,8 +313,8 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 					 "ml_catalog_register_model: model_id NULL after insert/update");
 			if (model_id <= 0)
 				elog(ERROR,
-					 "ml_catalog_register_model: model_id=%d is invalid (should be > 0)",
-					 model_id);
+					"ml_catalog_register_model: model_id=%d is invalid (should be > 0)",
+					model_id);
 		}
 
 		/* Update model_data separately if provided (bytea can't be embedded in SQL string) */
@@ -314,10 +323,10 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			Oid argtypes[2];
 			Datum values[2];
 			char nulls[2];
-			StringInfoData update_sql;
 
-			initStringInfo(&update_sql);
-			appendStringInfo(&update_sql,
+			/* Reuse existing sql StringInfo to avoid memory context issues */
+			resetStringInfo(&sql);
+			appendStringInfo(&sql,
 				"UPDATE neurondb.ml_models SET model_data = $1 WHERE model_id = $2");
 
 			argtypes[0] = BYTEAOID;
@@ -327,13 +336,11 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			nulls[0] = ' ';
 			nulls[1] = ' ';
 
-			ret = SPI_execute_with_args(update_sql.data, 2, argtypes, values, nulls, false, 0);
+			ret = SPI_execute_with_args(sql.data, 2, argtypes, values, nulls, false, 0);
 			if (ret != SPI_OK_UPDATE)
-				elog(WARNING,
-					 "ml_catalog_register_model: failed to update model_data for model_id %d (ret=%d)",
-					 model_id, ret);
-
-			pfree(update_sql.data);
+				elog(DEBUG1,
+					"ml_catalog_register_model: failed to update model_data for model_id %d (ret=%d)",
+					model_id, ret);
 		}
 
 		/* Cleanup */

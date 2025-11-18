@@ -136,9 +136,6 @@ cluster_gmm(PG_FUNCTION_ARGS)
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_column);
 
-	elog(DEBUG1, "neurondb: GMM clustering (k=%d, max_iters=%d)",
-		 num_components, max_iters);
-
 	data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
 
 	if (nvec < num_components)
@@ -212,11 +209,7 @@ cluster_gmm(PG_FUNCTION_ARGS)
 		log_likelihood /= nvec;
 
 		if (fabs(log_likelihood - prev_log_likelihood) < 1e-6)
-		{
-			elog(DEBUG1, "neurondb: GMM converged at iteration %d (ll=%.4f)",
-				 iter + 1, log_likelihood);
 			break;
-		}
 		prev_log_likelihood = log_likelihood;
 
 		{
@@ -272,8 +265,9 @@ cluster_gmm(PG_FUNCTION_ARGS)
 		}
 
 		if ((iter + 1) % 10 == 0)
-			elog(DEBUG2, "neurondb: GMM iteration %d, log-likelihood=%.4f",
-				 iter + 1, log_likelihood);
+			elog(DEBUG1,
+				"neurondb: GMM iteration %d, log_likelihood=%.6f",
+				iter + 1, log_likelihood);
 	}
 
 	result_datums = (Datum *) palloc(sizeof(Datum) * nvec * num_components);
@@ -375,7 +369,9 @@ gmm_model_deserialize_from_bytea(const bytea *data)
 	int i, j;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 2)
-		ereport(ERROR, (errmsg("Invalid GMM model data: too small")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: invalid GMM model data: too small")));
 
 	buf = VARDATA(data);
 
@@ -389,9 +385,13 @@ gmm_model_deserialize_from_bytea(const bytea *data)
 
 	/* Validate reasonable bounds */
 	if (model->k <= 0 || model->k > 100)
-		ereport(ERROR, (errmsg("Invalid model data: k=%d (expected 1-100)", model->k)));
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: invalid model data: k=%d (expected 1-100)", model->k)));
 	if (model->dim <= 0 || model->dim > 100000)
-		ereport(ERROR, (errmsg("Invalid model data: dim=%d (expected 1-100000)", model->dim)));
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: invalid model data: dim=%d (expected 1-100000)", model->dim)));
 
 	/* Allocate arrays */
 	model->mixing_coeffs = (double *)palloc0(sizeof(double) * model->k);
@@ -1267,5 +1267,4 @@ void
 neurondb_gpu_register_gmm_model(void)
 {
 	/* GMM GPU Model Ops not yet implemented - will use CPU fallback */
-	elog(DEBUG1, "GMM GPU Model Ops registration skipped - not yet implemented");
 }

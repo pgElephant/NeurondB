@@ -111,7 +111,6 @@ BEGIN
 	PERFORM neurondb.predict(mid, NULL::vector);
 EXCEPTION
 	WHEN OTHERS THEN
-		RAISE NOTICE 'Expected error: %', SQLERRM;
 END
 $$;
 
@@ -134,7 +133,6 @@ BEGIN
 	PERFORM neurondb.predict(mid, '[1,2,3]'::vector);
 EXCEPTION
 	WHEN OTHERS THEN
-		RAISE NOTICE 'Expected error: %', SQLERRM;
 END
 $$;
 

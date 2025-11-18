@@ -61,6 +61,24 @@ extern int ndb_cuda_nb_predict(const bytea *model_data,
 	double *probability_out,
 	char **errstr);
 
+extern int ndb_cuda_nb_predict_batch(const bytea *model_data,
+	const float *features,
+	int n_samples,
+	int feature_dim,
+	int *predictions_out,
+	char **errstr);
+
+extern int ndb_cuda_nb_evaluate_batch(const bytea *model_data,
+	const float *features,
+	const int *labels,
+	int n_samples,
+	int feature_dim,
+	double *accuracy_out,
+	double *precision_out,
+	double *recall_out,
+	double *f1_out,
+	char **errstr);
+
 /* CUDA kernel functions for training */
 extern int ndb_cuda_nb_count_classes(const double *labels,
 	int n_samples,

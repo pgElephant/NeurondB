@@ -500,7 +500,6 @@ prefetch_entry_points(PG_FUNCTION_ARGS)
 			(errmsg("prefetch_entry_points: index_name conversion "
 				"failed")));
 
-	elog(DEBUG1, "neurondb:prefetch_entry_points: index='%s'", idx_str);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 	{

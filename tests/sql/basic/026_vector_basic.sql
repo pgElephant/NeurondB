@@ -104,8 +104,6 @@ DECLARE
 BEGIN
 	v1 := vector(txt1);
 	bin := vector_send(v1);
-	RAISE NOTICE 'input: %, send: %', v1, bin;
-	RAISE NOTICE 'text roundtrip: %', array_to_vector(vector_to_array(v1)::float8[]);
 END $$;
 
 -- Edge/limit tests: empty, single-element, max dims
@@ -175,16 +173,12 @@ BEGIN
 	fp16_1 := vector_quantize_fp16(v1);
 	fp16_2 := vector_quantize_fp16(v2);
 	v_dequantized := vector_dequantize_fp16(fp16_1);
-	RAISE NOTICE 'FP16: original=%, quantized=%, dequantized=%', v1, fp16_1, v_dequantized;
 	
 	-- INT8 quantization
 	int8_1 := vector_quantize_int8(v1, v2, v3);
 	v_dequantized := vector_dequantize_int8(int8_1, v2, v3);
-	RAISE NOTICE 'INT8: original=%, quantized=%, dequantized=%', v1, int8_1, v_dequantized;
 	
 	-- FP16 distance
-	RAISE NOTICE 'FP16 L2 distance: %', vector_l2_distance_fp16(fp16_1, fp16_2);
-	RAISE NOTICE 'FP16 cosine distance: %', vector_cosine_distance_fp16(fp16_1, fp16_2);
 END $$;
 
 \echo '✓ Vector basic test complete'

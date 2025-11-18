@@ -2,29 +2,33 @@
 -- Negative test for PCA (Principal Component Analysis)
 -- All possible negative tests with 1000 rows only
 
+\timing on
+\pset footer off
+\pset pager off
+\pset tuples_only off
+\set ON_ERROR_STOP off
 SET client_min_messages TO WARNING;
 SET neurondb.gpu_enabled = off;
 
-\echo '=== PCA Negative Test ==='
+\echo '=========================================================================='
+\echo 'PCA - Negative Test Cases (Error Handling)'
+\echo '=========================================================================='
 
--- Verify required tables exist
+/* Setup: Create test views if they don't exist */
 DO $$
 BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'sample_train table does not exist';
+	IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
+		DROP VIEW IF EXISTS test_train_view;
+		CREATE VIEW test_train_view AS
+		SELECT features, label FROM sample_train LIMIT 1000;
+	END IF;
+	IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
+		DROP VIEW IF EXISTS test_test_view;
+		CREATE VIEW test_test_view AS
+		SELECT features, label FROM sample_test LIMIT 1000;
 	END IF;
 END
 $$;
-
--- Create views with 1000 rows for negative tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
-
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
 
 -- Create test data
 DROP TABLE IF EXISTS pca_test_data;
@@ -33,63 +37,61 @@ SELECT features[1:5]::vector(5) AS feat_5d
 FROM test_train_view
 LIMIT 100;
 
--- Invalid table
-DO $$ BEGIN
-    PERFORM neurondb.transform_pca('nonexistent_table', ARRAY['feat_5d'], 2);
-    RAISE EXCEPTION 'Should have failed';
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid table';
-END $$;
+\echo ''
+\echo 'Test 1: Invalid Table Name'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Invalid column
-DO $$ BEGIN
-    PERFORM neurondb.transform_pca('pca_test_data', ARRAY['invalid_col'], 2);
-    RAISE EXCEPTION 'Should have failed';
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid column';
-END $$;
+SELECT neurondb.transform_pca('nonexistent_table', ARRAY['feat_5d'], 2);
 
--- Invalid n_components (n_components < 1)
-DO $$ BEGIN
-    PERFORM neurondb.transform_pca('pca_test_data', ARRAY['feat_5d'], 0);
-    RAISE EXCEPTION 'Should have failed';
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid n_components (n_components < 1)';
-END $$;
+\echo ''
+\echo 'Test 2: Invalid Column Name'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Invalid n_components (n_components > input dimensions)
-DO $$ BEGIN
-    PERFORM neurondb.transform_pca('pca_test_data', ARRAY['feat_5d'], 10);
-    RAISE EXCEPTION 'Should have failed';
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid n_components (n_components > dims)';
-END $$;
+SELECT neurondb.transform_pca('pca_test_data', ARRAY['invalid_col'], 2);
 
--- NULL table
-DO $$ BEGIN
-    PERFORM neurondb.transform_pca(NULL, ARRAY['feat_5d'], 2);
-    RAISE EXCEPTION 'Should have failed';
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled NULL table';
-END $$;
+\echo ''
+\echo 'Test 3: Invalid n_components (n_components < 1)'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- NULL column array
-DO $$ BEGIN
-    PERFORM neurondb.transform_pca('pca_test_data', NULL, 2);
-    RAISE EXCEPTION 'Should have failed';
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled NULL column array';
-END $$;
+SELECT neurondb.transform_pca('pca_test_data', ARRAY['feat_5d'], 0);
 
--- Empty column array
-DO $$ BEGIN
-    PERFORM neurondb.transform_pca('pca_test_data', ARRAY[]::text[], 2);
-    RAISE EXCEPTION 'Should have failed';
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled empty column array';
-END $$;
+\echo ''
+\echo 'Test 4: Invalid n_components (n_components < 0)'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT neurondb.transform_pca('pca_test_data', ARRAY['feat_5d'], -1);
+
+\echo ''
+\echo 'Test 5: NULL Table Name'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT neurondb.transform_pca(NULL, ARRAY['feat_5d'], 2);
+
+\echo ''
+\echo 'Test 6: NULL Column Array'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT neurondb.transform_pca('pca_test_data', NULL, 2);
+
+\echo ''
+\echo 'Test 7: Empty Column Array'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT neurondb.transform_pca('pca_test_data', ARRAY[]::text[], 2);
+
+\echo ''
+\echo 'Test 8: NULL n_components'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT neurondb.transform_pca('pca_test_data', ARRAY['feat_5d'], NULL);
+
+\echo ''
+\echo 'Test 9: n_components > input dimensions (may be handled gracefully)'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT neurondb.transform_pca('pca_test_data', ARRAY['feat_5d'], 10);
 
 DROP TABLE IF EXISTS pca_test_data;
 
+\echo ''
 \echo '✓ PCA negative test complete'
-

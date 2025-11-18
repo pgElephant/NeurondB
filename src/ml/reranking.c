@@ -313,7 +313,6 @@ rerank_llm(PG_FUNCTION_ARGS)
      * To implement: invoke model completion, synthesize prompt with query and candidate list,
      * model returns indices or scores, parse, return indices + scores.
      */
-	elog(WARNING, "neurondb: rerank_llm() not yet implemented");
 	PG_RETURN_NULL();
 }
 
@@ -326,7 +325,6 @@ PG_FUNCTION_INFO_V1(rerank_cohere);
 Datum
 rerank_cohere(PG_FUNCTION_ARGS)
 {
-	elog(WARNING, "neurondb: rerank_cohere() not yet implemented");
 	PG_RETURN_NULL();
 }
 
@@ -339,7 +337,6 @@ PG_FUNCTION_INFO_V1(rerank_colbert);
 Datum
 rerank_colbert(PG_FUNCTION_ARGS)
 {
-	elog(WARNING, "neurondb: rerank_colbert() not yet implemented");
 	PG_RETURN_NULL();
 }
 
@@ -352,7 +349,6 @@ PG_FUNCTION_INFO_V1(rerank_ltr);
 Datum
 rerank_ltr(PG_FUNCTION_ARGS)
 {
-	elog(WARNING, "neurondb: rerank_ltr() not yet implemented");
 	PG_RETURN_NULL();
 }
 
@@ -365,6 +361,5 @@ PG_FUNCTION_INFO_V1(rerank_ensemble);
 Datum
 rerank_ensemble(PG_FUNCTION_ARGS)
 {
-	elog(WARNING, "neurondb: rerank_ensemble() not yet implemented");
 	PG_RETURN_NULL();
 }

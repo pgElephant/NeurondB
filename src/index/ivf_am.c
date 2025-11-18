@@ -53,6 +53,18 @@ extern float fp16_to_float(uint16 fp16);
 #define IVF_CONVERGENCE_THRESHOLD 0.001 /* KMeans convergence */
 
 /*
+ * IVF index options
+ */
+typedef struct IvfOptions
+{
+	int32 vl_len_; /* varlena header (do not touch directly!) */
+	int nlists; /* Number of clusters */
+	int nprobe; /* Number of lists to probe */
+} IvfOptions;
+
+#define RELOPT_KIND_IVF 2
+
+/*
  * IVF metadata page (block 0)
  */
 typedef struct IvfMetaPageData
@@ -260,6 +272,19 @@ static IndexBulkDeleteResult *ivfbulkdelete(IndexVacuumInfo *info,
 	void *callback_state);
 static IndexBulkDeleteResult *ivfvacuumcleanup(IndexVacuumInfo *info,
 	IndexBulkDeleteResult *stats);
+static bool ivfdelete(Relation index,
+	ItemPointer tid,
+	Datum *values,
+	bool *isnull,
+	Relation heapRel,
+	struct IndexInfo *indexInfo) __attribute__((unused));
+static bool ivfupdate(Relation index,
+	ItemPointer tid,
+	Datum *values,
+	bool *isnull,
+	ItemPointer otid,
+	Relation heapRel,
+	struct IndexInfo *indexInfo) __attribute__((unused));
 static void ivfcostestimate(struct PlannerInfo *root,
 	struct IndexPath *path,
 	double loop_count,
@@ -318,7 +343,7 @@ ivf_handler(PG_FUNCTION_ARGS)
 	amroutine->amstorage = false;
 	amroutine->amclusterable = false;
 	amroutine->ampredlocks = false;
-	amroutine->amcanparallel = false;
+	amroutine->amcanparallel = true;
 	amroutine->amcaninclude = false;
 	amroutine->amusemaintenanceworkmem = false;
 	amroutine->amsummarizing = false;
@@ -359,7 +384,6 @@ ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 {
 	IndexBuildResult *result;
 
-	elog(NOTICE, "neurondb: Building IVF index with KMeans clustering");
 
 	/* TODO: Implement full build:
 	 * 1. Sample vectors from heap
@@ -446,8 +470,9 @@ ivfinsert(Relation index,
 	if (nlist <= 0)
 	{
 		UnlockReleaseBuffer(meta_buf);
-		elog(WARNING,
-			"IVF index has no centroids or dimension mismatch");
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("IVF index has no centroids or dimension mismatch")));
 		return false;
 	}
 
@@ -530,7 +555,7 @@ ivfcostestimate(struct PlannerInfo *root,
 	double *indexCorrelation,
 	double *indexPages)
 {
-	*indexStartupCost = 0;
+	*indexStartupCost = 25.0;
 	*indexTotalCost = 50.0;
 	*indexSelectivity = 0.01;
 	*indexCorrelation = 0.0;
@@ -540,7 +565,13 @@ ivfcostestimate(struct PlannerInfo *root,
 static bytea *
 ivfoptions(Datum reloptions, bool validate)
 {
-	return NULL;
+	static const relopt_parse_elt tab[] = {
+		{"lists", RELOPT_TYPE_INT, offsetof(IvfOptions, nlists)},
+		{"probes", RELOPT_TYPE_INT, offsetof(IvfOptions, nprobe)}
+	};
+
+	return (bytea *) build_reloptions(reloptions, validate, RELOPT_KIND_IVF,
+									  sizeof(IvfOptions), tab, lengthof(tab));
 }
 
 static bool
@@ -628,7 +659,7 @@ kmeans_run(KMeansState *state)
 	float4 prevCost = FLT_MAX;
 	float4 cost;
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: Running KMeans with k=%d, n=%d, dim=%d",
 		state->k,
 		state->n,
@@ -647,7 +678,7 @@ kmeans_run(KMeansState *state)
 
 		if (fabs(prevCost - cost) < state->threshold)
 		{
-			elog(NOTICE,
+			elog(DEBUG1,
 				"neurondb: KMeans converged at iteration %d "
 				"(cost=%.4f)",
 				iter,
@@ -793,4 +824,57 @@ find_nearest_centroid(KMeansState *state, const float4 *vector)
 	}
 
 	return best;
+}
+
+/*
+ * Delete a vector from the IVF index
+ * IVF deletion requires removing the vector from its assigned inverted list.
+ * For now, we mark the tuple as deleted but don't rebuild the lists.
+ */
+static bool
+ivfdelete(Relation index,
+	ItemPointer tid,
+	Datum *values,
+	bool *isnull,
+	Relation heapRel,
+	struct IndexInfo *indexInfo)
+{
+	/* TODO: Implement proper IVF deletion:
+	 * 1. Find which centroid/list the vector belongs to
+	 * 2. Remove the vector from that inverted list
+	 * 3. Update list membership counts
+	 * 4. Potentially retrain centroids if lists become unbalanced
+	 */
+
+	/* For now, just return success without actually deleting */
+	/* This allows DELETE operations to work but index will become stale */
+	return true;
+}
+
+/*
+ * Update a vector in the IVF index
+ * This requires deleting the old vector and inserting the new one
+ */
+static bool
+ivfupdate(Relation index,
+	ItemPointer tid,
+	Datum *values,
+	bool *isnull,
+	ItemPointer otid,
+	Relation heapRel,
+	struct IndexInfo *indexInfo)
+{
+	/* For proper vector updates (including upserts), we need to:
+	 * 1. Find and remove the old vector from its assigned list
+	 * 2. Assign the new vector to the appropriate list and insert it
+	 *
+	 * Since full deletion is complex and not yet implemented,
+	 * we use a simplified approach: just insert the new vector.
+	 * This works well for upserts but may leave stale entries for updates.
+	 */
+
+	/* For now, just insert the new value */
+	/* TODO: Implement proper removal of old vector from its list */
+	return ivfinsert(index, values, isnull, tid, heapRel,
+			 UNIQUE_CHECK_NO, false, indexInfo);
 }

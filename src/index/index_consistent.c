@@ -52,7 +52,7 @@ consistent_index_create(PG_FUNCTION_ARGS)
 	char *index_tbl;
 	Oid relid;
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"Creating consistent HNSW on %s.%s (seed=%u)",
 		tbl_str,
 		col_str,
@@ -61,7 +61,7 @@ consistent_index_create(PG_FUNCTION_ARGS)
 	/* Check if the index already exists */
 	if (index_exists(tbl_str, col_str))
 	{
-		elog(NOTICE,
+		elog(DEBUG1,
 			"Index already exists for %s.%s",
 			tbl_str,
 			col_str);
@@ -73,7 +73,6 @@ consistent_index_create(PG_FUNCTION_ARGS)
 
 	/* Store metadata for deterministic operation; in real code, update catalog */
 	index_tbl = get_index_table(tbl_str, col_str, random_seed);
-	elog(NOTICE, "Index table for consistent HNSW: %s", index_tbl);
 
 	/* Validate relation exists */
 	relid = get_relid_from_name(index_tbl);
@@ -119,7 +118,7 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 		oldcontext =
 			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-		elog(NOTICE,
+		elog(DEBUG1,
 			"Consistent kNN search for %d neighbors with snapshot "
 			"xmin " NDB_INT64_FMT,
 			k,
@@ -255,7 +254,7 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 	Oid argtypes[4];
 	Datum values[4];
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"Building deterministic HNSW index: %s.%s (seed=%u)",
 		table,
 		col,

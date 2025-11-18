@@ -583,7 +583,6 @@ export_prometheus_metrics(void)
 
 		SPI_execute(sql.data, false, 0);
 
-		elog(DEBUG2, "neurondb: exported Prometheus metrics");
 
 		pfree(sql.data);
 		pfree(metrics.data);
@@ -609,7 +608,6 @@ Datum
 neuranmon_sample(PG_FUNCTION_ARGS)
 {
 	(void)fcinfo; /* Unused */
-	elog(NOTICE, "neurondb: manually triggering neuranmon sampling");
 
 	/* Function is called from user session, already in transaction */
 	sample_and_tune();

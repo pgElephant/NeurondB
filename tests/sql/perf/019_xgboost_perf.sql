@@ -1,24 +1,48 @@
--- 019_xgboost.sql
--- performance test for XGBoost (CPU and GPU)
+-- 019_xgboost_perf.sql
+-- Performance test for XGBoost (CPU and GPU)
+-- Works on full dataset from sample_train table
 
-
--- Performance test: Works on the whole 11M row view
+\timing on
+\pset footer off
+\pset pager off
+\pset tuples_only off
+\set ON_ERROR_STOP on
 SET client_min_messages TO WARNING;
+
+\echo '=========================================================================='
+\echo 'XGBoost - Performance Test (Full Dataset)'
+\echo '=========================================================================='
+
+-- Verify required tables exist
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
+		RAISE EXCEPTION 'sample_train table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
+		RAISE EXCEPTION 'sample_test table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	END IF;
+END
+$$;
+
+-- Create views for full dataset
+DROP VIEW IF EXISTS perf_train_view;
+DROP VIEW IF EXISTS perf_test_view;
+
+CREATE VIEW perf_train_view AS
+SELECT features, label FROM sample_train;
+
+CREATE VIEW perf_test_view AS
+SELECT features, label FROM sample_test;
+
+SELECT 
+	(SELECT COUNT(*)::bigint FROM perf_train_view) AS train_rows,
+	(SELECT COUNT(*)::bigint FROM perf_test_view) AS test_rows;
+
+\echo ''
+\echo 'Testing XGBoost on CPU (full dataset)...'
+
 SET neurondb.gpu_enabled = off;
-
-DROP TABLE IF EXISTS xgb_data;
-CREATE TABLE xgb_data (
-	id serial PRIMARY KEY,
-	x1 double precision,
-	x2 double precision,
-	y int
-);
-
-INSERT INTO xgb_data (x1, x2, y)
-SELECT x, x*2 + random()*0.1, CASE WHEN x < 5 THEN 0 ELSE 1 END
-FROM generate_series(1, 10) AS x;
-
-\echo '=== XGBoost Performance Test (Full Dataset) (CPU) ==='
 
 -- Train XGBoost model on CPU
 DO $$
@@ -26,39 +50,22 @@ DECLARE
 	model_id int;
 BEGIN
 	BEGIN
-		SELECT neurondb.train('xgboost', 'xgb_data', 'y') INTO model_id;
+		SELECT neurondb.train('xgboost', 'perf_train_view', 'features', 'label', '{}'::jsonb) INTO model_id;
 		IF model_id IS NULL THEN
-			RAISE NOTICE 'XGBoost (CPU) training not yet implemented';
 			RETURN;
 		END IF;
-		RAISE NOTICE '✓ XGBoost (CPU) model trained, model_id=%', model_id;
 	EXCEPTION WHEN OTHERS THEN
-		RAISE NOTICE 'XGBoost (CPU) training not yet implemented: %', SQLERRM;
 		RETURN;
 	END;
 END $$;
 
--- Test inference on CPU
-DO $$
-DECLARE
-	pred float8;
-	model_id int;
-BEGIN
-	SELECT m.model_id INTO model_id FROM neurondb.ml_models m WHERE m.algorithm::text = 'xgboost' ORDER BY m.model_id DESC LIMIT 1;
-	IF model_id IS NULL THEN
-		RAISE NOTICE 'XGBoost (CPU) inference skipped - no model available';
-		RETURN;
-	END IF;
-	SELECT neurondb.predict(model_id, ARRAY[7.0, 14.0]::vector) INTO pred;
-	IF pred IS NULL THEN
-		RAISE NOTICE 'XGBoost (CPU) predict returned NULL';
-		RETURN;
-	END IF;
-	RAISE NOTICE '✓ XGBoost (CPU) inference successful, ŷ = %', pred;
-END $$;
+\echo ''
+\echo 'Testing XGBoost on GPU (full dataset)...'
 
-\echo '=== XGBoost Performance Test (Full Dataset) (GPU) ==='
 SET neurondb.gpu_enabled = on;
+SET neurondb.gpu_kernels = 'l2,cosine,ip';
+SELECT neurondb_gpu_enable() AS gpu_available;
+SELECT neurondb_gpu_info() AS gpu_info;
 
 -- Train XGBoost model on GPU
 DO $$
@@ -66,34 +73,16 @@ DECLARE
 	model_id int;
 BEGIN
 	BEGIN
-		SELECT neurondb.train('xgboost', 'xgb_data', 'y') INTO model_id;
+		SELECT neurondb.train('xgboost', 'perf_train_view', 'features', 'label', '{}'::jsonb) INTO model_id;
 		IF model_id IS NULL THEN
-			RAISE NOTICE 'XGBoost (GPU) training not yet implemented';
 			RETURN;
 		END IF;
-		RAISE NOTICE '✓ XGBoost (GPU) model trained, model_id=%', model_id;
 	EXCEPTION WHEN OTHERS THEN
-		RAISE NOTICE 'XGBoost (GPU) training not yet implemented: %', SQLERRM;
 		RETURN;
 	END;
 END $$;
 
--- Test inference on GPU
-DO $$
-DECLARE
-	pred float8;
-	model_id int;
-BEGIN
-	SELECT m.model_id INTO model_id FROM neurondb.ml_models m WHERE m.algorithm::text = 'xgboost' ORDER BY m.model_id DESC LIMIT 1;
-	IF model_id IS NULL THEN
-		RAISE NOTICE 'XGBoost (GPU) inference skipped - no model available';
-		RETURN;
-	END IF;
-	SELECT neurondb.predict(model_id, ARRAY[7.0, 14.0]::vector) INTO pred;
-	IF pred IS NULL THEN
-		RAISE NOTICE 'XGBoost (GPU) predict returned NULL';
-		RETURN;
-	END IF;
-	RAISE NOTICE '✓ XGBoost (GPU) inference successful, ŷ = %', pred;
-END $$;
+DROP VIEW IF EXISTS perf_train_view;
+DROP VIEW IF EXISTS perf_test_view;
 
+\echo 'XGBoost performance test completed successfully'

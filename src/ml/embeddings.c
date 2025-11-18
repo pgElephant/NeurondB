@@ -233,12 +233,12 @@ embed_text(PG_FUNCTION_ARGS)
 		 * to reduce noise in tests when LLM is not configured */
 		if (neurondb_llm_fail_open)
 			elog(DEBUG1,
-				 "neurondb: embed_text() failed for input: '%s', returning zero vector",
-				 (input_str != NULL) ? input_str : "(null)");
+				"neurondb: embed_text() failed for input: '%s', returning zero vector",
+				(input_str != NULL) ? input_str : "(null)");
 		else
 			elog(WARNING,
-				 "neurondb: embed_text() failed for input: '%s', returning zero vector",
-				 (input_str != NULL) ? input_str : "(null)");
+				"neurondb: embed_text() failed for input: '%s', returning zero vector",
+				(input_str != NULL) ? input_str : "(null)");
 		dim = 384;
 		vec_data = (float *) palloc0(dim * sizeof(float));
 	}
@@ -409,7 +409,6 @@ embed_image(PG_FUNCTION_ARGS)
 		|| vec_data == NULL)
 #endif
 	{
-		elog(NOTICE, "neurondb: embed_image() image embedding not yet implemented, returning zero vector");
 		dim = 512;
 		vec_data = (float *) palloc0(dim * sizeof(float));
 	}
@@ -491,7 +490,6 @@ embed_multimodal(PG_FUNCTION_ARGS)
 		Vector	   *img_vec;
 		int			out_dim;
 
-		elog(NOTICE, "neurondb: embed_multimodal() provider unavailable, constructing synthetic multimodal vector");
 
 		tx_vec_dat = DirectFunctionCall2(embed_text,
 										 PointerGetDatum(input_text),
@@ -592,7 +590,6 @@ embed_cached(PG_FUNCTION_ARGS)
 		result = parse_vector_from_text(cached_text);
 		if (result != NULL)
 		{
-			elog(DEBUG1, "neurondb: embed_cached() cache hit (key='%s')", cache_key);
 			SAFE_PFREE(input_str);
 			SAFE_PFREE(model_str);
 			SAFE_PFREE(cache_key);
@@ -601,7 +598,6 @@ embed_cached(PG_FUNCTION_ARGS)
 		}
 		else
 		{
-			elog(WARNING, "neurondb: embed_cached() cache corrupted for key '%s'", cache_key);
 		}
 		SAFE_PFREE(cached_text);
 	}
@@ -661,8 +657,9 @@ configure_embedding_model(PG_FUNCTION_ARGS)
 	model_str = text_to_cstring(model_name);
 	cfg_str = text_to_cstring(config_json);
 
-	elog(INFO, "neurondb: configure_embedding_model() called: model='%s', config='%s'",
-		 model_str, cfg_str);
+	elog(DEBUG1,
+		"neurondb: configure_embedding_model: model='%s', config='%s'",
+		model_str, cfg_str);
 
 	SAFE_PFREE(model_str);
 	SAFE_PFREE(cfg_str);

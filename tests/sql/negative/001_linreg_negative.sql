@@ -8,6 +8,22 @@
 \echo 'Linear Regression - Negative Test Cases (Error Handling)'
 \echo '=========================================================================='
 
+/* Setup: Create test views if they don't exist */
+DO $$
+BEGIN
+	IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
+		DROP VIEW IF EXISTS test_train_view;
+		CREATE VIEW test_train_view AS
+		SELECT features, label FROM sample_train LIMIT 1000;
+	END IF;
+	IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
+		DROP VIEW IF EXISTS test_test_view;
+		CREATE VIEW test_test_view AS
+		SELECT features, label FROM sample_test LIMIT 1000;
+	END IF;
+END
+$$;
+
 \echo ''
 \echo 'Test 1: NULL Table Name'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
@@ -113,7 +129,6 @@ BEGIN
 	PERFORM neurondb.predict(mid, NULL::vector);
 EXCEPTION
 	WHEN OTHERS THEN
-		RAISE NOTICE 'Expected error: %', SQLERRM;
 END
 $$;
 
@@ -137,7 +152,6 @@ BEGIN
 	PERFORM neurondb.predict(mid, '[1,2,3]'::vector);
 EXCEPTION
 	WHEN OTHERS THEN
-		RAISE NOTICE 'Expected error: %', SQLERRM;
 END
 $$;
 
@@ -209,7 +223,6 @@ BEGIN
 	SELECT neurondb.evaluate(mid, 'nonexistent_test_table', 'features', 'label');
 EXCEPTION
 	WHEN OTHERS THEN
-		RAISE NOTICE 'Expected error: %', SQLERRM;
 END
 $$;
 

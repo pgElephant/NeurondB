@@ -175,7 +175,6 @@ pg_attribute_unused() temporal_rerank_results(ItemPointer *items,
 
 	pfree(scores);
 
-	elog(DEBUG1, "neurondb: Temporally reranked %d results", count);
 }
 
 /*
@@ -285,7 +284,6 @@ pg_attribute_unused() temporal_integrate_hnsw_search(BlockNumber *results,
 	pfree(timestamps);
 	pfree(config);
 
-	elog(DEBUG1, "neurondb: Applied temporal scoring to HNSW results");
 }
 
 /*

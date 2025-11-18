@@ -81,7 +81,7 @@ PG_FUNCTION_INFO_V1(neurandefrag_run);
 Datum
 neurandefrag_run(PG_FUNCTION_ARGS)
 {
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: neurandefrag_run invoked (stub implementation)");
 	PG_RETURN_BOOL(false);
 }

@@ -60,7 +60,9 @@ neurondb_fetch_vectors_from_table(const char *table,
 	{
 		SPI_finish();
 		pfree(sql.data);
-		elog(ERROR, "SPI_execute failed: %s", sql.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_execute failed: %s", sql.data)));
 	}
 
 	*out_count = SPI_processed;
@@ -75,7 +77,7 @@ neurondb_fetch_vectors_from_table(const char *table,
 	/* Warn if we hit the limit */
 	if (*out_count >= 500000)
 	{
-		elog(WARNING,
+		elog(DEBUG1,
 			"neurondb_fetch_vectors_from_table: table has more than %d vectors, "
 			"limiting to %d to avoid memory allocation errors",
 			500000, *out_count);
@@ -95,7 +97,9 @@ neurondb_fetch_vectors_from_table(const char *table,
 		{
 			SPI_finish();
 			pfree(sql.data);
-			elog(ERROR, "NULL vector in first row");
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: NULL vector in first row")));
 		}
 
 		first_vec = DatumGetVector(first_datum);
@@ -142,7 +146,9 @@ neurondb_fetch_vectors_from_table(const char *table,
 			SPI_finish();
 			pfree(sql.data);
 			MemoryContextSwitchTo(oldcontext);
-			elog(ERROR, "NULL vector at row %d", i);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: NULL vector at row %d", i)));
 		}
 
 		vec = DatumGetVector(vec_datum);
@@ -157,12 +163,12 @@ neurondb_fetch_vectors_from_table(const char *table,
 			SPI_finish();
 			pfree(sql.data);
 			MemoryContextSwitchTo(oldcontext);
-			elog(ERROR,
-				"Inconsistent vector dimension at row %d: "
-				"expected %d, got %d",
-				i,
-				*out_dim,
-				vec->dim);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: inconsistent vector dimension at row %d: expected %d, got %d",
+						i,
+						*out_dim,
+						vec->dim)));
 		}
 
 		/* Check individual vector allocation size */

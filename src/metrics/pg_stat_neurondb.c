@@ -192,7 +192,6 @@ pg_neurondb_stat_reset(PG_FUNCTION_ARGS)
 	g_stats.last_reset = GetCurrentTimestamp();
 
 	/* Emit a NOTICE to end users so resets are confirmed. */
-	elog(NOTICE, "neurondb: statistics reset");
 
 	PG_RETURN_VOID();
 }

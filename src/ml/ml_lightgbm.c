@@ -92,5 +92,4 @@ predict_lightgbm(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_lightgbm_model(void)
 {
-	elog(DEBUG1, "Lightgbm GPU Model Ops registration skipped - not yet implemented");
 }

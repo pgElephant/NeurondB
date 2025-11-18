@@ -55,8 +55,7 @@ Datum
 enable_confidential_compute(PG_FUNCTION_ARGS)
 {
 	bool enable = PG_GETARG_BOOL(0);
-
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: confidential compute mode %s",
 		enable ? "enabled" : "disabled");
 
@@ -84,10 +83,11 @@ set_access_mask(PG_FUNCTION_ARGS)
 	role_str = text_to_cstring(role_name);
 	metrics_str = text_to_cstring(allowed_metrics);
 	indexes_str = text_to_cstring(allowed_indexes);
+	/* Suppress unused variable warnings - placeholders for future implementation */
+	(void) role_str;
+	(void) metrics_str;
+	(void) indexes_str;
 
-	elog(NOTICE, "neurondb: setting access mask for role '%s'", role_str);
-	elog(DEBUG1, "neurondb: allowed metrics: %s", metrics_str);
-	elog(DEBUG1, "neurondb: allowed indexes: %s", indexes_str);
 
 	/* Store access control rules */
 	/* Enforce at query execution time */
@@ -108,10 +108,11 @@ federated_vector_query(PG_FUNCTION_ARGS)
 	char *query_str;
 
 	host_str = text_to_cstring(remote_host);
+	/* Suppress unused variable warning - placeholder for future implementation */
+	(void) host_str;
 	query_str = text_to_cstring(query);
 	(void)query_str;
 
-	elog(NOTICE, "neurondb: federated query to '%s'", host_str);
 
 	/* Establish secure libpq connection with TLS */
 	/* Encrypt vectors before transmission */

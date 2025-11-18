@@ -340,7 +340,7 @@ ndb_gpu_init_if_needed(void)
 					errmsg("neurondb: GPU initialization "
 					       "failed")));
 		}
-		ereport(WARNING,
+		ereport(ERROR,
 			(errmsg("neurondb: GPU init failed. Using CPU "
 				"fallback")));
 		return;
@@ -390,7 +390,6 @@ neurondb_gpu_shutdown(void)
 	active_device_id = 0;
 	ndb_gpu_clear_model_registry();
 
-	elog(DEBUG1, "neurondb: GPU backend shut down");
 }
 
 bool
@@ -449,13 +448,12 @@ neurondb_gpu_set_device(int device_id)
 {
 	if (!active_backend || active_backend->set_device == NULL)
 	{
-		elog(WARNING, "neurondb: no active GPU backend to set device");
 		return;
 	}
 
 	if (active_backend->set_device(device_id) != 0)
 	{
-		elog(WARNING,
+		elog(DEBUG1,
 			"neurondb: failed to switch GPU device to %d",
 			device_id);
 		return;
@@ -562,7 +560,6 @@ neurondb_gpu_enable(PG_FUNCTION_ARGS)
 	 * Instead, GPU backends will be lazily initialized on first actual use.
 	 */
 
-	elog(NOTICE, "neurondb: GPU acceleration enabled (lazy initialization)");
 	PG_RETURN_BOOL(true);
 }
 
@@ -925,11 +922,9 @@ neurondb_gpu_hf_complete_batch(const char *model_name,
 		goto out;
 
 	/* Call CUDA batch generation function */
-	elog(DEBUG1, "neurondb: gpu_core calling ndb_cuda_hf_generate_batch with %d prompts", num_prompts);
 	rc = ndb_cuda_hf_generate_batch(
 		model_name, prompts, num_prompts, params_json, results, errstr);
 	used_gpu = (rc == 0);
-	elog(DEBUG1, "neurondb: gpu_core got rc=%d from ndb_cuda_hf_generate_batch", rc);
 
 out:
 	t1 = GetCurrentTimestamp();

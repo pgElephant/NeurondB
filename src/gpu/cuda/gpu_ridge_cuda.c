@@ -205,8 +205,7 @@ ndb_cuda_ridge_train(const float *features,
 	}
 
 	elog(DEBUG1,
-		 "ndb_cuda_ridge_train: entry: model_data=%p, features=%p, "
-		 "targets=%p, n_samples=%d, feature_dim=%d",
+		 "ndb_cuda_ridge_train: entry: model_data=%p, features=%p, targets=%p, n_samples=%d, feature_dim=%d",
 		 model_data,
 		 features,
 		 targets,
@@ -276,8 +275,7 @@ ndb_cuda_ridge_train(const float *features,
 		target_bytes = sizeof(double) * (size_t) n_samples;
 
 		elog(DEBUG1,
-			 "ndb_cuda_ridge_train: allocating GPU memory: feature_bytes=%zu "
-			 "(%.2f MB), target_bytes=%zu",
+			 "ndb_cuda_ridge_train: allocating GPU memory: feature_bytes=%zu (%.2f MB), target_bytes=%zu",
 			 feature_bytes,
 			 feature_bytes / (1024.0 * 1024.0),
 			 target_bytes);
@@ -298,7 +296,7 @@ ndb_cuda_ridge_train(const float *features,
 		status = cudaMalloc((void **) &d_features, feature_bytes);
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMalloc d_features failed: %s",
 				 cudaGetErrorString(status));
 			goto cpu_fallback;
@@ -308,7 +306,7 @@ ndb_cuda_ridge_train(const float *features,
 		if (status != cudaSuccess)
 		{
 			cudaFree(d_features);
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMalloc d_targets failed: %s",
 				 cudaGetErrorString(status));
 			goto cpu_fallback;
@@ -319,7 +317,7 @@ ndb_cuda_ridge_train(const float *features,
 		{
 			cudaFree(d_features);
 			cudaFree(d_targets);
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMalloc d_XtX failed: %s",
 				 cudaGetErrorString(status));
 			goto cpu_fallback;
@@ -331,7 +329,7 @@ ndb_cuda_ridge_train(const float *features,
 			cudaFree(d_features);
 			cudaFree(d_targets);
 			cudaFree(d_XtX);
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMalloc d_Xty failed: %s",
 				 cudaGetErrorString(status));
 			goto cpu_fallback;
@@ -349,7 +347,7 @@ ndb_cuda_ridge_train(const float *features,
 		status = cudaMemcpy(d_features, features, feature_bytes, cudaMemcpyHostToDevice);
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMemcpy d_features failed: %s",
 				 cudaGetErrorString(status));
 			goto gpu_cleanup;
@@ -357,7 +355,7 @@ ndb_cuda_ridge_train(const float *features,
 		status = cudaMemcpy(d_targets, targets, target_bytes, cudaMemcpyHostToDevice);
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMemcpy d_targets failed: %s",
 				 cudaGetErrorString(status));
 			goto gpu_cleanup;
@@ -373,7 +371,7 @@ ndb_cuda_ridge_train(const float *features,
 			d_Xty);
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: launch_linreg_compute_xtx_kernel failed: %s",
 				 cudaGetErrorString(status));
 			goto gpu_cleanup;
@@ -386,7 +384,7 @@ ndb_cuda_ridge_train(const float *features,
 		status = cudaMemcpy(h_XtX, d_XtX, XtX_bytes, cudaMemcpyDeviceToHost);
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMemcpy h_XtX failed: %s",
 				 cudaGetErrorString(status));
 			goto gpu_cleanup;
@@ -400,7 +398,7 @@ ndb_cuda_ridge_train(const float *features,
 		status = cudaMemcpy(h_Xty, d_Xty, Xty_bytes, cudaMemcpyDeviceToHost);
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMemcpy h_Xty failed: %s",
 				 cudaGetErrorString(status));
 			goto gpu_cleanup;
@@ -410,7 +408,7 @@ ndb_cuda_ridge_train(const float *features,
 		status = cudaMemcpy(d_XtX, h_XtX, XtX_bytes, cudaMemcpyHostToDevice);
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMemcpy d_XtX failed: %s",
 				 cudaGetErrorString(status));
 			goto gpu_cleanup;
@@ -420,7 +418,7 @@ ndb_cuda_ridge_train(const float *features,
 		status = cudaMalloc((void **) &d_XtX_inv, XtX_bytes);
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMalloc d_XtX_inv failed: %s",
 				 cudaGetErrorString(status));
 			goto gpu_cleanup;
@@ -430,7 +428,7 @@ ndb_cuda_ridge_train(const float *features,
 		if (status != cudaSuccess)
 		{
 			cudaFree(d_XtX_inv);
-			elog(DEBUG1,
+			elog(WARNING,
 				 "ndb_cuda_ridge_train: cudaMalloc d_beta failed: %s",
 				 cudaGetErrorString(status));
 			goto gpu_cleanup;
@@ -463,8 +461,7 @@ gpu_cleanup:
 
 cpu_fallback:
 	/* Fallback to CPU computation */
-	elog(DEBUG1,
-		 "ndb_cuda_ridge_train: falling back to CPU computation");
+	elog(DEBUG1, "ndb_cuda_ridge_train: falling back to CPU computation");
 	for (i = 0; i < n_samples; i++)
 	{
 		const float *row = features + (i * feature_dim);
@@ -596,7 +593,7 @@ matrix_inversion:
 			status = cudaMemcpy(d_XtX_inv, h_XtX_inv, XtX_bytes, cudaMemcpyHostToDevice);
 			if (status != cudaSuccess)
 			{
-				elog(DEBUG1,
+				elog(WARNING,
 					 "ndb_cuda_ridge_train: cudaMemcpy d_XtX_inv failed: %s",
 					 cudaGetErrorString(status));
 				/* Fallback to CPU computation */
@@ -640,7 +637,7 @@ matrix_inversion:
 					}
 					else
 					{
-						elog(DEBUG1,
+						elog(WARNING,
 							 "ndb_cuda_ridge_train: cublasDgemv failed: %d, falling back to CPU",
 							 (int)cublas_err);
 					}

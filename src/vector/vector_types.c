@@ -1053,3 +1053,214 @@ vectorp_validate(PG_FUNCTION_ARGS)
 
 	PG_RETURN_BOOL(true);
 }
+
+/*
+ * vector_analyze: ANALYZE hook for collecting vector column statistics
+ * This function is called during ANALYZE to collect statistics about vector columns
+ * that can help the query planner make better decisions.
+ */
+PG_FUNCTION_INFO_V1(vector_analyze);
+Datum
+vector_analyze(PG_FUNCTION_ARGS)
+{
+	/* For now, return true to indicate successful analysis */
+	/* TODO: Implement proper vector statistics collection:
+	 * 1. Sample vectors from the column
+	 * 2. Calculate dimensionality statistics
+	 * 3. Compute min/max/mean per dimension
+	 * 4. Calculate vector norm distributions
+	 * 5. Build histograms for distance estimation
+	 * 6. Store statistics in pg_statistic
+	 */
+
+	PG_RETURN_BOOL(true);
+}
+
+/* ===================== BINARY VECTOR TYPE ===================== */
+
+/*
+ * BinaryVec: Packed binary vector for efficient quantization
+ * Stores bits in a compact format where each bit represents a binary value
+ */
+typedef struct BinaryVec
+{
+	int32 vl_len_; /* varlena header */
+	int32 dim; /* dimension (number of bits) */
+	uint8 data[FLEXIBLE_ARRAY_MEMBER]; /* packed bits */
+} BinaryVec;
+
+#define BINARYVEC_SIZE(dim) (offsetof(BinaryVec, data) + ((dim + 7) / 8))
+#define BINARYVEC_DIMENSION(bv) ((bv)->dim)
+
+/*
+ * binaryvec_in: Parse binaryvec from text
+ * Format: "[1,0,1,0]" or "1010" (binary string)
+ */
+PG_FUNCTION_INFO_V1(binaryvec_in);
+Datum
+binaryvec_in(PG_FUNCTION_ARGS)
+{
+	char *str = PG_GETARG_CSTRING(0);
+	BinaryVec *result;
+	int dim = 0;
+	char *ptr = str;
+	char *count_ptr;
+	int bit_index;
+	int bit_value;
+
+	/* Skip whitespace */
+	while (*ptr && isspace(*ptr)) ptr++;
+
+	/* Check for array format [1,0,1,0] */
+	if (*ptr == '[') {
+		ptr++; /* skip '[' */
+
+		/* Count bits and validate */
+		count_ptr = ptr;
+		while (*count_ptr) {
+			if (*count_ptr == '0' || *count_ptr == '1') {
+				dim++;
+			} else if (*count_ptr == ',' || *count_ptr == ']' || isspace(*count_ptr)) {
+				/* valid separators */
+			} else {
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+						errmsg("binaryvec: invalid character '%c' in array format", *count_ptr)));
+			}
+			count_ptr++;
+		}
+
+		if (dim == 0) {
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					errmsg("binaryvec: empty array not allowed")));
+		}
+
+		/* Allocate result */
+		result = (BinaryVec *)palloc0(BINARYVEC_SIZE(dim));
+		SET_VARSIZE(result, BINARYVEC_SIZE(dim));
+		result->dim = dim;
+
+		/* Parse bits */
+		ptr = str + 1; /* skip '[' */
+		bit_index = 0;
+		while (*ptr && *ptr != ']') {
+			if (*ptr == '0' || *ptr == '1') {
+				bit_value = *ptr - '0';
+				if (bit_value) {
+					result->data[bit_index / 8] |= (1 << (bit_index % 8));
+				}
+				bit_index++;
+			}
+			ptr++;
+		}
+	} else {
+		/* Binary string format "1010" */
+		while (*ptr) {
+			if (*ptr == '0' || *ptr == '1') {
+				dim++;
+			} else if (!isspace(*ptr)) {
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+						errmsg("binaryvec: invalid character '%c' in binary string format", *ptr)));
+			}
+			ptr++;
+		}
+
+		if (dim == 0) {
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					errmsg("binaryvec: empty binary string not allowed")));
+		}
+
+		/* Allocate result */
+		result = (BinaryVec *)palloc0(BINARYVEC_SIZE(dim));
+		SET_VARSIZE(result, BINARYVEC_SIZE(dim));
+		result->dim = dim;
+
+		/* Parse bits */
+		ptr = str;
+		bit_index = 0;
+		while (*ptr) {
+			if (*ptr == '0' || *ptr == '1') {
+				bit_value = *ptr - '0';
+				if (bit_value) {
+					result->data[bit_index / 8] |= (1 << (bit_index % 8));
+				}
+				bit_index++;
+			}
+			ptr++;
+		}
+	}
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
+ * binaryvec_out: Convert binaryvec to text
+ * Output format: "[1,0,1,0]"
+ */
+PG_FUNCTION_INFO_V1(binaryvec_out);
+Datum
+binaryvec_out(PG_FUNCTION_ARGS)
+{
+	BinaryVec *bv = (BinaryVec *)PG_GETARG_VARLENA_P(0);
+	StringInfoData buf;
+	int i;
+	int byte_index;
+	int bit_index;
+	int bit_value;
+
+	initStringInfo(&buf);
+	appendStringInfoChar(&buf, '[');
+
+	for (i = 0; i < bv->dim; i++) {
+		if (i > 0) {
+			appendStringInfoString(&buf, ",");
+		}
+
+		byte_index = i / 8;
+		bit_index = i % 8;
+		bit_value = (bv->data[byte_index] >> bit_index) & 1;
+
+		appendStringInfoChar(&buf, bit_value ? '1' : '0');
+	}
+
+	appendStringInfoChar(&buf, ']');
+
+	PG_RETURN_CSTRING(buf.data);
+}
+
+/*
+ * binaryvec_hamming_distance: Compute Hamming distance between two binary vectors
+ * Returns the number of positions where the bits differ
+ */
+PG_FUNCTION_INFO_V1(binaryvec_hamming_distance);
+Datum
+binaryvec_hamming_distance(PG_FUNCTION_ARGS)
+{
+	BinaryVec *bv1 = (BinaryVec *)PG_GETARG_VARLENA_P(0);
+	BinaryVec *bv2 = (BinaryVec *)PG_GETARG_VARLENA_P(1);
+	int distance = 0;
+	int i;
+
+	if (bv1->dim != bv2->dim) {
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("binaryvec: dimensions must match: %d vs %d", bv1->dim, bv2->dim)));
+	}
+
+	/* Count differing bits */
+	for (i = 0; i < bv1->dim; i++) {
+		int byte_index = i / 8;
+		int bit_index = i % 8;
+		int bit1 = (bv1->data[byte_index] >> bit_index) & 1;
+		int bit2 = (bv2->data[byte_index] >> bit_index) & 1;
+
+		if (bit1 != bit2) {
+			distance++;
+		}
+	}
+
+	PG_RETURN_INT32(distance);
+}

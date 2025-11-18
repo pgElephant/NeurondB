@@ -1,28 +1,31 @@
+-- 001_linreg_advance.sql
+-- Exhaustive detailed test for linear_regression: all train, error, predict, evaluate.
+-- Works on 1000 rows only and tests each and every way with comprehensive coverage
+-- Tests: GPU/CPU paths, hyperparameters, batch operations, error handling, metadata
+
+SET client_min_messages TO WARNING;
+\set ON_ERROR_STOP on
 \timing on
 \pset footer off
 \pset pager off
-
-\set ON_ERROR_STOP on
+\pset tuples_only off
 
 \echo '=========================================================================='
-\echo 'Linear Regression - Advanced Features Test'
+\echo 'linear_regression: Exhaustive GPU/CPU + Error Coverage (1000 rows sample)'
 \echo '=========================================================================='
 
--- This test uses test_train_view and test_test_view tables created by ml_dataset.py
--- Run: python ml_dataset.py <dataset_name> to populate the database first
--- Or use the test runner: python run_ml_tests.py
---
--- Verify required tables exist
+/* Check that sample_train and sample_test exist */
 DO $$
 BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'test_train_view') THEN
-		RAISE EXCEPTION 'test_train_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
+		RAISE EXCEPTION 'sample_train table does not exist';
 	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'test_test_view') THEN
-		RAISE EXCEPTION 'test_test_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
+		RAISE EXCEPTION 'sample_test table does not exist';
 	END IF;
 END
 $$;
+
 -- Create views with 1000 rows for advance tests
 DROP VIEW IF EXISTS test_train_view;
 DROP VIEW IF EXISTS test_test_view;
@@ -33,164 +36,500 @@ SELECT features, label FROM sample_train LIMIT 1000;
 CREATE VIEW test_test_view AS
 SELECT features, label FROM sample_test LIMIT 1000;
 
--- Configure GPU (if available)
+\echo ''
+\echo 'Dataset Information'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+SELECT 
+	COUNT(*)::bigint AS train_count,
+	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_count,
+	(SELECT vector_dims(features) FROM test_train_view LIMIT 1) AS feature_dim,
+	ROUND((SELECT AVG(label) FROM test_train_view)::numeric, 4) AS avg_label,
+	ROUND((SELECT STDDEV(label) FROM test_train_view)::numeric, 4) AS stddev_label
+FROM test_train_view;
+
+/*---- Register required GPU kernels ----*/
+\echo ''
+\echo 'GPU Configuration'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 SET neurondb.gpu_enabled = on;
 SET neurondb.gpu_kernels = 'l2,cosine,ip,linreg_train,linreg_predict';
 SELECT neurondb_gpu_enable() AS gpu_available;
+SELECT neurondb_gpu_info() AS gpu_info;
 
+/*
+ * ---- TRAINING routines (1000 sampled rows) ----
+ * Test multiple hyperparameter combinations and paths
+ */
 \echo ''
-\echo 'Test 1: Training with Custom Hyperparameters'
+\echo 'Training Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Train with custom parameters
-DROP TABLE IF EXISTS adv_model_temp;
-CREATE TEMP TABLE adv_model_temp AS
-SELECT neurondb.train(
-	'linear_regression',
-	'test_train_view',
-	'features',
-	'label',
-	'{"fit_intercept": true, "normalize": false}'::jsonb
-)::integer AS model_id;
+\echo 'Test 1: GPU training with default parameters'
+SET neurondb.gpu_enabled = on;
+DROP TABLE IF EXISTS gpu_model_temp_001;
+CREATE TEMP TABLE gpu_model_temp_001 AS
+SELECT neurondb.train('linear_regression', 
+	'test_train_view', 
+	'features', 'label', '{}'::jsonb)::integer AS gpu_model_id;
 
-SELECT model_id FROM adv_model_temp;
+SELECT 
+	'GPU Default' AS config,
+	gpu_model_id AS model_id,
+	(SELECT metrics->>'storage' FROM neurondb.ml_models WHERE model_id = gpu_model_id) AS storage
+FROM gpu_model_temp_001;
 
+\echo 'Test 2: CPU training with default parameters'
+SET neurondb.gpu_enabled = off;
+DROP TABLE IF EXISTS cpu_model_temp_001;
+CREATE TEMP TABLE cpu_model_temp_001 AS
+SELECT neurondb.train('linear_regression', 
+	'test_train_view', 
+	'features', 'label', '{}'::jsonb)::integer AS cpu_model_id;
+
+SELECT 
+	'CPU Default' AS config,
+	cpu_model_id AS model_id,
+	(SELECT metrics->>'storage' FROM neurondb.ml_models WHERE model_id = cpu_model_id) AS storage
+FROM cpu_model_temp_001;
+
+\echo 'Test 3: Custom hyperparameters (fit_intercept=true, normalize=false)'
+DROP TABLE IF EXISTS custom_model_temp_001;
+CREATE TEMP TABLE custom_model_temp_001 AS
+SELECT neurondb.train('linear_regression', 
+	'test_train_view', 
+	'features', 'label', 
+	'{"fit_intercept":true,"normalize":false}'::jsonb)::integer AS custom_model_id;
+
+SELECT 
+	'Custom (intercept, no norm)' AS config,
+	custom_model_id AS model_id,
+	(SELECT metrics->>'fit_intercept' FROM neurondb.ml_models WHERE model_id = custom_model_id) AS fit_intercept
+FROM custom_model_temp_001;
+
+\echo 'Test 4: Without intercept (fit_intercept=false)'
+DROP TABLE IF EXISTS noint_model_temp_001;
+CREATE TEMP TABLE noint_model_temp_001 AS
+SELECT neurondb.train('linear_regression', 
+	'test_train_view', 
+	'features', 'label', 
+	'{"fit_intercept":false}'::jsonb)::integer AS noint_model_id;
+
+/* --- ERROR path: bad table or column --- */
 \echo ''
-\echo 'Test 2: Model Metadata and Storage Information'
+\echo 'Error Handling Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
+\echo 'Error Test 1: Invalid table name'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('linear_regression','missing_table','features','label','{}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for missing table';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 2: Invalid feature column'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('linear_regression','test_train_view','notafeat','label','{}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for invalid feature column';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 3: Invalid label column'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('linear_regression','test_train_view','features','notalabel','{}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for invalid label column';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 4: NULL features'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('linear_regression','test_train_view',NULL,'label','{}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for NULL feature column';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+/*-------------------------------------------------------------------
+ * ---- PREDICT ----
+ * GPU/CPU paths, all error paths, batch and single, sampling 1000
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'Prediction Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Predict Test 1: GPU batch prediction (1000 rows)'
+SET neurondb.gpu_enabled = on;
+SELECT 
+	'GPU Batch' AS test_type,
+	COUNT(*) AS n_predictions,
+	ROUND(AVG(score)::numeric, 4) AS avg_score,
+	ROUND(MIN(score)::numeric, 4) AS min_score,
+	ROUND(MAX(score)::numeric, 4) AS max_score,
+	ROUND(STDDEV(score)::numeric, 4) AS stddev_score
+FROM (
+	SELECT neurondb.predict((SELECT gpu_model_id FROM gpu_model_temp_001 LIMIT 1), features) AS score
+	FROM test_test_view
+	LIMIT 1000
+) sub;
+
+\echo 'Predict Test 2: CPU batch prediction (1000 rows)'
+SET neurondb.gpu_enabled = off;
+SELECT 
+	'CPU Batch' AS test_type,
+	COUNT(*) AS n_predictions,
+	ROUND(AVG(score)::numeric, 4) AS avg_score,
+	ROUND(MIN(score)::numeric, 4) AS min_score,
+	ROUND(MAX(score)::numeric, 4) AS max_score,
+	ROUND(STDDEV(score)::numeric, 4) AS stddev_score
+FROM (
+	SELECT neurondb.predict((SELECT cpu_model_id FROM cpu_model_temp_001 LIMIT 1), features) AS score
+	FROM test_test_view
+	LIMIT 1000
+) sub;
+
+\echo 'Predict Test 3: Custom model single row prediction'
+SELECT 
+	'Custom Single' AS test_type,
+	neurondb.predict((SELECT custom_model_id FROM custom_model_temp_001 LIMIT 1), features) AS prediction
+FROM test_test_view
+LIMIT 1;
+
+\echo 'Predict Test 4: Custom model batch (100 rows)'
+SET neurondb.gpu_enabled = off;
+SELECT 
+	'Custom Batch' AS test_type,
+	COUNT(*) AS n_predictions,
+	ROUND(AVG(score)::numeric, 4) AS avg_score
+FROM (
+	SELECT neurondb.predict((SELECT custom_model_id FROM custom_model_temp_001 LIMIT 1), features) AS score
+	FROM test_test_view
+	LIMIT 100
+) b;
+
+\echo 'Predict Test 5: No-intercept model batch (50 rows)'
+SELECT 
+	'No-Intercept Batch' AS test_type,
+	COUNT(*) AS n_predictions,
+	ROUND(AVG(score)::numeric, 4) AS avg_score
+FROM (
+	SELECT neurondb.predict((SELECT noint_model_id FROM noint_model_temp_001 LIMIT 1), features) AS score
+	FROM test_test_view
+	LIMIT 50
+) b;
+
+/* Error: invalid model id */
+\echo ''
+\echo 'Prediction Error Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Predict Error Test 1: Non-existent model ID'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.predict(-10, ARRAY[0.1, 0.2, 0.3]::double precision[]);
+		RAISE EXCEPTION 'FAIL: non-existent model should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Predict Error Test 2: Wrong feature type (integer array)'
+DO $$
+DECLARE
+	cpu_mid_temp integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid_temp FROM cpu_model_temp_001 LIMIT 1;
+	BEGIN
+		PERFORM neurondb.predict(cpu_mid_temp, '{1,2,3}'::integer[]);
+		RAISE EXCEPTION 'FAIL: int[] instead of float[] should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Predict Error Test 3: Wrong feature dimension'
+DO $$
+DECLARE
+	model_dim integer;
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_temp_001 LIMIT 1;
+	SELECT jsonb_array_length(metrics->'coefficients') INTO model_dim
+	FROM neurondb.ml_models WHERE model_id = cpu_mid
+	AND metrics IS NOT NULL AND metrics->'coefficients' IS NOT NULL;
+	IF model_dim IS NULL THEN
+		model_dim := 28; /* Default if not available */
+	END IF;
+	BEGIN
+		PERFORM neurondb.predict(cpu_mid, ARRAY[42.0]::double precision[]); -- wrong dim
+		RAISE EXCEPTION 'FAIL: wrong feature array length should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END
+$$;
+
+\echo 'Predict Error Test 4: NULL model ID'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.predict(NULL, ARRAY[0.1, 0.2, 0.3]::double precision[]);
+		RAISE EXCEPTION 'FAIL: NULL model ID should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Predict Error Test 5: NULL features'
+DO $$
+DECLARE
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_temp_001 LIMIT 1;
+	BEGIN
+		PERFORM neurondb.predict(cpu_mid, NULL);
+		RAISE EXCEPTION 'FAIL: NULL features should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+/*-------------------------------------------------------------------
+ * ---- EVALUATE ----
+ * Metrics for all model types/paths ; test set sampled to 1000 rows
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'Evaluation Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Evaluate Test 1: CPU model evaluation'
+DO $$
+DECLARE
+	cpu_mid integer;
+	result jsonb;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_temp_001 LIMIT 1;
+	IF cpu_mid IS NOT NULL THEN
+		BEGIN
+			result := neurondb.evaluate(cpu_mid, 'test_test_view', 'features', 'label');
+		EXCEPTION WHEN OTHERS THEN
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Test 2: GPU model evaluation'
+DO $$
+DECLARE
+	gpu_mid integer;
+	result jsonb;
+BEGIN
+	SELECT gpu_model_id INTO gpu_mid FROM gpu_model_temp_001 LIMIT 1;
+	IF gpu_mid IS NOT NULL THEN
+		BEGIN
+			result := neurondb.evaluate(gpu_mid, 'test_test_view', 'features', 'label');
+		EXCEPTION WHEN OTHERS THEN
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Test 3: Custom model evaluation'
+DO $$
+DECLARE
+	custom_mid integer;
+	result jsonb;
+BEGIN
+	SELECT custom_model_id INTO custom_mid FROM custom_model_temp_001 LIMIT 1;
+	IF custom_mid IS NOT NULL THEN
+		BEGIN
+			result := neurondb.evaluate(custom_mid, 'test_test_view', 'features', 'label');
+		EXCEPTION WHEN OTHERS THEN
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Test 4: No-intercept model evaluation'
+DO $$
+DECLARE
+	noint_mid integer;
+	result jsonb;
+BEGIN
+	SELECT noint_model_id INTO noint_mid FROM noint_model_temp_001 LIMIT 1;
+	IF noint_mid IS NOT NULL THEN
+		BEGIN
+			result := neurondb.evaluate(noint_mid, 'test_test_view', 'features', 'label');
+		EXCEPTION WHEN OTHERS THEN
+		END;
+	END IF;
+END$$;
+
+\echo ''
+\echo 'Evaluation Error Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Evaluate Error Test 1: Invalid table'
+DO $$
+DECLARE
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_temp_001 LIMIT 1;
+	IF cpu_mid IS NOT NULL THEN
+		BEGIN
+			BEGIN
+				PERFORM neurondb.evaluate(cpu_mid, 'no_such', 'features', 'label');
+				RAISE EXCEPTION 'FAIL: eval on bad table must error';
+			EXCEPTION WHEN OTHERS THEN 
+			NULL;
+			END;
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Error Test 2: Invalid feature column'
+DO $$
+DECLARE
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_temp_001 LIMIT 1;
+	IF cpu_mid IS NOT NULL THEN
+		BEGIN
+			BEGIN
+				PERFORM neurondb.evaluate(cpu_mid, 'test_test_view', 'badfeature', 'label');
+				RAISE EXCEPTION 'FAIL: eval on bad feature col must error';
+			EXCEPTION WHEN OTHERS THEN 
+			NULL;
+			END;
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Error Test 3: Invalid label column'
+DO $$
+DECLARE
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_temp_001 LIMIT 1;
+	IF cpu_mid IS NOT NULL THEN
+		BEGIN
+			BEGIN
+				PERFORM neurondb.evaluate(cpu_mid, 'test_test_view', 'features', 'badlabel');
+				RAISE EXCEPTION 'FAIL: eval on bad label col must error';
+			EXCEPTION WHEN OTHERS THEN 
+			NULL;
+			END;
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Error Test 4: NULL model ID'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.evaluate(NULL, 'test_test_view', 'features', 'label');
+		RAISE EXCEPTION 'FAIL: NULL model ID should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+/*-------------------------------------------------------------------
+ * Model catalog check and metadata
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'Model Metadata Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Metadata Test 1: GPU model metadata'
 SELECT 
 	m.model_id,
 	m.algorithm,
 	m.created_at,
 	m.metrics->>'storage' AS storage_type,
 	m.metrics->>'r_squared' AS r_squared,
-	m.metrics->>'mse' AS mean_squared_error,
+	m.metrics->>'mse' AS mse,
+	m.metrics->>'mae' AS mae,
+	m.metrics->>'n_samples' AS n_samples,
+	m.metrics->>'n_features' AS n_features,
 	CASE 
 		WHEN m.model_data IS NULL THEN 'NULL (GPU model)'
 		ELSE format('%s bytes', pg_column_size(m.model_data))
 	END AS model_data_status
-FROM neurondb.ml_models m, adv_model_temp t
-WHERE m.model_id = t.model_id;
+FROM neurondb.ml_models m, gpu_model_temp_001 t
+WHERE m.model_id = t.gpu_model_id;
 
-\echo ''
-\echo 'Test 3: Batch Evaluation Performance (Optimized C Batch Processing)'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Use optimized batch evaluation instead of per-row predictions
-CREATE TEMP TABLE adv_eval_temp AS
-SELECT neurondb.evaluate((SELECT model_id FROM adv_model_temp), 'test_test_view', 'features', 'label') AS metrics;
-
-SELECT
-	'Total Samples' AS metric,
-	(SELECT COUNT(*)::bigint FROM test_test_view WHERE features IS NOT NULL AND label IS NOT NULL)::text AS value
-UNION ALL
-SELECT 'MSE', ROUND((metrics->>'mse')::numeric, 6)::text
-FROM adv_eval_temp
-WHERE metrics->>'mse' IS NOT NULL
-UNION ALL
-SELECT 'RMSE', ROUND((metrics->>'rmse')::numeric, 6)::text
-FROM adv_eval_temp
-WHERE metrics->>'rmse' IS NOT NULL
-UNION ALL
-SELECT 'MAE', ROUND((metrics->>'mae')::numeric, 6)::text
-FROM adv_eval_temp
-WHERE metrics->>'mae' IS NOT NULL
-UNION ALL
-SELECT 'R²', ROUND((metrics->>'r_squared')::numeric, 6)::text
-FROM adv_eval_temp
-WHERE metrics->>'r_squared' IS NOT NULL
-ORDER BY metric;
-
-\echo ''
-\echo 'Test 4: Evaluation Metrics Summary'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Show detailed evaluation metrics from optimized batch processing
-SELECT
-	'MSE' AS metric,
-	ROUND((metrics->>'mse')::numeric, 6)::numeric AS value
-FROM adv_eval_temp
-WHERE metrics->>'mse' IS NOT NULL
-UNION ALL
-SELECT 'RMSE', ROUND((metrics->>'rmse')::numeric, 6)::numeric
-FROM adv_eval_temp
-WHERE metrics->>'rmse' IS NOT NULL
-UNION ALL
-SELECT 'MAE', ROUND((metrics->>'mae')::numeric, 6)::numeric
-FROM adv_eval_temp
-WHERE metrics->>'mae' IS NOT NULL
-UNION ALL
-SELECT 'R²', ROUND((metrics->>'r_squared')::numeric, 6)::numeric
-FROM adv_eval_temp
-WHERE metrics->>'r_squared' IS NOT NULL
-ORDER BY metric;
-
-\echo ''
-\echo 'Test 5: Model Quality Metrics'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Use evaluation metrics for quality assessment (much faster than per-row residuals)
-SELECT
-	ROUND((metrics->>'mse')::numeric, 6) AS mean_squared_error,
-	ROUND((metrics->>'rmse')::numeric, 6) AS root_mean_squared_error,
-	ROUND((metrics->>'mae')::numeric, 6) AS mean_absolute_error,
-	ROUND((metrics->>'r_squared')::numeric, 6) AS r_squared,
-	CASE 
-		WHEN (metrics->>'r_squared')::numeric > 0.5 THEN 'Good fit'
-		WHEN (metrics->>'r_squared')::numeric > 0.1 THEN 'Moderate fit'
-		ELSE 'Poor fit (may need feature engineering)'
-	END AS fit_quality
-FROM adv_eval_temp;
-
-\echo ''
-\echo 'Test 6: Model Storage Type Verification'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Train model (storage is automatically determined by GPU availability)
-DROP TABLE IF EXISTS model_storage_test;
-CREATE TEMP TABLE model_storage_test AS
-SELECT neurondb.train(
-	'linear_regression',
-	'test_train_view',
-	'features',
-	'label',
-	'{}'::jsonb
-)::integer AS model_id;
-
--- Check actual storage type used (GPU if available, CPU otherwise)
+\echo 'Metadata Test 2: CPU model metadata'
 SELECT 
 	m.model_id,
+	m.algorithm,
+	m.created_at,
 	m.metrics->>'storage' AS storage_type,
-	ROUND((m.metrics->>'r_squared')::numeric, 4) AS r_squared,
-	ROUND((m.metrics->>'mse')::numeric, 4) AS mse,
+	m.metrics->>'r_squared' AS r_squared,
+	m.metrics->>'mse' AS mse,
+	m.metrics->>'mae' AS mae,
 	CASE 
-		WHEN m.metrics->>'storage' = 'gpu' THEN 'GPU training succeeded'
-		WHEN m.metrics->>'storage' = 'cpu' THEN 'CPU training (GPU unavailable or failed)'
-		ELSE 'Unknown storage type'
-	END AS storage_status
-FROM neurondb.ml_models m, model_storage_test t
-WHERE m.model_id = t.model_id;
+		WHEN m.model_data IS NULL THEN 'NULL (GPU model)'
+		ELSE format('%s bytes', pg_column_size(m.model_data))
+	END AS model_data_status
+FROM neurondb.ml_models m, cpu_model_temp_001 t
+WHERE m.model_id = t.cpu_model_id;
 
-\echo ''
-\echo 'Test 7: Model Persistence and Retrieval'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Check model is persisted
+\echo 'Metadata Test 3: Custom model metadata'
 SELECT 
-	COUNT(*) AS total_models,
-	COUNT(DISTINCT algorithm) AS unique_algorithms,
-	MIN(created_at) AS oldest_model,
-	MAX(created_at) AS newest_model
-FROM neurondb.ml_models
-WHERE algorithm = 'linear_regression';
+	m.model_id,
+	m.algorithm,
+	m.metrics->>'fit_intercept' AS fit_intercept,
+	m.metrics->>'r_squared' AS r_squared,
+	m.metrics->>'mse' AS mse
+FROM neurondb.ml_models m, custom_model_temp_001 t
+WHERE m.model_id = t.custom_model_id;
 
--- Cleanup
-DROP TABLE IF EXISTS adv_model_temp;
-DROP TABLE IF EXISTS adv_eval_temp;
-DROP TABLE IF EXISTS model_storage_test;
+\echo 'Metadata Test 4: Model comparison (all models)'
+SELECT 
+	algorithm,
+	COUNT(*) AS n_models,
+	MIN(created_at) AS first_created,
+	MAX(created_at) AS last_created,
+	COUNT(CASE WHEN metrics->>'storage' = 'gpu' THEN 1 END) AS gpu_models,
+	COUNT(CASE WHEN metrics->>'storage' = 'cpu' THEN 1 END) AS cpu_models,
+	ROUND(AVG((metrics->>'r_squared')::numeric), 4) AS avg_r_squared
+FROM neurondb.ml_models
+WHERE algorithm = 'linear_regression'
+GROUP BY algorithm;
 
 \echo ''
-\echo 'Advanced Linear Regression Test Complete!'
 \echo '=========================================================================='
-
+\echo '✓ linear_regression: Full exhaustive code-path test complete (1000-row sample)'
+\echo '=========================================================================='

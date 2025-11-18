@@ -2581,7 +2581,6 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 	/* Process prompts in parallel using streams */
 	if (num_streams > 0)
 	{
-		elog(DEBUG1, "neurondb: batch completion using %d streams for %d prompts", num_streams, num_prompts);
 		/* Use parallel processing with streams */
 		for (i = 0; i < num_prompts; i++)
 		{
@@ -2594,13 +2593,11 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 			cudaStreamSynchronize(streams[stream_idx]);
 
 			/* Process prompt */
-			elog(NOTICE, "neurondb: batch processing prompt %d/%d", i + 1, num_prompts);
 			rc = ndb_cuda_hf_complete(model_name,
 				prompts[i],
 				params_json,
 				&text_out,
 				&prompt_err);
-			elog(NOTICE, "neurondb: prompt %d completed with rc=%d, text_out=%s", i + 1, rc, text_out ? (strlen(text_out) > 0 ? "non-empty" : "empty") : "NULL");
 			if (rc == 0)
 			{
 #ifdef HAVE_ONNX_RUNTIME
@@ -2747,27 +2744,22 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 		rc = -1;
 		for (i = 0; i < num_prompts; i++)
 		{
-			elog(DEBUG1, "neurondb: batch result[%d]: status=%d, text=%s", i, results[i].status, results[i].text ? (strlen(results[i].text) > 0 ? "non-empty" : "empty") : "NULL");
 			if (results[i].status == 0)
 			{
 				rc = 0;
-				elog(DEBUG1, "neurondb: found successful prompt at index %d", i);
 				break;
 			}
 		}
 		if (rc != 0)
 		{
 			/* All prompts failed */
-			elog(DEBUG1, "neurondb: all %d batch completions failed", num_prompts);
 			if (errstr)
 				*errstr = pstrdup("all batch completions failed");
 		} else
 		{
-			elog(DEBUG1, "neurondb: batch completion succeeded (at least one prompt succeeded)");
 		}
 	} else
 	{
-		elog(NOTICE, "neurondb: batch completion falling back to sequential processing for %d prompts", num_prompts);
 		/* Fall back to sequential processing */
 		for (i = 0; i < num_prompts; i++)
 		{
@@ -2891,27 +2883,22 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 		rc = -1;
 		for (i = 0; i < num_prompts; i++)
 		{
-			elog(DEBUG1, "neurondb: sequential batch result[%d]: status=%d, text=%s", i, results[i].status, results[i].text ? (strlen(results[i].text) > 0 ? "non-empty" : "empty") : "NULL");
 			if (results[i].status == 0)
 			{
 				rc = 0;
-				elog(DEBUG1, "neurondb: sequential found successful prompt at index %d", i);
 				break;
 			}
 		}
 		if (rc != 0)
 		{
 			/* All prompts failed */
-			elog(DEBUG1, "neurondb: sequential all %d batch completions failed", num_prompts);
 			if (errstr)
 				*errstr = pstrdup("all batch completions failed");
 		} else
 		{
-			elog(DEBUG1, "neurondb: sequential batch completion succeeded (at least one prompt succeeded)");
 		}
 	}
 
-	elog(DEBUG1, "neurondb: ndb_cuda_hf_generate_batch returning rc=%d", rc);
 	/* Switch back to original context and clean up */
 	MemoryContextSwitchTo(oldctx);
 	MemoryContextDelete(batchctx);

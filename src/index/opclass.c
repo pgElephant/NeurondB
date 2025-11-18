@@ -359,6 +359,214 @@ vector_order_support(PG_FUNCTION_ARGS)
  */
 
 /*
+ * vector_cosine_less(vector, vector, vector) -> bool
+ *
+ * For cosine distance ordering: lower distance = better match
+ */
+PG_FUNCTION_INFO_V1(vector_cosine_less);
+
+Datum
+vector_cosine_less(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *query = PG_GETARG_VECTOR_P(2);
+	float4 dist_a, dist_b;
+	extern float4 cosine_distance_simd(Vector *a, Vector *b);
+
+	if (a->dim != query->dim || b->dim != query->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: vector dimensions must "
+				       "match: %d vs %d vs %d",
+					a->dim, b->dim, query->dim)));
+
+	/* Use SIMD-optimized version */
+	dist_a = cosine_distance_simd(a, query);
+	dist_b = cosine_distance_simd(b, query);
+
+	PG_RETURN_BOOL(dist_a < dist_b);
+}
+
+/*
+ * vector_cosine_less_equal(vector, vector, vector) -> bool
+ */
+PG_FUNCTION_INFO_V1(vector_cosine_less_equal);
+
+Datum
+vector_cosine_less_equal(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *query = PG_GETARG_VECTOR_P(2);
+	float4 dist_a, dist_b;
+	extern float4 cosine_distance_simd(Vector *a, Vector *b);
+
+	if (a->dim != query->dim || b->dim != query->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: vector dimensions must match")));
+
+	dist_a = cosine_distance_simd(a, query);
+	dist_b = cosine_distance_simd(b, query);
+
+	PG_RETURN_BOOL(dist_a <= dist_b);
+}
+
+/*
+ * vector_cosine_greater(vector, vector, vector) -> bool
+ */
+PG_FUNCTION_INFO_V1(vector_cosine_greater);
+
+Datum
+vector_cosine_greater(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *query = PG_GETARG_VECTOR_P(2);
+	float4 dist_a, dist_b;
+	extern float4 cosine_distance_simd(Vector *a, Vector *b);
+
+	if (a->dim != query->dim || b->dim != query->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: vector dimensions must match")));
+
+	dist_a = cosine_distance_simd(a, query);
+	dist_b = cosine_distance_simd(b, query);
+
+	PG_RETURN_BOOL(dist_a > dist_b);
+}
+
+/*
+ * vector_cosine_greater_equal(vector, vector, vector) -> bool
+ */
+PG_FUNCTION_INFO_V1(vector_cosine_greater_equal);
+
+Datum
+vector_cosine_greater_equal(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *query = PG_GETARG_VECTOR_P(2);
+	float4 dist_a, dist_b;
+	extern float4 cosine_distance_simd(Vector *a, Vector *b);
+
+	if (a->dim != query->dim || b->dim != query->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: vector dimensions must match")));
+
+	dist_a = cosine_distance_simd(a, query);
+	dist_b = cosine_distance_simd(b, query);
+
+	PG_RETURN_BOOL(dist_a >= dist_b);
+}
+
+/*
+ * vector_inner_product_less(vector, vector, vector) -> bool
+ *
+ * For inner product: higher value = better match, so we want to minimize
+ * the negative inner product distance
+ */
+PG_FUNCTION_INFO_V1(vector_inner_product_less);
+
+Datum
+vector_inner_product_less(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *query = PG_GETARG_VECTOR_P(2);
+	float4 dist_a, dist_b;
+	extern float4 inner_product_distance_simd(Vector *a, Vector *b);
+
+	if (a->dim != query->dim || b->dim != query->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: vector dimensions must match")));
+
+	dist_a = inner_product_distance_simd(a, query);
+	dist_b = inner_product_distance_simd(b, query);
+
+	PG_RETURN_BOOL(dist_a < dist_b);
+}
+
+/*
+ * vector_inner_product_less_equal(vector, vector, vector) -> bool
+ */
+PG_FUNCTION_INFO_V1(vector_inner_product_less_equal);
+
+Datum
+vector_inner_product_less_equal(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *query = PG_GETARG_VECTOR_P(2);
+	float4 dist_a, dist_b;
+	extern float4 inner_product_distance_simd(Vector *a, Vector *b);
+
+	if (a->dim != query->dim || b->dim != query->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: vector dimensions must match")));
+
+	dist_a = inner_product_distance_simd(a, query);
+	dist_b = inner_product_distance_simd(b, query);
+
+	PG_RETURN_BOOL(dist_a <= dist_b);
+}
+
+/*
+ * vector_inner_product_greater(vector, vector, vector) -> bool
+ */
+PG_FUNCTION_INFO_V1(vector_inner_product_greater);
+
+Datum
+vector_inner_product_greater(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *query = PG_GETARG_VECTOR_P(2);
+	float4 dist_a, dist_b;
+	extern float4 inner_product_distance_simd(Vector *a, Vector *b);
+
+	if (a->dim != query->dim || b->dim != query->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: vector dimensions must match")));
+
+	dist_a = inner_product_distance_simd(a, query);
+	dist_b = inner_product_distance_simd(b, query);
+
+	PG_RETURN_BOOL(dist_a > dist_b);
+}
+
+/*
+ * vector_inner_product_greater_equal(vector, vector, vector) -> bool
+ */
+PG_FUNCTION_INFO_V1(vector_inner_product_greater_equal);
+
+Datum
+vector_inner_product_greater_equal(PG_FUNCTION_ARGS)
+{
+	Vector *a = PG_GETARG_VECTOR_P(0);
+	Vector *b = PG_GETARG_VECTOR_P(1);
+	Vector *query = PG_GETARG_VECTOR_P(2);
+	float4 dist_a, dist_b;
+	extern float4 inner_product_distance_simd(Vector *a, Vector *b);
+
+	if (a->dim != query->dim || b->dim != query->dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_EXCEPTION),
+				errmsg("neurondb: vector dimensions must match")));
+
+	dist_a = inner_product_distance_simd(a, query);
+	dist_b = inner_product_distance_simd(b, query);
+
+	PG_RETURN_BOOL(dist_a >= dist_b);
+}
+
+/*
  * Utility function to check if operator class exists
  */
 PG_FUNCTION_INFO_V1(neurondb_has_opclass);

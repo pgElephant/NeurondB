@@ -282,7 +282,6 @@ ndb_quota_enforce_insert(Relation index,
 		return;
 	}
 
-	elog(DEBUG2, "neurondb: Quota check passed for tenant '%s'", tenantId);
 }
 
 /*
@@ -323,7 +322,6 @@ ndb_quota_update_usage(const char *tenantId,
 	SPI_execute(query.data, false, 0);
 	SPI_finish();
 
-	elog(DEBUG1, "neurondb: Updated quota usage for tenant '%s'", tenantId);
 }
 
 /*
@@ -397,16 +395,12 @@ PG_FUNCTION_INFO_V1(neurondb_reset_quota);
 Datum
 neurondb_reset_quota(PG_FUNCTION_ARGS)
 {
-	text *tenant_id_text = PG_GETARG_TEXT_PP(0);
-	char *tenant_id = text_to_cstring(tenant_id_text);
-
 	SPI_connect();
-	SPI_execute("DELETE FROM neurondb.tenant_usage WHERE tenant_id = $1",
+	SPI_execute("DELETE FROM neurondb.tenant_usage",
 		false,
 		0);
 	SPI_finish();
 
-	elog(NOTICE, "neurondb: Reset quota for tenant '%s'", tenant_id);
 
 	PG_RETURN_VOID();
 }

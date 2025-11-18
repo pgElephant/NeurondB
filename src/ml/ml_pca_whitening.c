@@ -211,8 +211,8 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
 
-	elog(DEBUG1,
-		"neurondb: PCA whitening on %s.%s (epsilon=%.2e)",
+		elog(DEBUG1,
+			"neurondb: PCA whitening on %s.%s (epsilon=%.2e)",
 		tbl_str,
 		vec_col_str,
 		epsilon);
@@ -221,12 +221,17 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 	vectors = neurondb_fetch_vectors_from_table(
 		tbl_str, vec_col_str, &nvec, &dim);
 	if (nvec < dim)
+	{
+		elog(DEBUG1,
+		     "Need at least d=%d vectors for %d-dimensional whitening",
+		     dim,
+		     dim);
 		ereport(ERROR,
 			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("Need at least d=%d vectors for "
-				       "%d-dimensional whitening",
+				errmsg("Need at least d=%d vectors for %d-dimensional whitening",
 					dim,
 					dim)));
+	}
 
 	/* Step 1: Center data (compute mean and subtract) */
 	mean = (double *)palloc0(sizeof(double) * dim);
@@ -284,7 +289,7 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 				eigenvectors[c],
 				eigenvalues[c]);
 
-		elog(DEBUG2,
+		elog(DEBUG1,
 			"neurondb: Eigenvalue %d = %.6f",
 			c + 1,
 			eigenvalues[c]);

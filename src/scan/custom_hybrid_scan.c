@@ -116,7 +116,6 @@ Datum
 create_hybrid_scan_path(PG_FUNCTION_ARGS)
 {
 	/* This is called during planning to add hybrid path */
-	elog(NOTICE, "neurondb: Creating hybrid scan path");
 
 	/* TODO: Integrate with planner hooks to add CustomPath */
 
@@ -153,7 +152,6 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 {
 	HybridScanState *state = (HybridScanState *)node;
 
-	elog(DEBUG1, "neurondb: Beginning hybrid scan execution");
 
 	/* Extract parameters from plan */
 	/* state->queryVector = ... */
@@ -226,7 +224,6 @@ hybrid_end(CustomScanState *node)
 {
 	HybridScanState *state = (HybridScanState *)node;
 
-	elog(DEBUG1, "neurondb: Ending hybrid scan");
 
 	/* Close scans */
 	/* if (state->vectorScan)
@@ -323,7 +320,6 @@ merge_candidates(HybridScanState *state)
 
 	/* TODO: Implement deduplication and sorting */
 
-	elog(DEBUG1, "neurondb: Merged %d candidates", state->candidateCount);
 }
 
 /*
@@ -354,5 +350,4 @@ void
 register_hybrid_scan_provider(void)
 {
 	/* RegisterCustomScanMethods(&hybrid_exec_methods); */
-	elog(DEBUG1, "neurondb: Registered hybrid scan provider");
 }

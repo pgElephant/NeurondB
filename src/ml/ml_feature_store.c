@@ -62,9 +62,8 @@ neurondb_create_feature_store(PG_FUNCTION_ARGS)
 	bool isnull;
 	int store_id;
 
-	elog(NOTICE,
-		"neurondb.create_feature_store: name='%s', entity_table='%s', "
-		"entity_key='%s'",
+	elog(DEBUG1,
+		"neurondb.create_feature_store: name='%s', entity_table='%s', entity_key='%s'",
 		store_name,
 		entity_table,
 		entity_key);
@@ -135,9 +134,8 @@ neurondb_register_feature(PG_FUNCTION_ARGS)
 		? text_to_cstring(transformation_text)
 		: NULL;
 
-	elog(NOTICE,
-		"neurondb.register_feature: store=%d, feature='%s', type=%s, "
-		"transformation='%s'",
+	elog(DEBUG1,
+		"neurondb.register_feature: store=%d, feature='%s', type=%s, transformation='%s'",
 		store_id,
 		feature_name,
 		feature_type,
@@ -312,9 +310,7 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 			&sql, "SELECT %s", quote_identifier(entity_key_col));
 		for (j = 0; j < ndefs; ++j)
 		{
-			appendStringInfo(&sql,
-				", %s",
-				quote_identifier(feature_names[j]));
+			appendStringInfo(&sql, ", %s", quote_identifier(feature_names[j]));
 		}
 		appendStringInfo(&sql,
 			" FROM %s WHERE %s = %s",
@@ -602,8 +598,7 @@ entity_key_for_store(int32 store_id)
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT entity_key FROM neurondb.feature_stores WHERE store_id "
-		"= %d",
+		"SELECT entity_key FROM neurondb.feature_stores WHERE store_id = %d",
 		store_id);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -642,8 +637,7 @@ entity_table_for_store(int32 store_id)
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT entity_table FROM neurondb.feature_stores WHERE "
-		"store_id = %d",
+		"SELECT entity_table FROM neurondb.feature_stores WHERE store_id = %d",
 		store_id);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -689,8 +683,7 @@ get_feature_definitions(int32 store_id,
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 		"SELECT feature_name, feature_type, transformation "
-		"FROM neurondb.feature_definitions WHERE store_id = %d ORDER "
-		"BY feature_id",
+		"FROM neurondb.feature_definitions WHERE store_id = %d ORDER BY feature_id",
 		store_id);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -705,8 +698,7 @@ get_feature_definitions(int32 store_id,
 		SPI_finish();
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("could not retrieve feature definitions "
-				       "for store %d",
+				errmsg("could not retrieve feature definitions for store %d",
 					store_id)));
 	}
 

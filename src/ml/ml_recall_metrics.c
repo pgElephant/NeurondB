@@ -135,8 +135,8 @@ recall_at_k(PG_FUNCTION_ARGS)
 
 	recall = (double)found_count / n_relevant;
 
-	elog(DEBUG2,
-		"neurondb: Recall@%d = %.4f (found %d of %d)",
+		elog(DEBUG1,
+			"neurondb: Recall@%d = %.4f (found %d of %d)",
 		k,
 		recall,
 		found_count,

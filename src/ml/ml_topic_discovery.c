@@ -109,7 +109,6 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_column);
 
-	elog(DEBUG1, "neurondb: Topic discovery (k=%d)", num_topics);
 
 	/* Fetch embeddings */
 	data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
@@ -117,8 +116,7 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 	if (nvec < num_topics)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("Not enough documents (%d) for %d "
-				       "topics",
+				errmsg("Not enough documents (%d) for %d topics",
 					nvec,
 					num_topics)));
 
@@ -174,8 +172,7 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 		if (!changed)
 		{
 			elog(DEBUG1,
-				"neurondb: Topic discovery converged at "
-				"iteration %d",
+				"neurondb: Topic discovery converged at iteration %d",
 				iter + 1);
 			break;
 		}
@@ -241,5 +238,4 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_topic_discovery_model(void)
 {
-	elog(DEBUG1, "TopicDiscovery GPU Model Ops registration skipped - not yet implemented");
 }

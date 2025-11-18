@@ -364,10 +364,8 @@ vector_wal_set_compression(PG_FUNCTION_ARGS)
 
 	if (enable)
 	{
-		elog(NOTICE, "neurondb: Vector WAL compression enabled.");
 	} else
 	{
-		elog(NOTICE, "neurondb: Vector WAL compression disabled.");
 	}
 	/*
 	 * In real system: would set neurondb.wal_compression GUC,

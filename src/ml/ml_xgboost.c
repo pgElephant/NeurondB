@@ -42,6 +42,7 @@
 PG_FUNCTION_INFO_V1(train_xgboost_classifier);
 PG_FUNCTION_INFO_V1(train_xgboost_regressor);
 PG_FUNCTION_INFO_V1(predict_xgboost);
+PG_FUNCTION_INFO_V1(evaluate_xgboost_by_model_id);
 
 #if HAVE_XGBOOST
 
@@ -78,16 +79,22 @@ load_training_data(const char *table,
 		&query, "SELECT %s, %s FROM %s", feature_col, label_col, table);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_connect failed")));
 
 	ret = SPI_execute(query.data, true, 0);
 
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "SPI_execute failed for training data");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_execute failed for training data")));
 
 	nrows = SPI_processed;
 	if (nrows <= 0)
-		elog(ERROR, "No training rows found");
+		ereport(ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				errmsg("neurondb: no training rows found")));
 
 	/*
 	 * Determine dimension (features can be a vector column).
@@ -99,7 +106,9 @@ load_training_data(const char *table,
 
 	feat_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
 	if (isnull)
-		elog(ERROR, "Null feature vector found");
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: null feature vector found")));
 
 	if (tupdesc->attrs[0]->atttypid == FLOAT4ARRAYOID
 		|| tupdesc->attrs[0]->atttypid == FLOAT8ARRAYOID)
@@ -128,7 +137,9 @@ load_training_data(const char *table,
 		featval =
 			SPI_getbinval(current_tuple, tupdesc, 1, &isnull_feat);
 		if (isnull_feat)
-			elog(ERROR, "Null feature vector in row %d", i);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: null feature vector in row %d", i)));
 
 		if (feat_arr)
 		{
@@ -143,16 +154,18 @@ load_training_data(const char *table,
 				arr_len = ArrayGetNItems(
 					ARR_NDIM(curr_arr), ARR_DIMS(curr_arr));
 				if (arr_len != ncols)
-					elog(ERROR,
-						"Unexpected dimension of "
-						"feature array");
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("neurondb: unexpected dimension of feature array")));
 				fdat = (float8 *)ARR_DATA_PTR(curr_arr);
 				for (j = 0; j < ncols; j++)
 					features[i * ncols + j] =
 						(float)fdat[j];
 			} else
 			{
-				elog(ERROR, "Feature arrays must be 1D");
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: feature arrays must be 1D")));
 			}
 		} else
 		{
@@ -170,7 +183,9 @@ load_training_data(const char *table,
 		labelval =
 			SPI_getbinval(current_tuple, tupdesc, 2, &isnull_label);
 		if (isnull_label)
-			elog(ERROR, "Null label/target in row %d", i);
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: null label/target in row %d", i)));
 
 		if (tupdesc->attrs[1]->atttypid == INT4OID)
 			labels[i] = (float)DatumGetInt32(labelval);
@@ -256,7 +271,8 @@ fetch_xgboost_model(int32 model_id, size_t *model_size)
 
 	snprintf(select_cmd,
 		sizeof(select_cmd),
-		"SELECT model FROM ml_models WHERE id = %d",
+		elog(DEBUG1,
+			"SELECT model FROM ml_models WHERE id = %d",
 		model_id);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -269,7 +285,8 @@ fetch_xgboost_model(int32 model_id, size_t *model_size)
 
 	if (SPI_processed == 0)
 		elog(ERROR,
-			"Model with id %d not found in ml_models",
+			elog(DEBUG1,
+				"Model with id %d not found in ml_models",
 			model_id);
 
 	tup = SPI_tuptable->vals[0];
@@ -334,9 +351,9 @@ train_xgboost_classifier(PG_FUNCTION_ARGS)
 	char *out_bytes = NULL;
 	int32 model_id;
 
-	elog(NOTICE,
-		"XGBoost Classifier: table=%s, feature=%s, label=%s, "
-		"n_estimators=%d, max_depth=%d, learning_rate=%.3f",
+		"neurondb: XGBoost Classifier: table=%s, feature=%s, label=%s, "
+		elog(DEBUG1,
+			"n_estimators=%d, max_depth=%d, learning_rate=%.3f",
 		table_str,
 		feature_str,
 		label_str,
@@ -391,7 +408,8 @@ train_xgboost_classifier(PG_FUNCTION_ARGS)
 	{
 		if (XGBoosterSetParam(booster, keys[i], vals[i]) != 0)
 			elog(ERROR,
-				"Failed to set XGBoost booster parameter: %s",
+				elog(DEBUG1,
+					"Failed to set XGBoost booster parameter: %s",
 				keys[i]);
 	}
 
@@ -399,7 +417,8 @@ train_xgboost_classifier(PG_FUNCTION_ARGS)
 	{
 		if (XGBoosterUpdateOneIter(booster, iter, dtrain) != 0)
 			elog(ERROR,
-				"Failed during XGBoost training iteration %d",
+				elog(DEBUG1,
+					"Failed during XGBoost training iteration %d",
 				iter);
 	}
 
@@ -459,9 +478,9 @@ train_xgboost_regressor(PG_FUNCTION_ARGS)
 	char *out_bytes = NULL;
 	int32 model_id;
 
-	elog(NOTICE,
-		"XGBoost Regressor: table=%s, feature=%s, target=%s, "
-		"n_estimators=%d, max_depth=%d, learning_rate=%.3f",
+		"neurondb: XGBoost Regressor: table=%s, feature=%s, target=%s, "
+		elog(DEBUG1,
+			"n_estimators=%d, max_depth=%d, learning_rate=%.3f",
 		table_str,
 		feature_str,
 		target_str,
@@ -504,14 +523,16 @@ train_xgboost_regressor(PG_FUNCTION_ARGS)
 	{
 		if (XGBoosterSetParam(booster, keys[i], vals[i]) != 0)
 			elog(ERROR,
-				"Failed to set XGBoost booster parameter: %s",
+				elog(DEBUG1,
+					"Failed to set XGBoost booster parameter: %s",
 				keys[i]);
 	}
 	for (iter = 0; iter < n_estimators; iter++)
 	{
 		if (XGBoosterUpdateOneIter(booster, iter, dtrain) != 0)
 			elog(ERROR,
-				"Failed during XGBoost training iteration %d",
+				elog(DEBUG1,
+					"Failed during XGBoost training iteration %d",
 				iter);
 	}
 
@@ -628,6 +649,248 @@ predict_xgboost(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(0.0);
 }
 
+/*
+ * evaluate_xgboost_by_model_id
+ *
+ * Evaluates an XGBoost model on a dataset and returns performance metrics.
+ * Arguments: int4 model_id, text table_name, text feature_col, text label_col
+ * Returns: jsonb with metrics
+ */
+Datum
+evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
+{
+#if HAVE_XGBOOST
+    int32 model_id;
+    text *table_name;
+    text *feature_col;
+    text *label_col;
+    char *tbl_str;
+    char *feat_str;
+    char *targ_str;
+    StringInfoData query;
+    int ret;
+    int nvec = 0;
+    double mse = 0.0;
+    double mae = 0.0;
+    double ss_tot = 0.0;
+    double ss_res = 0.0;
+    double y_mean = 0.0;
+    double r_squared;
+    double rmse;
+    int i;
+    StringInfoData jsonbuf;
+    Jsonb *result;
+    MemoryContext oldcontext;
+
+    /* Validate arguments */
+    if (PG_NARGS() != 4)
+        ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("neurondb: evaluate_xgboost_by_model_id: 4 arguments are required")));
+
+    if (PG_ARGISNULL(0))
+        ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("neurondb: evaluate_xgboost_by_model_id: model_id is required")));
+
+    model_id = PG_GETARG_INT32(0);
+
+    if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3))
+        ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("neurondb: evaluate_xgboost_by_model_id: table_name, feature_col, and label_col are required")));
+
+    table_name = PG_GETARG_TEXT_PP(1);
+    feature_col = PG_GETARG_TEXT_PP(2);
+    label_col = PG_GETARG_TEXT_PP(3);
+
+    tbl_str = text_to_cstring(table_name);
+    feat_str = text_to_cstring(feature_col);
+    targ_str = text_to_cstring(label_col);
+
+    oldcontext = CurrentMemoryContext;
+
+    /* Connect to SPI */
+    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+        ereport(ERROR,
+            (errcode(ERRCODE_INTERNAL_ERROR),
+                errmsg("neurondb: evaluate_xgboost_by_model_id: SPI_connect failed")));
+
+    /* Build query */
+    initStringInfo(&query);
+    appendStringInfo(&query,
+        "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+        feat_str, targ_str, tbl_str, feat_str, targ_str);
+
+    ret = SPI_execute(query.data, true, 0);
+    if (ret != SPI_OK_SELECT)
+        ereport(ERROR,
+            (errcode(ERRCODE_INTERNAL_ERROR),
+                errmsg("neurondb: evaluate_xgboost_by_model_id: query failed")));
+
+    nvec = SPI_processed;
+    if (nvec < 2)
+    {
+        SPI_finish();
+        pfree(tbl_str);
+        pfree(feat_str);
+        pfree(targ_str);
+        pfree(query.data);
+        ereport(ERROR,
+            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                errmsg("neurondb: evaluate_xgboost_by_model_id: need at least 2 samples, got %d",
+                    nvec)));
+    }
+
+    /* First pass: compute mean of y */
+    for (i = 0; i < nvec; i++)
+    {
+        HeapTuple tuple = SPI_tuptable->vals[i];
+        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        Datum targ_datum;
+        bool targ_null;
+
+        targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+        if (!targ_null)
+            y_mean += DatumGetFloat8(targ_datum);
+    }
+    y_mean /= nvec;
+
+    /* Determine feature type from first row */
+    Oid feat_type_oid = InvalidOid;
+    bool feat_is_array = false;
+    if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL)
+    {
+        feat_type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, 1);
+        if (feat_type_oid == FLOAT8ARRAYOID || feat_type_oid == FLOAT4ARRAYOID)
+            feat_is_array = true;
+    }
+
+    /* Second pass: compute predictions and metrics */
+    for (i = 0; i < nvec; i++)
+    {
+        HeapTuple tuple = SPI_tuptable->vals[i];
+        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        Datum feat_datum;
+        Datum targ_datum;
+        bool feat_null;
+        bool targ_null;
+        ArrayType *arr;
+        Vector *vec;
+        double y_true;
+        double y_pred;
+        double error;
+        int actual_dim;
+        int j;
+
+        feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+        targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+
+        if (feat_null || targ_null)
+            continue;
+
+        y_true = DatumGetFloat8(targ_datum);
+
+        /* Extract features and determine dimension */
+        if (feat_is_array)
+        {
+            arr = DatumGetArrayTypeP(feat_datum);
+            if (ARR_NDIM(arr) != 1)
+            {
+                SPI_finish();
+                pfree(tbl_str);
+                pfree(feat_str);
+                pfree(targ_str);
+                pfree(query.data);
+                ereport(ERROR,
+                    (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                        errmsg("xgboost: features array must be 1-D")));
+            }
+            actual_dim = ARR_DIMS(arr)[0];
+        }
+        else
+        {
+            vec = DatumGetVector(feat_datum);
+            actual_dim = vec->dim;
+        }
+
+        /* Make prediction using XGBoost model */
+        if (feat_is_array)
+        {
+            /* Create a temporary array for prediction */
+            Datum features_datum = feat_datum;
+            y_pred = DatumGetFloat8(DirectFunctionCall2(predict_xgboost,
+                                                       Int32GetDatum(model_id),
+                                                       features_datum));
+        }
+        else
+        {
+            /* Convert vector to array for prediction */
+            int ndims = 1;
+            int dims[1] = {actual_dim};
+            int lbs[1] = {1};
+            Datum *elems = palloc(sizeof(Datum) * actual_dim);
+
+            for (j = 0; j < actual_dim; j++)
+                elems[j] = Float8GetDatum(vec->data[j]);
+
+            ArrayType *feature_array = construct_md_array(elems, NULL, ndims, dims, lbs,
+                                                        FLOAT8OID, sizeof(float8), true, 'd');
+            Datum features_datum = PointerGetDatum(feature_array);
+
+            y_pred = DatumGetFloat8(DirectFunctionCall2(predict_xgboost,
+                                                       Int32GetDatum(model_id),
+                                                       features_datum));
+
+            pfree(elems);
+            pfree(feature_array);
+        }
+
+        /* Compute errors */
+        error = y_true - y_pred;
+        mse += error * error;
+        mae += fabs(error);
+        ss_res += error * error;
+        ss_tot += (y_true - y_mean) * (y_true - y_mean);
+    }
+
+    SPI_finish();
+
+    mse /= nvec;
+    mae /= nvec;
+    rmse = sqrt(mse);
+
+    /* Handle R² calculation - if ss_tot is zero (no variance in y), R² is undefined */
+    if (ss_tot == 0.0)
+        r_squared = 0.0; /* Convention: set to 0 when there's no variance to explain */
+    else
+        r_squared = 1.0 - (ss_res / ss_tot);
+
+    /* Build result JSON */
+    MemoryContextSwitchTo(oldcontext);
+    initStringInfo(&jsonbuf);
+    appendStringInfo(&jsonbuf,
+        "{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"r_squared\":%.6f,\"n_samples\":%d}",
+        mse, mae, rmse, r_squared, nvec);
+
+    result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
+    pfree(jsonbuf.data);
+
+    /* Cleanup */
+    pfree(tbl_str);
+    pfree(feat_str);
+    pfree(targ_str);
+    pfree(query.data);
+
+    PG_RETURN_JSONB_P(result);
+#else
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("XGBoost library not available. Please install XGBoost to use evaluation.")));
+    PG_RETURN_NULL();
+#endif
+}
+
 #endif /* HAVE_XGBOOST */
 
 /*-------------------------------------------------------------------------
@@ -640,5 +903,4 @@ predict_xgboost(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_xgboost_model(void)
 {
-	elog(DEBUG1, "XGBoost GPU Model Ops registration skipped - not yet implemented");
 }

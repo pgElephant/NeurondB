@@ -73,7 +73,7 @@ hnsw_tenant_create(PG_FUNCTION_ARGS)
     maybe_build_hnsw_index(tbl_str, col_str, tenant_id);
 
     index_tbl = get_hnsw_tenant_table(tbl_str, col_str, tenant_id);
-    elog(NOTICE,
+    elog(INFO,
          "neurondb: Created tenant-aware HNSW on %s.%s (tenant %d, quota=%d, ef=%d, max_level=%d, idx_tbl=%s)",
          tbl_str, col_str, tenant_id, quota_max, ef_search, max_level, index_tbl);
 

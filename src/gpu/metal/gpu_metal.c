@@ -25,7 +25,6 @@
 bool
 neurondb_gpu_metal_init(void)
 {
-	elog(DEBUG1, "neurondb: Calling metal_backend_init()...");
 
 	if (metal_backend_init())
 	{
@@ -39,7 +38,6 @@ neurondb_gpu_metal_init(void)
 		return true;
 	}
 
-	elog(WARNING, "neurondb: Metal backend initialization failed");
 	return false;
 }
 

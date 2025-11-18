@@ -279,7 +279,6 @@ hnsw_search_layer(PG_FUNCTION_ARGS)
 {
 	/* This would be called internally by the IndexAM */
 	/* Simplified stub for now */
-	elog(NOTICE, "neurondb: HNSW layer search called");
 	PG_RETURN_VOID();
 }
 
@@ -310,7 +309,7 @@ hnswSearchLayerGreedy(Relation index,
 		 */
 	}
 
-	elog(DEBUG2,
+	elog(DEBUG1,
 		"neurondb: Greedy search at layer %d found block %u",
 		layer,
 		best);

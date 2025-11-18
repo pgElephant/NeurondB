@@ -50,7 +50,7 @@ hybrid_index_create(PG_FUNCTION_ARGS)
 	vec_str = text_to_cstring(vector_col);
 	txt_str = text_to_cstring(text_col);
 
-	elog(NOTICE,
+	elog(INFO,
 		"neurondb: Creating hybrid index on %s (%s vector, %s text, "
 		"weight=%.2f)",
 		tbl_str,
@@ -110,7 +110,7 @@ hybrid_index_create(PG_FUNCTION_ARGS)
 	SPI_finish();
 
 	/* In production: store fusion config and columns in metadata */
-	elog(NOTICE,
+	elog(INFO,
 		"neurondb: Hybrid index set up complete with "
 		"fusion_weight=%.2f",
 		fusion_weight);

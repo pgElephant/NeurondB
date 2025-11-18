@@ -117,12 +117,17 @@ mmr_rerank(PG_FUNCTION_ARGS)
 	dim = ARR_DIMS(candidates_array)[1];
 
 	if (dim != query_dim)
+	{
+		elog(DEBUG1,
+		     "Query dimension %d != candidate dimension %d",
+		     query_dim,
+		     dim);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("Query dimension %d != candidate "
-				       "dimension %d",
+				errmsg("Query dimension %d != candidate dimension %d",
 					query_dim,
 					dim)));
+	}
 
 	if (top_k < 1)
 		top_k = n_candidates;

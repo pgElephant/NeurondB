@@ -163,8 +163,7 @@ ltr_rerank_pointwise(PG_FUNCTION_ARGS)
 	if (ARR_DIMS(feature_matrix_array)[0] != num_docs)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("feature_matrix must have %d rows to "
-				       "match doc_ids",
+				errmsg("feature_matrix must have %d rows to match doc_ids",
 					num_docs)));
 
 	num_features = ARR_DIMS(feature_matrix_array)[1];
@@ -172,16 +171,15 @@ ltr_rerank_pointwise(PG_FUNCTION_ARGS)
 	if (ARR_DIMS(weights_array)[0] != num_features)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("weights must have %d elements to match "
-				       "features",
+				errmsg("weights must have %d elements to match features",
 					num_features)));
 
 	doc_ids = (int32 *)ARR_DATA_PTR(doc_ids_array);
 	feature_matrix = (float8 *)ARR_DATA_PTR(feature_matrix_array);
 	weights = (float8 *)ARR_DATA_PTR(weights_array);
 
-	elog(DEBUG1,
-		"neurondb: LTR reranking %d docs with %d features",
+		elog(DEBUG1,
+			"neurondb: LTR reranking %d docs with %d features",
 		num_docs,
 		num_features);
 

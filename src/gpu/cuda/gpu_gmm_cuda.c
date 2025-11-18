@@ -356,7 +356,7 @@ ndb_cuda_gmm_train(const float *features,
 		return -1;
 	}
 
-	elog(DEBUG1, "ndb_cuda_gmm_train: starting training: n_samples=%d, feature_dim=%d, n_components=%d",
+	elog(DEBUG1, "ndb_cuda_gmm_train: entry: n_samples=%d, feature_dim=%d, n_components=%d",
 		n_samples, feature_dim, n_components);
 
 	/* Validate input data for NaN/Inf before processing */
@@ -582,7 +582,6 @@ ndb_cuda_gmm_train(const float *features,
 		/* Check convergence */
 		if (fabs(log_likelihood - prev_log_likelihood) < tolerance)
 		{
-			elog(DEBUG1, "ndb_cuda_gmm_train: converged at iteration %d (ll=%.4f)", iter + 1, log_likelihood);
 			break;
 		}
 		prev_log_likelihood = log_likelihood;

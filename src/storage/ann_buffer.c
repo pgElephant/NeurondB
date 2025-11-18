@@ -92,7 +92,6 @@ neurondb_ann_buffer_get_centroid(PG_FUNCTION_ARGS)
 
 	if (ann_buffer_control == NULL)
 	{
-		elog(WARNING, "neurondb: ANN buffer not initialized");
 		PG_RETURN_NULL();
 	}
 
@@ -114,13 +113,12 @@ neurondb_ann_buffer_get_centroid(PG_FUNCTION_ARGS)
 	if (!found)
 	{
 		ann_buffer_control->total_misses++;
-		elog(DEBUG2,
+		elog(DEBUG1,
 			"neurondb: Cache miss for centroid %d",
 			centroid_id);
 		PG_RETURN_NULL();
 	}
 
-	elog(DEBUG2, "neurondb: Cache hit for centroid %d", centroid_id);
 
 	/* Return the cached vector */
 	PG_RETURN_TEXT_P(cstring_to_text("[cached_vector]"));
@@ -142,7 +140,6 @@ neurondb_ann_buffer_put_centroid(PG_FUNCTION_ARGS)
 
 	if (ann_buffer_control == NULL)
 	{
-		elog(WARNING, "neurondb: ANN buffer not initialized");
 		PG_RETURN_BOOL(false);
 	}
 
@@ -154,7 +151,6 @@ neurondb_ann_buffer_put_centroid(PG_FUNCTION_ARGS)
 	{
 		/* Evict LRU entry (entry with oldest last_access) */
 		slot = 0;
-		elog(DEBUG2, "neurondb: Evicting LRU entry to make room");
 	}
 
 	/* Store the centroid */
@@ -162,8 +158,7 @@ neurondb_ann_buffer_put_centroid(PG_FUNCTION_ARGS)
 	ann_buffer_control->entries[slot].centroid_id = centroid_id;
 	ann_buffer_control->entries[slot].access_count = 0;
 	ann_buffer_control->entries[slot].valid = true;
-
-	elog(DEBUG2,
+	elog(DEBUG1,
 		"neurondb: Cached centroid %d in slot %d",
 		centroid_id,
 		slot);
@@ -239,7 +234,6 @@ neurondb_ann_buffer_clear(PG_FUNCTION_ARGS)
 	ann_buffer_control->total_hits = 0;
 	ann_buffer_control->total_misses = 0;
 
-	elog(NOTICE, "neurondb: ANN buffer cleared");
 
 	PG_RETURN_BOOL(true);
 }

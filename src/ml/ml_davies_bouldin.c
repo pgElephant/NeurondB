@@ -90,8 +90,9 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	vec_col_str = text_to_cstring(vector_column);
 	cluster_col_str = text_to_cstring(cluster_column);
 
-	elog(DEBUG1, "neurondb: Computing Davies-Bouldin Index for %s.%s (clusters=%s)",
-		 tbl_str, vec_col_str, cluster_col_str);
+	elog(DEBUG1,
+	     "neurondb: Computing Davies-Bouldin index for %s.%s (clusters=%s)",
+	     tbl_str, vec_col_str, cluster_col_str);
 
 	vectors = neurondb_fetch_vectors_from_table(tbl_str, vec_col_str, &nvec, &dim);
 
@@ -142,7 +143,6 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_DATA_EXCEPTION),
 				 errmsg("Need at least 2 clusters for DBI (found %d)", num_clusters)));
 
-	elog(DEBUG1, "neurondb: Found %d clusters in data", num_clusters);
 
 	cluster_sizes = (int *) palloc0(sizeof(int) * num_clusters);
 	cluster_centroids = (float **) palloc(sizeof(float *) * num_clusters);
@@ -237,7 +237,6 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 			db_index = -1.0;
 	}
 
-	elog(DEBUG1, "neurondb: Davies-Bouldin Index = %.4f", db_index);
 
 	for (i = 0; i < nvec; i++)
 		pfree(vectors[i]);
@@ -268,5 +267,4 @@ void neurondb_gpu_register_davies_bouldin_model(void);
 void
 neurondb_gpu_register_davies_bouldin_model(void)
 {
-	elog(DEBUG1, "DaviesBouldin GPU Model Ops registration skipped - not yet implemented");
 }

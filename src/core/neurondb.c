@@ -22,12 +22,25 @@
 #include "libpq/pqformat.h"
 #include "utils/array.h"
 #include "utils/lsyscache.h"
+#include "utils/guc.h"
 #include "catalog/pg_type.h"
 #include <math.h>
 #include <float.h>
 #include <ctype.h>
 
 PG_MODULE_MAGIC;
+
+/* ------------------------
+ *	GUC Variables
+ * ------------------------
+ */
+
+/* HNSW runtime parameters */
+int neurondb_hnsw_ef_search;
+int neurondb_ivf_probes;
+
+/* Forward declaration */
+extern void neurondb_worker_fini(void);
 
 /* ------------------------
  *	Vector Construction
@@ -432,8 +445,9 @@ vector_add(PG_FUNCTION_ARGS)
 	{
 		double sum = (double)a->data[i] + (double)b->data[i];
 		if (isinf(sum))
-			ereport(WARNING,
-				(errmsg("vector addition resulted in infinity at index %d", i)));
+			ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+					errmsg("vector addition resulted in infinity at index %d", i)));
 		result->data[i] = (float4)sum;
 	}
 
@@ -467,8 +481,9 @@ vector_sub(PG_FUNCTION_ARGS)
 	{
 		double diff = (double)a->data[i] - (double)b->data[i];
 		if (isinf(diff))
-			ereport(WARNING,
-				(errmsg("vector subtraction resulted in infinity at index %d", i)));
+			ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+					errmsg("vector subtraction resulted in infinity at index %d", i)));
 		result->data[i] = (float4)diff;
 	}
 
@@ -500,8 +515,9 @@ vector_mul(PG_FUNCTION_ARGS)
 	{
 		double product = (double)v->data[i] * scalar;
 		if (isinf(product))
-			ereport(WARNING,
-				(errmsg("vector multiplication resulted in infinity at index %d", i)));
+			ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+					errmsg("vector multiplication resulted in infinity at index %d", i)));
 		result->data[i] = (float4)product;
 	}
 

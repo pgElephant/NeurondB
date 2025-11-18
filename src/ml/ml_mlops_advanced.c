@@ -368,9 +368,9 @@ log_prediction(PG_FUNCTION_ARGS)
 		SPI_finish();
 		pfree(input_str);
 		pfree(pred_str);
-		ereport(WARNING,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("log_prediction: failed to insert prediction log")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+			 errmsg("log_prediction: failed to insert prediction log")));
 	}
 
 	SPI_finish();

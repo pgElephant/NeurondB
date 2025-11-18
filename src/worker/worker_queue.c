@@ -333,7 +333,7 @@ neuranq_main(Datum main_arg)
 			MemoryContext oldcontext =
 				MemoryContextSwitchTo(TopMemoryContext);
 
-			elog(WARNING,
+			elog(DEBUG1,
 				"neurondb: exception in neuranq main loop - "
 				"recovering");
 			FlushErrorState();
@@ -530,7 +530,7 @@ process_job_batch(void)
 	}
 	PG_CATCH();
 	{
-		elog(WARNING,
+		elog(DEBUG1,
 			"neurondb: exception in process_job_batch - "
 			"recovering");
 		FlushErrorState();
@@ -559,7 +559,7 @@ execute_job(int64 job_id,
 		if (strcmp(job_type, "embed") == 0)
 		{
 			/* Embedding generation job */
-			elog(DEBUG2,
+			elog(DEBUG1,
 				"neurondb: processing embed job " NDB_INT64_FMT
 				": %s",
 				NDB_INT64_CAST(job_id),
@@ -570,7 +570,7 @@ execute_job(int64 job_id,
 		} else if (strcmp(job_type, "rerank") == 0)
 		{
 			/* Reranking job */
-			elog(DEBUG2,
+			elog(DEBUG1,
 				"neurondb: processing rerank "
 				"job " NDB_INT64_FMT,
 				NDB_INT64_CAST(job_id));
@@ -578,7 +578,7 @@ execute_job(int64 job_id,
 		} else if (strcmp(job_type, "cache_refresh") == 0)
 		{
 			/* Cache refresh job */
-			elog(DEBUG2,
+			elog(DEBUG1,
 				"neurondb: processing cache_refresh "
 				"job " NDB_INT64_FMT,
 				NDB_INT64_CAST(job_id));
@@ -586,7 +586,7 @@ execute_job(int64 job_id,
 		} else if (strcmp(job_type, "http_call") == 0)
 		{
 			/* External HTTP API call */
-			elog(DEBUG2,
+			elog(INFO,
 				"neurondb: processing http_call "
 				"job " NDB_INT64_FMT,
 				NDB_INT64_CAST(job_id));
@@ -647,7 +647,7 @@ neuranq_run_once(PG_FUNCTION_ARGS)
 
 	PG_TRY();
 	{
-		elog(NOTICE,
+		elog(INFO,
 			"neurondb: manually triggering neuranq batch "
 			"processing");
 		process_job_batch();

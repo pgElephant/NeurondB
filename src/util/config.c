@@ -348,7 +348,6 @@ set_vector_config(PG_FUNCTION_ARGS)
 
 	set_neurondb_guc(opt, value_str);
 
-	elog(NOTICE, "neurondb: set %s = %s", name_str, value_str);
 
 	PG_RETURN_BOOL(true);
 }
@@ -370,7 +369,7 @@ get_vector_config(PG_FUNCTION_ARGS)
 
 	if (opt == NULL)
 	{
-		ereport(WARNING,
+		ereport(ERROR,
 			(errmsg("neurondb: unknown configuration parameter "
 				"'%s'",
 				name_str)));
@@ -407,7 +406,7 @@ reset_vector_config(PG_FUNCTION_ARGS)
 		}
 	}
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: Reset %d settings to default values",
 		reset_count);
 

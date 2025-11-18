@@ -488,17 +488,22 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **) &d_features, feature_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		if (errstr)
+			*errstr = psprintf("ndb_cuda_lr_train: cudaMalloc d_features failed: %s",
+				cudaGetErrorString(status));
+		elog(WARNING,
 			 "ndb_cuda_lr_train: cudaMalloc d_features failed: %s",
 			 cudaGetErrorString(status));
 		goto gpu_fail;
 	}
-	elog(DEBUG1, "ndb_cuda_lr_train: d_features allocated: %p", d_features);
 
 	status = cudaMalloc((void **) &d_predictions, pred_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		if (errstr)
+			*errstr = psprintf("ndb_cuda_lr_train: cudaMalloc d_predictions failed: %s",
+				cudaGetErrorString(status));
+		elog(WARNING,
 			 "ndb_cuda_lr_train: cudaMalloc d_predictions failed: %s",
 			 cudaGetErrorString(status));
 		goto gpu_fail;
@@ -506,7 +511,10 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **) &d_z, z_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		if (errstr)
+			*errstr = psprintf("ndb_cuda_lr_train: cudaMalloc d_z failed: %s",
+				cudaGetErrorString(status));
+		elog(WARNING,
 			 "ndb_cuda_lr_train: cudaMalloc d_z failed: %s",
 			 cudaGetErrorString(status));
 		goto gpu_fail;
@@ -525,7 +533,6 @@ ndb_cuda_lr_train(const float *features,
 
 		if (h_features_col == NULL)
 		{
-			elog(DEBUG1, "ndb_cuda_lr_train: palloc h_features_col failed");
 			if (errstr && *errstr == NULL)
 				*errstr = pstrdup("ndb_cuda_lr_train: failed to allocate column-major feature buffer");
 			goto gpu_fail;
@@ -564,7 +571,7 @@ ndb_cuda_lr_train(const float *features,
 		pfree(h_features_col);
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				"ndb_cuda_lr_train: cudaMemcpy d_features (column-major) failed: %s",
 				cudaGetErrorString(status));
 			if (errstr && *errstr == NULL)
@@ -577,7 +584,7 @@ ndb_cuda_lr_train(const float *features,
 		status = cudaGetLastError();
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				"ndb_cuda_lr_train: CUDA error after cudaMemcpy d_features: %s",
 				cudaGetErrorString(status));
 			if (errstr && *errstr == NULL)
@@ -591,7 +598,10 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **) &d_weights, weight_bytes_gpu);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		if (errstr)
+			*errstr = psprintf("ndb_cuda_lr_train: cudaMalloc d_weights failed: %s",
+				cudaGetErrorString(status));
+		elog(WARNING,
 			 "ndb_cuda_lr_train: cudaMalloc d_weights failed: %s",
 			 cudaGetErrorString(status));
 		goto gpu_fail;
@@ -605,7 +615,7 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **)&d_z_float, z_float_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			 "ndb_cuda_lr_train: cudaMalloc d_z_float failed: %s",
 			 cudaGetErrorString(status));
 		goto gpu_fail;
@@ -614,7 +624,7 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **)&d_errors, error_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			 "ndb_cuda_lr_train: cudaMalloc d_errors failed: %s",
 			 cudaGetErrorString(status));
 		goto gpu_fail;
@@ -623,7 +633,7 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **)&d_grad_weights_float, grad_weight_bytes_float);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			 "ndb_cuda_lr_train: cudaMalloc d_grad_weights_float failed: %s",
 			 cudaGetErrorString(status));
 		goto gpu_fail;
@@ -632,7 +642,7 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **)&d_labels_double, label_bytes);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			 "ndb_cuda_lr_train: cudaMalloc d_labels_double failed: %s",
 			 cudaGetErrorString(status));
 		goto gpu_fail;
@@ -642,7 +652,7 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMemcpy(d_labels_double, labels, label_bytes, cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			 "ndb_cuda_lr_train: cudaMemcpy d_labels_double failed: %s",
 			 cudaGetErrorString(status));
 		goto gpu_fail;
@@ -652,7 +662,6 @@ ndb_cuda_lr_train(const float *features,
 	h_grad_weights_float = (float *)palloc(sizeof(float) * (size_t)feature_dim);
 	if (h_grad_weights_float == NULL)
 	{
-		elog(DEBUG1, "ndb_cuda_lr_train: palloc h_grad_weights_float failed");
 		goto gpu_fail;
 	}
 
@@ -663,7 +672,6 @@ ndb_cuda_lr_train(const float *features,
 		
 		if (h_weights_init == NULL)
 		{
-			elog(DEBUG1, "ndb_cuda_lr_train: palloc h_weights_init failed");
 			goto gpu_fail;
 		}
 
@@ -675,7 +683,7 @@ ndb_cuda_lr_train(const float *features,
 		
 		if (status != cudaSuccess)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				"ndb_cuda_lr_train: initial cudaMemcpy weights failed: %s",
 				cudaGetErrorString(status));
 			goto gpu_fail;
@@ -686,7 +694,7 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **)&d_error_sum, sizeof(double));
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			"ndb_cuda_lr_train: cudaMalloc d_error_sum failed: %s",
 			cudaGetErrorString(status));
 		goto gpu_fail;
@@ -696,7 +704,7 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMalloc((void **)&d_bias, sizeof(double));
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			"ndb_cuda_lr_train: cudaMalloc d_bias failed: %s",
 			cudaGetErrorString(status));
 		goto gpu_fail;
@@ -706,14 +714,13 @@ ndb_cuda_lr_train(const float *features,
 	status = cudaMemcpy(d_bias, &bias, sizeof(double), cudaMemcpyHostToDevice);
 	if (status != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			"ndb_cuda_lr_train: cudaMemcpy d_bias failed: %s",
 			cudaGetErrorString(status));
 		goto gpu_fail;
 	}
 
-	elog(DEBUG1,
-		"ndb_cuda_lr_train: all fixed device buffers allocated successfully");
+	elog(DEBUG1, "ndb_cuda_lr_train: all fixed device buffers allocated successfully");
 
 	/* Gradient descent */
 	for (iter = 0; iter < max_iters; iter++)
@@ -732,7 +739,7 @@ ndb_cuda_lr_train(const float *features,
 			{
 				if ((iter % 100) == 0)
 				{
-					elog(DEBUG1,
+					elog(WARNING,
 						"ndb_cuda_lr_train: cuBLAS handle not available at iter %d",
 						iter);
 				}
@@ -797,7 +804,7 @@ ndb_cuda_lr_train(const float *features,
 			{
 				if ((iter % 100) == 0)
 				{
-					elog(DEBUG1,
+					elog(WARNING,
 						"ndb_cuda_lr_train: cuBLAS SGEMV failed with status %d at iter %d",
 						cublas_err, iter);
 				}
@@ -819,7 +826,7 @@ ndb_cuda_lr_train(const float *features,
 				{
 					if ((iter % 100) == 0)
 					{
-						elog(DEBUG1,
+						elog(WARNING,
 							"ndb_cuda_lr_train: cudaMemcpy d_bias failed: %s",
 							cudaGetErrorString(status));
 					}
@@ -831,7 +838,7 @@ ndb_cuda_lr_train(const float *features,
 				{
 					if ((iter % 100) == 0)
 					{
-						elog(DEBUG1,
+						elog(WARNING,
 							"ndb_cuda_lr_train: convert_z_add_bias GPU kernel failed at iter %d",
 							iter);
 					}
@@ -859,7 +866,7 @@ ndb_cuda_lr_train(const float *features,
 			{
 				if ((iter % 100) == 0)
 				{
-					elog(DEBUG1,
+					elog(WARNING,
 						"ndb_cuda_lr_train: sigmoid GPU kernel failed at iter %d",
 						iter);
 				}
@@ -889,7 +896,7 @@ ndb_cuda_lr_train(const float *features,
 			{
 				if ((iter % 100) == 0)
 				{
-					elog(DEBUG1,
+					elog(WARNING,
 						"ndb_cuda_lr_train: compute_errors GPU kernel failed at iter %d",
 						iter);
 				}
@@ -905,7 +912,7 @@ ndb_cuda_lr_train(const float *features,
 			{
 				if ((iter % 100) == 0)
 				{
-					elog(DEBUG1,
+					elog(WARNING,
 						"ndb_cuda_lr_train: cudaMemset d_error_sum failed: %s",
 						cudaGetErrorString(status));
 				}
@@ -917,7 +924,7 @@ ndb_cuda_lr_train(const float *features,
 			{
 				if ((iter % 100) == 0)
 				{
-					elog(DEBUG1,
+					elog(WARNING,
 						"ndb_cuda_lr_train: reduce_errors_bias GPU kernel failed at iter %d",
 						iter);
 				}
@@ -933,7 +940,7 @@ ndb_cuda_lr_train(const float *features,
 			{
 				if ((iter % 100) == 0)
 				{
-					elog(DEBUG1,
+					elog(WARNING,
 						"ndb_cuda_lr_train: cudaMemcpy d_error_sum failed: %s",
 						cudaGetErrorString(status));
 				}
@@ -951,7 +958,7 @@ ndb_cuda_lr_train(const float *features,
 				{
 					if ((iter % 100) == 0)
 					{
-						elog(DEBUG1,
+						elog(WARNING,
 							"ndb_cuda_lr_train: cudaMemset d_grad_weights_float failed: %s",
 							cudaGetErrorString(status));
 					}
@@ -1009,7 +1016,7 @@ ndb_cuda_lr_train(const float *features,
 					
 					if ((iter % 100) == 0)
 					{
-						elog(DEBUG1,
+						elog(WARNING,
 							"ndb_cuda_lr_train: weight update kernel failed at iter %d",
 							iter);
 					}
@@ -1018,7 +1025,7 @@ ndb_cuda_lr_train(const float *features,
 				{
 					if ((iter % 100) == 0)
 					{
-						elog(DEBUG1,
+						elog(WARNING,
 							"neurondb: logistic_regression: cuBLAS SGEMV gradient failed with status %d, falling back to kernel",
 							cublas_err);
 					}
@@ -1072,7 +1079,7 @@ ndb_cuda_lr_train(const float *features,
 					pfree(h_weights_fallback);
 					if ((iter % 100) == 0)
 					{
-						elog(DEBUG1,
+						elog(WARNING,
 							"neurondb: logistic_regression: compute_gradients failed at iter %d",
 							iter);
 					}
@@ -1325,7 +1332,7 @@ gradient_done:
 	{
 		if (metrics_json == NULL)
 		{
-			elog(WARNING,
+			elog(DEBUG1,
 				 "ndb_cuda_lr_train: metrics_json is NULL, building default metrics");
 			/* Build default metrics JSON */
 			{
@@ -1439,18 +1446,17 @@ ndb_cuda_lr_predict(const bytea *model_data,
 								sizeof(float) * (size_t) feature_dim;
 		size_t	actual_size = VARSIZE(detoasted) - VARHDRSZ;
 
-		elog(DEBUG1,
-			 "ndb_cuda_lr_predict: payload size check: expected=%zu, actual=%zu, feature_dim=%d",
-			 expected_size,
-			 actual_size,
-			 feature_dim);
+	elog(DEBUG1,
+		 "ndb_cuda_lr_predict: payload size check: expected=%zu, actual=%zu, feature_dim=%d",
+		 expected_size,
+		 actual_size,
+		 feature_dim);
 
-		if (actual_size < expected_size)
+	if (actual_size < expected_size)
 		{
 			if (errstr)
 				*errstr = psprintf("model data too small: expected %zu bytes, got %zu",
 								   expected_size, actual_size);
-			elog(DEBUG1, "ndb_cuda_lr_predict: %s", *errstr);
 			return -1;
 		}
 	}
@@ -1466,7 +1472,6 @@ ndb_cuda_lr_predict(const bytea *model_data,
 			*errstr = psprintf("feature dimension mismatch: model has %d, input has %d",
 							   hdr->feature_dim,
 							   feature_dim);
-		elog(DEBUG1, "ndb_cuda_lr_predict: %s", *errstr);
 		return -1;
 	}
 

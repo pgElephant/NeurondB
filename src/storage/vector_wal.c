@@ -30,7 +30,6 @@ vector_wal_compress(PG_FUNCTION_ARGS)
 
 	vec_str = text_to_cstring(vector);
 
-	elog(DEBUG1, "neurondb: Compressing vector using delta encoding");
 
 	/*
 	 * Delta encoding algorithm:
@@ -59,7 +58,6 @@ vector_wal_decompress(PG_FUNCTION_ARGS)
 	(void)compressed;
 	(void)base_vector;
 
-	elog(DEBUG1, "neurondb: Decompressing vector from delta encoding");
 
 	/*
 	 * Decompression algorithm:
@@ -100,7 +98,6 @@ vector_wal_estimate_size(PG_FUNCTION_ARGS)
 	compression_ratio = 2.5;
 	estimated_compressed_size = (int32)(original_size / compression_ratio);
 
-	elog(DEBUG1,
 		"neurondb: Estimated compression: %d -> %d bytes (%.1fx)",
 		original_size,
 		estimated_compressed_size,
@@ -120,10 +117,8 @@ vector_wal_set_compression(PG_FUNCTION_ARGS)
 
 	if (enable)
 	{
-		elog(NOTICE, "neurondb: Vector WAL compression enabled");
 	} else
 	{
-		elog(NOTICE, "neurondb: Vector WAL compression disabled");
 	}
 
 	/*
@@ -160,7 +155,6 @@ vector_wal_get_stats(PG_FUNCTION_ARGS)
 		NDB_INT64_CAST(total_bytes_compressed),
 		compression_ratio);
 
-	elog(DEBUG1,
 		"neurondb: WAL compression stats: %.2fx ratio",
 		compression_ratio);
 

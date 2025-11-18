@@ -37,7 +37,6 @@ BEGIN
 		PERFORM neurondb_gpu_enable();
 	EXCEPTION WHEN OTHERS THEN
 		SET neurondb.gpu_enabled = off;
-		RAISE NOTICE 'GPU not available, using CPU for GMM training: %', SQLERRM;
 	END;
 END
 $$;
@@ -64,7 +63,6 @@ BEGIN
 	EXCEPTION WHEN OTHERS THEN
 		-- If GPU training fails, disable GPU and retry
 		IF SQLERRM LIKE '%GPU training requested but GPU hardware not available%' THEN
-			RAISE NOTICE 'GPU not available, retrying with CPU: %', SQLERRM;
 			SET neurondb.gpu_enabled = off;
 			model_id_val := neurondb.train(
 				'gmm',

@@ -45,7 +45,6 @@ neurondb_gpu_rocm_init(void)
 	hip_err = hipGetDeviceCount(&device_count);
 	if (hip_err != hipSuccess || device_count == 0)
 	{
-		elog(WARNING,
 			"neurondb: No ROCm/HIP devices found: %s",
 			hipGetErrorString(hip_err));
 		return false;
@@ -55,7 +54,6 @@ neurondb_gpu_rocm_init(void)
 	hip_err = hipSetDevice(rocm_device_id);
 	if (hip_err != hipSuccess)
 	{
-		elog(WARNING,
 			"neurondb: Failed to set HIP device %d: %s",
 			rocm_device_id,
 			hipGetErrorString(hip_err));
@@ -81,7 +79,6 @@ neurondb_gpu_rocm_init(void)
 	rocblas_status = rocblas_create_handle(&rocblas_handle);
 	if (rocblas_status != rocblas_status_success)
 	{
-		elog(WARNING,
 			"neurondb: Failed to create rocBLAS handle: %d",
 			rocblas_status);
 		return false;
@@ -92,7 +89,6 @@ neurondb_gpu_rocm_init(void)
 	if (hip_err != hipSuccess)
 	{
 		rocblas_destroy_handle(rocblas_handle);
-		elog(WARNING,
 			"neurondb: Failed to create HIP stream: %s",
 			hipGetErrorString(hip_err));
 		return false;

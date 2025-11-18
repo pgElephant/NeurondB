@@ -209,7 +209,7 @@ validate_hnsw_index(Relation index)
 	result->errors = 0;
 	result->warnings = 0;
 
-	elog(NOTICE,
+	elog(INFO,
 		"neurondb: Validating HNSW index %s",
 		RelationGetRelationName(index));
 
@@ -259,7 +259,7 @@ validate_ivf_index(Relation index)
 	result->errors = 0;
 	result->warnings = 0;
 
-	elog(NOTICE,
+	elog(INFO,
 		"neurondb: Validating IVF index %s",
 		RelationGetRelationName(index));
 
@@ -424,7 +424,7 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 	indexOid = PG_GETARG_OID(0);
 	indexRel = index_open(indexOid, AccessExclusiveLock);
 
-	elog(NOTICE,
+	elog(INFO,
 		"neurondb: Rebuilding index %s",
 		RelationGetRelationName(indexRel));
 

@@ -660,7 +660,11 @@ train_neural_network(PG_FUNCTION_ARGS)
 		loss /= n_samples;
 
 		if (epoch % 10 == 0)
-			elog(DEBUG1, "epoch %d: loss = %.6f", epoch, loss);
+		{
+			elog(DEBUG1,
+				"Epoch %d: loss = %.6f",
+				epoch, loss);
+		}
 	}
 
 	/* Store model in database */
@@ -691,6 +695,7 @@ train_neural_network(PG_FUNCTION_ARGS)
  * to generate prediction.
  */
 PG_FUNCTION_INFO_V1(predict_neural_network);
+PG_FUNCTION_INFO_V1(evaluate_neural_network_by_model_id);
 
 Datum
 predict_neural_network(PG_FUNCTION_ARGS)
@@ -786,6 +791,181 @@ predict_neural_network(PG_FUNCTION_ARGS)
 	 */
 }
 
+/*
+ * evaluate_neural_network_by_model_id
+ *
+ * Evaluates a neural network model on a dataset and returns performance metrics.
+ * Arguments: int4 model_id, text table_name, text feature_col, text label_col
+ * Returns: jsonb with metrics
+ */
+Datum
+evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
+{
+	int32 model_id;
+	text *table_name;
+	text *feature_col;
+	text *label_col;
+	char *tbl_str;
+	char *feat_str;
+	char *targ_str;
+	StringInfoData query;
+	int ret;
+	int nvec = 0;
+	double mse = 0.0;
+	double mae = 0.0;
+	double ss_tot = 0.0;
+	double ss_res = 0.0;
+	double y_mean = 0.0;
+	double r_squared;
+	double rmse;
+	int i;
+	StringInfoData jsonbuf;
+	Jsonb *result;
+	MemoryContext oldcontext;
+
+	/* Validate arguments */
+	if (PG_NARGS() != 4)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_neural_network_by_model_id: 4 arguments are required")));
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_neural_network_by_model_id: model_id is required")));
+
+	model_id = PG_GETARG_INT32(0);
+
+	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_neural_network_by_model_id: table_name, feature_col, and label_col are required")));
+
+	table_name = PG_GETARG_TEXT_PP(1);
+	feature_col = PG_GETARG_TEXT_PP(2);
+	label_col = PG_GETARG_TEXT_PP(3);
+
+	tbl_str = text_to_cstring(table_name);
+	feat_str = text_to_cstring(feature_col);
+	targ_str = text_to_cstring(label_col);
+
+	oldcontext = CurrentMemoryContext;
+
+	/* Connect to SPI */
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_neural_network_by_model_id: SPI_connect failed")));
+
+	/* Build query */
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		feat_str, targ_str, tbl_str, feat_str, targ_str);
+
+	ret = SPI_execute(query.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_neural_network_by_model_id: query failed")));
+
+	nvec = SPI_processed;
+	if (nvec < 2)
+	{
+		SPI_finish();
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		pfree(query.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_neural_network_by_model_id: need at least 2 samples, got %d",
+					nvec)));
+	}
+
+	/* First pass: compute mean of y */
+	for (i = 0; i < nvec; i++)
+	{
+		HeapTuple tuple = SPI_tuptable->vals[i];
+		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+		Datum targ_datum;
+		bool targ_null;
+
+		targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+		if (!targ_null)
+			y_mean += DatumGetFloat8(targ_datum);
+	}
+	y_mean /= nvec;
+
+	/* Second pass: compute predictions and metrics */
+	for (i = 0; i < nvec; i++)
+	{
+		HeapTuple tuple = SPI_tuptable->vals[i];
+		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+		Datum feat_datum;
+		Datum targ_datum;
+		bool feat_null;
+		bool targ_null;
+		Vector *vec;
+		double y_true;
+		double y_pred;
+		double error;
+
+		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+		targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+
+		if (feat_null || targ_null)
+			continue;
+
+		y_true = DatumGetFloat8(targ_datum);
+
+		/* Extract features */
+		vec = DatumGetVector(feat_datum);
+
+		/* Make prediction using neural network model */
+		y_pred = DatumGetFloat8(DirectFunctionCall2(predict_neural_network,
+												   Int32GetDatum(model_id),
+												   PointerGetDatum(vec)));
+
+		/* Compute errors */
+		error = y_true - y_pred;
+		mse += error * error;
+		mae += fabs(error);
+		ss_res += error * error;
+		ss_tot += (y_true - y_mean) * (y_true - y_mean);
+	}
+
+	SPI_finish();
+
+	mse /= nvec;
+	mae /= nvec;
+	rmse = sqrt(mse);
+
+	/* Handle R² calculation - if ss_tot is zero (no variance in y), R² is undefined */
+	if (ss_tot == 0.0)
+		r_squared = 0.0; /* Convention: set to 0 when there's no variance to explain */
+	else
+		r_squared = 1.0 - (ss_res / ss_tot);
+
+	/* Build result JSON */
+	MemoryContextSwitchTo(oldcontext);
+	initStringInfo(&jsonbuf);
+	appendStringInfo(&jsonbuf,
+		"{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"r_squared\":%.6f,\"n_samples\":%d}",
+		mse, mae, rmse, r_squared, nvec);
+
+	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
+	pfree(jsonbuf.data);
+
+	/* Cleanup */
+	pfree(tbl_str);
+	pfree(feat_str);
+	pfree(targ_str);
+	pfree(query.data);
+
+	PG_RETURN_JSONB_P(result);
+}
+
 /*-------------------------------------------------------------------------
  * GPU Model Ops Registration Stub for NeuralNetwork
  *-------------------------------------------------------------------------
@@ -796,5 +976,4 @@ predict_neural_network(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_neural_network_model(void)
 {
-	elog(DEBUG1, "NeuralNetwork GPU Model Ops registration skipped - not yet implemented");
 }

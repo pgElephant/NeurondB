@@ -141,7 +141,7 @@ ndb_cuda_init(void)
 	 */
 	if (cuda_ctx.initialized && cuda_ctx.init_pid != current_pid)
 	{
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: Detected fork (parent PID %d, current PID %d) - resetting CUDA",
 			cuda_ctx.init_pid,
 			current_pid);
@@ -169,7 +169,7 @@ ndb_cuda_init(void)
 	err = cudaGetDeviceCount(&device_count);
 	if (err != cudaSuccess || device_count <= 0)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			"neurondb: cudaGetDeviceCount failed: %s (devices=%d)",
 			cudaGetErrorString(err),
 			device_count);
@@ -179,7 +179,7 @@ ndb_cuda_init(void)
 	err = cudaSetDevice(cuda_ctx.device_id);
 	if (err != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			"neurondb: cudaSetDevice(%d) failed: %s",
 			cuda_ctx.device_id,
 			cudaGetErrorString(err));
@@ -190,7 +190,7 @@ ndb_cuda_init(void)
 	err = cudaFree(0);
 	if (err != cudaSuccess)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			"neurondb: cudaFree(0) warm-up failed: %s",
 			cudaGetErrorString(err));
 		return -1;
@@ -199,7 +199,7 @@ ndb_cuda_init(void)
 	status = cublasCreate(&cuda_ctx.handle);
 	if (status != CUBLAS_STATUS_SUCCESS)
 	{
-		elog(DEBUG1,
+		elog(WARNING,
 			"neurondb: cublasCreate failed with status %d",
 			status);
 		return -1;
@@ -208,7 +208,7 @@ ndb_cuda_init(void)
 	cuda_ctx.initialized = true;
 	cuda_ctx.init_pid = current_pid;
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: CUDA initialized successfully in process %d (device %d)",
 		current_pid,
 		cuda_ctx.device_id);
@@ -730,7 +730,7 @@ void
 neurondb_gpu_register_cuda_backend(void)
 {
 	if (ndb_gpu_register_backend(&ndb_cuda_backend) != 0)
-		elog(WARNING, "neurondb: failed to register CUDA GPU backend");
+		elog(WARNING, "neurondb: failed to register CUDA backend");
 }
 
 #endif /* NDB_GPU_CUDA */

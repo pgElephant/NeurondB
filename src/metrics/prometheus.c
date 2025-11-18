@@ -309,7 +309,6 @@ prometheus_worker_main(Datum arg)
 		{
 			if (errno == EINTR)
 				continue;
-			elog(WARNING, "neurondb: Prometheus accept failed: %m");
 			continue;
 		}
 

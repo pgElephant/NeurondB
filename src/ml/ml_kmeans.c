@@ -104,10 +104,10 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 		{
 			pfree(dist);
 			pfree(selected);
-			elog(ERROR,
-				"neurondb: k-means++ failed to select centroid "
-				"%d",
-				c);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: k-means++ failed to select centroid %d",
+						c)));
 		}
 
 		centroids[c] = picked;
@@ -172,8 +172,7 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 	if (!data || nvec < num_clusters)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("not enough vectors for cluster count "
-				       "(need >= %d, have %d)",
+				errmsg("not enough vectors for cluster count (need >= %d, have %d)",
 					num_clusters,
 					nvec)));
 
@@ -396,8 +395,7 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 		pfree(col_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("not enough vectors for cluster count "
-				       "(need >= %d, have %d)",
+				errmsg("not enough vectors for cluster count (need >= %d, have %d)",
 					num_clusters,
 					nvec)));
 	}
@@ -876,5 +874,4 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_kmeans_model(void)
 {
-	elog(DEBUG1, "K-Means GPU Model Ops registration skipped - not yet implemented");
 }

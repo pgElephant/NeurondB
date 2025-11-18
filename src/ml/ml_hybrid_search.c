@@ -164,8 +164,8 @@ hybrid_search_fusion(PG_FUNCTION_ARGS)
 	semantic_scores = (float8 *)ARR_DATA_PTR(semantic_scores_array);
 	lexical_scores = (float8 *)ARR_DATA_PTR(lexical_scores_array);
 
-	elog(DEBUG1,
-		"neurondb: Hybrid search fusion (%d docs, weight=%.2f)",
+		elog(DEBUG1,
+			"neurondb: Hybrid search fusion (%d docs, weight=%.2f)",
 		num_docs,
 		semantic_weight);
 

@@ -31,7 +31,6 @@ DO $$ BEGIN
     PERFORM cluster_hierarchical('nonexistent_table', 'features', 3, 'average');
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid table';
 END $$;
 
 -- Invalid column
@@ -39,7 +38,6 @@ DO $$ BEGIN
     PERFORM cluster_hierarchical('test_train_view', 'invalid_col', 3, 'average');
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid column';
 END $$;
 
 -- Invalid k (k < 1)
@@ -47,7 +45,6 @@ DO $$ BEGIN
     PERFORM cluster_hierarchical('test_train_view', 'features', 0, 'average');
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid k (k < 1)';
 END $$;
 
 -- Invalid linkage method
@@ -55,7 +52,6 @@ DO $$ BEGIN
     PERFORM cluster_hierarchical('test_train_view', 'features', 3, 'invalid_linkage');
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid linkage method';
 END $$;
 
 -- NULL table
@@ -63,7 +59,6 @@ DO $$ BEGIN
     PERFORM cluster_hierarchical(NULL, 'features', 3, 'average');
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled NULL table';
 END $$;
 
 -- NULL column
@@ -71,7 +66,6 @@ DO $$ BEGIN
     PERFORM cluster_hierarchical('test_train_view', NULL, 3, 'average');
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled NULL column';
 END $$;
 
 \echo '✓ hierarchical negative test complete'

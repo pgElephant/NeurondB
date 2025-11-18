@@ -80,7 +80,7 @@ temporal_index_create(PG_FUNCTION_ARGS)
 	ts_str = text_to_cstring(timestamp_col);
 	idx_tbl = get_temporal_index_table(tbl_str, vec_str);
 
-	elog(NOTICE,
+	elog(INFO,
 		 "neurondb: Creating temporal index on %s.%s with timestamp %s "
 		 "(decay=%.4f/day)",
 		 tbl_str,

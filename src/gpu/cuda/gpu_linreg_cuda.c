@@ -264,7 +264,7 @@ ndb_cuda_linreg_train(const float *features,
 			err = cudaMalloc((void **)&d_X_with_intercept, X_bytes);
 			if (err != cudaSuccess)
 			{
-				elog(DEBUG1,
+				elog(WARNING,
 					"neurondb: linear_regression: failed to allocate X matrix, falling back to kernel");
 				/* Fallback to kernel approach */
 				goto kernel_fallback;
@@ -278,7 +278,7 @@ ndb_cuda_linreg_train(const float *features,
 				dim_with_intercept);
 			if (err != cudaSuccess)
 			{
-				elog(DEBUG1,
+				elog(WARNING,
 					"neurondb: linear_regression: build_X_matrix kernel failed, falling back");
 				goto kernel_fallback;
 			}

@@ -68,7 +68,7 @@ fallback_complete(const NdbLLMConfig *cfg,
 		NdbLLMConfig fallback = *cfg;
 
 		fallback.provider = "huggingface";
-		ereport(WARNING,
+		ereport(ERROR,
 			(errmsg("neurondb: LLM provider \"%s\" unavailable "
 				"locally (%s); falling back to remote Hugging "
 				"Face",
@@ -109,7 +109,7 @@ fallback_embed(const NdbLLMConfig *cfg,
 		NdbLLMConfig fallback = *cfg;
 
 		fallback.provider = "huggingface";
-		ereport(WARNING,
+		ereport(ERROR,
 			(errmsg("neurondb: LLM provider \"%s\" unavailable "
 				"locally (%s); falling back to remote Hugging "
 				"Face",
@@ -151,7 +151,7 @@ fallback_rerank(const NdbLLMConfig *cfg,
 		NdbLLMConfig fallback = *cfg;
 
 		fallback.provider = "huggingface";
-		ereport(WARNING,
+		ereport(ERROR,
 			(errmsg("neurondb: LLM provider \"%s\" unavailable "
 				"locally (%s); falling back to remote Hugging "
 				"Face",
@@ -581,7 +581,7 @@ ndb_llm_route_complete(const NdbLLMConfig *cfg,
 #endif
 	}
 
-	ereport(WARNING,
+	ereport(ERROR,
 		(errmsg("neurondb: unknown LLM provider \"%s\", using remote "
 			"Hugging Face",
 			cfg->provider)));
@@ -911,7 +911,7 @@ ndb_llm_route_embed(const NdbLLMConfig *cfg,
 #endif
 	}
 
-	ereport(WARNING,
+	ereport(ERROR,
 		(errmsg("neurondb: unknown LLM provider \"%s\", using remote "
 			"Hugging Face",
 			cfg->provider)));
@@ -1010,7 +1010,7 @@ ndb_llm_route_rerank(const NdbLLMConfig *cfg,
 #endif
 	}
 
-	ereport(WARNING,
+	ereport(ERROR,
 		(errmsg("neurondb: unknown LLM provider \"%s\", using remote "
 			"Hugging Face",
 			cfg->provider)));
@@ -1032,10 +1032,8 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 	int i;
 	int num_success = 0;
 
-	elog(NOTICE, "neurondb: ndb_llm_route_complete_batch entry: cfg=%p, prompts=%p, out=%p, num_prompts=%d", cfg, prompts, out, num_prompts);
 	if (cfg == NULL || prompts == NULL || out == NULL || num_prompts <= 0)
 	{
-		elog(NOTICE, "neurondb: router batch invalid parameters");
 		return NDB_LLM_ROUTE_ERROR;
 	}
 
@@ -1047,13 +1045,11 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 	out->tokens_out = (int *)palloc0(num_prompts * sizeof(int));
 	out->http_status = (int *)palloc0(num_prompts * sizeof(int));
 
-	elog(NOTICE, "neurondb: router batch provider=%s", cfg->provider ? cfg->provider : "NULL");
 	if (cfg->provider == NULL || provider_is(cfg->provider, "huggingface")
 		|| provider_is(cfg->provider, "hf-http")
 		|| provider_is(cfg->provider, "huggingface-local")
 		|| provider_is(cfg->provider, "hf-local"))
 	{
-		elog(NOTICE, "neurondb: router batch provider is huggingface variant, checking GPU");
 		/* Try GPU-accelerated batch inference first if GPU is available */
 		if (neurondb_gpu_is_available()
 			&& (opts == NULL || opts->prefer_gpu
@@ -1064,18 +1060,15 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 			int rc;
 			char *gpu_err = NULL;
 
-			elog(NOTICE, "neurondb: router batch GPU is available, attempting GPU batch");
 
 			batch_results = (NdbCudaHfBatchResult *)palloc0(
 				num_prompts * sizeof(NdbCudaHfBatchResult));
-			elog(NOTICE, "neurondb: router calling neurondb_gpu_hf_complete_batch with %d prompts", num_prompts);
 			rc = neurondb_gpu_hf_complete_batch(cfg->model,
 				prompts,
 				num_prompts,
 				params_json,
 				batch_results,
 				&gpu_err);
-			elog(DEBUG1, "neurondb: router got rc=%d from neurondb_gpu_hf_complete_batch", rc);
 			if (rc == 0)
 			{
 				/* Copy results to output */
@@ -1122,7 +1115,6 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 					}
 				}
 				out->num_success = num_success;
-				elog(DEBUG1, "neurondb: router processed GPU batch results: %d/%d succeeded", num_success, num_prompts);
 				if (gpu_err)
 					pfree(gpu_err);
 				pfree(batch_results);
@@ -1151,10 +1143,8 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 #endif
 		} else
 		{
-			elog(NOTICE, "neurondb: router batch GPU not available or not preferred");
 		}
 		/* Fall back to sequential processing or ONNX */
-		elog(NOTICE, "neurondb: router falling back to sequential processing for %d prompts", num_prompts);
 		/* For now, process sequentially */
 		for (i = 0; i < num_prompts; i++)
 		{
@@ -1162,10 +1152,8 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 			int rc;
 
 			memset(&resp, 0, sizeof(NdbLLMResp));
-			elog(NOTICE, "neurondb: router sequential processing prompt %d/%d", i + 1, num_prompts);
 			rc = ndb_llm_route_complete(
 				cfg, opts, prompts[i], params_json, &resp);
-			elog(NOTICE, "neurondb: router sequential prompt %d: rc=%d, text=%s", i + 1, rc, resp.text ? (strlen(resp.text) > 0 ? "non-empty" : "empty") : "NULL");
 			if (rc == 0)
 			{
 				out->texts[i] = resp.text ? resp.text : pstrdup("");
@@ -1182,7 +1170,6 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 			}
 		}
 		out->num_success = num_success;
-		elog(NOTICE, "neurondb: router sequential batch results: %d/%d succeeded, returning %s", num_success, num_prompts, (num_success > 0) ? "SUCCESS" : "ERROR");
 		return (num_success > 0) ? NDB_LLM_ROUTE_SUCCESS
 					 : NDB_LLM_ROUTE_ERROR;
 	}
@@ -1194,9 +1181,7 @@ ndb_llm_route_complete_batch(const NdbLLMConfig *cfg,
 		int rc;
 
 		memset(&resp, 0, sizeof(NdbLLMResp));
-		elog(NOTICE, "neurondb: router remote provider processing prompt %d/%d", i + 1, num_prompts);
 		rc = ndb_hf_complete(cfg, prompts[i], params_json, &resp);
-		elog(NOTICE, "neurondb: router remote prompt %d: rc=%d, text=%s", i + 1, rc, resp.text ? (strlen(resp.text) > 0 ? "non-empty" : "empty") : "NULL");
 		if (rc == 0)
 		{
 			out->texts[i] = resp.text ? resp.text : pstrdup("");

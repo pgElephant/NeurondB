@@ -11,7 +11,6 @@ DO $$ BEGIN
     PERFORM neurondb.train('hybrid_search', 'nonexistent_table', 'features', 'label', '{}'::jsonb);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid table';
 END $$;
 
 -- Invalid column
@@ -19,7 +18,6 @@ DO $$ BEGIN
     PERFORM neurondb.train('hybrid_search', 'test_train_view', 'invalid_col', 'label', '{}'::jsonb);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid column';
 END $$;
 
 \echo '✓ hybrid_search negative test complete'

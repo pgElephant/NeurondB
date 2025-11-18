@@ -188,8 +188,8 @@ neurondb_embed_text(PG_FUNCTION_ARGS)
 	input_str = text_to_cstring(input_text);
 	input_len = strlen(input_str);
 
-	elog(DEBUG2,
-		"neurondb_embed_text: model='%s', use_gpu=%d",
+		elog(DEBUG1,
+			"neurondb_embed_text: model='%s', use_gpu=%d",
 		model_name,
 		use_gpu);
 
@@ -463,8 +463,7 @@ neurondb_rank_documents(PG_FUNCTION_ARGS)
 			if (count != 0)
 				appendStringInfoString(&json_result, ", ");
 			appendStringInfo(&json_result,
-				"{\"document\": %s, \"score\": %.4f, \"rank\": "
-				"%d}",
+				"{\"document\": %s, \"score\": %.4f, \"rank\": %d}",
 				quote_literal_cstr(ranklist[i].doc),
 				ranklist[i].score,
 				count + 1);

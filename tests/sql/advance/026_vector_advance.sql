@@ -1,18 +1,21 @@
 -- 026_vector_advance.sql
 -- Comprehensive advanced test for ALL vector operations
 -- Tests every function, operator, and code path in the vector implementation
--- Works on 1000 rows and tests each and every way
+-- Works on 1000 rows and tests each and every way with comprehensive coverage
 
+SET client_min_messages TO WARNING;
+\set ON_ERROR_STOP on
 \timing on
 \pset footer off
 \pset pager off
-
-\set ON_ERROR_STOP on
+\pset tuples_only off
 
 \pset null [NULL]
 \pset format aligned
 
-\echo '=== Vector Operations Comprehensive Advanced Test ==='
+\echo '=========================================================================='
+\echo 'Vector Operations: Comprehensive Advanced Test (1000 rows sample)'
+\echo '=========================================================================='
 
 -- Verify required tables exist
 DO $$
@@ -55,6 +58,27 @@ WHERE features IS NOT NULL;
 -- Create a view for convenience
 DROP VIEW IF EXISTS test_vectors_view;
 CREATE VIEW test_vectors_view AS SELECT * FROM test_vectors_temp;
+
+\echo ''
+\echo 'Dataset Information'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+SELECT 
+	COUNT(*)::bigint AS vector_count,
+	(SELECT vector_dims(v) FROM test_vectors_temp LIMIT 1) AS feature_dim
+FROM test_vectors_temp;
+
+/*---- Register required GPU kernels ----*/
+\echo ''
+\echo 'GPU Configuration'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+SET neurondb.gpu_enabled = on;
+SET neurondb.gpu_kernels = 'l2,cosine,ip';
+SELECT neurondb_gpu_enable() AS gpu_available;
+SELECT neurondb_gpu_info() AS gpu_info;
+
+\echo ''
+\echo 'Vector Operations Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 \echo 'Test 1: Vector count (aggregates tested in basic tests)'
 SELECT COUNT(*) AS vector_count FROM test_vectors_temp;
@@ -298,16 +322,10 @@ BEGIN
 	v2 := array_to_vector_float8(ARRAY[4.0, 5.0, 6.0]::double precision[]);
 	
 	-- Test operations
-	RAISE NOTICE 'v1 + v2 = %', v1 + v2;
-	RAISE NOTICE 'v1 <-> v2 = %', v1 <-> v2;
-	RAISE NOTICE 'vector_dims(v1) = %', vector_dims(v1);
-	RAISE NOTICE 'vector_norm(v1) = %', vector_norm(v1);
 	
 	-- Test dimension casting
 	v3 := vector_cast_dimension(v1, 5);
-	RAISE NOTICE 'cast to 5 dims: dims = %', vector_dims(v3);
 	
-	RAISE NOTICE 'Edge case tests completed';
 END
 $$;
 

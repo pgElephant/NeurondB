@@ -31,7 +31,6 @@ DO $$ BEGIN
     PERFORM cluster_minibatch_kmeans('nonexistent_table', 'features', 3, 100, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid table';
 END $$;
 
 -- Invalid column
@@ -39,7 +38,6 @@ DO $$ BEGIN
     PERFORM cluster_minibatch_kmeans('test_train_view', 'invalid_col', 3, 100, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid column';
 END $$;
 
 -- Invalid k (k < 1)
@@ -47,7 +45,6 @@ DO $$ BEGIN
     PERFORM cluster_minibatch_kmeans('test_train_view', 'features', 0, 100, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid k (k < 1)';
 END $$;
 
 -- Invalid batch_size (batch_size < 1)
@@ -55,7 +52,6 @@ DO $$ BEGIN
     PERFORM cluster_minibatch_kmeans('test_train_view', 'features', 3, 0, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid batch_size';
 END $$;
 
 -- Invalid max_iters (max_iters < 1)
@@ -63,7 +59,6 @@ DO $$ BEGIN
     PERFORM cluster_minibatch_kmeans('test_train_view', 'features', 3, 100, 0);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid max_iters';
 END $$;
 
 \echo '✓ minibatch_kmeans negative test complete'

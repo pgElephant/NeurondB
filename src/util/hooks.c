@@ -39,7 +39,7 @@ register_custom_operator(PG_FUNCTION_ARGS)
 	name_str = text_to_cstring(op_name);
 	func_str = text_to_cstring(op_function);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: registering custom operator '%s' -> '%s'",
 		name_str,
 		func_str);
@@ -62,8 +62,9 @@ enable_vector_replication(PG_FUNCTION_ARGS)
 	char *pub_str;
 
 	pub_str = text_to_cstring(publication_name);
+	/* Suppress unused variable warning - placeholder for future implementation */
+	(void) pub_str;
 
-	elog(NOTICE, "neurondb: enabling vector replication for '%s'", pub_str);
 
 	/* Register logical replication output plugin */
 	/* Encode vectors in binary-safe format */
@@ -90,7 +91,7 @@ create_vector_fdw(PG_FUNCTION_ARGS)
 	type_str = text_to_cstring(remote_type);
 	conn_str = text_to_cstring(connection_string);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: creating %s FDW '%s' with connection '%s'",
 		type_str,
 		name_str,
@@ -122,7 +123,7 @@ assert_recall(PG_FUNCTION_ARGS)
 	passed = (fabs(actual_recall - expected_recall) <= tolerance);
 
 	if (passed)
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: TEST PASSED: recall=%.4f (expected=%.4f "
 			"±%.4f)",
 			actual_recall,
@@ -170,7 +171,7 @@ assert_vector_equal(PG_FUNCTION_ARGS)
 	}
 
 	if (passed)
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: TEST PASSED: vectors equal within tolerance "
 			"%.6f",
 			tolerance);

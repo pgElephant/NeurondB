@@ -76,7 +76,7 @@ mdl_http(PG_FUNCTION_ARGS)
 	initStringInfo(&response);
 	cb.buf = &response;
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: HTTP %s %s (timeout=%dms, max_retries=%d)",
 		method_str,
 		url_str,
@@ -222,7 +222,7 @@ mdl_llm(PG_FUNCTION_ARGS)
 	int32 estimated_cost_microcents;
 	StringInfoData result;
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: LLM call: model=%s; max_tokens=%d; temperature=%.2f",
 		model_str,
 		max_tokens,
@@ -322,7 +322,7 @@ mdl_cache(PG_FUNCTION_ARGS)
 	time_t expires_at;
 	bool success = false;
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: Insert/Update cache: key='%s' ttl=%d",
 		key_str,
 		ttl_seconds);
@@ -354,7 +354,6 @@ mdl_cache(PG_FUNCTION_ARGS)
 		success = true;
 	} else
 	{
-		elog(WARNING, "neurondb: cannot connect SPI for cache insert");
 		success = false;
 	}
 
@@ -407,7 +406,6 @@ mdl_trace(PG_FUNCTION_ARGS)
 		SPI_finish();
 	} else
 	{
-		elog(WARNING, "neurondb: cannot connect SPI for trace insert");
 	}
 
 	PG_RETURN_VOID();

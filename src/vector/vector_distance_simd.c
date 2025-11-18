@@ -68,6 +68,9 @@ detect_simd_capabilities(void)
 	return simd_capabilities;
 }
 
+/* Forward declarations */
+float4 inner_product_distance_simd(Vector *a, Vector *b);
+
 /*
  * horizontal_sum_avx2
  *
@@ -526,6 +529,17 @@ inner_product_simd(Vector *a, Vector *b)
 
 	/* Fallback to scalar */
 	return -inner_product_distance(a, b);
+}
+
+/*
+ * inner_product_distance_simd
+ *
+ * Alias for inner_product_simd to match naming convention.
+ */
+float4
+inner_product_distance_simd(Vector *a, Vector *b)
+{
+	return inner_product_simd(a, b);
 }
 
 /*

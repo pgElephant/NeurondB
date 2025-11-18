@@ -662,7 +662,7 @@ rf_store_model(int32 model_id,
 	MemoryContext oldctx;
 	MemoryContext entry_ctx;
 	int i;
-	size_t alloc_size;
+	size_t alloc_size __attribute__((unused));
 
 	/* Capture entry context for checking */
 	entry_ctx = CurrentMemoryContext;
@@ -739,6 +739,14 @@ rf_store_model(int32 model_id,
 		return;
 	}
 
+	/* BULLETPROOF: Defensive check - if rf_models is NULL but count > 0, something is wrong */
+	if (rf_models == NULL && rf_model_count > 0)
+	{
+		MemoryContextSwitchTo(oldctx);
+		elog(WARNING, "rf_store_model: rf_models is NULL but rf_model_count=%d, resetting count", rf_model_count);
+		rf_model_count = 0;
+	}
+
 	if (rf_model_count == 0)
 	{
 		rf_models = (RFModel *)palloc(sizeof(RFModel));
@@ -758,12 +766,28 @@ rf_store_model(int32 model_id,
 			elog(ERROR, "rf_store_model: allocation size %zu exceeds MaxAllocSize", alloc_size);
 			return;
 		}
-		rf_models = (RFModel *)repalloc(rf_models, alloc_size);
+		/* BULLETPROOF: Defensive check before repalloc */
 		if (rf_models == NULL)
 		{
 			MemoryContextSwitchTo(oldctx);
-			elog(ERROR, "rf_store_model: repalloc failed for rf_models");
-			return;
+			elog(WARNING, "rf_store_model: rf_models is NULL before repalloc, resetting and using palloc");
+			rf_model_count = 0;
+			rf_models = (RFModel *)palloc(sizeof(RFModel));
+			if (rf_models == NULL)
+			{
+				elog(ERROR, "rf_store_model: palloc failed after reset");
+				return;
+			}
+		}
+		else
+		{
+			rf_models = (RFModel *)repalloc(rf_models, alloc_size);
+			if (rf_models == NULL)
+			{
+				MemoryContextSwitchTo(oldctx);
+				elog(ERROR, "rf_store_model: repalloc failed for rf_models");
+				return;
+			}
 		}
 	}
 
@@ -1098,12 +1122,12 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	text *feature_col_text;
 	text *label_col_text;
 
-	char *table_name;
-	char *feature_col;
-	char *label_col;
-	const char *quoted_tbl;
-	const char *quoted_feat;
-	const char *quoted_label;
+	char *table_name = NULL;
+	char *feature_col = NULL;
+	char *label_col = NULL;
+	const char *quoted_tbl = NULL;
+	const char *quoted_feat = NULL;
+	const char *quoted_label = NULL;
 
 	StringInfoData query;
 
@@ -1338,38 +1362,73 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				ndb_gpu_free_train_result(&gpu_result);
 
 				if (gpu_hyperparams)
+				{
 					pfree(gpu_hyperparams);
-				pfree(hyperbuf.data);
+					gpu_hyperparams = NULL;
+				}
+				if (hyperbuf.data)
+				{
+					pfree(hyperbuf.data);
+					hyperbuf.data = NULL;
+				}
+				/* BULLETPROOF: Don't free gpu_err - it's allocated by GPU function using pstrdup()
+				 * and will be automatically freed when the memory context is cleaned up.
+				 */
 				if (gpu_err)
-					pfree(gpu_err);
+				{
+					elog(DEBUG1, "train_random_forest_classifier: [DEBUG] gpu_err=%p (not freeing - managed by memory context)", (void *)gpu_err);
+					gpu_err = NULL; /* Clear pointer but don't free */
+				}
 
 				rf_dataset_free(&dataset);
 				SPI_finish();
 
 				if (table_name)
+				{
 					pfree(table_name);
+					table_name = NULL;
+				}
 				if (feature_col)
+				{
 					pfree(feature_col);
+					feature_col = NULL;
+				}
 				if (label_col)
+				{
 					pfree(label_col);
+					label_col = NULL;
+				}
 				if (query.data)
+				{
 					pfree(query.data);
+					query.data = NULL;
+				}
 
 				PG_RETURN_INT32(model_id);
 			}
 
+			/* BULLETPROOF: Don't free gpu_err - it's allocated by GPU function using pstrdup()
+			 * and will be automatically freed when the memory context is cleaned up.
+			 */
 			if (gpu_err != NULL)
 			{
 				elog(DEBUG1,
-					"random_forest: GPU training unavailable "
-					"(%s)",
+					"random_forest: GPU training unavailable (%s)",
 					gpu_err);
-				pfree(gpu_err);
+				elog(DEBUG1, "train_random_forest_classifier: [DEBUG] gpu_err=%p (not freeing - managed by memory context)", (void *)gpu_err);
+				gpu_err = NULL; /* Clear pointer but don't free */
 			}
 
 			if (gpu_hyperparams != NULL)
+			{
 				pfree(gpu_hyperparams);
-			pfree(hyperbuf.data);
+				gpu_hyperparams = NULL;
+			}
+			if (hyperbuf.data)
+			{
+				pfree(hyperbuf.data);
+				hyperbuf.data = NULL;
+			}
 		}
 	}
 	if (n_samples > 0)
@@ -1529,16 +1588,11 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				for (i = 0; i < n_classes; i++)
 				{
 					if (i > 0)
-						appendStringInfoString(
-							&histogram, ", ");
-					appendStringInfo(&histogram,
-						"%d",
-						class_counts_tmp[i]);
+						appendStringInfoString(&histogram, ", ");
+					appendStringInfo(&histogram, "%d", class_counts_tmp[i]);
 				}
 				appendStringInfoChar(&histogram, ']');
-				elog(DEBUG1,
-					"random_forest: class histogram %s",
-					histogram.data);
+				elog(DEBUG1, "random_forest: class histogram %s", histogram.data);
 				pfree(histogram.data);
 			}
 		}
@@ -1574,16 +1628,16 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			{
 				if (j > 0)
 					appendStringInfoString(&mean_log, ", ");
-				appendStringInfo(&mean_log,
-					"%.3f",
+				elog(DEBUG1,
+						"%.3f",
 					feature_means_tmp[j]);
 			}
 			if (feature_dim > 5)
 				appendStringInfoString(&mean_log, ", ...");
 			appendStringInfoChar(&mean_log, ']');
 			elog(DEBUG1,
-				"random_forest: feature means %s",
-				mean_log.data);
+			     "random_forest: feature means %s",
+			     mean_log.data);
 			pfree(mean_log.data);
 
 			initStringInfo(&var_log);
@@ -3045,8 +3099,11 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				elog(DEBUG1,
 					"random_forest: GPU pack failed (%s)",
 					gpu_err);
-				pfree(gpu_err);
-				gpu_err = NULL;
+				/* BULLETPROOF: Don't free gpu_err - it's allocated by GPU function using pstrdup()
+				 * and will be automatically freed when the memory context is cleaned up.
+				 */
+				elog(DEBUG1, "train_random_forest_classifier: [DEBUG] gpu_err=%p (not freeing - managed by memory context)", (void *)gpu_err);
+				gpu_err = NULL; /* Clear pointer but don't free */
 			}
 		}
 
@@ -3070,17 +3127,42 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		if (model_id >= rf_next_model_id)
 			rf_next_model_id = model_id + 1;
 
-		pfree(serialized);
-		if (params_jsonb)
+		/* BULLETPROOF: Free SPI context allocations with NULL checks and set to NULL */
+		if (serialized != NULL)
+		{
+			pfree(serialized);
+			serialized = NULL;
+		}
+		if (params_jsonb != NULL)
+		{
 			pfree(params_jsonb);
-		if (metrics_jsonb)
+			params_jsonb = NULL;
+		}
+		if (metrics_jsonb != NULL)
+		{
 			pfree(metrics_jsonb);
-		pfree(params_buf.data);
-		pfree(metrics_buf.data);
-		if (gpu_metrics)
+			metrics_jsonb = NULL;
+		}
+		if (params_buf.data != NULL)
+		{
+			pfree(params_buf.data);
+			params_buf.data = NULL;
+		}
+		if (metrics_buf.data != NULL)
+		{
+			pfree(metrics_buf.data);
+			metrics_buf.data = NULL;
+		}
+		if (gpu_metrics != NULL)
+		{
 			pfree(gpu_metrics);
-		if (!gpu_packed && gpu_payload)
+			gpu_metrics = NULL;
+		}
+		if (!gpu_packed && gpu_payload != NULL)
+		{
 			pfree(gpu_payload);
+			gpu_payload = NULL;
+		}
 	}
 
 	elog(NOTICE,
@@ -3210,8 +3292,7 @@ rf_tree_predict_single(const GTree *tree,
 		{
 			elog(DEBUG1,
 				"random_forest: path aborted at node %d "
-				"(feature "
-				"%d)",
+				"(feature %d)",
 				idx,
 				node->feature_idx);
 			if (model)
@@ -3361,8 +3442,7 @@ predict_random_forest(PG_FUNCTION_ARGS)
 		if (!rf_load_model_from_catalog(model_id, &model))
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("random_forest: model %d not "
-					       "found",
+					errmsg("random_forest: model %d not found",
 						model_id)));
 	}
 
@@ -3376,8 +3456,7 @@ predict_random_forest(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("random_forest: feature dimension "
-				       "mismatch "
-				       "(expected %d got %d)",
+				       "mismatch (expected %d got %d)",
 					model->n_features,
 					feature_vec->dim)));
 
@@ -3408,21 +3487,18 @@ predict_random_forest(PG_FUNCTION_ARGS)
 		dist = sqrt(dist);
 		if (model->feature_variances != NULL)
 			elog(DEBUG1,
-				"random_forest: feature L2 distance %.3f max-z "
-				"%.3f",
+				"random_forest: feature L2 distance %.3f max-z %.3f",
 				dist,
 				max_z);
 		else
 			elog(DEBUG1,
-				"random_forest: feature L2 distance to mean "
-				"%.3f",
+				"random_forest: feature L2 distance to mean %.3f",
 				dist);
 		if (model->feature_variances != NULL
 			&& model->second_fraction > 0.0 && max_z > 1.5)
 			elog(DEBUG1,
 				"random_forest: deviation %.3f exceeds "
-				"threshold, "
-				"considering second class %.3f",
+				"threshold, considering second class %.3f",
 				max_z,
 				model->second_value);
 		model->max_deviation = max_z;
@@ -3637,8 +3713,7 @@ predict_random_forest(PG_FUNCTION_ARGS)
 	{
 		elog(DEBUG1,
 			"random_forest: high deviation %.3f -> returning "
-			"second "
-			"class %.3f",
+			"second class %.3f",
 			model->max_deviation,
 			fallback_value);
 		result = fallback_value;
@@ -3744,14 +3819,14 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 	{
 		/* Try loading from catalog */
 		elog(DEBUG1,
-			 "evaluate_random_forest: model_id %d not in cache, trying catalog",
-			 model_id);
+			"evaluate_random_forest: model_id %d not in cache, trying catalog",
+			model_id);
 		if (!ml_catalog_fetch_model_payload(
 			    model_id, &payload, NULL, &metrics))
 		{
 			elog(WARNING,
-				 "evaluate_random_forest: ml_catalog_fetch_model_payload returned false for model_id %d",
-				 model_id);
+				"evaluate_random_forest: ml_catalog_fetch_model_payload returned false for model_id %d",
+				model_id);
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					errmsg("random_forest: model %d not found",
@@ -3760,9 +3835,9 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 
 		/* If GPU model, extract metrics from JSONB */
 		elog(DEBUG1,
-			 "evaluate_random_forest: metrics=%p, rf_metadata_is_gpu=%d",
-			 (void *)metrics,
-			 metrics != NULL ? rf_metadata_is_gpu(metrics) : 0);
+			"evaluate_random_forest: metrics=%p, rf_metadata_is_gpu=%d",
+			(void *)metrics,
+			metrics != NULL ? rf_metadata_is_gpu(metrics) : 0);
 		if (rf_metadata_is_gpu(metrics) && metrics != NULL)
 		{
 			Datum acc_datum;
@@ -3890,16 +3965,16 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 
 		/* Try loading CPU model from catalog */
 		elog(DEBUG1,
-			 "evaluate_random_forest: not a GPU model, trying CPU load for model_id %d",
-			 model_id);
+			"evaluate_random_forest: not a GPU model, trying CPU load for model_id %d",
+			model_id);
 		
 		PG_TRY();
 		{
 			if (!rf_load_model_from_catalog(model_id, &model))
 			{
 				elog(DEBUG1,
-					 "evaluate_random_forest: rf_load_model_from_catalog failed for model_id %d",
-					 model_id);
+					"evaluate_random_forest: rf_load_model_from_catalog failed for model_id %d",
+					model_id);
 				if (payload)
 					pfree(payload);
 				if (metrics)
@@ -4155,9 +4230,9 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 	text *table_name;
 	text *feature_col;
 	text *label_col;
-	char *tbl_str;
-	char *feat_str;
-	char *targ_str;
+	char *tbl_str = NULL;
+	char *feat_str = NULL;
+	char *targ_str = NULL;
 	int ret;
 	int nvec = 0;
 	int i;
@@ -4181,12 +4256,15 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 	Jsonb *gpu_metrics = NULL;
 	bool is_gpu_model = false;
 
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] Function entry, PG_NARGS=%d", PG_NARGS());
+
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("neurondb: evaluate_random_forest_by_model_id: model_id is required")));
 
 	model_id = PG_GETARG_INT32(0);
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] model_id=%d", model_id);
 
 	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3))
 		ereport(ERROR,
@@ -4201,7 +4279,10 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 	feat_str = text_to_cstring(feature_col);
 	targ_str = text_to_cstring(label_col);
 
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] table=%s, feature_col=%s, label_col=%s", tbl_str, feat_str, targ_str);
+
 	oldcontext = CurrentMemoryContext;
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] saved oldcontext=%p", (void *)oldcontext);
 
 	/* Load model from catalog - try CPU first, then check for GPU */
 	if (!rf_lookup_model(model_id, &model))
@@ -4271,6 +4352,7 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 		quote_identifier(tbl_str),
 		quote_identifier(feat_str),
 		quote_identifier(targ_str));
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: executing query: %s", query.data);
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -4325,8 +4407,8 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 		if (payload_size < sizeof(NdbCudaRfModelHeader))
 		{
 			elog(WARNING,
-				 "evaluate_random_forest_by_model_id: GPU payload too small (%zu bytes), falling back to CPU",
-				 payload_size);
+				"evaluate_random_forest_by_model_id: GPU payload too small (%zu bytes), falling back to CPU",
+				payload_size);
 			goto cpu_evaluation_path;
 		}
 
@@ -4343,8 +4425,8 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 		if (feat_dim <= 0 || feat_dim > 100000)
 		{
 			elog(WARNING,
-				 "evaluate_random_forest_by_model_id: invalid feature_dim (%d), falling back to CPU",
-				 feat_dim);
+				"evaluate_random_forest_by_model_id: invalid feature_dim (%d), falling back to CPU",
+				feat_dim);
 			goto cpu_evaluation_path;
 		}
 
@@ -4356,8 +4438,8 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 			if (features_size > MaxAllocSize || labels_size > MaxAllocSize)
 			{
 				elog(WARNING,
-					 "evaluate_random_forest_by_model_id: allocation size too large (features=%zu, labels=%zu), falling back to CPU",
-					 features_size, labels_size);
+					"evaluate_random_forest_by_model_id: allocation size too large (features=%zu, labels=%zu), falling back to CPU",
+					features_size, labels_size);
 				goto cpu_evaluation_path;
 			}
 
@@ -4368,10 +4450,16 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 			{
 				elog(WARNING,
 					 "evaluate_random_forest_by_model_id: memory allocation failed, falling back to CPU");
-				if (h_features)
+				if (h_features != NULL)
+				{
 					pfree(h_features);
-				if (h_labels)
+					h_features = NULL;
+				}
+				if (h_labels != NULL)
+				{
 					pfree(h_labels);
+					h_labels = NULL;
+				}
 				goto cpu_evaluation_path;
 			}
 		}
@@ -4479,16 +4567,46 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 
 		if (valid_rows == 0)
 		{
-			pfree(h_features);
-			pfree(h_labels);
-			if (gpu_payload)
+			if (h_features != NULL)
+			{
+				pfree(h_features);
+				h_features = NULL;
+			}
+			if (h_labels != NULL)
+			{
+				pfree(h_labels);
+				h_labels = NULL;
+			}
+			if (gpu_payload != NULL)
+			{
 				pfree(gpu_payload);
-			if (gpu_metrics)
+				gpu_payload = NULL;
+			}
+			if (gpu_metrics != NULL)
+			{
 				pfree(gpu_metrics);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(targ_str);
+				gpu_metrics = NULL;
+			}
+			if (query.data != NULL)
+			{
+				pfree(query.data);
+				query.data = NULL;
+			}
+			if (tbl_str != NULL)
+			{
+				pfree(tbl_str);
+				tbl_str = NULL;
+			}
+			if (feat_str != NULL)
+			{
+				pfree(feat_str);
+				feat_str = NULL;
+			}
+			if (targ_str != NULL)
+			{
+				pfree(targ_str);
+				targ_str = NULL;
+			}
 			SPI_finish();
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -4499,17 +4617,37 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 		{
 			int rc;
 			char *gpu_errstr = NULL;
+			bool cleanup_done = false;
+			bool h_features_freed = false;
+			bool h_labels_freed = false;
+			/* Note: gpu_errstr is allocated by GPU function using pstrdup() - never free it manually */
+
+			elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] Starting GPU evaluation path, valid_rows=%d, feat_dim=%d", valid_rows, feat_dim);
 
 			/* Defensive checks before GPU call */
 			if (h_features == NULL || h_labels == NULL || valid_rows <= 0 || feat_dim <= 0)
 			{
 				elog(WARNING,
-					 "evaluate_random_forest_by_model_id: invalid inputs for GPU evaluation (features=%p, labels=%p, rows=%d, dim=%d), falling back to CPU",
-					 (void *)h_features, (void *)h_labels, valid_rows, feat_dim);
-				pfree(h_features);
-				pfree(h_labels);
+					"evaluate_random_forest_by_model_id: [DEBUG] invalid inputs for GPU evaluation (features=%p, labels=%p, rows=%d, dim=%d), falling back to CPU",
+					(void *)h_features, (void *)h_labels, valid_rows, feat_dim);
+				if (h_features != NULL && !h_features_freed)
+				{
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_features (early exit)");
+					pfree(h_features);
+					h_features = NULL;
+					h_features_freed = true;
+				}
+				if (h_labels != NULL && !h_labels_freed)
+				{
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_labels (early exit)");
+					pfree(h_labels);
+					h_labels = NULL;
+					h_labels_freed = true;
+				}
 				goto cpu_evaluation_path;
 			}
+
+			elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] calling ndb_cuda_rf_evaluate_batch, h_features=%p, h_labels=%p", (void *)h_features, (void *)h_labels);
 
 			PG_TRY();
 			{
@@ -4524,59 +4662,196 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 					&f1_score,
 					&gpu_errstr);
 
+				elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] GPU evaluation returned rc=%d, gpu_errstr=%p", rc, (void *)gpu_errstr);
+
 				if (rc == 0)
-			{
-				/* Success - build result and return */
-				initStringInfo(&jsonbuf);
-				appendStringInfo(&jsonbuf,
-					"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
-					accuracy,
-					precision,
-					recall,
-					f1_score,
-					valid_rows);
+				{
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] GPU evaluation succeeded, building JSONB result");
+					/* Success - build result and return */
+					initStringInfo(&jsonbuf);
+					appendStringInfo(&jsonbuf,
+						"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
+						accuracy,
+						precision,
+						recall,
+						f1_score,
+						valid_rows);
 
-				result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-					CStringGetDatum(jsonbuf.data)));
+					result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+						CStringGetDatum(jsonbuf.data)));
 
-				pfree(jsonbuf.data);
-				pfree(h_features);
-				pfree(h_labels);
-				if (gpu_payload)
-					pfree(gpu_payload);
-				if (gpu_metrics)
-					pfree(gpu_metrics);
-				if (gpu_errstr)
-					pfree(gpu_errstr);
-				SPI_finish();
-				pfree(query.data);
-				pfree(tbl_str);
-				pfree(feat_str);
-				pfree(targ_str);
-				MemoryContextSwitchTo(oldcontext);
-				PG_RETURN_JSONB_P(result_jsonb);
-				} else
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] JSONB created, copying to caller context");
+					/* BULLETPROOF: Free SPI context allocations BEFORE switching contexts */
+					pfree(jsonbuf.data);
+					jsonbuf.data = NULL;
+					{
+						Jsonb *temp_jsonb = result_jsonb;
+						/* BULLETPROOF: Copy JSONB to caller's context before SPI_finish */
+						MemoryContextSwitchTo(oldcontext);
+						result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
+						/* Don't free temp_jsonb - it's in SPI context and will be cleaned up by SPI_finish() */
+					}
+					
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] cleaning up GPU evaluation resources");
+					if (h_features != NULL && !h_features_freed)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_features (success path)");
+						pfree(h_features);
+						h_features = NULL;
+						h_features_freed = true;
+					}
+					if (h_labels != NULL && !h_labels_freed)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_labels (success path)");
+						pfree(h_labels);
+						h_labels = NULL;
+						h_labels_freed = true;
+					}
+					if (gpu_payload != NULL)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing gpu_payload");
+						pfree(gpu_payload);
+						gpu_payload = NULL;
+					}
+					if (gpu_metrics != NULL)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing gpu_metrics");
+						pfree(gpu_metrics);
+						gpu_metrics = NULL;
+					}
+					/* BULLETPROOF: Don't free gpu_errstr - it's allocated by GPU function using pstrdup()
+					 * and will be automatically freed when the memory context is cleaned up.
+					 * Manually freeing it can cause crashes if the context is already cleaned up.
+					 */
+					if (gpu_errstr)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] gpu_errstr=%p (not freeing - managed by memory context)", (void *)gpu_errstr);
+						gpu_errstr = NULL; /* Clear pointer but don't free */
+					}
+					cleanup_done = true;
+					/* BULLETPROOF: Free SPI context allocations BEFORE SPI_finish() */
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing SPI context allocations before SPI_finish()");
+					if (query.data)
+					{
+						pfree(query.data);
+						query.data = NULL;
+					}
+					if (tbl_str)
+					{
+						pfree(tbl_str);
+						tbl_str = NULL;
+					}
+					if (feat_str)
+					{
+						pfree(feat_str);
+						feat_str = NULL;
+					}
+					if (targ_str)
+					{
+						pfree(targ_str);
+						targ_str = NULL;
+					}
+					SPI_finish();
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] returning JSONB result");
+					PG_RETURN_JSONB_P(result_jsonb);
+				}
+				else
 				{
 					/* GPU evaluation failed, fall back to CPU */
 					elog(WARNING,
-						"neurondb: evaluate_random_forest_by_model_id: GPU batch evaluation failed: %s, falling back to CPU",
+						"neurondb: evaluate_random_forest_by_model_id: [DEBUG] GPU batch evaluation failed: %s, falling back to CPU",
 						gpu_errstr ? gpu_errstr : "unknown error");
-					pfree(h_features);
-					pfree(h_labels);
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] cleaning up after GPU failure");
+					if (h_features != NULL && !h_features_freed)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_features (failure path)");
+						pfree(h_features);
+						h_features = NULL;
+						h_features_freed = true;
+					}
+					if (h_labels != NULL && !h_labels_freed)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_labels (failure path)");
+						pfree(h_labels);
+						h_labels = NULL;
+						h_labels_freed = true;
+					}
+					/* BULLETPROOF: Don't free gpu_errstr - it's allocated by GPU function using pstrdup()
+					 * and will be automatically freed when the memory context is cleaned up.
+					 */
 					if (gpu_errstr)
-						pfree(gpu_errstr);
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] gpu_errstr=%p (not freeing in failure path - managed by memory context)", (void *)gpu_errstr);
+						gpu_errstr = NULL; /* Clear pointer but don't free */
+					}
+					cleanup_done = true;
 				}
 			}
 			PG_CATCH();
 			{
+				/* BULLETPROOF: Flush error state and safely clean up */
+				FlushErrorState();
 				elog(WARNING,
-					 "evaluate_random_forest_by_model_id: exception during GPU evaluation, falling back to CPU");
-				if (h_features)
-					pfree(h_features);
-				if (h_labels)
-					pfree(h_labels);
-				if (gpu_errstr)
-					pfree(gpu_errstr);
+					 "evaluate_random_forest_by_model_id: [DEBUG] exception during GPU evaluation, falling back to CPU");
+				
+				/* Only free if not already freed and pointers are valid */
+				if (!cleanup_done)
+				{
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: cleanup_done=false");
+					if (h_features != NULL && !h_features_freed)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: freeing h_features, ptr=%p", (void *)h_features);
+						PG_TRY();
+						{
+							if (h_features != NULL)
+							{
+								pfree(h_features);
+								h_features = NULL;
+							}
+						}
+						PG_CATCH();
+						{
+							elog(WARNING, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: failed to free h_features, ignoring");
+							FlushErrorState();
+							h_features = NULL;
+						}
+						PG_END_TRY();
+						h_features_freed = true;
+					}
+					if (h_labels != NULL && !h_labels_freed)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: freeing h_labels, ptr=%p", (void *)h_labels);
+						PG_TRY();
+						{
+							if (h_labels != NULL)
+							{
+								pfree(h_labels);
+								h_labels = NULL;
+							}
+						}
+						PG_CATCH();
+						{
+							elog(WARNING, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: failed to free h_labels, ignoring");
+							FlushErrorState();
+							h_labels = NULL;
+						}
+						PG_END_TRY();
+						h_labels_freed = true;
+					}
+					/* BULLETPROOF: Never free gpu_errstr in exception handler - it's allocated by GPU function
+					 * using pstrdup() and will be automatically freed when the memory context is cleaned up.
+					 * This is the problematic pointer that was causing crashes.
+					 */
+					if (gpu_errstr != NULL)
+					{
+						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: gpu_errstr=%p (NOT freeing - this was the problematic pointer, now handled safely)", (void *)gpu_errstr);
+						gpu_errstr = NULL; /* Clear pointer but don't free - let memory context handle it */
+					}
+				}
+				else
+				{
+					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: cleanup_done=true, skipping cleanup");
+				}
 			}
 			PG_END_TRY();
 		}
@@ -4598,6 +4873,7 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 
 cpu_evaluation_path:
 	/* CPU evaluation path (also used as fallback for GPU models) */
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] Entering CPU evaluation path");
 	/* Use optimized batch prediction */
 	{
 		float *h_features = NULL;
@@ -4706,18 +4982,48 @@ cpu_evaluation_path:
 
 		if (valid_rows == 0)
 		{
-			pfree(h_features);
-			pfree(h_labels);
+			if (h_features != NULL)
+			{
+				pfree(h_features);
+				h_features = NULL;
+			}
+			if (h_labels != NULL)
+			{
+				pfree(h_labels);
+				h_labels = NULL;
+			}
 			if (model != NULL)
 				rf_free_deserialized_model(model);
-			if (gpu_payload)
+			if (gpu_payload != NULL)
+			{
 				pfree(gpu_payload);
-			if (gpu_metrics)
+				gpu_payload = NULL;
+			}
+			if (gpu_metrics != NULL)
+			{
 				pfree(gpu_metrics);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(targ_str);
+				gpu_metrics = NULL;
+			}
+			if (query.data != NULL)
+			{
+				pfree(query.data);
+				query.data = NULL;
+			}
+			if (tbl_str != NULL)
+			{
+				pfree(tbl_str);
+				tbl_str = NULL;
+			}
+			if (feat_str != NULL)
+			{
+				pfree(feat_str);
+				feat_str = NULL;
+			}
+			if (targ_str != NULL)
+			{
+				pfree(targ_str);
+				targ_str = NULL;
+			}
 			SPI_finish();
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -4729,16 +5035,46 @@ cpu_evaluation_path:
 		{
 			/* TODO: Implement GPU model to CPU model conversion for evaluation */
 			/* For now, we cannot evaluate GPU models on CPU */
-			pfree(h_features);
-			pfree(h_labels);
-			if (gpu_payload)
+			if (h_features != NULL)
+			{
+				pfree(h_features);
+				h_features = NULL;
+			}
+			if (h_labels != NULL)
+			{
+				pfree(h_labels);
+				h_labels = NULL;
+			}
+			if (gpu_payload != NULL)
+			{
 				pfree(gpu_payload);
-			if (gpu_metrics)
+				gpu_payload = NULL;
+			}
+			if (gpu_metrics != NULL)
+			{
 				pfree(gpu_metrics);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(targ_str);
+				gpu_metrics = NULL;
+			}
+			if (query.data != NULL)
+			{
+				pfree(query.data);
+				query.data = NULL;
+			}
+			if (tbl_str != NULL)
+			{
+				pfree(tbl_str);
+				tbl_str = NULL;
+			}
+			if (feat_str != NULL)
+			{
+				pfree(feat_str);
+				feat_str = NULL;
+			}
+			if (targ_str != NULL)
+			{
+				pfree(targ_str);
+				targ_str = NULL;
+			}
 			SPI_finish();
 			ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -4778,23 +5114,56 @@ cpu_evaluation_path:
 		}
 
 		/* Cleanup */
-		pfree(h_features);
-		pfree(h_labels);
+		if (h_features != NULL)
+		{
+			pfree(h_features);
+			h_features = NULL;
+		}
+		if (h_labels != NULL)
+		{
+			pfree(h_labels);
+			h_labels = NULL;
+		}
 		if (model != NULL)
 			rf_free_deserialized_model(model);
-		if (gpu_payload)
+		if (gpu_payload != NULL)
+		{
 			pfree(gpu_payload);
-		if (gpu_metrics)
+			gpu_payload = NULL;
+		}
+		if (gpu_metrics != NULL)
+		{
 			pfree(gpu_metrics);
+			gpu_metrics = NULL;
+		}
 	}
 
+	/* BULLETPROOF: Free SPI context allocations BEFORE SPI_finish() */
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: freeing SPI context allocations before SPI_finish()");
+	if (query.data)
+	{
+		pfree(query.data);
+		query.data = NULL;
+	}
+	if (tbl_str)
+	{
+		pfree(tbl_str);
+		tbl_str = NULL;
+	}
+	if (feat_str)
+	{
+		pfree(feat_str);
+		feat_str = NULL;
+	}
+	if (targ_str)
+	{
+		pfree(targ_str);
+		targ_str = NULL;
+	}
 	SPI_finish();
-	pfree(query.data);
-	pfree(tbl_str);
-	pfree(feat_str);
-	pfree(targ_str);
 
 	/* Build jsonb result */
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: building JSONB result, accuracy=%.6f, precision=%.6f, recall=%.6f, f1_score=%.6f, nvec=%d", accuracy, precision, recall, f1_score, nvec);
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
 		"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
@@ -4804,11 +5173,20 @@ cpu_evaluation_path:
 		f1_score,
 		nvec);
 
-	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(jsonbuf.data)));
-
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: JSONB string created, length=%d", jsonbuf.len);
+	{
+		Jsonb *temp_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+			CStringGetDatum(jsonbuf.data)));
+		
+		elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: JSONB created, copying to caller context");
+		/* BULLETPROOF: Copy JSONB to caller's context before SPI_finish */
+		MemoryContextSwitchTo(oldcontext);
+		result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
+		if (temp_jsonb != (Jsonb *) DatumGetPointer((Datum) temp_jsonb))
+			pfree(temp_jsonb);
+	}
 	pfree(jsonbuf.data);
-	MemoryContextSwitchTo(oldcontext);
+	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: returning JSONB result");
 	PG_RETURN_JSONB_P(result_jsonb);
 }
 
@@ -4949,8 +5327,7 @@ rf_read_int_array(StringInfo buf, int expected_count)
 	if (expected_count >= 0 && len != expected_count)
 	{
 		elog(ERROR,
-			"random_forest: unexpected int array length %d "
-			"(expected %d)",
+			"random_forest: unexpected int array length %d (expected %d)",
 			len,
 			expected_count);
 		return NULL;
@@ -5065,7 +5442,7 @@ rf_read_double_array(StringInfo buf, int expected_count)
 	{
 		elog(ERROR,
 			"random_forest: buffer overrun in rf_read_double_array: cursor=%d, len=%d, needed=%zu, available=%d",
-			buf->cursor, len, (size_t)len * sizeof(double), buf->len - buf->cursor);
+			buf->cursor, buf->len, (size_t)len * sizeof(double), buf->len - buf->cursor);
 		/* Cursor was already advanced, buffer is corrupted */
 		return NULL;
 	}
@@ -5302,6 +5679,11 @@ rf_model_deserialize(const bytea *data)
 					elog(DEBUG1, "rf_model_deserialize: reading feature_importance, cursor=%d/%d, n_features=%d", buf.cursor, buf.len, model->n_features);
 					
 					/* Wrap in PG_TRY to catch errors from rf_read_double_array */
+					/* Suppress shadow warning from nested PG_TRY in PostgreSQL macros */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow=compatible-local"
+#endif
 					PG_TRY();
 					{
 						model->feature_importance = rf_read_double_array(&buf, model->n_features);
@@ -5393,6 +5775,11 @@ rf_model_deserialize(const bytea *data)
 					{
 						/* Continue with deserialization */
 					elog(DEBUG1, "rf_model_deserialize: reading left_branch_means, cursor=%d/%d, feature_limit=%d", buf.cursor, buf.len, model->feature_limit);
+					/* Suppress shadow warning from nested PG_TRY in PostgreSQL macros */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow=compatible-local"
+#endif
 					PG_TRY();
 					{
 						model->left_branch_means = rf_read_double_array(&buf, model->feature_limit);
@@ -5415,6 +5802,9 @@ rf_model_deserialize(const bytea *data)
 						PG_RE_THROW();
 					}
 					PG_END_TRY();
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 						
 						if (model != NULL && model->left_branch_means == NULL && model->feature_limit > 0)
 						{
@@ -5434,6 +5824,11 @@ rf_model_deserialize(const bytea *data)
 						else if (model != NULL)
 						{
 						elog(DEBUG1, "rf_model_deserialize: reading right_branch_means, cursor=%d/%d, feature_limit=%d", buf.cursor, buf.len, model->feature_limit);
+						/* Suppress shadow warning from nested PG_TRY in PostgreSQL macros */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow=compatible-local"
+#endif
 						PG_TRY();
 						{
 							model->right_branch_means = rf_read_double_array(&buf, model->feature_limit);
@@ -5458,6 +5853,9 @@ rf_model_deserialize(const bytea *data)
 							PG_RE_THROW();
 						}
 						PG_END_TRY();
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 							
 							if (model != NULL && model->right_branch_means == NULL && model->feature_limit > 0)
 							{
@@ -5748,8 +6146,7 @@ rf_dataset_load(const char *quoted_tbl,
 
 	resetStringInfo(query);
 	appendStringInfo(query,
-		"SELECT %s, (%s)::float8 FROM %s WHERE %s IS NOT NULL "
-		"AND %s IS NOT NULL",
+		"SELECT %s, (%s)::float8 FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
 		quoted_feat,
 		quoted_label,
 		quoted_tbl,
@@ -6153,27 +6550,37 @@ rf_try_gpu_predict_catalog(int32 model_id,
 		if (result_out != NULL)
 			*result_out = (double)class_out;
 		elog(DEBUG1,
-			"random_forest: GPU prediction used for model %d "
-			"class=%d",
+			"random_forest: GPU prediction used for model %d class=%d",
 			model_id,
 			class_out);
 		success = true;
 	} else if (gpu_err != NULL)
 	{
 		elog(WARNING,
-			"random_forest: GPU prediction failed for model %d "
-			"(%s)",
+			"random_forest: GPU prediction failed for model %d (%s)",
 			model_id,
 			gpu_err);
 	}
 
 cleanup:
+	/* BULLETPROOF: Don't free gpu_err - it's allocated by GPU function using pstrdup()
+	 * and will be automatically freed when the memory context is cleaned up.
+	 */
 	if (gpu_err != NULL)
-		pfree(gpu_err);
+	{
+		elog(DEBUG1, "rf_try_gpu_predict_catalog: [DEBUG] gpu_err=%p (not freeing - managed by memory context)", (void *)gpu_err);
+		gpu_err = NULL; /* Clear pointer but don't free */
+	}
 	if (payload != NULL)
+	{
 		pfree(payload);
+		payload = NULL;
+	}
 	if (metrics != NULL)
+	{
 		pfree(metrics);
+		metrics = NULL;
+	}
 
 	return success;
 }

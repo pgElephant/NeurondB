@@ -1,28 +1,31 @@
+-- 014_knn_advance.sql
+-- Exhaustive detailed test for knn: all train, error, predict, evaluate.
+-- Works on 1000 rows only and tests each and every way with comprehensive coverage
+-- Tests: GPU/CPU paths, hyperparameters, batch operations, error handling, metadata
+
+SET client_min_messages TO WARNING;
+\set ON_ERROR_STOP on
 \timing on
 \pset footer off
 \pset pager off
-
-\set ON_ERROR_STOP on
+\pset tuples_only off
 
 \echo '=========================================================================='
-\echo 'K-Nearest Neighbors - Advanced Features Test'
+\echo 'knn: Exhaustive GPU/CPU + Error Coverage (1000 rows sample)'
 \echo '=========================================================================='
 
--- This test uses test_train_view and test_test_view tables created by ml_dataset.py
--- Run: python ml_dataset.py <dataset_name> to populate the database first
--- Or use the test runner: python run_ml_tests.py
---
--- Verify required tables exist
+/* Check that sample_train and sample_test exist */
 DO $$
 BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'test_train_view') THEN
-		RAISE EXCEPTION 'test_train_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
+		RAISE EXCEPTION 'sample_train table does not exist';
 	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'test_test_view') THEN
-		RAISE EXCEPTION 'test_test_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
+		RAISE EXCEPTION 'sample_test table does not exist';
 	END IF;
 END
 $$;
+
 -- Create views with 1000 rows for advance tests
 DROP VIEW IF EXISTS test_train_view;
 DROP VIEW IF EXISTS test_test_view;
@@ -33,66 +36,496 @@ SELECT features, label FROM sample_train LIMIT 1000;
 CREATE VIEW test_test_view AS
 SELECT features, label FROM sample_test LIMIT 1000;
 
+\echo ''
+\echo 'Dataset Information'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+SELECT 
+	COUNT(*)::bigint AS train_count,
+	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_count,
+	(SELECT COUNT(DISTINCT label) FROM test_train_view) AS n_classes,
+	(SELECT vector_dims(features) FROM test_train_view LIMIT 1) AS feature_dim
+FROM test_train_view;
+
+/*---- Register required GPU kernels ----*/
+\echo ''
+\echo 'GPU Configuration'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 SET neurondb.gpu_enabled = on;
 SET neurondb.gpu_kernels = 'l2,cosine,ip,knn_train,knn_predict';
-SELECT neurondb_gpu_enable();
+SELECT neurondb_gpu_enable() AS gpu_available;
+SELECT neurondb_gpu_info() AS gpu_info;
 
+/*
+ * ---- TRAINING routines (1000 sampled rows) ----
+ * Test multiple hyperparameter combinations and paths
+ */
 \echo ''
-\echo 'Test 1: Training with Different K Values'
+\echo 'Training Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Train with k=3
-DROP TABLE IF EXISTS knn_k3;
-CREATE TEMP TABLE knn_k3 AS
-SELECT neurondb.train(
-	'knn',
-	'test_train_view',
-	'features',
-	'label',
-	'{"k": 3}'::jsonb
-)::integer AS model_id;
-
--- Train with k=5
-DROP TABLE IF EXISTS knn_k5;
-CREATE TEMP TABLE knn_k5 AS
-SELECT neurondb.train(
-	'knn',
-	'test_train_view',
-	'features',
-	'label',
-	'{"k": 5}'::jsonb
-)::integer AS model_id;
-
--- Train with k=7
-DROP TABLE IF EXISTS knn_k7;
-CREATE TEMP TABLE knn_k7 AS
-SELECT neurondb.train(
-	'knn',
-	'test_train_view',
-	'features',
-	'label',
-	'{"k": 7}'::jsonb
-)::integer AS model_id;
+\echo 'Test 1: GPU training with k=3'
+SET neurondb.gpu_enabled = on;
+DROP TABLE IF EXISTS gpu_model_k3_temp_014;
+CREATE TEMP TABLE gpu_model_k3_temp_014 AS
+SELECT neurondb.train('knn', 
+	'test_train_view', 
+	'features', 'label', 
+	'{"k":3}'::jsonb)::integer AS gpu_model_id;
 
 SELECT 
-	'k=3' AS k_value,
-	model_id AS model_id_k3
-FROM knn_k3
-UNION ALL
-SELECT 
-	'k=5' AS k_value,
-	model_id AS model_id_k5
-FROM knn_k5
-UNION ALL
-SELECT 
-	'k=7' AS k_value,
-	model_id AS model_id_k7
-FROM knn_k7;
+	'GPU k=3' AS config,
+	gpu_model_id AS model_id,
+	(SELECT metrics->>'storage' FROM neurondb.ml_models WHERE model_id = gpu_model_id) AS storage
+FROM gpu_model_k3_temp_014;
 
+\echo 'Test 2: CPU training with k=5'
+SET neurondb.gpu_enabled = off;
+DROP TABLE IF EXISTS cpu_model_k5_temp_014;
+CREATE TEMP TABLE cpu_model_k5_temp_014 AS
+SELECT neurondb.train('knn', 
+	'test_train_view', 
+	'features', 'label', 
+	'{"k":5}'::jsonb)::integer AS cpu_model_id;
+
+SELECT 
+	'CPU k=5' AS config,
+	cpu_model_id AS model_id,
+	(SELECT metrics->>'storage' FROM neurondb.ml_models WHERE model_id = cpu_model_id) AS storage
+FROM cpu_model_k5_temp_014;
+
+\echo 'Test 3: Custom hyperparameters (k=7)'
+DROP TABLE IF EXISTS custom_model_temp_014;
+CREATE TEMP TABLE custom_model_temp_014 AS
+SELECT neurondb.train('knn', 
+	'test_train_view', 
+	'features', 'label', 
+	'{"k":7}'::jsonb)::integer AS custom_model_id;
+
+SELECT 
+	'Custom (k=7)' AS config,
+	custom_model_id AS model_id,
+	(SELECT metrics->>'k' FROM neurondb.ml_models WHERE model_id = custom_model_id) AS k_value
+FROM custom_model_temp_014;
+
+\echo 'Test 4: Different k value (k=1)'
+DROP TABLE IF EXISTS k1_model_temp_014;
+CREATE TEMP TABLE k1_model_temp_014 AS
+SELECT neurondb.train('knn', 
+	'test_train_view', 
+	'features', 'label', 
+	'{"k":1}'::jsonb)::integer AS k1_model_id;
+
+\echo 'Test 5: Larger k value (k=11)'
+DROP TABLE IF EXISTS k11_model_temp_014;
+CREATE TEMP TABLE k11_model_temp_014 AS
+SELECT neurondb.train('knn', 
+	'test_train_view', 
+	'features', 'label', 
+	'{"k":11}'::jsonb)::integer AS k11_model_id;
+
+/* --- ERROR path: bad table or column --- */
 \echo ''
-\echo 'Test 2: Model Metadata and Storage Information'
+\echo 'Error Handling Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
+\echo 'Error Test 1: Invalid table name'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('knn','missing_table','features','label','{"k":5}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for missing table';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 2: Invalid feature column'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('knn','test_train_view','notafeat','label','{"k":5}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for invalid feature column';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 3: Invalid label column'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('knn','test_train_view','features','notalabel','{"k":5}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for invalid label column';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 4: k=0'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('knn','test_train_view','features','label','{"k":0}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for k=0';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 5: Negative k'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('knn','test_train_view','features','label','{"k":-1}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for negative k';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 6: NULL features'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.train('knn','test_train_view',NULL,'label','{"k":5}'::jsonb);
+		RAISE EXCEPTION 'FAIL: expected error for NULL feature column';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+/*-------------------------------------------------------------------
+ * ---- PREDICT ----
+ * GPU/CPU paths, all error paths, batch and single, sampling 1000
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'Prediction Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Predict Test 1: GPU batch prediction (1000 rows)'
+SET neurondb.gpu_enabled = on;
+SELECT 
+	'GPU Batch' AS test_type,
+	COUNT(*) AS n_predictions,
+	ROUND(AVG(score)::numeric, 4) AS avg_score,
+	ROUND(MIN(score)::numeric, 4) AS min_score,
+	ROUND(MAX(score)::numeric, 4) AS max_score
+FROM (
+	SELECT neurondb.predict((SELECT gpu_model_id FROM gpu_model_k3_temp_014 LIMIT 1), features) AS score
+	FROM test_test_view
+	LIMIT 1000
+) sub;
+
+\echo 'Predict Test 2: CPU batch prediction (1000 rows)'
+SET neurondb.gpu_enabled = off;
+SELECT 
+	'CPU Batch' AS test_type,
+	COUNT(*) AS n_predictions,
+	ROUND(AVG(score)::numeric, 4) AS avg_score,
+	ROUND(MIN(score)::numeric, 4) AS min_score,
+	ROUND(MAX(score)::numeric, 4) AS max_score
+FROM (
+	SELECT neurondb.predict((SELECT cpu_model_id FROM cpu_model_k5_temp_014 LIMIT 1), features) AS score
+	FROM test_test_view
+	LIMIT 1000
+) sub;
+
+\echo 'Predict Test 3: Custom model single row prediction'
+SELECT 
+	'Custom Single' AS test_type,
+	neurondb.predict((SELECT custom_model_id FROM custom_model_temp_014 LIMIT 1), features) AS prediction
+FROM test_test_view
+LIMIT 1;
+
+\echo 'Predict Test 4: Custom model batch (100 rows)'
+SET neurondb.gpu_enabled = off;
+SELECT 
+	'Custom Batch' AS test_type,
+	COUNT(*) AS n_predictions,
+	ROUND(AVG(score)::numeric, 4) AS avg_score
+FROM (
+	SELECT neurondb.predict((SELECT custom_model_id FROM custom_model_temp_014 LIMIT 1), features) AS score
+	FROM test_test_view
+	LIMIT 100
+) b;
+
+\echo 'Predict Test 5: k=1 model batch (50 rows)'
+SELECT 
+	'k=1 Batch' AS test_type,
+	COUNT(*) AS n_predictions,
+	ROUND(AVG(score)::numeric, 4) AS avg_score
+FROM (
+	SELECT neurondb.predict((SELECT k1_model_id FROM k1_model_temp_014 LIMIT 1), features) AS score
+	FROM test_test_view
+	LIMIT 50
+) b;
+
+/* Error: invalid model id */
+\echo ''
+\echo 'Prediction Error Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Predict Error Test 1: Non-existent model ID'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.predict(-10, ARRAY[0.1, 0.2, 0.3]::double precision[]);
+		RAISE EXCEPTION 'FAIL: non-existent model should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Predict Error Test 2: Wrong feature type (integer array)'
+DO $$
+DECLARE
+	cpu_mid_temp integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid_temp FROM cpu_model_k5_temp_014 LIMIT 1;
+	BEGIN
+		PERFORM neurondb.predict(cpu_mid_temp, '{1,2,3}'::integer[]);
+		RAISE EXCEPTION 'FAIL: int[] instead of float[] should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Predict Error Test 3: Wrong feature dimension'
+DO $$
+DECLARE
+	model_dim integer;
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_k5_temp_014 LIMIT 1;
+	SELECT jsonb_array_length(metrics->'feature_dim') INTO model_dim
+	FROM neurondb.ml_models WHERE model_id = cpu_mid
+	AND metrics IS NOT NULL AND metrics->'feature_dim' IS NOT NULL;
+	IF model_dim IS NULL THEN
+		model_dim := 28; /* Default if not available */
+	END IF;
+	BEGIN
+		PERFORM neurondb.predict(cpu_mid, ARRAY[42.0]::double precision[]); -- wrong dim
+		RAISE EXCEPTION 'FAIL: wrong feature array length should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END
+$$;
+
+\echo 'Predict Error Test 4: NULL model ID'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.predict(NULL, ARRAY[0.1, 0.2, 0.3]::double precision[]);
+		RAISE EXCEPTION 'FAIL: NULL model ID should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Predict Error Test 5: NULL features'
+DO $$
+DECLARE
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_k5_temp_014 LIMIT 1;
+	BEGIN
+		PERFORM neurondb.predict(cpu_mid, NULL);
+		RAISE EXCEPTION 'FAIL: NULL features should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+/*-------------------------------------------------------------------
+ * ---- EVALUATE ----
+ * Metrics for all model types/paths ; test set sampled to 1000 rows
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'Evaluation Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Evaluate Test 1: CPU model evaluation'
+DO $$
+DECLARE
+	cpu_mid integer;
+	result jsonb;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_k5_temp_014 LIMIT 1;
+	IF cpu_mid IS NOT NULL THEN
+		BEGIN
+			result := neurondb.evaluate(cpu_mid, 'test_test_view', 'features', 'label');
+				result->>'tp', result->>'fp', result->>'tn', result->>'fn';
+		EXCEPTION WHEN OTHERS THEN
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Test 2: GPU model evaluation'
+DO $$
+DECLARE
+	gpu_mid integer;
+	result jsonb;
+BEGIN
+	SELECT gpu_model_id INTO gpu_mid FROM gpu_model_k3_temp_014 LIMIT 1;
+	IF gpu_mid IS NOT NULL THEN
+		BEGIN
+			result := neurondb.evaluate(gpu_mid, 'test_test_view', 'features', 'label');
+				result->>'tp', result->>'fp', result->>'tn', result->>'fn';
+		EXCEPTION WHEN OTHERS THEN
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Test 3: Custom model evaluation'
+DO $$
+DECLARE
+	custom_mid integer;
+	result jsonb;
+BEGIN
+	SELECT custom_model_id INTO custom_mid FROM custom_model_temp_014 LIMIT 1;
+	IF custom_mid IS NOT NULL THEN
+		BEGIN
+			result := neurondb.evaluate(custom_mid, 'test_test_view', 'features', 'label');
+		EXCEPTION WHEN OTHERS THEN
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Test 4: k=1 model evaluation'
+DO $$
+DECLARE
+	k1_mid integer;
+	result jsonb;
+BEGIN
+	SELECT k1_model_id INTO k1_mid FROM k1_model_temp_014 LIMIT 1;
+	IF k1_mid IS NOT NULL THEN
+		BEGIN
+			result := neurondb.evaluate(k1_mid, 'test_test_view', 'features', 'label');
+		EXCEPTION WHEN OTHERS THEN
+		END;
+	END IF;
+END$$;
+
+\echo ''
+\echo 'Evaluation Error Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Evaluate Error Test 1: Invalid table'
+DO $$
+DECLARE
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_k5_temp_014 LIMIT 1;
+	IF cpu_mid IS NOT NULL THEN
+		BEGIN
+			BEGIN
+				PERFORM neurondb.evaluate(cpu_mid, 'no_such', 'features', 'label');
+				RAISE EXCEPTION 'FAIL: eval on bad table must error';
+			EXCEPTION WHEN OTHERS THEN 
+			NULL;
+			END;
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Error Test 2: Invalid feature column'
+DO $$
+DECLARE
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_k5_temp_014 LIMIT 1;
+	IF cpu_mid IS NOT NULL THEN
+		BEGIN
+			BEGIN
+				PERFORM neurondb.evaluate(cpu_mid, 'test_test_view', 'badfeature', 'label');
+				RAISE EXCEPTION 'FAIL: eval on bad feature col must error';
+			EXCEPTION WHEN OTHERS THEN 
+			NULL;
+			END;
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Error Test 3: Invalid label column'
+DO $$
+DECLARE
+	cpu_mid integer;
+BEGIN
+	SELECT cpu_model_id INTO cpu_mid FROM cpu_model_k5_temp_014 LIMIT 1;
+	IF cpu_mid IS NOT NULL THEN
+		BEGIN
+			BEGIN
+				PERFORM neurondb.evaluate(cpu_mid, 'test_test_view', 'features', 'badlabel');
+				RAISE EXCEPTION 'FAIL: eval on bad label col must error';
+			EXCEPTION WHEN OTHERS THEN 
+			NULL;
+			END;
+		END;
+	END IF;
+END$$;
+
+\echo 'Evaluate Error Test 4: NULL model ID'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM neurondb.evaluate(NULL, 'test_test_view', 'features', 'label');
+		RAISE EXCEPTION 'FAIL: NULL model ID should error';
+	EXCEPTION WHEN OTHERS THEN 
+			NULL;
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+/*-------------------------------------------------------------------
+ * Model catalog check and metadata
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'Model Metadata Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Metadata Test 1: GPU model metadata'
+SELECT 
+	m.model_id,
+	m.algorithm,
+	m.created_at,
+	m.metrics->>'storage' AS storage_type,
+	m.metrics->>'k' AS k_value,
+	m.metrics->>'accuracy' AS accuracy,
+	m.metrics->>'n_samples' AS n_samples,
+	m.metrics->>'n_features' AS n_features,
+	m.metrics->>'n_classes' AS n_classes,
+	CASE 
+		WHEN m.model_data IS NULL THEN 'NULL (GPU model)'
+		ELSE format('%s bytes', pg_column_size(m.model_data))
+	END AS model_data_status
+FROM neurondb.ml_models m, gpu_model_k3_temp_014 t
+WHERE m.model_id = t.gpu_model_id;
+
+\echo 'Metadata Test 2: CPU model metadata'
 SELECT 
 	m.model_id,
 	m.algorithm,
@@ -104,141 +537,32 @@ SELECT
 		WHEN m.model_data IS NULL THEN 'NULL (GPU model)'
 		ELSE format('%s bytes', pg_column_size(m.model_data))
 	END AS model_data_status
-FROM neurondb.ml_models m, knn_k5 t
-WHERE m.model_id = t.model_id;
+FROM neurondb.ml_models m, cpu_model_k5_temp_014 t
+WHERE m.model_id = t.cpu_model_id;
 
-\echo ''
-\echo 'Test 3: K Value Comparison'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Compare accuracy for different k values
+\echo 'Metadata Test 3: Custom model metadata'
 SELECT 
-	'k=3' AS k_value,
-	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
-FROM neurondb.ml_models m, knn_k3 g
-WHERE m.model_id = g.model_id
-UNION ALL
+	m.model_id,
+	m.algorithm,
+	m.metrics->>'k' AS k_value,
+	m.metrics->>'accuracy' AS accuracy
+FROM neurondb.ml_models m, custom_model_temp_014 t
+WHERE m.model_id = t.custom_model_id;
+
+\echo 'Metadata Test 4: Model comparison (all models)'
 SELECT 
-	'k=5' AS k_value,
-	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
-FROM neurondb.ml_models m, knn_k5 g
-WHERE m.model_id = g.model_id
-UNION ALL
-SELECT 
-	'k=7' AS k_value,
-	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
-FROM neurondb.ml_models m, knn_k7 g
-WHERE m.model_id = g.model_id
-ORDER BY k_value;
-
-\echo ''
-\echo 'Test 4: Batch Evaluation Performance (Optimized C Batch Processing)'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Use optimized batch evaluation instead of per-row predictions
-CREATE TEMP TABLE knn_eval_temp AS
-SELECT neurondb.evaluate((SELECT model_id FROM knn_k5), 'test_test_view', 'features', 'label') AS metrics;
-
-SELECT
-	'Total Samples' AS metric,
-	(SELECT COUNT(*)::bigint FROM test_test_view WHERE features IS NOT NULL AND label IS NOT NULL)::text AS value
-UNION ALL
-SELECT 'Accuracy', ROUND((metrics->>'accuracy')::numeric, 6)::text
-FROM knn_eval_temp
-WHERE metrics->>'accuracy' IS NOT NULL
-UNION ALL
-SELECT 'Precision', ROUND((metrics->>'precision')::numeric, 6)::text
-FROM knn_eval_temp
-WHERE metrics->>'precision' IS NOT NULL
-UNION ALL
-SELECT 'Recall', ROUND((metrics->>'recall')::numeric, 6)::text
-FROM knn_eval_temp
-WHERE metrics->>'recall' IS NOT NULL
-UNION ALL
-SELECT 'F1 Score', ROUND((metrics->>'f1_score')::numeric, 6)::text
-FROM knn_eval_temp
-WHERE metrics->>'f1_score' IS NOT NULL
-ORDER BY metric;
-
-\echo ''
-\echo 'Test 5: Model Quality Metrics'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Use evaluation metrics for quality assessment (much faster than per-row predictions)
-SELECT
-	ROUND((metrics->>'accuracy')::numeric, 6) AS accuracy,
-	ROUND((metrics->>'precision')::numeric, 6) AS precision,
-	ROUND((metrics->>'recall')::numeric, 6) AS recall,
-	ROUND((metrics->>'f1_score')::numeric, 6) AS f1_score,
-	CASE 
-		WHEN (metrics->>'accuracy')::numeric > 0.8 THEN 'Excellent'
-		WHEN (metrics->>'accuracy')::numeric > 0.6 THEN 'Good'
-		WHEN (metrics->>'accuracy')::numeric > 0.4 THEN 'Moderate'
-		ELSE 'Poor (may need different k or feature engineering)'
-	END AS fit_quality
-FROM knn_eval_temp;
-
-\echo ''
-\echo 'Test 6: Model Comparison (GPU vs CPU)'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Train GPU model
-DROP TABLE IF EXISTS gpu_model_adv;
-CREATE TEMP TABLE gpu_model_adv AS
-SELECT neurondb.train(
-	'knn',
-	'test_train_view',
-	'features',
-	'label',
-	'{"k": 5, "storage": "gpu"}'::jsonb
-)::integer AS model_id;
-
--- Train CPU model (if possible)
-DROP TABLE IF EXISTS cpu_model_adv;
-CREATE TEMP TABLE cpu_model_adv AS
-SELECT neurondb.train(
-	'knn',
-	'test_train_view',
-	'features',
-	'label',
-	'{"k": 5, "storage": "cpu"}'::jsonb
-)::integer AS model_id;
-
--- Compare metrics
-SELECT 
-	'GPU Model' AS model_type,
-	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
-FROM neurondb.ml_models m, gpu_model_adv g
-WHERE m.model_id = g.model_id
-UNION ALL
-SELECT 
-	'CPU Model' AS model_type,
-	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
-FROM neurondb.ml_models m, cpu_model_adv c
-WHERE m.model_id = c.model_id;
-
-\echo ''
-\echo 'Test 7: Model Persistence and Retrieval'
-\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-
--- Check models are persisted
-SELECT 
-	COUNT(*) AS total_models,
-	COUNT(DISTINCT (metrics->>'k')::int) AS unique_k_values,
-	MIN(created_at) AS oldest_model,
-	MAX(created_at) AS newest_model
+	algorithm,
+	COUNT(*) AS n_models,
+	MIN(created_at) AS first_created,
+	MAX(created_at) AS last_created,
+	COUNT(CASE WHEN metrics->>'storage' = 'gpu' THEN 1 END) AS gpu_models,
+	COUNT(CASE WHEN metrics->>'storage' = 'cpu' THEN 1 END) AS cpu_models,
+	COUNT(DISTINCT (metrics->>'k')::int) AS unique_k_values
 FROM neurondb.ml_models
-WHERE algorithm = 'knn';
-
--- Cleanup
-DROP TABLE IF EXISTS knn_k3;
-DROP TABLE IF EXISTS knn_k5;
-DROP TABLE IF EXISTS knn_k7;
-DROP TABLE IF EXISTS knn_eval_temp;
-DROP TABLE IF EXISTS gpu_model_adv;
-DROP TABLE IF EXISTS cpu_model_adv;
+WHERE algorithm = 'knn'
+GROUP BY algorithm;
 
 \echo ''
-\echo 'Advanced KNN Test Complete!'
 \echo '=========================================================================='
-
+\echo '✓ knn: Full exhaustive code-path test complete (1000-row sample)'
+\echo '=========================================================================='

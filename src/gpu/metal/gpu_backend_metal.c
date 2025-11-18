@@ -135,7 +135,6 @@ metal_backend_init_impl(void)
 	ok = metal_backend_init();
 	if (!ok)
 	{
-		elog(WARNING,
 			"neurondb: Metal backend initialization failed. "
 			"Check Metal device support and driver installation on "
 			"this system.");
@@ -151,7 +150,6 @@ static void
 metal_backend_cleanup_impl(void)
 {
 	metal_backend_cleanup();
-	elog(DEBUG1,
 		"neurondb: Metal GPU backend cleanup: all queues, kernels, and "
 		"state released");
 }
@@ -162,7 +160,6 @@ metal_backend_is_available_impl(void)
 	bool avail;
 
 	avail = metal_backend_is_available();
-	elog(DEBUG3,
 		"neurondb: Metal backend availability = %s",
 		avail ? "YES" : "NO");
 	return avail;
@@ -176,7 +173,6 @@ metal_backend_get_device_count_impl(void)
 	int count;
 
 	count = metal_backend_is_available() ? 1 : 0;
-	elog(DEBUG2, "neurondb: Metal get_device_count: %d", count);
 	return count;
 }
 
@@ -190,7 +186,6 @@ metal_backend_get_device_info_impl(int device_id, GPUDeviceInfo *info)
 
 	if (device_id != 0 || info == NULL)
 	{
-		elog(WARNING,
 			"neurondb: metal_backend_get_device_info: invalid id "
 			"(%d) or NULL info pointer %p",
 			device_id,
@@ -200,7 +195,6 @@ metal_backend_get_device_info_impl(int device_id, GPUDeviceInfo *info)
 
 	if (!metal_backend_is_available())
 	{
-		elog(WARNING,
 			"neurondb: Metal not available (cannot query device "
 			"info)");
 		return false;
@@ -225,7 +219,6 @@ metal_backend_get_device_info_impl(int device_id, GPUDeviceInfo *info)
 	info->compute_minor = 0;
 	info->is_available = true;
 
-	elog(DEBUG2,
 		"neurondb: Metal get_device_info: name='%s', total=%lld MB, "
 		"free=%lld MB, "
 		"major=%d, minor=%d",
@@ -243,10 +236,8 @@ metal_backend_set_device_impl(int device_id)
 {
 	if (device_id == 0)
 	{
-		elog(DEBUG3, "neurondb: Metal device 0 selected");
 		return true;
 	}
-	elog(WARNING,
 		"neurondb: Metal set_device: device_id %d not available",
 		device_id);
 	return false;
@@ -265,7 +256,6 @@ metal_backend_mem_alloc_impl(Size bytes)
 			"neurondb: Metal mem_alloc: failed to allocate %zu "
 			"bytes",
 			bytes);
-	elog(DEBUG3, "neurondb: Metal mem_alloc: %zu bytes -> %p", bytes, ptr);
 	return ptr;
 }
 
@@ -274,7 +264,6 @@ metal_backend_mem_free_impl(void *ptr)
 {
 	if (ptr != NULL)
 	{
-		elog(DEBUG3, "neurondb: Metal mem_free: %p", ptr);
 		pfree(ptr);
 	}
 }
@@ -285,14 +274,12 @@ metal_backend_mem_copy_h2d_impl(void *dst, const void *src, Size bytes)
 	if (dst != NULL && src != NULL && bytes > 0)
 	{
 		memcpy(dst, src, bytes);
-		elog(DEBUG3,
 			"neurondb: Metal mem_copy_h2d: %zu bytes %p -> %p",
 			bytes,
 			src,
 			dst);
 		return true;
 	}
-	elog(WARNING,
 		"neurondb: Metal mem_copy_h2d failed: dst=%p, src=%p, "
 		"bytes=%zu",
 		dst,
@@ -307,14 +294,12 @@ metal_backend_mem_copy_d2h_impl(void *dst, const void *src, Size bytes)
 	if (dst != NULL && src != NULL && bytes > 0)
 	{
 		memcpy(dst, src, bytes);
-		elog(DEBUG3,
 			"neurondb: Metal mem_copy_d2h: %zu bytes %p -> %p",
 			bytes,
 			src,
 			dst);
 		return true;
 	}
-	elog(WARNING,
 		"neurondb: Metal mem_copy_d2h failed: dst=%p, src=%p, "
 		"bytes=%zu",
 		dst,
@@ -326,7 +311,6 @@ metal_backend_mem_copy_d2h_impl(void *dst, const void *src, Size bytes)
 static void __attribute__((unused))
 metal_backend_synchronize_impl(void)
 {
-	elog(DEBUG2,
 		"neurondb: Metal synchronize: no explicit sync required (UMA "
 		"system)");
 }
@@ -367,7 +351,6 @@ metal_backend_batch_l2_impl(const float *queries,
 	Assert(queries != NULL && targets != NULL && distances != NULL);
 	metal_backend_batch_l2(
 		queries, targets, num_queries, num_targets, dim, distances);
-	elog(DEBUG2,
 		"neurondb: batch_l2 %d queries x %d targets, dim=%d",
 		num_queries,
 		num_targets,
@@ -409,7 +392,6 @@ metal_backend_batch_cosine_impl(const float *queries,
 			dist = 1.0f - cosine;
 
 			distances[i * num_targets + j] = dist;
-			elog(DEBUG5,
 				"neurondb: batch_cosine i=%d j=%d dist=%f",
 				i,
 				j,
@@ -441,7 +423,6 @@ metal_backend_quantize_int8_impl(const float *input, int8_t *output, int count)
 	if (max_abs < 1e-10f)
 	{
 		memset(output, 0, count * sizeof(int8_t));
-		elog(DEBUG4,
 			"neurondb: quantize_int8: all-zeros (max abs < 1e-10)");
 		return true;
 	}
@@ -458,7 +439,6 @@ metal_backend_quantize_int8_impl(const float *input, int8_t *output, int count)
 		if (out < -127)
 			out = -127;
 		output[i] = (int8_t)out;
-		elog(DEBUG5,
 			"neurondb: quantize_int8[%d]: in=%f scaled=%f out=%d",
 			i,
 			input[i],
@@ -501,7 +481,6 @@ metal_backend_quantize_fp16_impl(const float *input, void *output, int count)
 			fp16 = sign | (exp << 10) | (mant & 0x3FF);
 		}
 		o[i] = fp16;
-		elog(DEBUG5,
 			"neurondb: quantize_fp16[%d]: in=%f -> 0x%04x",
 			i,
 			input[i],
@@ -563,7 +542,6 @@ metal_backend_kmeans_impl(const float *vectors,
 			if (assignments[i] != cid)
 			{
 				changed = true;
-				elog(DEBUG5,
 					"kmeans: vector %d: cluster %d -> %d "
 					"(dist=%f)",
 					i,
@@ -576,7 +554,6 @@ metal_backend_kmeans_impl(const float *vectors,
 
 		if (!changed)
 		{
-			elog(DEBUG3,
 				"kmeans: converged after %d iteration(s)",
 				iter + 1);
 			break;
@@ -606,7 +583,6 @@ metal_backend_kmeans_impl(const float *vectors,
 			}
 		}
 		memcpy(centroids, new_centroids, k * dim * sizeof(float));
-		elog(DEBUG4, "kmeans: iter %d: centroids recomputed", iter + 1);
 	}
 
 	pfree(cluster_counts);
@@ -717,7 +693,6 @@ metal_backend_dbscan_impl(const float *vectors,
 			if (cluster_ids[n] == -1)
 				cluster_ids[n] = cluster;
 		}
-		elog(DEBUG5,
 			"neurondb: dbscan: assigned cluster %d (core=%d "
 			"neighbors=%d)",
 			cluster,
@@ -728,7 +703,6 @@ metal_backend_dbscan_impl(const float *vectors,
 	pfree(visited);
 	pfree(neighbors);
 
-	elog(DEBUG2,
 		"neurondb: Metal DBSCAN: %d clusters (including noise)",
 		cluster + 1);
 	return true;
@@ -739,7 +713,6 @@ metal_backend_dbscan_impl(const float *vectors,
 static bool __attribute__((unused))
 metal_backend_create_streams_impl(int num_streams)
 {
-	elog(DEBUG1,
 		"neurondb: Metal create_streams: requested %d command queues",
 		num_streams);
 	return true;
@@ -748,14 +721,12 @@ metal_backend_create_streams_impl(int num_streams)
 static void __attribute__((unused))
 metal_backend_destroy_streams_impl(void)
 {
-	elog(DEBUG1,
 		"neurondb: Metal destroy_streams: command queues released");
 }
 
 static void * __attribute__((unused))
 metal_backend_get_context_impl(void)
 {
-	elog(DEBUG1,
 		"neurondb: Metal backend get_context invoked (not implemented, "
 		"returns NULL)");
 	return NULL;
@@ -3873,7 +3844,6 @@ ndb_metal_nb_train(const float *features,
 		return -1;
 	}
 
-	elog(DEBUG1, "ndb_metal_nb_train: starting training: n_samples=%d, feature_dim=%d, class_count=%d",
 		n_samples, feature_dim, class_count);
 
 	/* Allocate host memory */
@@ -4246,7 +4216,6 @@ ndb_metal_gmm_train(const float *features,
 		return -1;
 	}
 
-	elog(DEBUG1, "ndb_metal_gmm_train: starting training: n_samples=%d, feature_dim=%d, n_components=%d",
 		n_samples, feature_dim, n_components);
 
 	/* Extract hyperparameters from JSONB */
@@ -4372,7 +4341,6 @@ ndb_metal_gmm_train(const float *features,
 		/* Check convergence */
 		if (fabs(log_likelihood - prev_log_likelihood) < tolerance)
 		{
-			elog(DEBUG1, "ndb_metal_gmm_train: converged at iteration %d (ll=%.4f)", iter + 1, log_likelihood);
 			break;
 		}
 		prev_log_likelihood = log_likelihood;
@@ -4705,7 +4673,6 @@ ndb_metal_knn_train(const float *features,
 		return -1;
 	}
 
-	elog(DEBUG1, "ndb_metal_knn_train: starting training: n_samples=%d, feature_dim=%d, k=%d, task_type=%d",
 		n_samples, feature_dim, k, task_type);
 
 	/* Extract hyperparameters if provided */
@@ -4978,10 +4945,8 @@ void
 neurondb_gpu_register_metal_backend(void)
 {
 	if (ndb_gpu_register_backend(&ndb_metal_backend) == 0)
-		elog(DEBUG1,
 			"neurondb: Metal GPU backend registered successfully");
 	else
-		elog(WARNING,
 			"neurondb: Metal GPU backend registration failed");
 }
 

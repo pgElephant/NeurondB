@@ -124,18 +124,22 @@ knn_classify(PG_FUNCTION_ARGS)
 	dim = query_vector->dim;
 
 	if (k < 1)
-		ereport(ERROR, (errmsg("k must be at least 1, got %d", k)));
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: k must be at least 1, got %d", k)));
 
 	oldcontext = CurrentMemoryContext;
 
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_connect failed")));
 
 	/* Build query to fetch all training samples */
 	initStringInfo(&query);
-	appendStringInfo(&query,
-		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+	elog(DEBUG1,
+			"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
 		feat_str,
 		label_str,
 		tbl_str,
@@ -144,15 +148,18 @@ knn_classify(PG_FUNCTION_ARGS)
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errmsg("Query failed: %s", query.data)));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: query failed: %s", query.data)));
 
 	nvec = SPI_processed;
 
 	if (nvec < k)
 		ereport(ERROR,
-			(errmsg("Need at least k=%d samples, but found only %d",
-				k,
-				nvec)));
+			(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				errmsg("neurondb: need at least k=%d samples, but found only %d",
+					k,
+					nvec)));
 
 	/* Allocate samples array in caller's context */
 	MemoryContextSwitchTo(oldcontext);
@@ -176,13 +183,14 @@ knn_classify(PG_FUNCTION_ARGS)
 			continue;
 
 		vec = DatumGetVector(feat_datum);
+		if (vec == NULL || vec->dim <= 0)
+			continue;
 
 		if (vec->dim != dim)
 			ereport(ERROR,
-				(errmsg("Dimension mismatch: expected %d, got "
-					"%d",
-					dim,
-					vec->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Dimension mismatch: expected %d, got %d",
+						dim, vec->dim)));
 
 		/* Copy features */
 		samples[i].features = (float *)palloc(sizeof(float) * dim);
@@ -265,18 +273,22 @@ knn_regress(PG_FUNCTION_ARGS)
 	dim = query_vector->dim;
 
 	if (k < 1)
-		ereport(ERROR, (errmsg("k must be at least 1, got %d", k)));
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: k must be at least 1, got %d", k)));
 
 	oldcontext = CurrentMemoryContext;
 
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_connect failed")));
 
 	/* Build query */
 	initStringInfo(&query);
-	appendStringInfo(&query,
-		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+	elog(DEBUG1,
+			"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
 		feat_str,
 		targ_str,
 		tbl_str,
@@ -285,7 +297,9 @@ knn_regress(PG_FUNCTION_ARGS)
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errmsg("Query failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: query failed")));
 
 	nvec = SPI_processed;
 
@@ -317,13 +331,14 @@ knn_regress(PG_FUNCTION_ARGS)
 			continue;
 
 		vec = DatumGetVector(feat_datum);
+		if (vec == NULL || vec->dim <= 0)
+			continue;
 
 		if (vec->dim != dim)
 			ereport(ERROR,
-				(errmsg("Dimension mismatch: expected %d, got "
-					"%d",
-					dim,
-					vec->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Dimension mismatch: expected %d, got %d",
+						dim, vec->dim)));
 
 		/* Copy features */
 		samples[i].features = (float *)palloc(sizeof(float) * dim);
@@ -404,12 +419,14 @@ evaluate_knn_classifier(PG_FUNCTION_ARGS)
 
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_connect failed")));
 
 	/* Build query to fetch test samples */
 	initStringInfo(&query);
-	appendStringInfo(&query,
-		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+	elog(DEBUG1,
+			"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
 		feat_str,
 		label_str,
 		test_str,
@@ -418,7 +435,9 @@ evaluate_knn_classifier(PG_FUNCTION_ARGS)
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errmsg("Query failed")));
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: query failed")));
 
 	ntest = SPI_processed;
 
@@ -565,7 +584,9 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 		Datum vec_datum;
 		
 		if (SPI_connect() != SPI_OK_CONNECT)
-			ereport(ERROR, (errmsg("SPI_connect failed")));
+			ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_connect failed")));
 		
 		initStringInfo(&query);
 		appendStringInfo(&query, "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
@@ -579,7 +600,9 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 			pfree(feat_str);
 			pfree(label_str);
 			pfree(query.data);
-			ereport(ERROR, (errmsg("Failed to fetch training data")));
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: failed to fetch training data")));
 		}
 		
 		nvec = SPI_processed;
@@ -604,7 +627,9 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 			pfree(feat_str);
 			pfree(label_str);
 			pfree(query.data);
-			ereport(ERROR, (errmsg("NULL vector in first row")));
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: NULL vector in first row")));
 		}
 		first_vec = DatumGetVector(vec_datum);
 		dim = first_vec->dim;
@@ -622,7 +647,9 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 				pfree(feat_str);
 				pfree(label_str);
 				pfree(query.data);
-				ereport(ERROR, (errmsg("NULL vector at row %d", i)));
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: NULL vector at row %d", i)));
 			}
 			vec = DatumGetVector(vec_datum);
 			if (vec->dim != dim)
@@ -632,7 +659,9 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 				pfree(feat_str);
 				pfree(label_str);
 				pfree(query.data);
-				ereport(ERROR, (errmsg("Inconsistent vector dimension at row %d", i)));
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: inconsistent vector dimension at row %d", i)));
 			}
 		}
 		
@@ -756,6 +785,7 @@ predict_knn_model_id(PG_FUNCTION_ARGS)
 				errmsg("predict_knn_model_id: features array cannot be empty")));
 
 	/* Fetch model data from catalog */
+	elog(DEBUG1, "predict_knn_model_id: creating memory context");
 	callcontext = AllocSetContextCreate(CurrentMemoryContext,
 		"predict_knn_model_id context",
 		ALLOCSET_DEFAULT_SIZES);
@@ -926,7 +956,9 @@ predict_knn_model_id(PG_FUNCTION_ARGS)
 					pfree(metrics);
 				if (model_data)
 					pfree(model_data);
-				ereport(ERROR, (errmsg("SPI_connect failed in predict_knn_model_id")));
+				ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("neurondb: SPI_connect failed in predict_knn_model_id")));
 			}
 			
 			ret = SPI_execute(sql_query.data, true, 0);
@@ -943,7 +975,9 @@ predict_knn_model_id(PG_FUNCTION_ARGS)
 					pfree(metrics);
 				if (model_data)
 					pfree(model_data);
-				ereport(ERROR, (errmsg("knn_classify failed in predict_knn_model_id")));
+				ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("neurondb: knn_classify failed in predict_knn_model_id")));
 			}
 			
 			/* Get result */
@@ -1477,8 +1511,8 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 
 	/* Build query - single query to fetch all data */
 	initStringInfo(&query);
-	appendStringInfo(&query,
-		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+	elog(DEBUG1,
+			"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
 		quote_identifier(feat_str),
 		quote_identifier(targ_str),
 		quote_identifier(tbl_str),
@@ -1529,15 +1563,286 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	if (is_gpu_model && neurondb_gpu_is_available())
 	{
 #ifdef NDB_GPU_CUDA
-		/* For now, GPU evaluation for KNN is not implemented, fall back to CPU */
-		elog(DEBUG1,
-			"neurondb: evaluate_knn_by_model_id: GPU evaluation not yet implemented for KNN, using CPU batch evaluation");
-		goto gpu_eval_fallback;
+		const NdbCudaKnnModelHeader *gpu_hdr;
+		int *h_labels = NULL;
+		float *h_features = NULL;
+		int valid_rows = 0;
+		size_t payload_size;
+
+		/* Defensive check: validate payload size */
+		payload_size = VARSIZE(gpu_payload) - VARHDRSZ;
+		if (payload_size < sizeof(NdbCudaKnnModelHeader))
+		{
+				 elog(DEBUG1,
+				 	"neurondb: evaluate_knn_by_model_id: GPU payload too small (%zu bytes), falling back to CPU",
+				 payload_size);
+			goto cpu_evaluation_path;
+		}
+
+		/* Load GPU model header with defensive checks */
+		gpu_hdr = (const NdbCudaKnnModelHeader *)VARDATA(gpu_payload);
+		if (gpu_hdr == NULL)
+		{
+			elog(DEBUG1,
+			     "neurondb: evaluate_knn_by_model_id: NULL GPU header, falling back to CPU");
+			goto cpu_evaluation_path;
+		}
+
+		if (gpu_hdr->n_features != feat_dim)
+		{
+				 elog(DEBUG1,
+				 	"neurondb: evaluate_knn_by_model_id: feature dimension mismatch (model has %d, expected %d), falling back to CPU",
+				 gpu_hdr->n_features, feat_dim);
+			goto cpu_evaluation_path;
+		}
+
+		if (gpu_hdr->n_features <= 0 || gpu_hdr->n_features > 100000)
+		{
+				 elog(DEBUG1,
+				 	"evaluate_knn_by_model_id: invalid feature_dim (%d), falling back to CPU",
+				 gpu_hdr->n_features);
+			goto cpu_evaluation_path;
+		}
+
+		/* Allocate host buffers for features and labels with size checks */
+		{
+			size_t features_size = sizeof(float) * (size_t)nvec * (size_t)feat_dim;
+			size_t labels_size = sizeof(int) * (size_t)nvec;
+
+			if (features_size > MaxAllocSize || labels_size > MaxAllocSize)
+			{
+					 elog(DEBUG1,
+					 	"neurondb: evaluate_knn_by_model_id: allocation size too large (features=%zu, labels=%zu), falling back to CPU",
+					 features_size, labels_size);
+				goto cpu_evaluation_path;
+			}
+
+			h_features = (float *)palloc(features_size);
+			h_labels = (int *)palloc(labels_size);
+
+			if (h_features == NULL || h_labels == NULL)
+			{
+				elog(DEBUG1,
+					"neurondb: evaluate_knn_by_model_id: memory allocation failed, falling back to CPU");
+				if (h_features)
+					pfree(h_features);
+				if (h_labels)
+					pfree(h_labels);
+				goto cpu_evaluation_path;
+			}
+		}
+
+		/* Extract features and labels from SPI results - optimized batch extraction */
+		/* Cache TupleDesc to avoid repeated lookups */
+		{
+			TupleDesc tupdesc = SPI_tuptable->tupdesc;
+
+			if (tupdesc == NULL)
+			{
+				elog(DEBUG1,
+				     "neurondb: evaluate_knn_by_model_id: NULL TupleDesc, falling back to CPU");
+				pfree(h_features);
+				pfree(h_labels);
+				goto cpu_evaluation_path;
+			}
+
+			for (i = 0; i < nvec; i++)
+			{
+				HeapTuple tuple;
+				Datum feat_datum;
+				Datum targ_datum;
+				bool feat_null;
+				bool targ_null;
+				Vector *vec;
+				ArrayType *arr;
+				float *feat_row;
+
+				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || i >= SPI_processed)
+					break;
+
+				tuple = SPI_tuptable->vals[i];
+				if (tuple == NULL)
+					continue;
+
+				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+
+				if (feat_null || targ_null)
+					continue;
+
+				/* Bounds check */
+				if (valid_rows >= nvec)
+				{
+					elog(DEBUG1,
+					     "neurondb: evaluate_knn_by_model_id: valid_rows overflow, breaking");
+					break;
+				}
+
+				feat_row = h_features + (valid_rows * feat_dim);
+				if (feat_row == NULL || feat_row < h_features || feat_row >= h_features + (nvec * feat_dim))
+				{
+					elog(DEBUG1,
+					     "neurondb: evaluate_knn_by_model_id: feat_row out of bounds, skipping row");
+					continue;
+				}
+
+				h_labels[valid_rows] = (int)rint(DatumGetFloat8(targ_datum));
+
+				/* Extract feature vector - optimized paths */
+				if (feat_is_array)
+				{
+					arr = DatumGetArrayTypeP(feat_datum);
+					if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != feat_dim)
+						continue;
+					if (feat_type_oid == FLOAT8ARRAYOID)
+					{
+						/* Optimized: bulk conversion with loop unrolling hint */
+						float8 *data = (float8 *)ARR_DATA_PTR(arr);
+						int j_remain = feat_dim % 4;
+						int j_end = feat_dim - j_remain;
+
+						/* Process 4 elements at a time for better cache locality */
+						for (j = 0; j < j_end; j += 4)
+						{
+							feat_row[j] = (float)data[j];
+							feat_row[j + 1] = (float)data[j + 1];
+							feat_row[j + 2] = (float)data[j + 2];
+							feat_row[j + 3] = (float)data[j + 3];
+						}
+						/* Handle remaining elements */
+						for (j = j_end; j < feat_dim; j++)
+							feat_row[j] = (float)data[j];
+					}
+					else
+					{
+						/* FLOAT4ARRAYOID: direct memcpy (already optimal) */
+						float4 *data = (float4 *)ARR_DATA_PTR(arr);
+						memcpy(feat_row, data, sizeof(float) * feat_dim);
+					}
+				}
+				else
+				{
+					/* Vector type: direct memcpy (already optimal) */
+					vec = DatumGetVector(feat_datum);
+					if (vec->dim != feat_dim)
+						continue;
+					memcpy(feat_row, vec->data, sizeof(float) * feat_dim);
+				}
+
+				valid_rows++;
+			}
+		}
+
+		if (valid_rows == 0)
+		{
+			pfree(h_features);
+			pfree(h_labels);
+			if (gpu_payload)
+				pfree(gpu_payload);
+			if (gpu_metrics)
+				pfree(gpu_metrics);
+			pfree(query.data);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(targ_str);
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_knn_by_model_id: no valid rows found")));
+		}
+
+		/* Use optimized GPU batch evaluation */
+		{
+			int rc;
+			char *gpu_errstr = NULL;
+
+			/* Defensive checks before GPU call */
+			if (h_features == NULL || h_labels == NULL || valid_rows <= 0 || feat_dim <= 0)
+			{
+					 elog(DEBUG1,
+					 	"neurondb: evaluate_knn_by_model_id: invalid inputs for GPU evaluation (features=%p, labels=%p, rows=%d, dim=%d), falling back to CPU",
+					 (void *)h_features, (void *)h_labels, valid_rows, feat_dim);
+				pfree(h_features);
+				pfree(h_labels);
+				goto cpu_evaluation_path;
+			}
+
+			PG_TRY();
+			{
+				rc = ndb_cuda_knn_evaluate_batch(gpu_payload,
+					h_features,
+					h_labels,
+					valid_rows,
+					feat_dim,
+					&accuracy,
+					&precision,
+					&recall,
+					&f1_score,
+					&gpu_errstr);
+
+				if (rc == 0)
+				{
+					/* Success - build result and return */
+					initStringInfo(&jsonbuf);
+					appendStringInfo(&jsonbuf,
+						"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
+						accuracy,
+						precision,
+						recall,
+						f1_score,
+						valid_rows);
+
+					result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+						CStringGetDatum(jsonbuf.data)));
+
+					pfree(jsonbuf.data);
+					pfree(h_features);
+					pfree(h_labels);
+					if (gpu_payload)
+						pfree(gpu_payload);
+					if (gpu_metrics)
+						pfree(gpu_metrics);
+					if (gpu_errstr)
+						pfree(gpu_errstr);
+					pfree(query.data);
+					pfree(tbl_str);
+					pfree(feat_str);
+					pfree(targ_str);
+					SPI_finish();
+					MemoryContextSwitchTo(oldcontext);
+					PG_RETURN_JSONB_P(result_jsonb);
+				}
+				else
+				{
+					/* GPU evaluation failed - fall back to CPU */
+						 elog(DEBUG1,
+						 	"neurondb: evaluate_knn_by_model_id: GPU batch evaluation failed: %s, falling back to CPU",
+						 gpu_errstr ? gpu_errstr : "unknown error");
+					if (gpu_errstr)
+						pfree(gpu_errstr);
+					pfree(h_features);
+					pfree(h_labels);
+					goto cpu_evaluation_path;
+				}
+			}
+			PG_CATCH();
+			{
+				elog(DEBUG1,
+				     "neurondb: evaluate_knn_by_model_id: exception during GPU evaluation, falling back to CPU");
+				if (h_features)
+					pfree(h_features);
+				if (h_labels)
+					pfree(h_labels);
+				goto cpu_evaluation_path;
+			}
+			PG_END_TRY();
+		}
 #endif	/* NDB_GPU_CUDA */
 	}
 
-gpu_eval_fallback:
-	/* CPU evaluation path (also used as fallback for GPU models) */
+cpu_evaluation_path:
+
+	/* CPU evaluation path */
 	/* Use optimized batch prediction */
 	{
 		float *h_features = NULL;
@@ -1655,8 +1960,8 @@ gpu_eval_fallback:
 			/* Defensive check: ensure we have predictions */
 			if (total_predictions == 0)
 			{
-				elog(WARNING,
-					"neurondb: evaluate_knn_by_model_id: no valid predictions made for %d valid rows (model_id=%d, feature_dim=%d)",
+					elog(DEBUG1,
+						"neurondb: evaluate_knn_by_model_id: no valid predictions made for %d valid rows (model_id=%d, feature_dim=%d)",
 					valid_rows, model_id, feat_dim);
 				accuracy = 0.0;
 				precision = 0.0;
@@ -1671,8 +1976,8 @@ gpu_eval_fallback:
 				/* Warn if some rows were skipped during prediction */
 				if (total_predictions < valid_rows)
 				{
-					elog(DEBUG1,
-						"neurondb: evaluate_knn_by_model_id: %d rows skipped during prediction (labels out of range?)",
+						elog(DEBUG1,
+							"neurondb: evaluate_knn_by_model_id: %d rows skipped during prediction (labels out of range?)",
 						valid_rows - total_predictions);
 				}
 
@@ -1730,12 +2035,11 @@ gpu_eval_fallback:
  * GPU Model Ops Registration Stub for KNN
  *-------------------------------------------------------------------------
  */
-#include "neurondb_gpu_model.h"
 
 /* Stub function to satisfy linker - full implementation needed */
 void
 neurondb_gpu_register_knn_model(void)
 {
 	/* KNN GPU Model Ops not yet implemented - will use CPU fallback */
-	elog(DEBUG1, "KNN GPU Model Ops registration skipped - not yet implemented");
+	return;
 }

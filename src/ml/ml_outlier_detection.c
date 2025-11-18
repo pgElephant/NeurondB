@@ -159,12 +159,11 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 	method = text_to_cstring(method_text);
 
 	elog(DEBUG1,
-		"neurondb: Outlier detection on %s.%s (method=%s, "
-		"threshold=%.2f)",
-		tbl_str,
-		vec_col_str,
-		method,
-		threshold);
+	     "neurondb: Outlier detection on %s.%s (method=%s, threshold=%.2f)",
+	     tbl_str,
+	     vec_col_str,
+	     method,
+	     threshold);
 
 	/* Fetch vectors */
 	vectors = neurondb_fetch_vectors_from_table(
@@ -216,8 +215,7 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 		{
 			/* All points identical - no outliers */
 			elog(DEBUG1,
-				"neurondb: All vectors identical, no outliers "
-				"detected");
+			     "neurondb: All vectors identical, no outliers detected");
 		} else
 		{
 			/* Flag outliers: distance > mean + threshold * std */
@@ -263,8 +261,7 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 		if (mad < 1e-10)
 		{
 			elog(DEBUG1,
-				"neurondb: MAD near zero, using fallback "
-				"threshold");
+			     "neurondb: MAD near zero, using fallback threshold");
 			mad = 1.0; /* Fallback to avoid division by zero */
 		}
 
@@ -280,10 +277,9 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 		}
 
 		elog(DEBUG1,
-			"neurondb: Modified Z-score detected %d outliers "
-			"(%.1f%%)",
-			num_outliers,
-			100.0 * num_outliers / nvec);
+		     "neurondb: Modified Z-score detected %d outliers (%.1f%%)",
+		     num_outliers,
+		     100.0 * num_outliers / nvec);
 
 		pfree(sorted_distances);
 		pfree(abs_deviations);
@@ -320,18 +316,20 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 				num_outliers++;
 		}
 
-		elog(DEBUG1,
-			"neurondb: IQR method detected %d outliers (%.1f%%)",
+			elog(DEBUG1,
+				"neurondb: IQR method detected %d outliers (%.1f%%)",
 			num_outliers,
 			100.0 * num_outliers / nvec);
 
 		pfree(sorted_distances);
 	} else
 	{
+		elog(DEBUG1,
+		     "Unknown method '%s'. Use 'zscore', 'modified_zscore', or 'iqr'",
+		     method);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("Unknown method '%s'. Use 'zscore', "
-				       "'modified_zscore', or 'iqr'",
+				errmsg("Unknown method '%s'. Use 'zscore', 'modified_zscore', or 'iqr'",
 					method)));
 	}
 

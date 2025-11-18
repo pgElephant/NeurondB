@@ -70,6 +70,24 @@ extern int ndb_cuda_dt_predict(const bytea *model_data,
 	double *prediction_out,
 	char **errstr);
 
+extern int ndb_cuda_dt_predict_batch(const bytea *model_data,
+	const float *features,
+	int n_samples,
+	int feature_dim,
+	int *predictions_out,
+	char **errstr);
+
+extern int ndb_cuda_dt_evaluate_batch(const bytea *model_data,
+	const float *features,
+	const int *labels,
+	int n_samples,
+	int feature_dim,
+	double *accuracy_out,
+	double *precision_out,
+	double *recall_out,
+	double *f1_out,
+	char **errstr);
+
 /* CUDA kernel launchers */
 extern int ndb_cuda_dt_launch_feature_stats(const float *features,
 	const int *indices,

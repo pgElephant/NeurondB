@@ -30,6 +30,10 @@
 #include "neurondb_config.h"
 #include "neurondb_automl.h"
 
+/* Core GUC variables (defined in neurondb.c) */
+extern int neurondb_hnsw_ef_search;
+extern int neurondb_ivf_probes;
+
 /* Forward declarations from background worker modules */
 extern void neuranq_main(Datum main_arg);
 extern void neuranq_init_guc(void);
@@ -60,8 +64,7 @@ extern Size entrypoint_cache_shmem_size(void);
 extern void entrypoint_cache_shmem_init(void);
 
 /* Module initialization */
-void _PG_init(void);
-void _PG_fini(void);
+void neurondb_worker_fini(void);
 
 /* Shared memory hooks */
 #if PG_VERSION_NUM >= 150000
@@ -72,7 +75,7 @@ static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static void neurondb_shmem_startup(void);
 
 /*
- * Module load callback
+ * Module initialization - PostgreSQL extension entry point
  */
 void
 _PG_init(void)
@@ -81,13 +84,40 @@ _PG_init(void)
 
 	if (!process_shared_preload_libraries_in_progress)
 	{
-		elog(WARNING,
+		elog(ERROR,
 			"neurondb: background workers require "
 			"shared_preload_libraries");
 		return;
 	}
 
 	elog(LOG, "neurondb: initializing background workers");
+
+	/* Initialize core GUC variables */
+	DefineCustomIntVariable("neurondb.hnsw_ef_search",
+		"Sets the ef_search parameter for HNSW index scans",
+		"Higher values improve recall but increase search time. Default is 64.",
+		&neurondb_hnsw_ef_search,
+		64, /* default */
+		1,  /* min */
+		10000, /* max */
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
+
+	DefineCustomIntVariable("neurondb.ivf_probes",
+		"Sets the number of probes for IVF index scans",
+		"Higher values improve recall but increase search time. Default is 10.",
+		&neurondb_ivf_probes,
+		10, /* default */
+		1,  /* min */
+		1000, /* max */
+		PGC_USERSET,
+		0,
+		NULL,
+		NULL,
+		NULL);
 
 	/* Initialize GUC variables for all workers */
 	neuranq_init_guc();
@@ -238,10 +268,10 @@ neurondb_gpu_register_metal_backend(void)
 #endif
 
 /*
- * Module unload callback
+ * Worker cleanup - called from _PG_fini in neurondb.c
  */
 void
-_PG_fini(void)
+neurondb_worker_fini(void)
 {
 	/* Cleanup ONNX Runtime */
 	neurondb_onnx_cleanup();

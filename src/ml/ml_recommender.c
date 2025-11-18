@@ -18,6 +18,7 @@
 #include "funcapi.h"
 #include "utils/builtins.h"
 #include "utils/array.h"
+#include "utils/jsonb.h"
 #include "executor/spi.h"
 #include "catalog/pg_type.h"
 #include "access/htup_details.h"
@@ -91,6 +92,8 @@ dot_product(const float *v1, const float *v2, int n)
  * Returns a model id. The model is saved as two tables: user_factors and item_factors.
  */
 PG_FUNCTION_INFO_V1(train_collaborative_filter);
+PG_FUNCTION_INFO_V1(predict_collaborative_filter);
+PG_FUNCTION_INFO_V1(evaluate_collaborative_filter_by_model_id);
 
 Datum
 train_collaborative_filter(PG_FUNCTION_ARGS)
@@ -175,8 +178,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 		{
 			SPI_finish();
 			ereport(ERROR,
-				(errmsg("user_col or item_col contains NULL at "
-					"row %d",
+				(errmsg("user_col or item_col contains NULL at row %d",
 					i + 1)));
 		}
 
@@ -276,14 +278,12 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 
 		resetStringInfo(&sql);
 		appendStringInfo(&sql,
-			"DELETE FROM neurondb_cf_user_factors WHERE model_id = "
-			"%ld",
+			"DELETE FROM neurondb_cf_user_factors WHERE model_id = %ld",
 			(long)model_id);
 		SPI_execute(sql.data, false, 0);
 		resetStringInfo(&sql);
 		appendStringInfo(&sql,
-			"DELETE FROM neurondb_cf_item_factors WHERE model_id = "
-			"%ld",
+			"DELETE FROM neurondb_cf_item_factors WHERE model_id = %ld",
 			(long)model_id);
 		SPI_execute(sql.data, false, 0);
 
@@ -295,8 +295,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 			int j;
 			plan = SPI_prepare(
 				"INSERT INTO neurondb_cf_user_factors "
-				"(model_id, user_id, factors) VALUES "
-				"($1,$2,$3)",
+				"(model_id, user_id, factors) VALUES ($1,$2,$3)",
 				3,
 				arg_types);
 			if (plan == NULL)
@@ -329,8 +328,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 					plan, values, nulls, false, 1);
 				if (ret != SPI_OK_INSERT)
 					elog(ERROR,
-						"Failed to insert user_factors "
-						"for user %d (model_id %ld)",
+						"Failed to insert user_factors for user %d (model_id %ld)",
 						i,
 						(long)model_id);
 			}
@@ -345,8 +343,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 
 			plan = SPI_prepare(
 				"INSERT INTO neurondb_cf_item_factors "
-				"(model_id, item_id, factors) VALUES "
-				"($1,$2,$3)",
+				"(model_id, item_id, factors) VALUES ($1,$2,$3)",
 				3,
 				arg_types);
 			if (plan == NULL)
@@ -379,8 +376,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 					plan, values, nulls, false, 1);
 				if (ret != SPI_OK_INSERT)
 					elog(ERROR,
-						"Failed to insert item_factors "
-						"for item %d (model_id %ld)",
+						"Failed to insert item_factors for item %d (model_id %ld)",
 						i,
 						(long)model_id);
 			}
@@ -413,6 +409,388 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 			(long)model_id);
 		PG_RETURN_TEXT_P(cstring_to_text(sql.data));
 	}
+}
+
+/* Helper functions for loading factors from database */
+static bool
+als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_factors)
+{
+	StringInfoData query;
+	int ret;
+	int n_rows;
+
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT factors FROM neurondb_cf_user_factors WHERE model_id = %d AND user_id = %d",
+		model_id, user_id);
+
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		return false;
+
+	ret = SPI_execute(query.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+	{
+		SPI_finish();
+		pfree(query.data);
+		return false;
+	}
+
+	n_rows = SPI_processed;
+	if (n_rows != 1)
+	{
+		SPI_finish();
+		pfree(query.data);
+		return false;
+	}
+
+	/* Extract factors array */
+	{
+		HeapTuple tuple = SPI_tuptable->vals[0];
+		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+		Datum factors_datum;
+		bool factors_null;
+		ArrayType *factors_array;
+		Oid elmtype;
+		int16 typlen;
+		bool typbyval;
+		char typalign;
+		int n_dims;
+		Datum *elems;
+		bool *nulls;
+		int n_elems;
+		int i;
+
+		factors_datum = SPI_getbinval(tuple, tupdesc, 1, &factors_null);
+		if (factors_null)
+		{
+			SPI_finish();
+			pfree(query.data);
+			return false;
+		}
+
+		factors_array = DatumGetArrayTypeP(factors_datum);
+		n_dims = ARR_NDIM(factors_array);
+		if (n_dims != 1)
+		{
+			SPI_finish();
+			pfree(query.data);
+			return false;
+		}
+
+		elmtype = ARR_ELEMTYPE(factors_array);
+		get_typlenbyvalalign(elmtype, &typlen, &typbyval, &typalign);
+
+		deconstruct_array(factors_array, elmtype, typlen, typbyval, typalign,
+						 &elems, &nulls, &n_elems);
+
+		*factors = palloc(sizeof(float) * n_elems);
+		*n_factors = n_elems;
+
+		for (i = 0; i < n_elems; i++)
+			(*factors)[i] = DatumGetFloat4(elems[i]);
+	}
+
+	SPI_finish();
+	pfree(query.data);
+	return true;
+}
+
+static bool
+als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_items_total, int *n_factors)
+{
+	StringInfoData query;
+	int ret;
+	int n_rows;
+
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT factors FROM neurondb_cf_item_factors WHERE model_id = %d AND item_id = %d",
+		model_id, item_id);
+
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		return false;
+
+	ret = SPI_execute(query.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+	{
+		SPI_finish();
+		pfree(query.data);
+		return false;
+	}
+
+	n_rows = SPI_processed;
+	if (n_rows != 1)
+	{
+		SPI_finish();
+		pfree(query.data);
+		return false;
+	}
+
+	/* Extract factors array */
+	{
+		HeapTuple tuple = SPI_tuptable->vals[0];
+		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+		Datum factors_datum;
+		bool factors_null;
+		ArrayType *factors_array;
+		Oid elmtype;
+		int16 typlen;
+		bool typbyval;
+		char typalign;
+		int n_dims;
+		Datum *elems;
+		bool *nulls;
+		int n_elems;
+		int i;
+
+		factors_datum = SPI_getbinval(tuple, tupdesc, 1, &factors_null);
+		if (factors_null)
+		{
+			SPI_finish();
+			pfree(query.data);
+			return false;
+		}
+
+		factors_array = DatumGetArrayTypeP(factors_datum);
+		n_dims = ARR_NDIM(factors_array);
+		if (n_dims != 1)
+		{
+			SPI_finish();
+			pfree(query.data);
+			return false;
+		}
+
+		elmtype = ARR_ELEMTYPE(factors_array);
+		get_typlenbyvalalign(elmtype, &typlen, &typbyval, &typalign);
+
+		deconstruct_array(factors_array, elmtype, typlen, typbyval, typalign,
+						 &elems, &nulls, &n_elems);
+
+		*factors = palloc(sizeof(float *) * 1); /* Only one item */
+		(*factors)[0] = palloc(sizeof(float) * n_elems);
+		*n_items_total = 1;
+		*n_factors = n_elems;
+
+		for (i = 0; i < n_elems; i++)
+			(*factors)[0][i] = DatumGetFloat4(elems[i]);
+	}
+
+	SPI_finish();
+	pfree(query.data);
+	return true;
+}
+
+/*
+ * predict_collaborative_filter
+ *      Predicts rating for a specific user-item pair using trained ALS model.
+ *      Arguments: int4 model_id, int4 user_id, int4 item_id
+ *      Returns: float8 predicted rating
+ */
+Datum
+predict_collaborative_filter(PG_FUNCTION_ARGS)
+{
+	int32 model_id = PG_GETARG_INT32(0);
+	int32 user_id = PG_GETARG_INT32(1);
+	int32 item_id = PG_GETARG_INT32(2);
+
+	float *user_factors = NULL;
+	float **item_factors = NULL;
+	int n_factors = 0;
+	int n_items_total = 0;
+	float prediction = 0.0;
+	int i;
+
+	/* Load user factors */
+	if (!als_load_user_factors(model_id, user_id, &user_factors, &n_factors))
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("collaborative_filter: no factors found for user %d in model %d",
+					user_id, model_id)));
+	}
+
+	/* Load item factors */
+	if (!als_load_item_factors(model_id, item_id, &item_factors, &n_items_total, &n_factors))
+	{
+		pfree(user_factors);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("collaborative_filter: no factors found for item %d in model %d",
+					item_id, model_id)));
+	}
+
+	/* Compute dot product of user and item factors */
+	for (i = 0; i < n_factors; i++)
+		prediction += user_factors[i] * item_factors[0][i];
+
+	/* Clamp prediction to valid rating range (assuming 1-5 scale) */
+	if (prediction < 1.0) prediction = 1.0;
+	if (prediction > 5.0) prediction = 5.0;
+
+	pfree(user_factors);
+	for (i = 0; i < n_items_total; i++)
+		pfree(item_factors[i]);
+	pfree(item_factors);
+
+	PG_RETURN_FLOAT8(prediction);
+}
+
+/*
+ * evaluate_collaborative_filter_by_model_id
+ *      Evaluates collaborative filtering model on a test dataset.
+ *      Arguments: int4 model_id, text table_name, text user_col, text item_col, text rating_col
+ *      Returns: jsonb with evaluation metrics
+ */
+Datum
+evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
+{
+	int32 model_id;
+	text *table_name;
+	text *user_col;
+	text *item_col;
+	text *rating_col;
+	char *tbl_str;
+	char *user_str;
+	char *item_str;
+	char *rating_str;
+	StringInfoData query;
+	int ret;
+	int n_ratings = 0;
+	double mse = 0.0;
+	double mae = 0.0;
+	int i;
+	StringInfoData jsonbuf;
+	Jsonb *result;
+	MemoryContext oldcontext;
+	double rmse;
+
+	/* Validate arguments */
+	if (PG_NARGS() != 5)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_collaborative_filter_by_model_id: 5 arguments are required")));
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_collaborative_filter_by_model_id: model_id is required")));
+
+	model_id = PG_GETARG_INT32(0);
+
+	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3) || PG_ARGISNULL(4))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_collaborative_filter_by_model_id: table_name, user_col, item_col, and rating_col are required")));
+
+	table_name = PG_GETARG_TEXT_PP(1);
+	user_col = PG_GETARG_TEXT_PP(2);
+	item_col = PG_GETARG_TEXT_PP(3);
+	rating_col = PG_GETARG_TEXT_PP(4);
+
+	tbl_str = text_to_cstring(table_name);
+	user_str = text_to_cstring(user_col);
+	item_str = text_to_cstring(item_col);
+	rating_str = text_to_cstring(rating_col);
+
+	oldcontext = CurrentMemoryContext;
+
+	/* Connect to SPI */
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_collaborative_filter_by_model_id: SPI_connect failed")));
+
+	/* Build query */
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT %s, %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL AND %s IS NOT NULL",
+		user_str, item_str, rating_str, tbl_str, user_str, item_str, rating_str);
+
+	ret = SPI_execute(query.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_collaborative_filter_by_model_id: query failed")));
+
+	n_ratings = SPI_processed;
+	if (n_ratings < 2)
+	{
+		SPI_finish();
+		pfree(tbl_str);
+		pfree(user_str);
+		pfree(item_str);
+		pfree(rating_str);
+		pfree(query.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_collaborative_filter_by_model_id: need at least 2 ratings, got %d",
+					n_ratings)));
+	}
+
+	/* Evaluate each rating */
+	for (i = 0; i < n_ratings; i++)
+	{
+		HeapTuple tuple = SPI_tuptable->vals[i];
+		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+		Datum user_datum;
+		Datum item_datum;
+		Datum rating_datum;
+		bool user_null;
+		bool item_null;
+		bool rating_null;
+		int32 user_id;
+		int32 item_id;
+		float true_rating;
+		float pred_rating;
+		float error;
+
+		user_datum = SPI_getbinval(tuple, tupdesc, 1, &user_null);
+		item_datum = SPI_getbinval(tuple, tupdesc, 2, &item_null);
+		rating_datum = SPI_getbinval(tuple, tupdesc, 3, &rating_null);
+
+		if (user_null || item_null || rating_null)
+			continue;
+
+		user_id = DatumGetInt32(user_datum);
+		item_id = DatumGetInt32(item_datum);
+		true_rating = DatumGetFloat4(rating_datum);
+
+		/* Get prediction */
+		pred_rating = DatumGetFloat8(DirectFunctionCall3(predict_collaborative_filter,
+														Int32GetDatum(model_id),
+														Int32GetDatum(user_id),
+														Int32GetDatum(item_id)));
+
+		/* Compute error */
+		error = true_rating - pred_rating;
+		mse += error * error;
+		mae += fabs(error);
+	}
+
+	SPI_finish();
+
+	mse /= n_ratings;
+	mae /= n_ratings;
+	rmse = sqrt(mse);
+
+	/* Build result JSON */
+	MemoryContextSwitchTo(oldcontext);
+	initStringInfo(&jsonbuf);
+	appendStringInfo(&jsonbuf,
+		"{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"n_ratings\":%d}",
+		mse, mae, rmse, n_ratings);
+
+	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
+	pfree(jsonbuf.data);
+
+	/* Cleanup */
+	pfree(tbl_str);
+	pfree(user_str);
+	pfree(item_str);
+	pfree(rating_str);
+	pfree(query.data);
+
+	PG_RETURN_JSONB_P(result);
 }
 
 /*
@@ -452,8 +830,7 @@ recommend_items(PG_FUNCTION_ARGS)
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT factors FROM neurondb_cf_user_factors WHERE model_id = "
-		"%d AND user_id = %d",
+		"SELECT factors FROM neurondb_cf_user_factors WHERE model_id = %d AND user_id = %d",
 		model_id,
 		user_id);
 
@@ -496,8 +873,7 @@ recommend_items(PG_FUNCTION_ARGS)
 
 	resetStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT item_id, factors FROM neurondb_cf_item_factors WHERE "
-		"model_id = %d",
+		"SELECT item_id, factors FROM neurondb_cf_item_factors WHERE model_id = %d",
 		model_id);
 
 	ret = SPI_execute(sql.data, true, 0);
@@ -651,8 +1027,7 @@ recommend_content_based(PG_FUNCTION_ARGS)
 		|| n_recommendations > RECO_MAX_RESULT)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("n_recommendations must be between %d "
-				       "and %d",
+				errmsg("n_recommendations must be between %d and %d",
 					RECO_MIN_RESULT,
 					RECO_MAX_RESULT)));
 
@@ -711,8 +1086,7 @@ recommend_content_based(PG_FUNCTION_ARGS)
 					pfree(other_ids);
 				SPI_finish();
 				ereport(ERROR,
-					(errmsg("NULL item or features at row "
-						"%d",
+					(errmsg("NULL item or features at row %d",
 						i + 1)));
 			}
 			{
@@ -734,8 +1108,7 @@ recommend_content_based(PG_FUNCTION_ARGS)
 						pfree(other_ids);
 					SPI_finish();
 					ereport(ERROR,
-						(errmsg("Feature length "
-							"mismatch at row %d",
+						(errmsg("Feature length mismatch at row %d",
 							i + 1)));
 				}
 				{
@@ -767,8 +1140,7 @@ recommend_content_based(PG_FUNCTION_ARGS)
 				pfree(other_ids);
 			SPI_finish();
 			ereport(ERROR,
-				(errmsg("item_id %d not found in features "
-					"table",
+				(errmsg("item_id %d not found in features table",
 					item_id)));
 		}
 
@@ -1006,8 +1378,7 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 
 		/* load user factors */
 		appendStringInfo(&sql,
-			"SELECT factors FROM neurondb_cf_user_factors WHERE "
-			"model_id = %d AND user_id = %d",
+			"SELECT factors FROM neurondb_cf_user_factors WHERE model_id = %d AND user_id = %d",
 			cf_model_id,
 			user_id);
 		ret = SPI_execute(sql.data, true, 1);
@@ -1024,8 +1395,7 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 				pfree(content_table_str);
 			SPI_finish();
 			ereport(ERROR,
-				(errmsg("No user_factors found for user %d in "
-					"model %d",
+				(errmsg("No user_factors found for user %d in model %d",
 					user_id,
 					cf_model_id)));
 		}
@@ -1051,8 +1421,7 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 		/* load item factors */
 		resetStringInfo(&sql);
 		appendStringInfo(&sql,
-			"SELECT item_id, factors FROM neurondb_cf_item_factors "
-			"WHERE model_id = %d",
+			"SELECT item_id, factors FROM neurondb_cf_item_factors WHERE model_id = %d",
 			cf_model_id);
 		ret = SPI_execute(sql.data, true, 0);
 		if (ret != SPI_OK_SELECT)
@@ -1111,8 +1480,7 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 					pfree(content_table_str);
 				SPI_finish();
 				ereport(ERROR,
-					(errmsg("Factor dimension mismatch for "
-						"item %d",
+					(errmsg("Factor dimension mismatch for item %d",
 						id)));
 			}
 			vec = (float *)palloc(sizeof(float) * n_factors);
@@ -1312,5 +1680,4 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_recommender_model(void)
 {
-	elog(DEBUG1, "Recommender GPU Model Ops registration skipped - not yet implemented");
 }

@@ -37,7 +37,7 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 
 	idx_str = text_to_cstring(index_name);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: %s HNSW rebuild for '%s'",
 		resume ? "resuming" : "starting",
 		idx_str);
@@ -81,7 +81,7 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 		{
 			checkpoint_id = 0;
 		}
-		elog(NOTICE,
+		elog(DEBUG1,
 			"neurondb: resuming from checkpoint " NDB_INT64_FMT,
 			NDB_INT64_CAST(checkpoint_id));
 	}
@@ -127,7 +127,7 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 
 	SPI_finish();
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: processed " NDB_INT64_FMT " vectors",
 		NDB_INT64_CAST(vectors_processed));
 
@@ -149,7 +149,7 @@ parallel_knn_search(PG_FUNCTION_ARGS)
 	(void)query_vector;
 	(void)i;
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: parallel kNN search with %d workers for top-%d",
 		num_workers,
 		k);
@@ -167,7 +167,6 @@ parallel_knn_search(PG_FUNCTION_ARGS)
 			i);
 	}
 
-	elog(DEBUG1, "neurondb: merged results from %d workers", num_workers);
 
 	PG_RETURN_NULL();
 }
@@ -215,12 +214,13 @@ Datum
 load_rebuild_checkpoint(PG_FUNCTION_ARGS)
 {
 	text *index_name = PG_GETARG_TEXT_PP(0);
-	char *idx_str;
 	text *checkpoint_data;
+	char *idx_str;
 
 	idx_str = text_to_cstring(index_name);
+	/* Suppress unused variable warning - placeholder for future implementation */
+	(void) idx_str;
 
-	elog(DEBUG1, "neurondb: loading checkpoint for '%s'", idx_str);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,

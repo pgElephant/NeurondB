@@ -340,8 +340,7 @@ neurondb_sentiment_analysis(PG_FUNCTION_ARGS)
 
 		snprintf(qry,
 			sizeof(qry),
-			"SELECT word, polarity FROM neurondb_sentiment_lexicon "
-			"WHERE model = '%s'",
+			"SELECT word, polarity FROM neurondb_sentiment_lexicon WHERE model = '%s'",
 			model_name);
 
 		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
@@ -512,8 +511,7 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 				pfree(tokens[t]);
 			ereport(ERROR, (errmsg("SPI_connect failed")));
 		}
-		ret = SPI_exec("SELECT entity, entity_type, confidence FROM "
-			       "neurondb_ner_entities",
+		ret = SPI_exec("SELECT entity, entity_type, confidence FROM neurondb_ner_entities",
 			0);
 		if (ret != SPI_OK_SELECT)
 		{
@@ -741,9 +739,8 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 			pfree(method);
 			ereport(ERROR, (errmsg("SPI_connect failed")));
 		}
-		ret = SPI_exec(
-			"SELECT stopword FROM neurondb_summarizer_stopwords",
-			0);
+		ret = SPI_execute("SELECT stopword FROM neurondb_summarizer_stopwords",
+			true, 0);
 		if (ret != SPI_OK_SELECT)
 		{
 			SPI_finish();
@@ -870,5 +867,4 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 void
 neurondb_gpu_register_text_model(void)
 {
-	elog(DEBUG1, "Text GPU Model Ops registration skipped - not yet implemented");
 }

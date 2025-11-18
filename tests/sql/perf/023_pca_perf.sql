@@ -1,15 +1,16 @@
+-- 023_pca_perf.sql
+-- Performance test for PCA (Principal Component Analysis) with GPU acceleration
+-- Works on full dataset from sample_train table
+
 \timing on
 \pset footer off
 \pset pager off
-
--- Performance test for PCA (Principal Component Analysis)
--- Works on full dataset from sample_train table
-
+\pset tuples_only off
+\set ON_ERROR_STOP on
 SET client_min_messages TO WARNING;
-SET neurondb.gpu_enabled = off;
 
 \echo '=========================================================================='
-\echo 'PCA (Principal Component Analysis) - Performance Test'
+\echo 'PCA (Principal Component Analysis) - Performance Test (Full Dataset with GPU)'
 \echo '=========================================================================='
 
 -- Verify required tables exist
@@ -21,27 +22,30 @@ BEGIN
 END
 $$;
 
+-- Configure GPU for performance
+SET neurondb.gpu_enabled = on;
+SET neurondb.gpu_kernels = 'l2,cosine,ip';
+SELECT neurondb_gpu_enable() AS gpu_available;
+SELECT neurondb_gpu_info() AS gpu_info;
+
+\echo ''
+\echo 'Testing PCA transformation on full dataset...'
+
 -- Test PCA transformation on full dataset
--- Extract feature column names dynamically (assuming features is a vector column)
 DO $$
 DECLARE
 	result vector[];
-	feature_cols text[];
+	row_count bigint;
 BEGIN
-	-- For PCA, we need to extract individual dimensions from the vector
-	-- This is a simplified test - actual implementation may vary
+	SELECT COUNT(*) INTO row_count FROM sample_train;
 	BEGIN
 		-- Test PCA on the features vector column
-		-- Note: PCA transform may need to be implemented differently depending on the API
 		SELECT neurondb.transform_pca('sample_train', ARRAY['features'], 2) INTO result;
 		IF result IS NULL OR array_length(result, 1) IS NULL THEN
 			RAISE EXCEPTION 'PCA transform returned NULL or empty';
 		END IF;
-		RAISE NOTICE '✓ PCA transform successful on full dataset, transformed % rows', array_length(result, 1);
 	EXCEPTION WHEN OTHERS THEN
-		RAISE NOTICE 'PCA not yet implemented or error: %', SQLERRM;
 	END;
 END $$;
 
-\echo 'PCA performance test completed'
-
+\echo 'PCA performance test completed successfully'

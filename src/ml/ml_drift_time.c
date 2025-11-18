@@ -128,6 +128,7 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 	drift_context = AllocSetContextCreate(CurrentMemoryContext,
 										 "drift monitoring context",
 										 ALLOCSET_DEFAULT_SIZES);
+	elog(DEBUG1, "drift monitoring context created");
 	oldcontext = MemoryContextSwitchTo(drift_context);
 
 	/* Connect to SPI */
@@ -157,6 +158,7 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 						 "WHERE %s >= NOW() - INTERVAL '%s' - INTERVAL '%s' "
 						 "AND %s < NOW() - INTERVAL '%s'",
 						 col_quoted, tbl_quoted, ts_col_quoted, window_str, window_str, ts_col_quoted, window_str);
+		elog(DEBUG1, "baseline query: %s", sql.data);
 		/* Note: quote_identifier returns const char * pointing to managed memory, don't pfree */
 	}
 
@@ -197,6 +199,7 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 						 "FROM %s "
 						 "WHERE %s >= NOW() - INTERVAL '%s'",
 						 col_quoted, tbl_quoted, ts_col_quoted, window_str);
+		elog(DEBUG1, "current query: %s", sql.data);
 		/* Note: quote_identifier returns const char * pointing to managed memory, don't pfree */
 	}
 

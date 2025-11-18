@@ -39,7 +39,7 @@ create_model(PG_FUNCTION_ARGS)
 	config_str = text_to_cstring(config_json);
 	(void)config_str;
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: creating model '%s' of type '%s'",
 		name_str,
 		type_str);
@@ -69,8 +69,9 @@ drop_model(PG_FUNCTION_ARGS)
 	char *name_str;
 
 	name_str = text_to_cstring(model_name);
+	/* Suppress unused variable warning - placeholder for future implementation */
+	(void) name_str;
 
-	elog(NOTICE, "neurondb: dropping model '%s'", name_str);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
@@ -109,7 +110,7 @@ create_ann_index(PG_FUNCTION_ARGS)
 	col_str = text_to_cstring(column_name);
 	type_str = text_to_cstring(index_type);
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: creating %s index '%s' on %s(%s)",
 		type_str,
 		idx_str,
@@ -132,7 +133,6 @@ explain_vector_query(PG_FUNCTION_ARGS)
 	query_str = text_to_cstring(query);
 	(void)query_str;
 
-	elog(NOTICE, "neurondb: explaining vector query");
 	elog(INFO, "neurondb: query plan: ANN index scan expected");
 	elog(INFO, "neurondb: estimated recall: 0.95");
 	elog(INFO, "neurondb: cache hits expected: high");

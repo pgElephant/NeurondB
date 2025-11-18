@@ -1,6 +1,7 @@
 \timing on
 \pset footer off
 \pset pager off
+SET log_min_messages = DEBUG1;
 
 -- This test uses test_train_view and test_test_view tables created by ml_dataset.py
 -- Run: python ml_dataset.py <dataset_name> to populate the database first

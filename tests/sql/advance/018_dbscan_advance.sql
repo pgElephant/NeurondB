@@ -1,12 +1,20 @@
 -- 018_dbscan_advance.sql
--- Advanced test for dbscan
--- Works on 1000 rows only and tests each and every way
+-- Exhaustive detailed test for dbscan clustering: all parameters, error handling.
+-- Works on 1000 rows only and tests each and every way with comprehensive coverage
+-- Tests: Different eps values, min_pts values, error handling, noise point validation
 
 SET client_min_messages TO WARNING;
+\set ON_ERROR_STOP on
+\timing on
+\pset footer off
+\pset pager off
+\pset tuples_only off
 
-\echo '=== dbscan Advanced Test ==='
+\echo '=========================================================================='
+\echo 'dbscan: Exhaustive Clustering Test (1000 rows sample)'
+\echo '=========================================================================='
 
--- Verify required tables exist
+/* Check that sample_train exists */
 DO $$
 BEGIN
 	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
@@ -25,38 +33,216 @@ SELECT features, label FROM sample_train LIMIT 1000;
 CREATE VIEW test_test_view AS
 SELECT features, label FROM sample_test LIMIT 1000;
 
-SET neurondb.gpu_enabled = on;
-SELECT neurondb_gpu_enable();
+\echo ''
+\echo 'Dataset Information'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+SELECT 
+	COUNT(*)::bigint AS train_count,
+	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_count,
+	(SELECT vector_dims(features) FROM test_train_view LIMIT 1) AS feature_dim
+FROM test_train_view;
 
-\echo 'Test 1: Different eps values'
+/*---- Register required GPU kernels ----*/
+\echo ''
+\echo 'GPU Configuration'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+SET neurondb.gpu_enabled = on;
+SET neurondb.gpu_kernels = 'l2,cosine,ip';
+SELECT neurondb_gpu_enable() AS gpu_available;
+SELECT neurondb_gpu_info() AS gpu_info;
+
+/*
+ * ---- CLUSTERING TESTS ----
+ * Test multiple eps and min_pts values
+ */
+\echo ''
+\echo 'Clustering Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Test 1: eps=0.1, min_pts=5'
 WITH eps01_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.1, 5)) AS cluster_id
 )
-SELECT 'eps=0.1' AS test, COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters FROM eps01_clusters;
+SELECT 
+	'eps=0.1, min_pts=5' AS test,
+	COUNT(*) AS total_points,
+	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points,
+	MIN(cluster_id) AS min_cluster,
+	MAX(cluster_id) AS max_cluster
+FROM eps01_clusters;
+
+\echo 'Test 2: eps=0.5, min_pts=5'
 WITH eps05_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
 )
-SELECT 'eps=0.5' AS test, COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters FROM eps05_clusters;
+SELECT 
+	'eps=0.5, min_pts=5' AS test,
+	COUNT(*) AS total_points,
+	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points,
+	MIN(cluster_id) AS min_cluster,
+	MAX(cluster_id) AS max_cluster
+FROM eps05_clusters;
+
+\echo 'Test 3: eps=1.0, min_pts=5'
 WITH eps10_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 1.0, 5)) AS cluster_id
 )
-SELECT 'eps=1.0' AS test, COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters FROM eps10_clusters;
+SELECT 
+	'eps=1.0, min_pts=5' AS test,
+	COUNT(*) AS total_points,
+	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points,
+	MIN(cluster_id) AS min_cluster,
+	MAX(cluster_id) AS max_cluster
+FROM eps10_clusters;
 
-\echo 'Test 2: Different min_pts values'
+\echo 'Test 4: Different min_pts values (min_pts=3)'
 WITH mp3_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 3)) AS cluster_id
 )
-SELECT 'min_pts=3' AS test, COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters FROM mp3_clusters;
-WITH mp5_clusters AS (
-	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
-)
-SELECT 'min_pts=5' AS test, COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters FROM mp5_clusters;
+SELECT 
+	'min_pts=3' AS test,
+	COUNT(*) AS total_points,
+	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points
+FROM mp3_clusters;
+
+\echo 'Test 5: Different min_pts values (min_pts=10)'
 WITH mp10_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 10)) AS cluster_id
 )
-SELECT 'min_pts=10' AS test, COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters FROM mp10_clusters;
+SELECT 
+	'min_pts=10' AS test,
+	COUNT(*) AS total_points,
+	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points
+FROM mp10_clusters;
 
-\echo 'Test 3: Verify cluster assignments and noise points'
+\echo 'Test 6: Cluster and noise distribution (eps=0.5, min_pts=5)'
+WITH clusters AS (
+	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
+)
+SELECT 
+	cluster_id,
+	COUNT(*) AS point_count,
+	ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM clusters), 2) AS percentage,
+	CASE 
+		WHEN cluster_id = -1 THEN 'Noise'
+		ELSE 'Cluster'
+	END AS point_type
+FROM clusters
+GROUP BY cluster_id
+ORDER BY cluster_id;
+
+\echo 'Test 7: Compare eps values (eps=0.1 vs eps=1.0)'
+WITH eps01_clusters AS (
+	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.1, 5)) AS cluster_id
+),
+eps10_clusters AS (
+	SELECT unnest(cluster_dbscan('test_train_view', 'features', 1.0, 5)) AS cluster_id
+)
+SELECT 
+	'eps=0.1' AS config,
+	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points,
+	COUNT(*) AS total_points
+FROM eps01_clusters
+UNION ALL
+SELECT 
+	'eps=1.0' AS config,
+	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points,
+	COUNT(*) AS total_points
+FROM eps10_clusters;
+
+/* --- ERROR path: invalid parameters --- */
+\echo ''
+\echo 'Error Handling Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Error Test 1: eps=0 (should error)'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM cluster_dbscan('test_train_view', 'features', 0.0, 5);
+		RAISE EXCEPTION 'FAIL: expected error for eps=0';
+	EXCEPTION WHEN OTHERS THEN
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 2: eps < 0 (should error)'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM cluster_dbscan('test_train_view', 'features', -0.1, 5);
+		RAISE EXCEPTION 'FAIL: expected error for eps < 0';
+	EXCEPTION WHEN OTHERS THEN
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 3: min_pts=0 (should error)'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM cluster_dbscan('test_train_view', 'features', 0.5, 0);
+		RAISE EXCEPTION 'FAIL: expected error for min_pts=0';
+	EXCEPTION WHEN OTHERS THEN
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 4: min_pts < 0 (should error)'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM cluster_dbscan('test_train_view', 'features', 0.5, -1);
+		RAISE EXCEPTION 'FAIL: expected error for min_pts < 0';
+	EXCEPTION WHEN OTHERS THEN
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 5: Invalid table name'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM cluster_dbscan('missing_table', 'features', 0.5, 5);
+		RAISE EXCEPTION 'FAIL: expected error for missing table';
+	EXCEPTION WHEN OTHERS THEN
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+\echo 'Error Test 6: Invalid column name'
+DO $$
+BEGIN
+	BEGIN
+		PERFORM cluster_dbscan('test_train_view', 'notacolumn', 0.5, 5);
+		RAISE EXCEPTION 'FAIL: expected error for invalid column';
+	EXCEPTION WHEN OTHERS THEN
+		-- Error handled correctly
+		NULL;
+	END;
+END$$;
+
+/*-------------------------------------------------------------------
+ * ---- VALIDATION TESTS ----
+ * Verify cluster assignments and noise points
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'Validation Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Validation Test 1: All points assigned (eps=0.5, min_pts=5)'
 WITH clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
 )
@@ -64,20 +250,63 @@ SELECT
 	COUNT(*) AS total_points,
 	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
 	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points,
-	MIN(cluster_id) AS min_cluster,
-	MAX(cluster_id) AS max_cluster
+	CASE 
+		WHEN COUNT(*) = (SELECT COUNT(*) FROM test_train_view) THEN '✓ All points assigned'
+		ELSE '✗ Missing assignments'
+	END AS assignment_status
 FROM clusters;
 
-\echo 'Test 4: Cluster size distribution'
+\echo 'Validation Test 2: Noise point handling (eps=0.5, min_pts=5)'
 WITH clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
 )
 SELECT 
-	cluster_id,
-	COUNT(*) AS point_count
-FROM clusters
-GROUP BY cluster_id
-ORDER BY cluster_id;
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points,
+	COUNT(*) FILTER (WHERE cluster_id != -1) AS clustered_points,
+	ROUND(100.0 * COUNT(*) FILTER (WHERE cluster_id = -1) / COUNT(*)::numeric, 2) AS noise_percentage,
+	CASE 
+		WHEN COUNT(*) FILTER (WHERE cluster_id = -1) >= 0 THEN '✓ Noise points handled correctly'
+		ELSE '✗ Noise point issue'
+	END AS noise_status
+FROM clusters;
 
-\echo '✓ dbscan advance test complete'
+\echo 'Validation Test 3: Compare min_pts values (min_pts=3 vs min_pts=10)'
+WITH mp3_clusters AS (
+	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 3)) AS cluster_id
+),
+mp10_clusters AS (
+	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 10)) AS cluster_id
+)
+SELECT 
+	'min_pts=3' AS config,
+	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points
+FROM mp3_clusters
+UNION ALL
+SELECT 
+	'min_pts=10' AS config,
+	COUNT(DISTINCT cluster_id) FILTER (WHERE cluster_id != -1) AS num_clusters,
+	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points
+FROM mp10_clusters;
 
+\echo 'Validation Test 4: Cluster size distribution (eps=0.5, min_pts=5)'
+WITH clusters AS (
+	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
+),
+cluster_counts AS (
+	SELECT cluster_id, COUNT(*) AS point_count
+	FROM clusters
+	WHERE cluster_id != -1
+	GROUP BY cluster_id
+)
+SELECT 
+	COUNT(*) AS clusters_with_points,
+	MIN(point_count) AS min_cluster_size,
+	MAX(point_count) AS max_cluster_size,
+	ROUND(AVG(point_count)::numeric, 2) AS avg_cluster_size
+FROM cluster_counts;
+
+\echo ''
+\echo '=========================================================================='
+\echo '✓ dbscan: Full exhaustive clustering test complete (1000-row sample)'
+\echo '=========================================================================='

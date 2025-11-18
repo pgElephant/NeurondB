@@ -56,7 +56,9 @@ feedback_loop_integrate(PG_FUNCTION_ARGS)
 	result_str = text_to_cstring(result);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_connect failed")));
 
 	tbl_def = "CREATE TABLE IF NOT EXISTS neurondb_feedback ("
 		  "id SERIAL PRIMARY KEY, "
@@ -69,7 +71,9 @@ feedback_loop_integrate(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_UTILITY)
 	{
 		SPI_finish();
-		elog(ERROR, "Failed to create neurondb_feedback table");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: failed to create neurondb_feedback table")));
 	}
 
 	/* Insert feedback row. */
@@ -84,7 +88,9 @@ feedback_loop_integrate(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_INSERT)
 	{
 		SPI_finish();
-		elog(ERROR, "Failed to insert feedback row");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: failed to insert feedback row")));
 	}
 
 	SPI_finish();
@@ -519,8 +525,7 @@ detect_outliers(PG_FUNCTION_ARGS)
 	col_str = text_to_cstring(column_name);
 
 	elog(DEBUG1,
-		"neurondb: Isolation Forest on %s.%s (n_trees=%d, "
-		"contamination=%.3f)",
+		"neurondb: Isolation Forest on %s.%s (n_trees=%d, contamination=%.3f)",
 		tbl_str,
 		col_str,
 		n_trees,
@@ -771,10 +776,10 @@ compute_embedding_quality(PG_FUNCTION_ARGS)
 	cluster_col_str = text_to_cstring(cluster_column);
 
 	elog(DEBUG1,
-		"neurondb: Computing embedding quality for %s.%s (clusters=%s)",
-		tbl_str,
-		col_str,
-		cluster_col_str);
+	     "neurondb: Computing embedding quality for %s.%s (clusters=%s)",
+	     tbl_str,
+	     col_str,
+	     cluster_col_str);
 
 	/* Fetch vectors */
 	data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
@@ -787,7 +792,9 @@ compute_embedding_quality(PG_FUNCTION_ARGS)
 	clusters = (int *)palloc(sizeof(int) * nvec);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: SPI_connect failed")));
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql, "SELECT %s FROM %s", cluster_col_str, tbl_str);

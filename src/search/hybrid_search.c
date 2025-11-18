@@ -148,9 +148,8 @@ hybrid_search(PG_FUNCTION_ARGS)
 	txt_str = text_to_cstring(query_text);
 	filter_str = text_to_cstring(filters);
 
-	elog(NOTICE,
-		"neurondb: Hybrid search on '%s' (query='%s', filters='%s', "
-		"vec_dim=%d, weight=%.2f, limit=%d)",
+	elog(DEBUG1,
+		"neurondb: Hybrid search on '%s' (query='%s', filters='%s', vec_dim=%d, weight=%.2f, limit=%d)",
 		tbl_str,
 		txt_str,
 		filter_str,
@@ -351,7 +350,7 @@ reciprocal_rank_fusion(PG_FUNCTION_ARGS)
 	bool *result_nulls = NULL;
 	ArrayType *ret_array;
 
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: Computing Reciprocal Rank Fusion with k=%.2f",
 		k);
 
@@ -486,8 +485,7 @@ semantic_keyword_search(PG_FUNCTION_ARGS)
 	bool *nulls;
 	int proc;
 	int i;
-
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: Semantic + Keyword search on '%s' for '%s' "
 		"(vec_dim=%d), top_k=%d",
 		tbl_str,
@@ -607,8 +605,7 @@ multi_vector_search(PG_FUNCTION_ARGS)
 
 	nvecs = ArrayGetNItems(
 		ARR_NDIM(query_vectors), ARR_DIMS(query_vectors));
-
-	elog(NOTICE,
+	elog(DEBUG1,
 		"neurondb: Multi-vector search on '%s' with %d queries, "
 		"agg=%s, top_k=%d",
 		tbl_str,
@@ -754,9 +751,8 @@ faceted_vector_search(PG_FUNCTION_ARGS)
 	bool *nulls;
 	int i;
 
-	elog(NOTICE,
-		"neurondb: Faceted search on '%s' by '%s', %d per facet "
-		"(vec_dim=%d)",
+	elog(DEBUG1,
+		"neurondb: Faceted search on '%s' with facets='%s', limit=%d (vec_dim=%d)",
 		tbl_str,
 		facet_str,
 		per_facet_limit,
@@ -861,9 +857,8 @@ temporal_vector_search(PG_FUNCTION_ARGS)
 	bool *nulls;
 	int i;
 
-	elog(NOTICE,
-		"neurondb: Temporal search on '%s'.%s with decay=%.4f, "
-		"top_k=%d (vec_dim=%d)",
+	elog(DEBUG1,
+		"neurondb: Temporal search on '%s'.%s with decay=%.4f, top_k=%d (vec_dim=%d)",
 		tbl_str,
 		ts_str,
 		decay_rate,
@@ -972,9 +967,8 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 	int select_count = 0;
 	mmr_cand_t *cands;
 
-	elog(NOTICE,
-		"neurondb: Diverse search on '%s' with lambda=%.2f, top_k=%d "
-		"(vec_dim=%d)",
+	elog(DEBUG1,
+		"neurondb: Diverse search on '%s' with lambda=%.2f, top_k=%d (vec_dim=%d)",
 		tbl_str,
 		lambda,
 		top_k,

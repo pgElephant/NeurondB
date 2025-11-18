@@ -6,15 +6,14 @@
  *    Step-by-step test with clean output and timing
  *
  *-------------------------------------------------------------------------*/
+SET neurondb.gpu_enabled = on;
+SET neurondb.gpu_kernels = 'l2,cosine,ip,linreg_train,linreg_predict';
 
 \set ON_ERROR_STOP on
 \timing on
 \pset footer off
 \pset pager off
 \pset tuples_only off
-
-/* Step 1: Verify prerequisites and create views with 1000 rows */
-\echo 'Step 1: Verifying prerequisites and creating test views...'
 
 DO $$
 BEGIN
@@ -32,6 +31,7 @@ $$;
 -- Create views with 1000 rows for basic tests
 DROP VIEW IF EXISTS test_train_view;
 DROP VIEW IF EXISTS test_test_view;
+DROP TABLE IF EXISTS gpu_model_temp;
 
 CREATE VIEW test_train_view AS
 SELECT features, label FROM sample_train LIMIT 1000;
@@ -43,19 +43,11 @@ SELECT
 	(SELECT COUNT(*)::bigint FROM test_train_view) AS train_rows,
 	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_rows;
 
-/* Step 2: Configure GPU */
-\echo 'Step 2: Configuring GPU acceleration...'
-
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,linreg_train,linreg_predict';
 
 SELECT 
 	neurondb_gpu_enable() AS gpu_available,
 	current_setting('neurondb.gpu_enabled') AS gpu_enabled,
 	current_setting('neurondb.gpu_kernels') AS gpu_kernels;
-
-/* Step 3: Dataset statistics */
-\echo 'Step 3: Dataset statistics...'
 
 SELECT 
 	'test_train_view' AS dataset,
@@ -69,10 +61,6 @@ SELECT
 	COUNT(*) FILTER (WHERE features IS NOT NULL AND label IS NOT NULL)::bigint
 FROM test_test_view;
 
-/* Step 4: Train model */
-\echo 'Step 4: Training linear regression model...'
-
-DROP TABLE IF EXISTS gpu_model_temp;
 CREATE TEMP TABLE gpu_model_temp AS
 SELECT 
 	neurondb.train(
@@ -84,9 +72,6 @@ SELECT
 	)::integer AS model_id;
 
 SELECT model_id FROM gpu_model_temp;
-
-/* Step 5: Training metrics */
-\echo 'Step 5: Training metrics...'
 
 SELECT 
 	m.algorithm::text AS algorithm,
@@ -131,17 +116,14 @@ FROM gpu_metrics_temp
 WHERE metrics->>'r_squared' IS NOT NULL
 ORDER BY metric;
 
-/* Step 8: Summary */
-\echo 'Step 8: Test summary...'
-
 SELECT 
 	(SELECT model_id FROM gpu_model_temp) AS model_id,
 	(SELECT COUNT(*)::bigint FROM test_train_view) AS train_samples,
 	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_samples,
 	(SELECT ROUND((metrics->>'mse')::numeric, 6) FROM gpu_metrics_temp) AS final_mse;
 
-/* Cleanup */
+DROP VIEW IF EXISTS test_train_view;
+DROP VIEW IF EXISTS test_test_view;
 DROP TABLE IF EXISTS gpu_model_temp;
-DROP TABLE IF EXISTS gpu_metrics_temp;
 
 \echo 'Test completed successfully'

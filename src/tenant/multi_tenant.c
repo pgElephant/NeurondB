@@ -102,9 +102,8 @@ create_tenant_worker(PG_FUNCTION_ARGS)
 		^ ((int32)GetCurrentTimestamp());
 
 	/* Safe, detailed notice */
-	elog(NOTICE,
-		"neurondb: registering worker type \"%s\" for tenant \"%s\" "
-		"(worker_id=%d)",
+	elog(DEBUG1,
+		"neurondb: registering worker type \"%s\" for tenant \"%s\" (worker_id=%d)",
 		type_str,
 		tid_str,
 		worker_id);
@@ -143,7 +142,6 @@ get_tenant_stats(PG_FUNCTION_ARGS)
 	appendStringInfo(&stats, "cost: %.2f\n", 25.50);
 	appendStringInfo(&stats, "avg_latency_ms: %d\n", 150);
 
-	elog(DEBUG1, "neurondb: reported stats for tenant \"%s\"", tid_str);
 
 	PG_RETURN_TEXT_P(cstring_to_text(stats.data));
 }
@@ -185,7 +183,6 @@ create_policy(PG_FUNCTION_ARGS)
 				errmsg("policy_rule length out of range "
 				       "(1-8192)")));
 
-	elog(NOTICE, "neurondb: creating policy \"%s\"", name_str);
 
 	PG_TRY();
 	{
@@ -279,9 +276,8 @@ audit_log_query(PG_FUNCTION_ARGS)
 
 	vector_hash = compute_vector_hash(result_vectors);
 
-	elog(NOTICE,
-		"neurondb: audit_log(user=\"%s\", len(query)=%zu, "
-		"vector_hash=%u)",
+	elog(DEBUG1,
+		"neurondb: audit_log(user=\"%s\", len(query)=%zu, vector_hash=%u)",
 		user_str,
 		strlen(query_str),
 		vector_hash);

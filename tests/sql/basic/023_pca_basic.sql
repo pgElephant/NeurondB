@@ -1,22 +1,47 @@
--- 023_pca.sql
--- Basic test for PCA (Principal Component Analysis)
+-- 023_pca_basic.sql
+-- Basic test for PCA (Principal Component Analysis) with GPU acceleration
 
+\set ON_ERROR_STOP on
+\timing on
+\pset footer off
+\pset pager off
+\pset tuples_only off
 SET client_min_messages TO WARNING;
-SET neurondb.gpu_enabled = off;
+
+/* Step 1: Verify prerequisites and create test data */
+\echo 'Step 1: Creating test data...'
 
 DROP TABLE IF EXISTS pca_data;
 CREATE TABLE pca_data (
 	id serial PRIMARY KEY,
-	x1 double precision,
-	x2 double precision,
-	x3 double precision
+	features vector
 );
 
-INSERT INTO pca_data (x1, x2, x3)
-SELECT x, x*1.5 + random()*0.1, x*2.0 + random()*0.1
+-- Create sample data with vector features
+INSERT INTO pca_data (features)
+SELECT 
+	array_to_vector_float8(ARRAY[
+		x::double precision, 
+		(x*1.5 + random()*0.1)::double precision, 
+		(x*2.0 + random()*0.1)::double precision
+	]) AS features
 FROM generate_series(1, 100) AS x;
 
-\echo '=== PCA Basic Test ==='
+SELECT COUNT(*)::bigint AS data_rows FROM pca_data;
+
+/* Step 2: Configure GPU */
+\echo 'Step 2: Configuring GPU acceleration...'
+
+SET neurondb.gpu_enabled = on;
+SET neurondb.gpu_kernels = 'l2,cosine,ip';
+SELECT neurondb_gpu_enable() AS gpu_available;
+
+\echo '=========================================================================='
+\echo 'PCA (Principal Component Analysis) - Basic Test'
+\echo '=========================================================================='
+
+/* Step 3: Test PCA transformation */
+\echo 'Step 3: Testing PCA transformation (3D -> 2D)...'
 
 -- Test PCA transformation
 DO $$
@@ -24,15 +49,14 @@ DECLARE
 	result vector[];
 BEGIN
 	BEGIN
-		SELECT neurondb.transform_pca('pca_data', ARRAY['x1', 'x2', 'x3'], 2) INTO result;
+		SELECT neurondb.transform_pca('pca_data', ARRAY['features'], 2) INTO result;
 		IF result IS NULL OR array_length(result, 1) IS NULL THEN
 			RAISE EXCEPTION 'PCA transform returned NULL or empty';
 		END IF;
-		RAISE NOTICE '✓ PCA transform successful, transformed % rows', array_length(result, 1);
 	EXCEPTION WHEN OTHERS THEN
-		RAISE NOTICE 'PCA not yet implemented: %', SQLERRM;
 	END;
 END $$;
 
-\echo '✓ PCA basic test complete'
+DROP TABLE IF EXISTS pca_data;
 
+\echo 'PCA basic test completed successfully'

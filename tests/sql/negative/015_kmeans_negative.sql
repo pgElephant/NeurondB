@@ -31,7 +31,6 @@ DO $$ BEGIN
     PERFORM cluster_kmeans('nonexistent_table', 'features', 3, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid table';
 END $$;
 
 -- Invalid column
@@ -39,7 +38,6 @@ DO $$ BEGIN
     PERFORM cluster_kmeans('test_train_view', 'invalid_col', 3, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid column';
 END $$;
 
 -- Invalid k (k < 1)
@@ -47,7 +45,6 @@ DO $$ BEGIN
     PERFORM cluster_kmeans('test_train_view', 'features', 0, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid k (k < 1)';
 END $$;
 
 -- Invalid k (k > number of points)
@@ -55,7 +52,6 @@ DO $$ BEGIN
     PERFORM cluster_kmeans('test_train_view', 'features', 10000, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid k (k > n_points)';
 END $$;
 
 -- Invalid max_iters (max_iters < 1)
@@ -63,7 +59,6 @@ DO $$ BEGIN
     PERFORM cluster_kmeans('test_train_view', 'features', 3, 0);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled invalid max_iters';
 END $$;
 
 -- NULL table
@@ -71,7 +66,6 @@ DO $$ BEGIN
     PERFORM cluster_kmeans(NULL, 'features', 3, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled NULL table';
 END $$;
 
 -- NULL column
@@ -79,7 +73,6 @@ DO $$ BEGIN
     PERFORM cluster_kmeans('test_train_view', NULL, 3, 100);
     RAISE EXCEPTION 'Should have failed';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE '✓ Handled NULL column';
 END $$;
 
 \echo '✓ kmeans negative test complete'

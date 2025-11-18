@@ -80,14 +80,14 @@ ndb_gpu_register_backend(const ndb_gpu_backend *backend)
 
 	if (backend == NULL)
 	{
-		elog(WARNING,
+		elog(DEBUG1,
 			"neurondb: attempted to register NULL GPU backend");
 		return -1;
 	}
 
 	if (registry.count >= NDB_GPU_MAX_BACKENDS)
 	{
-		elog(WARNING,
+		elog(DEBUG1,
 			"neurondb: GPU backend registry full; ignoring '%s'",
 			backend->name ? backend->name : "unknown");
 		return -1;
@@ -161,7 +161,7 @@ ndb_gpu_set_active_backend(const ndb_gpu_backend *backend)
 
 		if (rc != 0)
 		{
-			elog(WARNING,
+			elog(DEBUG1,
 				"neurondb: failed to initialise GPU backend "
 				"'%s' (rc=%d)",
 				backend->name ? backend->name : "unknown",
@@ -567,8 +567,19 @@ ndb_gpu_lasso_train(const float *features,
 {
 	if (errstr)
 		*errstr = NULL;
-	if (!active_backend || active_backend->lasso_train == NULL)
+	if (!active_backend)
+	{
+		if (errstr)
+			*errstr = pstrdup("GPU backend not initialized");
 		return -1;
+	}
+	if (active_backend->lasso_train == NULL)
+	{
+		if (errstr)
+			*errstr = psprintf("lasso_train not implemented for backend '%s'",
+							   active_backend->name ? active_backend->name : "unknown");
+		return -1;
+	}
 	return active_backend->lasso_train(features,
 		targets,
 		n_samples,
@@ -615,7 +626,6 @@ ndb_gpu_select_backend(const char *name)
 
 	if (registry.count == 0)
 	{
-		elog(DEBUG1, "neurondb: no GPU backends registered");
 		return NULL;
 	}
 
@@ -639,7 +649,7 @@ ndb_gpu_select_backend(const char *name)
 
 			if (!ndb_backend_is_available(candidate))
 			{
-				elog(WARNING,
+				elog(DEBUG1,
 					"neurondb: GPU backend '%s' not "
 					"available",
 					name);
@@ -652,7 +662,7 @@ ndb_gpu_select_backend(const char *name)
 
 		if (chosen == NULL)
 		{
-			elog(WARNING,
+			elog(DEBUG1,
 				"neurondb: GPU backend '%s' not found",
 				name);
 			return NULL;
