@@ -48,7 +48,21 @@ typedef struct NdbCudaRfTreeHeader
 	int node_count;
 	int nodes_start;
 	int root_index;
+	int max_feature_index;	/* Maximum feature index used in this tree */
 } NdbCudaRfTreeHeader;
+
+/* GPU-resident model structure for caching */
+typedef struct NdbCudaRfGpuModel
+{
+	NdbCudaRfNode *d_nodes;		/* Device pointer to nodes */
+	NdbCudaRfTreeHeader *d_trees;	/* Device pointer to tree headers */
+	int total_nodes;		/* Total number of nodes */
+	int tree_count;		/* Number of trees */
+	int feature_dim;		/* Feature dimensionality */
+	int class_count;		/* Number of classes */
+	int majority_class;		/* Default class for fallback */
+	bool is_valid;		/* Model validity flag */
+} NdbCudaRfGpuModel;
 
 #ifdef __cplusplus
 extern "C" {
@@ -104,6 +118,41 @@ extern int ndb_cuda_rf_launch_split_counts(const float *features,
 	int class_count,
 	int *left_counts_dev,
 	int *right_counts_dev);
+
+/* GPU model cache API */
+extern int ndb_cuda_rf_model_upload(const NdbCudaRfNode *nodes,
+	const NdbCudaRfTreeHeader *trees,
+	int tree_count,
+	int feature_dim,
+	int class_count,
+	int majority_class,
+	NdbCudaRfGpuModel **out_model);
+
+extern int ndb_cuda_rf_infer_model(const NdbCudaRfGpuModel *model,
+	const float *input,
+	int feature_dim,
+	int *votes);
+
+extern void ndb_cuda_rf_model_free(NdbCudaRfGpuModel *model);
+
+/* Batch inference API */
+extern int ndb_cuda_rf_predict_batch(const bytea *model_data,
+	const float *features,
+	int n_samples,
+	int feature_dim,
+	int *predictions_out,
+	char **errstr);
+
+extern int ndb_cuda_rf_evaluate_batch(const bytea *model_data,
+	const float *features,
+	const int *labels,
+	int n_samples,
+	int feature_dim,
+	double *accuracy_out,
+	double *precision_out,
+	double *recall_out,
+	double *f1_out,
+	char **errstr);
 
 #ifdef __cplusplus
 }

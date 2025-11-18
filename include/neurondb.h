@@ -117,6 +117,12 @@ float4 inner_product_distance(Vector *a, Vector *b);
 float4 cosine_distance(Vector *a, Vector *b);
 float4 l1_distance(Vector *a, Vector *b);
 
+/* vector_distance_simd.c - SIMD-optimized distance functions */
+float4 l2_distance_simd(Vector *a, Vector *b);
+float4 inner_product_simd(Vector *a, Vector *b);
+float4 cosine_distance_simd(Vector *a, Vector *b);
+float4 l1_distance_simd(Vector *a, Vector *b);
+
 /* quantization.c - Vector quantization */
 VectorI8 *quantize_vector_i8(Vector *v);
 VectorF16 *quantize_vector_f16(Vector *v);
@@ -125,6 +131,13 @@ VectorU8 *quantize_vector_uint8(Vector *v);
 VectorTernary *quantize_vector_ternary(Vector *v);
 VectorI4 *quantize_vector_int4(Vector *v);
 Vector *dequantize_vector(void *qv, int type);
+
+/* vector_distance_simd.c - SIMD-optimized distance functions */
+int detect_simd_capabilities(void);
+float4 l2_distance_simd(Vector *a, Vector *b);
+float4 inner_product_simd(Vector *a, Vector *b);
+float4 cosine_distance_simd(Vector *a, Vector *b);
+float4 l1_distance_simd(Vector *a, Vector *b);
 
 /* index_hnsw.c - HNSW index */
 void hnsw_build(Relation index, Relation heap);

@@ -308,8 +308,15 @@ ndb_cuda_svm_train(const float *features,
 	}
 
 	/* Initialize errors: E_i = f(x_i) - y_i, where f(x_i) = 0 initially */
+	/* Also initialize alphas to small values to help convergence */
 	for (i = 0; i < sample_limit; i++)
+	{
 		errors[i] = -(float)labels[i];
+		/* Initialize alphas to small random values to break symmetry */
+		alphas[i] = ((float)(i % 10) + 1.0f) * 0.01f * (float)C;
+		if (alphas[i] > (float)C)
+			alphas[i] = (float)C * 0.1f;
+	}
 
 	/* Simplified SMO: iterate until convergence or max iterations */
 	for (iter = 0; iter < actual_max_iters; iter++)
@@ -328,25 +335,44 @@ ndb_cuda_svm_train(const float *features,
 			float new_alpha_i;
 			float delta_alpha;
 
-			/* Compute kernel for self (simplified) */
-			eta = 2.0f * kernel_matrix[i * sample_limit + i] - kernel_matrix[i * sample_limit + i];
+			/* Compute eta: second derivative of objective function */
+			/* For linear kernel: eta = 2 * K(x_i, x_i) = 2 * ||x_i||^2 */
+			eta = 2.0f * kernel_matrix[i * sample_limit + i];
 
-			if (eta >= 0.0f)
+			/* Defensive: ensure eta is positive and reasonable */
+			if (eta <= 1e-6f)
+				eta = 1.0f;
+
+			/* Update alpha using gradient descent-like approach */
+			/* new_alpha = alpha - (error * label) / eta */
+			/* But we need to respect KKT conditions */
+			if (label_i * error_i < -(float)eps)
+			{
+				/* Violates KKT: alpha should increase */
+				new_alpha_i = alpha_i + (-label_i * error_i) / eta;
+			}
+			else if (label_i * error_i > (float)eps)
+			{
+				/* Violates KKT: alpha should decrease */
+				new_alpha_i = alpha_i - (label_i * error_i) / eta;
+			}
+			else
+			{
+				/* KKT satisfied, no update needed */
 				continue;
+			}
 
-			/* Update alpha */
-			new_alpha_i = alpha_i - label_i * error_i / eta;
-
-			/* Clip to bounds */
+			/* Clip to bounds [0, C] */
 			if (new_alpha_i < L)
 				new_alpha_i = L;
 			if (new_alpha_i > H)
 				new_alpha_i = H;
 
-			if (fabsf(new_alpha_i - alpha_i) < (float)eps)
+			/* Only update if change is significant */
+			delta_alpha = new_alpha_i - alpha_i;
+			if (fabsf(delta_alpha) < (float)eps)
 				continue;
 
-			delta_alpha = new_alpha_i - alpha_i;
 			alphas[i] = new_alpha_i;
 
 			/* Update errors using GPU */

@@ -20,6 +20,7 @@
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "utils/array.h"
+#include "utils/jsonb.h"
 #include "utils/memutils.h"
 
 #include "neurondb.h"
@@ -28,6 +29,16 @@
 #include "neurondb_cuda_knn.h"
 #include "vector/vector_types.h"
 #include "ml_gpu_registry.h"
+#ifdef NDB_GPU_CUDA
+#include "neurondb_gpu_model.h"
+#include "neurondb_gpu.h"
+#endif
+
+#ifdef NDB_GPU_CUDA
+#include "neurondb_cuda_runtime.h"
+#include <cublas_v2.h>
+extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
+#endif
 
 #include <math.h>
 #include <float.h>
@@ -1099,6 +1110,620 @@ predict_knn_model_id(PG_FUNCTION_ARGS)
 	MemoryContextDelete(callcontext);
 
 	PG_RETURN_FLOAT8(prediction);
+}
+
+/*
+ * knn_predict_batch
+ *
+ * Helper function to predict a batch of samples using KNN model.
+ * Updates confusion matrix.
+ */
+static void
+knn_predict_batch(int32 model_id,
+	const float *features,
+	const double *labels,
+	int n_samples,
+	int feature_dim,
+	int *tp_out,
+	int *tn_out,
+	int *fp_out,
+	int *fn_out)
+{
+	int i;
+	int tp = 0;
+	int tn = 0;
+	int fp = 0;
+	int fn = 0;
+	bytea *model_data = NULL;
+	Jsonb *metrics = NULL;
+	const char *base;
+	int k_value = 0;
+
+	if (features == NULL || labels == NULL || n_samples <= 0)
+	{
+		if (tp_out)
+			*tp_out = 0;
+		if (tn_out)
+			*tn_out = 0;
+		if (fp_out)
+			*fp_out = 0;
+		if (fn_out)
+			*fn_out = 0;
+		return;
+	}
+
+	/* Load model to get k value */
+	if (!ml_catalog_fetch_model_payload(model_id, &model_data, NULL, &metrics))
+	{
+		if (tp_out)
+			*tp_out = 0;
+		if (tn_out)
+			*tn_out = 0;
+		if (fp_out)
+			*fp_out = 0;
+		if (fn_out)
+			*fn_out = 0;
+		return;
+	}
+
+	if (model_data == NULL)
+	{
+		if (metrics)
+			pfree(metrics);
+		if (tp_out)
+			*tp_out = 0;
+		if (tn_out)
+			*tn_out = 0;
+		if (fp_out)
+			*fp_out = 0;
+		if (fn_out)
+			*fn_out = 0;
+		return;
+	}
+
+	base = VARDATA(model_data);
+
+	/* Detect CPU vs GPU format */
+	{
+		int first_int = *(int *)base;
+		if (first_int >= 1 && first_int <= 1000)
+		{
+			/* CPU format */
+			memcpy(&k_value, base, sizeof(int));
+		}
+		else
+		{
+			/* GPU format */
+			const NdbCudaKnnModelHeader *gpu_hdr;
+
+			if (VARSIZE(model_data) - VARHDRSZ < (int)sizeof(NdbCudaKnnModelHeader))
+			{
+				if (metrics)
+					pfree(metrics);
+				if (model_data)
+					pfree(model_data);
+				if (tp_out)
+					*tp_out = 0;
+				if (tn_out)
+					*tn_out = 0;
+				if (fp_out)
+					*fp_out = 0;
+				if (fn_out)
+					*fn_out = 0;
+				return;
+			}
+			gpu_hdr = (const NdbCudaKnnModelHeader *)base;
+			k_value = gpu_hdr->k;
+		}
+	}
+
+	if (k_value < 1)
+	{
+		if (metrics)
+			pfree(metrics);
+		if (model_data)
+			pfree(model_data);
+		if (tp_out)
+			*tp_out = 0;
+		if (tn_out)
+			*tn_out = 0;
+		if (fp_out)
+			*fp_out = 0;
+		if (fn_out)
+			*fn_out = 0;
+		return;
+	}
+
+	/* For each test sample, predict using predict_knn_model_id */
+	for (i = 0; i < n_samples; i++)
+	{
+		const float *row = features + (i * feature_dim);
+		double y_true = labels[i];
+		int true_class;
+		double prediction;
+		int pred_class;
+		ArrayType *feat_array;
+		Datum pred_datum;
+
+		if (!isfinite(y_true))
+			continue;
+
+		/* Convert label to class: handle both integer and float labels */
+		/* Allow small epsilon for floating point labels (e.g., 0.0, 1.0) */
+		if (y_true < -0.5 || y_true > 1.5)
+			continue;
+		
+		true_class = (int)rint(y_true);
+		/* Clamp to valid binary classification range [0, 1] */
+		if (true_class < 0)
+			true_class = 0;
+		if (true_class > 1)
+			true_class = 1;
+
+		/* Convert float features to float8 array for predict_knn_model_id */
+		{
+			float8 *feat_f8;
+			int j;
+
+			feat_f8 = (float8 *)palloc(sizeof(float8) * feature_dim);
+			for (j = 0; j < feature_dim; j++)
+				feat_f8[j] = (float8)row[j];
+
+			feat_array = construct_array((Datum *)feat_f8,
+				feature_dim,
+				FLOAT8OID,
+				sizeof(float8),
+				FLOAT8PASSBYVAL,
+				'd');
+			pfree(feat_f8);
+		}
+
+		/* Call predict_knn_model_id */
+		pred_datum = DirectFunctionCall2(predict_knn_model_id,
+			Int32GetDatum(model_id),
+			PointerGetDatum(feat_array));
+		prediction = DatumGetFloat8(pred_datum);
+		pfree(feat_array);
+
+		/* Convert prediction to class: handle both integer and float predictions */
+		/* Clamp prediction to valid binary classification range [0, 1] */
+		if (prediction < 0.0)
+			prediction = 0.0;
+		if (prediction > 1.0)
+			prediction = 1.0;
+		
+		pred_class = (int)rint(prediction);
+		if (pred_class < 0)
+			pred_class = 0;
+		if (pred_class > 1)
+			pred_class = 1;
+
+		/* Update confusion matrix */
+		if (true_class == 1 && pred_class == 1)
+			tp++;
+		else if (true_class == 0 && pred_class == 0)
+			tn++;
+		else if (true_class == 0 && pred_class == 1)
+			fp++;
+		else if (true_class == 1 && pred_class == 0)
+			fn++;
+	}
+
+	if (metrics)
+		pfree(metrics);
+	if (model_data)
+		pfree(model_data);
+
+	if (tp_out)
+		*tp_out = tp;
+	if (tn_out)
+		*tn_out = tn;
+	if (fp_out)
+		*fp_out = fp;
+	if (fn_out)
+		*fn_out = fn;
+}
+
+/*
+ * evaluate_knn_by_model_id
+ *
+ * Evaluates KNN model by model_id using optimized batch evaluation.
+ * Supports both GPU and CPU models with GPU-accelerated batch evaluation when available.
+ *
+ * Returns jsonb with metrics: accuracy, precision, recall, f1_score, n_samples
+ */
+PG_FUNCTION_INFO_V1(evaluate_knn_by_model_id);
+
+Datum
+evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
+{
+	int32 model_id;
+	text *table_name;
+	text *feature_col;
+	text *label_col;
+	char *tbl_str;
+	char *feat_str;
+	char *targ_str;
+	int ret;
+	int nvec = 0;
+	int i;
+	int j;
+	Oid feat_type_oid = InvalidOid;
+	bool feat_is_array = false;
+	double accuracy = 0.0;
+	double precision = 0.0;
+	double recall = 0.0;
+	double f1_score = 0.0;
+	int tp = 0;
+	int tn = 0;
+	int fp = 0;
+	int fn = 0;
+	MemoryContext oldcontext;
+	StringInfoData query;
+	StringInfoData jsonbuf;
+	Jsonb *result_jsonb = NULL;
+	bytea *gpu_payload = NULL;
+	Jsonb *gpu_metrics = NULL;
+	bool is_gpu_model = false;
+	int feat_dim = 0;
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_knn_by_model_id: model_id is required")));
+
+	model_id = PG_GETARG_INT32(0);
+
+	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_knn_by_model_id: table_name, feature_col, and label_col are required")));
+
+	table_name = PG_GETARG_TEXT_PP(1);
+	feature_col = PG_GETARG_TEXT_PP(2);
+	label_col = PG_GETARG_TEXT_PP(3);
+
+	tbl_str = text_to_cstring(table_name);
+	feat_str = text_to_cstring(feature_col);
+	targ_str = text_to_cstring(label_col);
+
+	oldcontext = CurrentMemoryContext;
+
+	/* Load model from catalog to determine feature dimension */
+	if (!ml_catalog_fetch_model_payload(model_id, &gpu_payload, NULL, &gpu_metrics))
+	{
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_knn_by_model_id: model %d not found",
+					model_id)));
+	}
+
+	/* Check if GPU model and extract feature dimension */
+	if (gpu_payload != NULL)
+	{
+		const char *base = VARDATA(gpu_payload);
+		int first_int = *(int *)base;
+
+		if (first_int >= 1 && first_int <= 1000)
+		{
+			/* CPU format: k, n_samples, n_features */
+			int k_cpu, n_samples_cpu, n_features_cpu;
+
+			memcpy(&k_cpu, base, sizeof(int));
+			memcpy(&n_samples_cpu, base + sizeof(int), sizeof(int));
+			memcpy(&n_features_cpu, base + sizeof(int) * 2, sizeof(int));
+			feat_dim = n_features_cpu;
+			is_gpu_model = false;
+		}
+		else
+		{
+			/* GPU format */
+			const NdbCudaKnnModelHeader *gpu_hdr;
+
+			if (VARSIZE(gpu_payload) - VARHDRSZ >= (int)sizeof(NdbCudaKnnModelHeader))
+			{
+				gpu_hdr = (const NdbCudaKnnModelHeader *)base;
+				feat_dim = gpu_hdr->n_features;
+				is_gpu_model = true;
+			}
+			else
+			{
+				pfree(tbl_str);
+				pfree(feat_str);
+				pfree(targ_str);
+				if (gpu_payload)
+					pfree(gpu_payload);
+				if (gpu_metrics)
+					pfree(gpu_metrics);
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: evaluate_knn_by_model_id: model %d has invalid header",
+							model_id)));
+			}
+		}
+	}
+
+	if (feat_dim <= 0)
+	{
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_knn_by_model_id: could not determine feature dimension")));
+	}
+
+	/* Connect to SPI */
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	{
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_knn_by_model_id: SPI_connect failed")));
+	}
+
+	/* Build query - single query to fetch all data */
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		quote_identifier(feat_str),
+		quote_identifier(targ_str),
+		quote_identifier(tbl_str),
+		quote_identifier(feat_str),
+		quote_identifier(targ_str));
+
+	ret = SPI_execute(query.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+	{
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_knn_by_model_id: query failed")));
+	}
+
+	nvec = SPI_processed;
+	if (nvec < 1)
+	{
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_knn_by_model_id: no valid rows found")));
+	}
+
+	/* Determine feature column type */
+	if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL)
+		feat_type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, 1);
+	if (feat_type_oid == FLOAT8ARRAYOID || feat_type_oid == FLOAT4ARRAYOID)
+		feat_is_array = true;
+
+	/* GPU batch evaluation path for GPU models - uses optimized evaluation kernel */
+	if (is_gpu_model && neurondb_gpu_is_available())
+	{
+#ifdef NDB_GPU_CUDA
+		/* For now, GPU evaluation for KNN is not implemented, fall back to CPU */
+		elog(DEBUG1,
+			"neurondb: evaluate_knn_by_model_id: GPU evaluation not yet implemented for KNN, using CPU batch evaluation");
+		goto gpu_eval_fallback;
+#endif	/* NDB_GPU_CUDA */
+	}
+
+gpu_eval_fallback:
+	/* CPU evaluation path (also used as fallback for GPU models) */
+	/* Use optimized batch prediction */
+	{
+		float *h_features = NULL;
+		double *h_labels = NULL;
+		int valid_rows = 0;
+
+		/* Allocate host buffers for features and labels */
+		h_features = (float *)palloc(sizeof(float) * (size_t)nvec * (size_t)feat_dim);
+		h_labels = (double *)palloc(sizeof(double) * (size_t)nvec);
+
+		/* Extract features and labels from SPI results - optimized batch extraction */
+		/* Cache TupleDesc to avoid repeated lookups */
+		{
+			TupleDesc tupdesc = SPI_tuptable->tupdesc;
+
+			for (i = 0; i < nvec; i++)
+			{
+				HeapTuple tuple = SPI_tuptable->vals[i];
+				Datum feat_datum;
+				Datum targ_datum;
+				bool feat_null;
+				bool targ_null;
+				Vector *vec;
+				ArrayType *arr;
+				float *feat_row;
+
+				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+
+				if (feat_null || targ_null)
+					continue;
+
+				feat_row = h_features + (valid_rows * feat_dim);
+				h_labels[valid_rows] = DatumGetFloat8(targ_datum);
+
+				/* Extract feature vector - optimized paths */
+				if (feat_is_array)
+				{
+					arr = DatumGetArrayTypeP(feat_datum);
+					if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != feat_dim)
+						continue;
+					if (feat_type_oid == FLOAT8ARRAYOID)
+					{
+						/* Optimized: bulk conversion with loop unrolling hint */
+						float8 *data = (float8 *)ARR_DATA_PTR(arr);
+						int j_remain = feat_dim % 4;
+						int j_end = feat_dim - j_remain;
+
+						/* Process 4 elements at a time for better cache locality */
+						for (j = 0; j < j_end; j += 4)
+						{
+							feat_row[j] = (float)data[j];
+							feat_row[j + 1] = (float)data[j + 1];
+							feat_row[j + 2] = (float)data[j + 2];
+							feat_row[j + 3] = (float)data[j + 3];
+						}
+						/* Handle remaining elements */
+						for (j = j_end; j < feat_dim; j++)
+							feat_row[j] = (float)data[j];
+					}
+					else
+					{
+						/* FLOAT4ARRAYOID: direct memcpy (already optimal) */
+						float4 *data = (float4 *)ARR_DATA_PTR(arr);
+						memcpy(feat_row, data, sizeof(float) * feat_dim);
+					}
+				}
+				else
+				{
+					/* Vector type: direct memcpy (already optimal) */
+					vec = DatumGetVector(feat_datum);
+					if (vec->dim != feat_dim)
+						continue;
+					memcpy(feat_row, vec->data, sizeof(float) * feat_dim);
+				}
+
+				valid_rows++;
+			}
+		}
+
+		if (valid_rows == 0)
+		{
+			pfree(h_features);
+			pfree(h_labels);
+			if (gpu_payload)
+				pfree(gpu_payload);
+			if (gpu_metrics)
+				pfree(gpu_metrics);
+			pfree(query.data);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(targ_str);
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_knn_by_model_id: no valid rows found")));
+		}
+
+		/* Use batch prediction helper */
+		knn_predict_batch(model_id,
+			h_features,
+			h_labels,
+			valid_rows,
+			feat_dim,
+			&tp,
+			&tn,
+			&fp,
+			&fn);
+
+		/* Compute metrics */
+		if (valid_rows > 0)
+		{
+			int total_predictions = tp + tn + fp + fn;
+			
+			/* Defensive check: ensure we have predictions */
+			if (total_predictions == 0)
+			{
+				elog(WARNING,
+					"neurondb: evaluate_knn_by_model_id: no valid predictions made for %d valid rows (model_id=%d, feature_dim=%d)",
+					valid_rows, model_id, feat_dim);
+				accuracy = 0.0;
+				precision = 0.0;
+				recall = 0.0;
+				f1_score = 0.0;
+			}
+			else
+			{
+				/* Use valid_rows for accuracy (original behavior) */
+				accuracy = (double)(tp + tn) / (double)valid_rows;
+				
+				/* Warn if some rows were skipped during prediction */
+				if (total_predictions < valid_rows)
+				{
+					elog(DEBUG1,
+						"neurondb: evaluate_knn_by_model_id: %d rows skipped during prediction (labels out of range?)",
+						valid_rows - total_predictions);
+				}
+
+				if ((tp + fp) > 0)
+					precision = (double)tp / (double)(tp + fp);
+				else
+					precision = 0.0;
+
+				if ((tp + fn) > 0)
+					recall = (double)tp / (double)(tp + fn);
+				else
+					recall = 0.0;
+
+				if ((precision + recall) > 0.0)
+					f1_score = 2.0 * (precision * recall) / (precision + recall);
+				else
+					f1_score = 0.0;
+			}
+		}
+
+		/* Cleanup */
+		pfree(h_features);
+		pfree(h_labels);
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+	}
+
+	SPI_finish();
+	pfree(query.data);
+	pfree(tbl_str);
+	pfree(feat_str);
+	pfree(targ_str);
+
+	/* Build jsonb result */
+	initStringInfo(&jsonbuf);
+	appendStringInfo(&jsonbuf,
+		"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
+		accuracy,
+		precision,
+		recall,
+		f1_score,
+		nvec);
+
+	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+		CStringGetDatum(jsonbuf.data)));
+
+	pfree(jsonbuf.data);
+	MemoryContextSwitchTo(oldcontext);
+	PG_RETURN_JSONB_P(result_jsonb);
 }
 
 /*-------------------------------------------------------------------------

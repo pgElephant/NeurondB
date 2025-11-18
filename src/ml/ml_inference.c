@@ -31,6 +31,7 @@
 #include "utils/lsyscache.h"
 #include "executor/spi.h"
 #include "pgtime.h"
+#include <stdint.h>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -108,14 +109,98 @@ model_type_to_cstr(ModelType t)
 static ModelEntry *
 find_model(const char *name)
 {
-	ModelEntry *cur = model_registry_head;
+	ModelEntry *cur;
+	volatile ModelEntry *volatile_cur;
+	int iter_count = 0;
 
-	while (cur != NULL)
+	elog(DEBUG1, "neurondb: find_model() called for name='%s'", name ? name : "NULL");
+
+	if (name == NULL)
 	{
-		if (pg_strcasecmp(cur->name, name) == 0)
-			return cur;
-		cur = cur->next;
+		elog(DEBUG1, "neurondb: find_model() name is NULL, returning NULL");
+		return NULL;
 	}
+
+	/* Defensive: Validate memory context before accessing registry */
+	if (TopMemoryContext == NULL || CurrentMemoryContext == NULL)
+	{
+		elog(DEBUG1, "neurondb: find_model() memory contexts are NULL, returning NULL");
+		return NULL;
+	}
+
+	elog(DEBUG1, "neurondb: find_model() accessing model_registry_head");
+	/* Use volatile pointer to prevent compiler optimizations that might
+	 * hide memory corruption */
+	volatile_cur = (volatile ModelEntry *)model_registry_head;
+	cur = (ModelEntry *)volatile_cur;
+	elog(DEBUG1, "neurondb: find_model() model_registry_head=%p", (void *)cur);
+
+	/* Limit iteration to prevent infinite loops from corrupted linked list */
+	{
+		int max_iter = 10000;
+		int iter = 0;
+
+		elog(DEBUG1, "neurondb: find_model() starting iteration through registry");
+		while (cur != NULL && iter < max_iter)
+		{
+			iter_count++;
+			elog(DEBUG1, "neurondb: find_model() iteration %d, cur=%p", iter, (void *)cur);
+
+			/* Defensive: Validate pointer alignment and reasonable address */
+			if ((uintptr_t)cur < 0x1000 || (uintptr_t)cur % sizeof(void *) != 0)
+			{
+				elog(WARNING, "neurondb: find_model() invalid pointer alignment at iteration %d", iter);
+				break;
+			}
+
+			/* Defensive: Validate model entry structure */
+			if (cur->name == NULL)
+			{
+				elog(WARNING, "neurondb: find_model() cur->name is NULL at iteration %d", iter);
+				break;
+			}
+
+			elog(DEBUG1, "neurondb: find_model() checking model name '%s' vs '%s'", cur->name, name);
+
+			/* Defensive: Validate name pointer */
+			if ((uintptr_t)cur->name < 0x1000 || (uintptr_t)cur->name % sizeof(void *) != 0)
+			{
+				elog(WARNING, "neurondb: find_model() invalid name pointer at iteration %d", iter);
+				break;
+			}
+
+			if (pg_strcasecmp(cur->name, name) == 0)
+			{
+				elog(DEBUG1, "neurondb: find_model() found matching model, validating handle");
+				/* Additional validation before returning */
+				if (cur->model_handle != NULL)
+				{
+					/* Validate handle pointer alignment */
+					if ((uintptr_t)cur->model_handle < 0x1000 || 
+						(uintptr_t)cur->model_handle % sizeof(void *) != 0)
+					{
+						elog(WARNING, "neurondb: find_model() invalid handle pointer alignment");
+						break;
+					}
+
+					/* Validate magic number */
+					if (cur->model_handle->magic != MODEL_HANDLE_MAGIC)
+					{
+						elog(WARNING, "neurondb: find_model() invalid magic number (expected 0x%x, got 0x%x)",
+							MODEL_HANDLE_MAGIC, cur->model_handle->magic);
+						break;
+					}
+				}
+				elog(DEBUG1, "neurondb: find_model() returning model entry at %p", (void *)cur);
+				return cur;
+			}
+			volatile_cur = (volatile ModelEntry *)cur->next;
+			cur = (ModelEntry *)volatile_cur;
+			iter++;
+		}
+		elog(DEBUG1, "neurondb: find_model() completed %d iterations, model not found", iter_count);
+	}
+	elog(DEBUG1, "neurondb: find_model() returning NULL");
 	return NULL;
 }
 
@@ -303,26 +388,237 @@ PG_FUNCTION_INFO_V1(predict);
 Datum
 predict(PG_FUNCTION_ARGS)
 {
-	text *model_name = PG_GETARG_TEXT_PP(0);
-	Vector *input = PG_GETARG_VECTOR_P(1);
-	char *name_str = text_to_cstring(model_name);
+	text *model_name;
+	Vector *input;
+	char *name_str = NULL;
 	ModelEntry *m;
 	Vector *result;
 
-	m = find_model(name_str);
+	elog(DEBUG1, "neurondb: predict() called with %d arguments", PG_NARGS());
+
+	if (PG_NARGS() != 2)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: predict requires 2 arguments, got %d", PG_NARGS())));
+
+	elog(DEBUG1, "neurondb: predict() checking argument nullness");
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: model_name cannot be NULL")));
+	if (PG_ARGISNULL(1))
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: Input vector is NULL")));
+
+	elog(DEBUG1, "neurondb: predict() getting arguments");
+	model_name = PG_GETARG_TEXT_PP(0);
+	input = PG_GETARG_VECTOR_P(1);
+	elog(DEBUG1, "neurondb: predict() got arguments: model_name=%p, input=%p", (void *)model_name, (void *)input);
+
+	/* Defensive: Validate memory context */
+	elog(DEBUG1, "neurondb: predict() validating memory context");
+	if (CurrentMemoryContext == NULL)
+	{
+		elog(ERROR, "neurondb: predict() CurrentMemoryContext is NULL");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: CurrentMemoryContext is NULL in predict")));
+	}
+	elog(DEBUG1, "neurondb: predict() CurrentMemoryContext=%p, TopMemoryContext=%p",
+		(void *)CurrentMemoryContext, (void *)TopMemoryContext);
+
+	/* Defensive: Validate input arguments */
+	if (model_name == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: model_name cannot be NULL")));
+
+	if (input == NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				errmsg("neurondb: Input vector is NULL")));
+
+	/* Defensive: Validate vector structure */
+	if (input->dim <= 0 || input->dim > VECTOR_MAX_DIM)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: Invalid vector dimension %d (must be 1-%d)",
+					input->dim, VECTOR_MAX_DIM)));
+
+	/* Convert model name to C string */
+	elog(DEBUG1, "neurondb: predict() converting model name to C string");
+	name_str = text_to_cstring(model_name);
+	if (name_str == NULL)
+	{
+		elog(ERROR, "neurondb: predict() text_to_cstring returned NULL");
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: Failed to convert model name to C string")));
+	}
+	elog(DEBUG1, "neurondb: predict() model name='%s'", name_str);
+
+	/* Find model in registry - defensive check for memory corruption */
+	/* During SQL function compilation, PostgreSQL may call this function with
+	 * dummy arguments just to validate the signature. We need to handle this
+	 * gracefully without accessing potentially corrupted memory. */
+	elog(DEBUG1, "neurondb: predict() starting model registry lookup for '%s'", name_str);
+	m = NULL;
+
+	/* Validate memory contexts first */
+	elog(DEBUG1, "neurondb: predict() validating memory contexts");
+	if (TopMemoryContext == NULL || CurrentMemoryContext == NULL)
+	{
+		elog(ERROR, "neurondb: predict() TopMemoryContext=%p, CurrentMemoryContext=%p",
+			(void *)TopMemoryContext, (void *)CurrentMemoryContext);
+		pfree(name_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: predict called in invalid memory context")));
+	}
+	elog(DEBUG1, "neurondb: predict() memory contexts validated");
+
+	/* Additional safety: validate memory context integrity before accessing registry */
+	/* During SQL function compilation, PostgreSQL may use special memory contexts
+	 * that are not safe for accessing global state. We check for this by validating
+	 * the context structure. */
+	elog(DEBUG1, "neurondb: predict() checking memory context integrity");
+	{
+		MemoryContext parent;
+		PG_TRY();
+		{
+			parent = MemoryContextGetParent(CurrentMemoryContext);
+			elog(DEBUG1, "neurondb: predict() CurrentMemoryContext parent=%p", (void *)parent);
+			/* If parent is NULL and we're not in TopMemoryContext, this might be unsafe */
+			if (parent == NULL && CurrentMemoryContext != TopMemoryContext)
+			{
+				elog(WARNING, "neurondb: predict() suspicious memory context (parent=NULL, not TopMemoryContext)");
+				/* This could be a compilation context - be extra cautious */
+				/* Don't error here, but skip registry access */
+			}
+		}
+		PG_CATCH();
+		{
+			/* If getting parent fails, memory context is corrupted - abort safely */
+			elog(ERROR, "neurondb: predict() MemoryContextGetParent failed - memory context corrupted");
+			pfree(name_str);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("neurondb: predict called in corrupted memory context")));
+		}
+		PG_END_TRY();
+	}
+	elog(DEBUG1, "neurondb: predict() memory context integrity check passed");
+
+	/* Try to access registry with maximum safety */
+	/* During SQL function compilation, PostgreSQL may call this function with
+	 * dummy arguments. We need to detect this and avoid accessing the registry
+	 * which might cause memory corruption. */
+	elog(DEBUG1, "neurondb: predict() attempting to access model registry");
+	PG_TRY();
+	{
+		/* First, validate that we can safely read the registry pointer */
+		volatile ModelEntry *volatile_reg_head;
+		uintptr_t ptr_val;
+		ModelEntry *safe_reg_head;
+		
+		elog(DEBUG1, "neurondb: predict() reading model_registry_head pointer");
+		volatile_reg_head = (volatile ModelEntry *)model_registry_head;
+		elog(DEBUG1, "neurondb: predict() model_registry_head=%p", (void *)volatile_reg_head);
+		
+		/* Validate registry pointer before dereferencing */
+		if (volatile_reg_head != NULL)
+		{
+			ptr_val = (uintptr_t)volatile_reg_head;
+			elog(DEBUG1, "neurondb: predict() registry pointer value=0x%lx", (unsigned long)ptr_val);
+			/* Check for obviously corrupted pointers */
+			if (ptr_val < 0x1000 || ptr_val > 0x7fffffffffffULL)
+			{
+				/* Suspicious pointer value - likely corruption */
+				elog(WARNING, "neurondb: predict: suspicious model_registry_head pointer (0x%lx), skipping lookup",
+					(unsigned long)ptr_val);
+				m = NULL;
+			}
+			else
+			{
+				elog(DEBUG1, "neurondb: predict() registry pointer looks valid, attempting find_model");
+				/* Pointer looks reasonable, try to access with additional safety */
+				/* Use volatile to prevent compiler optimizations that might hide corruption */
+				safe_reg_head = (ModelEntry *)volatile_reg_head;
+				
+				/* Double-check pointer is still valid after volatile cast */
+				if ((uintptr_t)safe_reg_head == ptr_val)
+				{
+					elog(DEBUG1, "neurondb: predict() calling find_model('%s')", name_str);
+					/* Try to find model, but be ready to catch any corruption */
+					m = find_model(name_str);
+					elog(DEBUG1, "neurondb: predict() find_model returned %p", (void *)m);
+				}
+				else
+				{
+					/* Pointer changed during access - corruption detected */
+					elog(WARNING, "neurondb: predict: model_registry_head pointer changed during access, skipping lookup");
+					m = NULL;
+				}
+			}
+		}
+		else
+		{
+			elog(DEBUG1, "neurondb: predict() registry is empty (model_registry_head is NULL)");
+			/* Registry is empty - no models loaded */
+			m = NULL;
+		}
+	}
+	PG_CATCH();
+	{
+		elog(ERROR, "neurondb: predict() exception caught during registry access");
+		if (name_str != NULL)
+			pfree(name_str);
+		/* During function compilation or if registry is corrupted, return error gracefully */
+		ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_OBJECT),
+				errmsg("neurondb: Model '%s' not found or registry unavailable", name_str ? name_str : "unknown")));
+	}
+	PG_END_TRY();
+	elog(DEBUG1, "neurondb: predict() registry lookup completed, m=%p", (void *)m);
+
+	elog(DEBUG1, "neurondb: predict() checking if model was found");
 	if (m == NULL)
+	{
+		elog(DEBUG1, "neurondb: predict() model '%s' not found in registry", name_str);
+		pfree(name_str);
 		ereport(ERROR,
 			(errmsg("neurondb: Model '%s' not found; must load "
 				"first.",
 				name_str)));
+	}
+
+	elog(DEBUG1, "neurondb: predict() model found, validating model entry");
+	/* Defensive: Validate model entry */
 	if (!m->loaded || m->model_handle == NULL)
+	{
+		elog(ERROR, "neurondb: predict() model '%s' not loaded (loaded=%d, handle=%p)",
+			name_str, m->loaded, (void *)m->model_handle);
+		pfree(name_str);
 		ereport(ERROR,
 			(errmsg("neurondb: Model '%s' not loaded or handle "
 				"invalid.",
 				name_str)));
+	}
 
-	if (input == NULL)
-		ereport(ERROR, (errmsg("neurondb: Input vector is NULL.")));
+	elog(DEBUG1, "neurondb: predict() validating model handle magic number");
+	/* Defensive: Validate model handle */
+	if (m->model_handle->magic != MODEL_HANDLE_MAGIC)
+	{
+		elog(ERROR, "neurondb: predict() model '%s' handle magic invalid (expected 0x%x, got 0x%x)",
+			name_str, MODEL_HANDLE_MAGIC, m->model_handle->magic);
+		pfree(name_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_DATA_CORRUPTED),
+				errmsg("neurondb: Model '%s' handle magic number invalid (corruption detected)",
+					name_str)));
+	}
+	elog(DEBUG1, "neurondb: predict() model handle validated successfully");
 
 	elog(INFO,
 		"neurondb: [predict] Model '%s' (type=%s) on %d-dim vector; "
@@ -335,6 +631,9 @@ predict(PG_FUNCTION_ARGS)
 
 	/* Actual inference stub -- returns copy (mock), real: output from backend */
 	result = copy_vector(input);
+
+	/* Free model name string */
+	pfree(name_str);
 
 	PG_RETURN_VECTOR_P(result);
 }

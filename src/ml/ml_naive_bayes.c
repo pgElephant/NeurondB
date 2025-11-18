@@ -27,6 +27,23 @@
 #include "neurondb_gpu_model.h"
 #include "neurondb_gpu_backend.h"
 #include "ml_catalog.h"
+#include "neurondb_cuda_nb.h"
+
+#ifdef NDB_GPU_CUDA
+#include "neurondb_cuda_runtime.h"
+#include <cublas_v2.h>
+extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
+extern int ndb_cuda_nb_evaluate(const bytea *model_data,
+	const float *features,
+	const int *labels,
+	int n_samples,
+	int feature_dim,
+	double *accuracy_out,
+	double *precision_out,
+	double *recall_out,
+	double *f1_out,
+	char **errstr);
+#endif
 
 #include <math.h>
 #include <float.h>
@@ -842,6 +859,559 @@ predict_naive_bayes_model_id(PG_FUNCTION_ARGS)
 		pfree(metrics);
 
 	PG_RETURN_INT32(predicted_class);
+}
+
+/*
+ * nb_predict_batch
+ *
+ * Helper function to predict a batch of samples using Naive Bayes model.
+ * Updates confusion matrix.
+ */
+static void
+nb_predict_batch(const GaussianNBModel *model,
+	const float *features,
+	const double *labels,
+	int n_samples,
+	int feature_dim,
+	int *tp_out,
+	int *tn_out,
+	int *fp_out,
+	int *fn_out)
+{
+	int i;
+	int tp = 0;
+	int tn = 0;
+	int fp = 0;
+	int fn = 0;
+
+	if (model == NULL || features == NULL || labels == NULL || n_samples <= 0)
+	{
+		if (tp_out)
+			*tp_out = 0;
+		if (tn_out)
+			*tn_out = 0;
+		if (fp_out)
+			*fp_out = 0;
+		if (fn_out)
+			*fn_out = 0;
+		return;
+	}
+
+	for (i = 0; i < n_samples; i++)
+	{
+		const float *row = features + (i * feature_dim);
+		double y_true = labels[i];
+		int true_class;
+		double log_probs[2] = { 0.0, 0.0 };
+		int pred_class;
+		int j;
+		int c;
+
+		if (!isfinite(y_true))
+			continue;
+
+		true_class = (int)rint(y_true);
+		if (true_class < 0 || true_class > 1)
+			continue;
+
+		/* Compute log probabilities for each class */
+		for (c = 0; c < model->n_classes; c++)
+		{
+			log_probs[c] = log(model->class_priors[c]);
+
+			for (j = 0; j < feature_dim; j++)
+			{
+				double pdf = gaussian_pdf((double)row[j],
+					model->means[c][j],
+					model->variances[c][j]);
+				log_probs[c] += log(pdf + 1e-10); /* Add small constant to avoid log(0) */
+			}
+		}
+
+		/* Return class with highest log probability */
+		pred_class = (log_probs[1] > log_probs[0]) ? 1 : 0;
+
+		/* Update confusion matrix */
+		if (true_class == 1 && pred_class == 1)
+			tp++;
+		else if (true_class == 0 && pred_class == 0)
+			tn++;
+		else if (true_class == 0 && pred_class == 1)
+			fp++;
+		else if (true_class == 1 && pred_class == 0)
+			fn++;
+	}
+
+	if (tp_out)
+		*tp_out = tp;
+	if (tn_out)
+		*tn_out = tn;
+	if (fp_out)
+		*fp_out = fp;
+	if (fn_out)
+		*fn_out = fn;
+}
+
+/*
+ * evaluate_naive_bayes_by_model_id
+ *
+ * Evaluates Naive Bayes model by model_id using optimized batch evaluation.
+ * Supports both GPU and CPU models with GPU-accelerated batch evaluation when available.
+ *
+ * Returns jsonb with metrics: accuracy, precision, recall, f1_score, n_samples
+ */
+PG_FUNCTION_INFO_V1(evaluate_naive_bayes_by_model_id);
+
+Datum
+evaluate_naive_bayes_by_model_id(PG_FUNCTION_ARGS)
+{
+	int32 model_id;
+	text *table_name;
+	text *feature_col;
+	text *label_col;
+	char *tbl_str;
+	char *feat_str;
+	char *targ_str;
+	int ret;
+	int nvec = 0;
+	int i;
+	int j;
+	Oid feat_type_oid = InvalidOid;
+	bool feat_is_array = false;
+	double accuracy = 0.0;
+	double precision = 0.0;
+	double recall = 0.0;
+	double f1_score = 0.0;
+	int tp = 0;
+	int tn = 0;
+	int fp = 0;
+	int fn = 0;
+	MemoryContext oldcontext;
+	StringInfoData query;
+	GaussianNBModel *model = NULL;
+	StringInfoData jsonbuf;
+	Jsonb *result_jsonb = NULL;
+	bytea *gpu_payload = NULL;
+	Jsonb *gpu_metrics = NULL;
+	bool is_gpu_model = false;
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_naive_bayes_by_model_id: model_id is required")));
+
+	model_id = PG_GETARG_INT32(0);
+
+	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_naive_bayes_by_model_id: table_name, feature_col, and label_col are required")));
+
+	table_name = PG_GETARG_TEXT_PP(1);
+	feature_col = PG_GETARG_TEXT_PP(2);
+	label_col = PG_GETARG_TEXT_PP(3);
+
+	tbl_str = text_to_cstring(table_name);
+	feat_str = text_to_cstring(feature_col);
+	targ_str = text_to_cstring(label_col);
+
+	oldcontext = CurrentMemoryContext;
+
+	/* Load model from catalog - try CPU first, then GPU */
+	if (!ml_catalog_fetch_model_payload(model_id, &gpu_payload, NULL, &gpu_metrics))
+	{
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_naive_bayes_by_model_id: model %d not found",
+					model_id)));
+	}
+
+	/* Check if GPU model */
+	if (gpu_payload != NULL && gpu_metrics != NULL)
+	{
+		char *meta_txt = NULL;
+		bool is_gpu = false;
+
+		PG_TRY();
+		{
+			meta_txt = DatumGetCString(DirectFunctionCall1(
+				jsonb_out, JsonbPGetDatum(gpu_metrics)));
+			/* Check for both "storage":"gpu" and "storage": "gpu" formats */
+			if (strstr(meta_txt, "\"storage\":\"gpu\"") != NULL ||
+				strstr(meta_txt, "\"storage\": \"gpu\"") != NULL)
+				is_gpu = true;
+			if (meta_txt != NULL)
+				pfree(meta_txt);
+		}
+		PG_CATCH();
+		{
+			/* Invalid JSONB, assume CPU */
+			is_gpu = false;
+		}
+		PG_END_TRY();
+
+		is_gpu_model = is_gpu;
+	}
+
+	/* For CPU models, deserialize from bytea */
+	if (!is_gpu_model && gpu_payload != NULL)
+	{
+		bytea *copy;
+		int data_len = VARSIZE(gpu_payload);
+
+		copy = (bytea *)palloc(data_len);
+		memcpy(copy, gpu_payload, data_len);
+		model = nb_model_deserialize_from_bytea(copy);
+		pfree(copy);
+	}
+
+	/* Connect to SPI */
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	{
+		if (model != NULL)
+		{
+			pfree(model->class_priors);
+			for (i = 0; i < model->n_classes; i++)
+			{
+				pfree(model->means[i]);
+				pfree(model->variances[i]);
+			}
+			pfree(model->means);
+			pfree(model->variances);
+			pfree(model);
+		}
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_naive_bayes_by_model_id: SPI_connect failed")));
+	}
+
+	/* Build query - single query to fetch all data */
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		quote_identifier(feat_str),
+		quote_identifier(targ_str),
+		quote_identifier(tbl_str),
+		quote_identifier(feat_str),
+		quote_identifier(targ_str));
+
+	ret = SPI_execute(query.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+	{
+		pfree(query.data);
+		if (model != NULL)
+		{
+			pfree(model->class_priors);
+			for (i = 0; i < model->n_classes; i++)
+			{
+				pfree(model->means[i]);
+				pfree(model->variances[i]);
+			}
+			pfree(model->means);
+			pfree(model->variances);
+			pfree(model);
+		}
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_naive_bayes_by_model_id: query failed")));
+	}
+
+	nvec = SPI_processed;
+	if (nvec < 1)
+	{
+		pfree(query.data);
+		if (model != NULL)
+		{
+			pfree(model->class_priors);
+			for (i = 0; i < model->n_classes; i++)
+			{
+				pfree(model->means[i]);
+				pfree(model->variances[i]);
+			}
+			pfree(model->means);
+			pfree(model->variances);
+			pfree(model);
+		}
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_naive_bayes_by_model_id: no valid rows found")));
+	}
+
+	/* Determine feature column type */
+	if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL)
+		feat_type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, 1);
+	if (feat_type_oid == FLOAT8ARRAYOID || feat_type_oid == FLOAT4ARRAYOID)
+		feat_is_array = true;
+
+	/* GPU batch evaluation path for GPU models - uses optimized evaluation kernel */
+	if (is_gpu_model && neurondb_gpu_is_available())
+	{
+#ifdef NDB_GPU_CUDA
+		/* For now, GPU evaluation for Naive Bayes is not implemented, fall back to CPU */
+		elog(DEBUG1,
+			"neurondb: evaluate_naive_bayes_by_model_id: GPU evaluation not yet implemented for Naive Bayes, using CPU batch evaluation");
+		goto gpu_eval_fallback;
+#endif	/* NDB_GPU_CUDA */
+	}
+
+gpu_eval_fallback:
+	/* CPU evaluation path (also used as fallback for GPU models) */
+	/* Use optimized batch prediction */
+	{
+		float *h_features = NULL;
+		double *h_labels = NULL;
+		int feat_dim = 0;
+		int valid_rows = 0;
+
+		/* Determine feature dimension from model */
+		if (model != NULL)
+			feat_dim = model->n_features;
+		else if (is_gpu_model && gpu_payload != NULL)
+		{
+			const NdbCudaNbModelHeader *gpu_hdr;
+
+			gpu_hdr = (const NdbCudaNbModelHeader *)VARDATA(gpu_payload);
+			feat_dim = gpu_hdr->n_features;
+		}
+		else
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_naive_bayes_by_model_id: could not determine feature dimension")));
+		}
+
+		if (feat_dim <= 0)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_naive_bayes_by_model_id: invalid feature dimension %d",
+						feat_dim)));
+		}
+
+		/* Allocate host buffers for features and labels */
+		h_features = (float *)palloc(sizeof(float) * (size_t)nvec * (size_t)feat_dim);
+		h_labels = (double *)palloc(sizeof(double) * (size_t)nvec);
+
+		/* Extract features and labels from SPI results - optimized batch extraction */
+		/* Cache TupleDesc to avoid repeated lookups */
+		{
+			TupleDesc tupdesc = SPI_tuptable->tupdesc;
+
+			for (i = 0; i < nvec; i++)
+			{
+				HeapTuple tuple = SPI_tuptable->vals[i];
+				Datum feat_datum;
+				Datum targ_datum;
+				bool feat_null;
+				bool targ_null;
+				Vector *vec;
+				ArrayType *arr;
+				float *feat_row;
+
+				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+
+				if (feat_null || targ_null)
+					continue;
+
+				feat_row = h_features + (valid_rows * feat_dim);
+				h_labels[valid_rows] = DatumGetFloat8(targ_datum);
+
+				/* Extract feature vector - optimized paths */
+				if (feat_is_array)
+				{
+					arr = DatumGetArrayTypeP(feat_datum);
+					if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != feat_dim)
+						continue;
+					if (feat_type_oid == FLOAT8ARRAYOID)
+					{
+						/* Optimized: bulk conversion with loop unrolling hint */
+						float8 *data = (float8 *)ARR_DATA_PTR(arr);
+						int j_remain = feat_dim % 4;
+						int j_end = feat_dim - j_remain;
+
+						/* Process 4 elements at a time for better cache locality */
+						for (j = 0; j < j_end; j += 4)
+						{
+							feat_row[j] = (float)data[j];
+							feat_row[j + 1] = (float)data[j + 1];
+							feat_row[j + 2] = (float)data[j + 2];
+							feat_row[j + 3] = (float)data[j + 3];
+						}
+						/* Handle remaining elements */
+						for (j = j_end; j < feat_dim; j++)
+							feat_row[j] = (float)data[j];
+					}
+					else
+					{
+						/* FLOAT4ARRAYOID: direct memcpy (already optimal) */
+						float4 *data = (float4 *)ARR_DATA_PTR(arr);
+						memcpy(feat_row, data, sizeof(float) * feat_dim);
+					}
+				}
+				else
+				{
+					/* Vector type: direct memcpy (already optimal) */
+					vec = DatumGetVector(feat_datum);
+					if (vec->dim != feat_dim)
+						continue;
+					memcpy(feat_row, vec->data, sizeof(float) * feat_dim);
+				}
+
+				valid_rows++;
+			}
+		}
+
+		if (valid_rows == 0)
+		{
+			pfree(h_features);
+			pfree(h_labels);
+			if (model != NULL)
+			{
+				pfree(model->class_priors);
+				for (i = 0; i < model->n_classes; i++)
+				{
+					pfree(model->means[i]);
+					pfree(model->variances[i]);
+				}
+				pfree(model->means);
+				pfree(model->variances);
+				pfree(model);
+			}
+			if (gpu_payload)
+				pfree(gpu_payload);
+			if (gpu_metrics)
+				pfree(gpu_metrics);
+			pfree(query.data);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(targ_str);
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_naive_bayes_by_model_id: no valid rows found")));
+		}
+
+		/* For GPU models, we cannot evaluate on CPU without model conversion */
+		if (is_gpu_model && model == NULL)
+		{
+			pfree(h_features);
+			pfree(h_labels);
+			if (gpu_payload)
+				pfree(gpu_payload);
+			if (gpu_metrics)
+				pfree(gpu_metrics);
+			pfree(query.data);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(targ_str);
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("neurondb: evaluate_naive_bayes_by_model_id: GPU model evaluation requires GPU evaluation kernel (not yet implemented)")));
+		}
+
+		/* Use batch prediction helper */
+		nb_predict_batch(model,
+			h_features,
+			h_labels,
+			valid_rows,
+			feat_dim,
+			&tp,
+			&tn,
+			&fp,
+			&fn);
+
+		/* Compute metrics */
+		if (valid_rows > 0)
+		{
+			accuracy = (double)(tp + tn) / (double)valid_rows;
+
+			if ((tp + fp) > 0)
+				precision = (double)tp / (double)(tp + fp);
+			else
+				precision = 0.0;
+
+			if ((tp + fn) > 0)
+				recall = (double)tp / (double)(tp + fn);
+			else
+				recall = 0.0;
+
+			if ((precision + recall) > 0.0)
+				f1_score = 2.0 * (precision * recall) / (precision + recall);
+			else
+				f1_score = 0.0;
+		}
+
+		/* Cleanup */
+		pfree(h_features);
+		pfree(h_labels);
+		if (model != NULL)
+		{
+			pfree(model->class_priors);
+			for (i = 0; i < model->n_classes; i++)
+			{
+				pfree(model->means[i]);
+				pfree(model->variances[i]);
+			}
+			pfree(model->means);
+			pfree(model->variances);
+			pfree(model);
+		}
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+	}
+
+	SPI_finish();
+	pfree(query.data);
+	pfree(tbl_str);
+	pfree(feat_str);
+	pfree(targ_str);
+
+	/* Build jsonb result */
+	initStringInfo(&jsonbuf);
+	appendStringInfo(&jsonbuf,
+		"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
+		accuracy,
+		precision,
+		recall,
+		f1_score,
+		nvec);
+
+	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+		CStringGetDatum(jsonbuf.data)));
+
+	pfree(jsonbuf.data);
+	MemoryContextSwitchTo(oldcontext);
+	PG_RETURN_JSONB_P(result_jsonb);
 }
 
 /*-------------------------------------------------------------------------

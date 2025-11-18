@@ -15,8 +15,17 @@
 #include "neurondb_cuda_runtime.h"
 #include <stdint.h>
 
+#ifdef NDB_GPU_CUDA
+#include <cublas_v2.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#ifdef NDB_GPU_CUDA
+/* cuBLAS handle accessor */
+extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
 #endif
 
 cudaError_t launch_quantize_fp32_to_fp16(const float *input,

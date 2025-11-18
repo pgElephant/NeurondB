@@ -44,8 +44,13 @@ neurondb_fetch_vectors_from_table(const char *table,
 	/* Save the caller's context before SPI operations */
 	caller_context = CurrentMemoryContext;
 
-	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT %s FROM %s", col, table);
+	/* Limit query to prevent memory allocation errors for very large tables */
+	/* Use a conservative limit: 500k vectors max to avoid MaxAllocSize errors */
+	{
+		int max_vectors_limit = 500000;
+		initStringInfo(&sql);
+		appendStringInfo(&sql, "SELECT %s FROM %s LIMIT %d", col, table, max_vectors_limit);
+	}
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -54,6 +59,7 @@ neurondb_fetch_vectors_from_table(const char *table,
 	if (ret != SPI_OK_SELECT)
 	{
 		SPI_finish();
+		pfree(sql.data);
 		elog(ERROR, "SPI_execute failed: %s", sql.data);
 	}
 
@@ -61,8 +67,18 @@ neurondb_fetch_vectors_from_table(const char *table,
 	if (*out_count == 0)
 	{
 		SPI_finish();
+		pfree(sql.data);
 		*out_dim = 0;
 		return NULL;
+	}
+	
+	/* Warn if we hit the limit */
+	if (*out_count >= 500000)
+	{
+		elog(WARNING,
+			"neurondb_fetch_vectors_from_table: table has more than %d vectors, "
+			"limiting to %d to avoid memory allocation errors",
+			500000, *out_count);
 	}
 
 	/* Get dimension from first vector */
@@ -78,6 +94,7 @@ neurondb_fetch_vectors_from_table(const char *table,
 		if (isnull)
 		{
 			SPI_finish();
+			pfree(sql.data);
 			elog(ERROR, "NULL vector in first row");
 		}
 
@@ -87,6 +104,22 @@ neurondb_fetch_vectors_from_table(const char *table,
 
 	/* Switch to caller's context to allocate result that survives SPI_finish() */
 	oldcontext = MemoryContextSwitchTo(caller_context);
+
+	/* Check memory allocation size before palloc */
+	{
+		size_t result_array_size = sizeof(float *) * (size_t)(*out_count);
+		if (result_array_size > MaxAllocSize)
+		{
+			SPI_finish();
+			pfree(sql.data);
+			MemoryContextSwitchTo(oldcontext);
+			ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("neurondb_fetch_vectors_from_table: result array size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
+					result_array_size, (size_t)MaxAllocSize),
+				 errhint("Reduce dataset size or use a different algorithm")));
+		}
+	}
 
 	result = (float **)palloc0(sizeof(float *) * (*out_count));
 
@@ -102,7 +135,13 @@ neurondb_fetch_vectors_from_table(const char *table,
 			&isnull);
 		if (isnull)
 		{
+			/* Free already allocated vectors */
+			for (int j = 0; j < i; j++)
+				pfree(result[j]);
+			pfree(result);
 			SPI_finish();
+			pfree(sql.data);
+			MemoryContextSwitchTo(oldcontext);
 			elog(ERROR, "NULL vector at row %d", i);
 		}
 
@@ -111,13 +150,39 @@ neurondb_fetch_vectors_from_table(const char *table,
 		/* Verify dimension consistency */
 		if (vec->dim != *out_dim)
 		{
+			/* Free already allocated vectors */
+			for (int j = 0; j < i; j++)
+				pfree(result[j]);
+			pfree(result);
 			SPI_finish();
+			pfree(sql.data);
+			MemoryContextSwitchTo(oldcontext);
 			elog(ERROR,
 				"Inconsistent vector dimension at row %d: "
 				"expected %d, got %d",
 				i,
 				*out_dim,
 				vec->dim);
+		}
+
+		/* Check individual vector allocation size */
+		{
+			size_t vector_size = sizeof(float) * (size_t)(*out_dim);
+			if (vector_size > MaxAllocSize)
+			{
+				/* Free already allocated vectors */
+				for (int j = 0; j < i; j++)
+					pfree(result[j]);
+				pfree(result);
+				SPI_finish();
+				pfree(sql.data);
+				MemoryContextSwitchTo(oldcontext);
+				ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("neurondb_fetch_vectors_from_table: vector size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
+						vector_size, (size_t)MaxAllocSize),
+					 errhint("Vector dimension too large")));
+			}
 		}
 
 		/* Copy vector data */
@@ -129,6 +194,7 @@ neurondb_fetch_vectors_from_table(const char *table,
 	/* Switch back to SPI context before finishing */
 	MemoryContextSwitchTo(oldcontext);
 	SPI_finish();
+	pfree(sql.data);
 
 	return result;
 }

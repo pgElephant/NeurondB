@@ -504,8 +504,19 @@ ndb_gpu_ridge_train(const float *features,
 {
 	if (errstr)
 		*errstr = NULL;
-	if (!active_backend || active_backend->ridge_train == NULL)
+	if (!active_backend)
+	{
+		if (errstr)
+			*errstr = pstrdup("GPU backend not available");
 		return -1;
+	}
+	if (active_backend->ridge_train == NULL)
+	{
+		if (errstr)
+			*errstr = psprintf("GPU backend '%s' does not support ridge_train",
+				active_backend->name ? active_backend->name : "unknown");
+		return -1;
+	}
 	return active_backend->ridge_train(features,
 		targets,
 		n_samples,

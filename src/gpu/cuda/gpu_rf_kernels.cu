@@ -394,3 +394,141 @@ error:
 		cudaFree(d_votes);
 	return -1;
 }
+
+/*
+ * Batch prediction kernel: 2D grid
+ * grid.x = samples, grid.y = trees
+ * Each thread processes one (sample, tree) pair
+ */
+__global__ static void
+ndb_cuda_rf_predict_batch_kernel(const NdbCudaRfNode *nodes,
+	const NdbCudaRfTreeHeader *trees,
+	int tree_count,
+	const float *features,	/* n_samples x feature_dim */
+	int n_samples,
+	int feature_dim,
+	int class_count,
+	int *votes)		/* n_samples x class_count */
+{
+	int sample_stride = blockDim.x * gridDim.x;
+	int tree_stride = blockDim.y * gridDim.y;
+	int sample_idx = blockIdx.x * blockDim.x + threadIdx.x;
+	int tree_idx = blockIdx.y * blockDim.y + threadIdx.y;
+	int t;
+
+	/* Grid stride loops: each thread processes multiple (sample, tree) pairs */
+	for (; sample_idx < n_samples; sample_idx += sample_stride)
+	{
+		for (t = tree_idx; t < tree_count; t += tree_stride)
+		{
+			const NdbCudaRfTreeHeader *tree = &trees[t];
+			const NdbCudaRfNode *tree_nodes = nodes + tree->nodes_start;
+			const float *input = features + (sample_idx * feature_dim);
+			int idx = (tree->root_index >= 0) ? tree->root_index : 0;
+			int steps = 0;
+			int max_steps = tree->node_count + 1;
+			int cls = 0;
+
+			/* Pre-check max_feature_index if available */
+			if (tree->max_feature_index >= 0
+				&& tree->max_feature_index >= feature_dim)
+			{
+				cls = (int)rintf(tree_nodes[0].value);
+				if (cls >= 0 && cls < class_count)
+				{
+					int *sample_votes = votes + (sample_idx * class_count);
+					atomicAdd(&sample_votes[cls], 1);
+				}
+				continue;
+			}
+
+			/* Walk tree for this sample */
+			while (steps < max_steps && idx >= 0 && idx < tree->node_count)
+			{
+				const NdbCudaRfNode *node = &tree_nodes[idx];
+
+				if (node->feature_idx < 0
+					|| node->feature_idx >= feature_dim)
+				{
+					cls = (int)rintf(node->value);
+					break;
+				}
+
+				float val = input[node->feature_idx];
+
+				if (val <= node->threshold)
+					idx = node->left_child;
+				else
+					idx = node->right_child;
+
+				steps++;
+			}
+
+			if (steps >= max_steps || idx < 0 || idx >= tree->node_count)
+				cls = (int)rintf(tree_nodes[0].value);
+
+			/* Atomic add vote for this sample's class */
+			if (cls >= 0 && cls < class_count)
+			{
+				int *sample_votes = votes + (sample_idx * class_count);
+				atomicAdd(&sample_votes[cls], 1);
+			}
+		}
+	}
+}
+
+/*
+ * Host wrapper for batch prediction kernel
+ * Note: d_votes must be cleared by caller before calling this function
+ */
+extern "C" int
+launch_rf_predict_batch_kernel(const NdbCudaRfNode *d_nodes,
+	const NdbCudaRfTreeHeader *d_trees,
+	int tree_count,
+	const float *d_features,
+	int n_samples,
+	int feature_dim,
+	int class_count,
+	int *d_votes)
+{
+	dim3 threads_per_block(16, 16);	/* 16x16 = 256 threads per block */
+	dim3 blocks;
+	cudaError_t status;
+
+	if (d_nodes == NULL || d_trees == NULL || d_features == NULL
+		|| d_votes == NULL)
+		return -1;
+
+	if (n_samples <= 0 || tree_count <= 0 || feature_dim <= 0
+		|| class_count <= 0)
+		return -1;
+
+	/* Calculate grid dimensions - no truncation needed with grid stride loops */
+	blocks.x = (n_samples + threads_per_block.x - 1) / threads_per_block.x;
+	blocks.y = (tree_count + threads_per_block.y - 1) / threads_per_block.y;
+
+	if (blocks.x == 0)
+		blocks.x = 1;
+	if (blocks.y == 0)
+		blocks.y = 1;
+
+	/* Clear old error before launch */
+	cudaGetLastError();
+
+	ndb_cuda_rf_predict_batch_kernel<<<blocks, threads_per_block>>>(
+		d_nodes,
+		d_trees,
+		tree_count,
+		d_features,
+		n_samples,
+		feature_dim,
+		class_count,
+		d_votes);
+
+	status = cudaGetLastError();
+	if (status != cudaSuccess)
+		return -1;
+
+	status = cudaDeviceSynchronize();
+	return (status == cudaSuccess) ? 0 : -1;
+}

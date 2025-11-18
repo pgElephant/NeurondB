@@ -20,19 +20,13 @@
 #include <string.h>
 
 #include "neurondb_cuda_runtime.h"
+#include "neurondb_cuda_launchers.h"
 #include "lib/stringinfo.h"
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
 
 #include "ml_linear_regression_internal.h"
 #include "neurondb_cuda_linreg.h"
-
-#ifdef NDB_GPU_CUDA
-#include <cublas_v2.h>
-#endif
-
-/* Forward declaration for cuBLAS handle access */
-extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
 
 /* Forward declaration for kernel launch wrappers */
 extern cudaError_t launch_build_X_matrix_kernel(const float *features,
@@ -191,10 +185,6 @@ ndb_cuda_linreg_train(const float *features,
 
 	/* Compute X'X and X'y on GPU */
 	{
-#ifdef NDB_GPU_CUDA
-		int threads_per_block = 256;
-		int blocks = (n_samples + threads_per_block - 1) / threads_per_block;
-#endif
 		cudaError_t err;
 
 		/* Allocate device memory */
@@ -261,9 +251,6 @@ ndb_cuda_linreg_train(const float *features,
 #ifdef NDB_GPU_CUDA
 		{
 			cublasHandle_t handle = ndb_cuda_get_cublas_handle();
-			cublasStatus_t cublas_err;
-			float alpha = 1.0f;
-			float beta = 0.0f;
 			float *d_X_with_intercept = NULL;
 			size_t X_bytes = sizeof(float) * (size_t)n_samples * (size_t)dim_with_intercept;
 			
@@ -335,7 +322,6 @@ kernel_fallback:
 #endif
 
 #ifdef NDB_GPU_CUDA
-gpu_compute_done:
 		/* Wait for operations to complete */
 		err = cudaDeviceSynchronize();
 		if (err != cudaSuccess)

@@ -1,27 +1,42 @@
 PostgreSQL Commit Message Guidelines for NeurondB:
 
-1. First line (subject) must end with a period.
+- The subject line must end with a period and should be concise and clear, 
+  typically not exceeding a single line.
 
-2. Use paragraph style, not bullet points or lists.
+- Write commit messages in paragraph form rather than as bullet points or 
+  lists, making sure to clearly communicate the content of the change.
 
-3. Do NOT mention specific file names in the commit message.
+- Do not reference specific file names or locations within the commit 
+  message text.
 
-4. Do NOT include merge/cherry-pick references (e.g., "Cherry-picked commit...", "Merge commit...").
+- Omit any mention of merge or cherry-pick actions, such as "Cherry-picked 
+  commit..." or "Merge commit...".
 
-5. Do NOT include cleanup or coding standard messages (e.g., "C90 violation", "coding standard", "cleanup").
+- Exclude any references to code cleanup, coding standards, or style 
+  violations (e.g., "C90 violation", "cleanup", or "coding standard changes").
 
-6. Do NOT mention version compatibility (e.g., "PostgreSQL compatibility", "API changes").
+- Leave out references to version compatibility or APIs, such as 
+  "PostgreSQL compatibility" or "API changes".
 
-7. Do NOT include status statements (e.g., "All compilation errors resolved", "compiles correctly").
+- Avoid including statements about the status of the codebase, such as 
+  whether it compiles correctly or if all errors have been resolved.
 
-8. Focus on WHAT was changed, not WHY (avoid explaining coding standards, compatibility reasons, etc.).
+- Focus exclusively on what has changed in the commit. Do not explain 
+  why it was done, and do not comment on compliance with standards or 
+  practices.
 
-9. Write in prose/paragraph form describing the changes clearly and concisely.
+- The body of the message should be written in clear paragraphs, providing
+  a concise narrative that describes the change, breaking details into
+  additional paragraphs as necessary for clarity.
 
-Example format:
-Subject line ending with period.
+Example:
 
-First paragraph describes the context or problem.
-Second paragraph describes the first set of changes.
-Third paragraph describes additional changes.
-Continue as needed for all changes.
+Improve embedding vector normalization logic.
+
+This commit adjusts the normalization routine to use a more numerically 
+stable approach, addressing issues with denormalized input data.
+
+Additional refactoring ensures consistent vector sizing across all 
+embedding interfaces, providing clearer behavior for callers and simplifying 
+future maintenance.
+

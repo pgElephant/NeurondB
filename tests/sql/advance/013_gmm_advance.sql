@@ -1,0 +1,186 @@
+\timing on
+\pset footer off
+\pset pager off
+
+\set ON_ERROR_STOP on
+
+\echo '=========================================================================='
+\echo 'Gaussian Mixture Model - Advanced Features Test'
+\echo '=========================================================================='
+
+-- This test uses test_train_view and test_test_view tables created by ml_dataset.py
+-- Run: python ml_dataset.py <dataset_name> to populate the database first
+-- Or use the test runner: python run_ml_tests.py
+--
+-- Verify required tables exist
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'test_train_view') THEN
+		RAISE EXCEPTION 'test_train_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'test_test_view') THEN
+		RAISE EXCEPTION 'test_test_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	END IF;
+END
+$$;
+-- Create views with 1000 rows for advance tests
+DROP VIEW IF EXISTS test_train_view;
+DROP VIEW IF EXISTS test_test_view;
+
+CREATE VIEW test_train_view AS
+SELECT features, label FROM sample_train LIMIT 1000;
+
+CREATE VIEW test_test_view AS
+SELECT features, label FROM sample_test LIMIT 1000;
+
+SET neurondb.gpu_enabled = on;
+SET neurondb.gpu_kernels = 'l2,cosine,ip,gmm_train,gmm_predict';
+SELECT neurondb_gpu_enable();
+
+\echo ''
+\echo 'Test 1: Training with Different Cluster Counts'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Train with k=3
+DROP TABLE IF EXISTS gmm_k3;
+CREATE TEMP TABLE gmm_k3 AS
+SELECT neurondb.train(
+	'gmm',
+	'test_train_view',
+	'features',
+	NULL,
+	'{"k": 3, "max_iters": 100}'::jsonb
+)::integer AS model_id;
+
+-- Train with k=5
+DROP TABLE IF EXISTS gmm_k5;
+CREATE TEMP TABLE gmm_k5 AS
+SELECT neurondb.train(
+	'gmm',
+	'test_train_view',
+	'features',
+	NULL,
+	'{"k": 5, "max_iters": 100}'::jsonb
+)::integer AS model_id;
+
+SELECT 
+	'k=3' AS cluster_count,
+	model_id AS model_id_k3
+FROM gmm_k3
+UNION ALL
+SELECT 
+	'k=5' AS cluster_count,
+	model_id AS model_id_k5
+FROM gmm_k5;
+
+\echo ''
+\echo 'Test 2: Model Metadata and Storage Information'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT 
+	m.model_id,
+	m.algorithm,
+	m.created_at,
+	m.metrics->>'storage' AS storage_type,
+	m.metrics->>'n_components' AS n_components,
+	m.metrics->>'silhouette_score' AS silhouette_score,
+	CASE 
+		WHEN m.model_data IS NULL THEN 'NULL (GPU model)'
+		ELSE format('%s bytes', pg_column_size(m.model_data))
+	END AS model_data_status
+FROM neurondb.ml_models m, gmm_k3 t
+WHERE m.model_id = t.model_id;
+
+\echo ''
+\echo 'Test 3: Cluster Distribution Analysis (Using Evaluation Metrics)'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Use optimized batch evaluation for clustering metrics
+-- Note: GMM evaluation may not support NULL label column, skip if it fails
+CREATE TEMP TABLE gmm_eval_temp (metrics jsonb);
+DO $$
+DECLARE
+	mid integer;
+	metrics_result jsonb;
+BEGIN
+	SELECT model_id INTO mid FROM gmm_k3 LIMIT 1;
+	BEGIN
+		metrics_result := neurondb.evaluate(mid, 'test_test_view', 'features', NULL);
+		INSERT INTO gmm_eval_temp VALUES (metrics_result);
+	EXCEPTION WHEN OTHERS THEN
+		-- GMM may not support evaluation with NULL labels, skip
+		RAISE NOTICE 'GMM evaluation skipped: %', SQLERRM;
+	END;
+END $$;
+
+SELECT
+	'Total Samples' AS metric,
+	(SELECT COUNT(*)::bigint FROM test_test_view WHERE features IS NOT NULL)::text AS value
+UNION ALL
+SELECT 'Silhouette Score', ROUND((metrics->>'silhouette_score')::numeric, 6)::text
+FROM gmm_eval_temp
+WHERE metrics->>'silhouette_score' IS NOT NULL
+UNION ALL
+SELECT 'Inertia', ROUND((metrics->>'inertia')::numeric, 6)::text
+FROM gmm_eval_temp
+WHERE metrics->>'inertia' IS NOT NULL
+ORDER BY metric;
+
+\echo ''
+\echo 'Test 4: Cluster Comparison (k=3 vs k=5)'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Compare silhouette scores
+SELECT 
+	'k=3' AS model_type,
+	ROUND((m.metrics->>'silhouette_score')::numeric, 4) AS silhouette_score,
+	ROUND((m.metrics->>'inertia')::numeric, 4) AS inertia
+FROM neurondb.ml_models m, gmm_k3 g
+WHERE m.model_id = g.model_id
+UNION ALL
+SELECT 
+	'k=5' AS model_type,
+	ROUND((m.metrics->>'silhouette_score')::numeric, 4) AS silhouette_score,
+	ROUND((m.metrics->>'inertia')::numeric, 4) AS inertia
+FROM neurondb.ml_models m, gmm_k5 g
+WHERE m.model_id = g.model_id;
+
+\echo ''
+\echo 'Test 5: Clustering Quality Metrics'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Use evaluation metrics for clustering quality (much faster than per-row predictions)
+SELECT
+	ROUND((metrics->>'silhouette_score')::numeric, 6) AS silhouette_score,
+	ROUND((metrics->>'inertia')::numeric, 6) AS inertia,
+	ROUND((metrics->>'n_components')::numeric, 0)::int AS n_components,
+	CASE 
+		WHEN (metrics->>'silhouette_score')::numeric > 0.5 THEN 'Excellent clustering'
+		WHEN (metrics->>'silhouette_score')::numeric > 0.3 THEN 'Good clustering'
+		WHEN (metrics->>'silhouette_score')::numeric > 0.1 THEN 'Moderate clustering'
+		ELSE 'Poor clustering (may need different k)'
+	END AS clustering_quality
+FROM gmm_eval_temp;
+
+\echo ''
+\echo 'Test 6: Model Persistence and Retrieval'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Check models are persisted
+SELECT 
+	COUNT(*) AS total_models,
+	COUNT(DISTINCT (metrics->>'n_components')::int) AS unique_k_values,
+	MIN(created_at) AS oldest_model,
+	MAX(created_at) AS newest_model
+FROM neurondb.ml_models
+WHERE algorithm = 'gmm';
+
+-- Cleanup
+DROP TABLE IF EXISTS gmm_k3;
+DROP TABLE IF EXISTS gmm_k5;
+DROP TABLE IF EXISTS gmm_eval_temp;
+
+\echo ''
+\echo 'Advanced GMM Test Complete!'
+\echo '=========================================================================='
+

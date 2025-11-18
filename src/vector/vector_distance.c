@@ -22,6 +22,12 @@
 #include <math.h>
 #include <float.h>
 
+/* SIMD-optimized distance functions */
+extern float4 l2_distance_simd(Vector *a, Vector *b);
+extern float4 inner_product_simd(Vector *a, Vector *b);
+extern float4 cosine_distance_simd(Vector *a, Vector *b);
+extern float4 l1_distance_simd(Vector *a, Vector *b);
+
 static inline void
 check_dimensions(const Vector *a, const Vector *b)
 {
@@ -99,7 +105,8 @@ vector_l2_distance(PG_FUNCTION_ARGS)
 {
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
-	PG_RETURN_FLOAT4(l2_distance(a, b));
+	/* Use SIMD-optimized version if available */
+	PG_RETURN_FLOAT4(l2_distance_simd(a, b));
 }
 
 /* Inner product distance, negative for correct ordering for similarity */
@@ -123,7 +130,8 @@ vector_inner_product(PG_FUNCTION_ARGS)
 {
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
-	PG_RETURN_FLOAT4(inner_product_distance(a, b));
+	/* Use SIMD-optimized version if available */
+	PG_RETURN_FLOAT4(inner_product_simd(a, b));
 }
 
 /* Cosine distance: 1.0 - (dot(a,b) / (||a||*||b||)), returns 1.0 if norm is zero */
@@ -167,7 +175,8 @@ vector_cosine_distance(PG_FUNCTION_ARGS)
 {
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
-	PG_RETURN_FLOAT4(cosine_distance(a, b));
+	/* Use SIMD-optimized version if available */
+	PG_RETURN_FLOAT4(cosine_distance_simd(a, b));
 }
 
 /* L1 (Manhattan) distance, standard implementation */
@@ -191,7 +200,8 @@ vector_l1_distance(PG_FUNCTION_ARGS)
 {
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
-	PG_RETURN_FLOAT4(l1_distance(a, b));
+	/* Use SIMD-optimized version if available */
+	PG_RETURN_FLOAT4(l1_distance_simd(a, b));
 }
 
 /* Hamming distance: counts differing coordinates */

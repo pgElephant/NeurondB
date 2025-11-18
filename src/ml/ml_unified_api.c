@@ -102,19 +102,28 @@ neurondb_load_training_data(const char *table_name,
 		*class_count_out = 0;
 
 	/* Build query to select features and target */
-	initStringInfo(&sql);
-	if (target_column)
+	/* Add LIMIT to prevent loading too much data into memory at once */
+	/* Conservative limit: 200k samples to avoid MaxAllocSize errors */
 	{
-		/* Make a copy of target_column before quoting to avoid memory corruption */
-		char *target_copy = pstrdup(target_column);
-		const char *target_quoted_const = quote_identifier(target_copy);
-		char *target_quoted = (char *)target_quoted_const;
-		appendStringInfo(&sql, "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL", feature_list_str, target_quoted, table_name, feature_list_str, target_quoted);
-		pfree(target_quoted);
-		pfree(target_copy);
+		int max_samples_limit = 200000;
+		initStringInfo(&sql);
+		if (target_column)
+		{
+			/* Make a copy of target_column before quoting to avoid memory corruption */
+			char *target_copy = pstrdup(target_column);
+			const char *target_quoted_const = quote_identifier(target_copy);
+			char *target_quoted = (char *)target_quoted_const;
+			appendStringInfo(&sql, "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL LIMIT %d", 
+				feature_list_str, target_quoted, table_name, feature_list_str, target_quoted, max_samples_limit);
+			pfree(target_quoted);
+			pfree(target_copy);
+		}
+		else
+		{
+			appendStringInfo(&sql, "SELECT %s FROM %s WHERE %s IS NOT NULL LIMIT %d", 
+				feature_list_str, table_name, feature_list_str, max_samples_limit);
+		}
 	}
-	else
-		appendStringInfo(&sql, "SELECT %s FROM %s WHERE %s IS NOT NULL", feature_list_str, table_name, feature_list_str);
 
 	elog(DEBUG1, "neurondb_load_training_data: SQL=%s", sql.data);
 
@@ -131,6 +140,15 @@ neurondb_load_training_data(const char *table_name,
 	{
 		pfree(sql.data);
 		return false;
+	}
+	
+	/* Warn if we hit the limit */
+	if (n_samples >= 200000)
+	{
+		elog(INFO,
+			"neurondb_load_training_data: dataset has more than %d rows, "
+			"limiting to %d samples to avoid memory allocation errors",
+			200000, n_samples);
 	}
 
 	/* Determine feature dimension from first row */
@@ -167,6 +185,32 @@ neurondb_load_training_data(const char *table_name,
 		}
 
 	/* Allocate arrays */
+	/* Check memory allocation size before palloc */
+	{
+		size_t feature_matrix_size = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
+		size_t label_vector_size = target_column ? sizeof(double) * (size_t)n_samples : 0;
+		
+		if (feature_matrix_size > MaxAllocSize)
+		{
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("neurondb_load_training_data: feature matrix size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
+					feature_matrix_size, (size_t)MaxAllocSize),
+				 errhint("Reduce dataset size or feature dimension")));
+		}
+		
+		if (label_vector_size > MaxAllocSize)
+		{
+			pfree(sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("neurondb_load_training_data: label vector size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
+					label_vector_size, (size_t)MaxAllocSize),
+				 errhint("Reduce dataset size")));
+		}
+	}
+	
 	feature_matrix = (float *)palloc(sizeof(float) * (size_t)n_samples * (size_t)feature_dim);
 	if (target_column)
 		label_vector = (double *)palloc(sizeof(double) * (size_t)n_samples);
@@ -467,12 +511,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 	/* Determine backend based on GPU availability and GUC settings */
 	{
-		bool gpu_enabled_guc = false;
+		bool gpu_enabled_guc = neurondb_gpu_enabled;
 		bool gpu_available = neurondb_gpu_is_available();
-		const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-		
-		/* Check GUC setting */
-		gpu_enabled_guc = (backend != NULL);
 		
 		elog(DEBUG1, "neurondb.train: GPU GUC enabled=%d, GPU hardware available=%d",
 			gpu_enabled_guc, gpu_available);
@@ -636,7 +676,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 	
 	/* Check if GPU was explicitly requested via GUC */
 	{
-		bool gpu_enabled_guc = (ndb_gpu_get_active_backend() != NULL);
+		bool gpu_enabled_guc = neurondb_gpu_enabled;
 		bool gpu_available = neurondb_gpu_is_available();
 		
 		if (gpu_enabled_guc && gpu_available)
@@ -1258,6 +1298,34 @@ neurondb_train(PG_FUNCTION_ARGS)
 						 neurondb_quote_literal_or_null(target_column),
 						 alpha);
 	}
+	else if (strcmp(algorithm, "rag") == 0 || strcmp(algorithm, "hybrid_search") == 0)
+	{
+		/* RAG and hybrid_search are special algorithms that don't require traditional training */
+		/* They are handled by their respective modules, but we need to register a placeholder model */
+		MLCatalogModelSpec spec;
+		memset(&spec, 0, sizeof(spec));
+		spec.algorithm = algorithm;
+		spec.model_type = "embedding";  /* RAG and hybrid_search use embedding type */
+		spec.training_table = table_name;
+		spec.training_column = target_column;
+		spec.parameters = hyperparams;
+		spec.metrics = NULL;
+		spec.model_data = NULL;
+		spec.training_time_ms = 0;
+		spec.num_samples = 0;
+		spec.num_features = 0;
+		
+		model_id = ml_catalog_register_model(&spec);
+		if (model_id <= 0)
+		{
+			neurondb_cleanup(oldcontext, callcontext, true);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("Failed to register %s model", algorithm)));
+		}
+		neurondb_cleanup(oldcontext, callcontext, true);
+		PG_RETURN_INT32(model_id);
+	}
 	else if (strcmp(algorithm, "gmm") == 0)
 	{
 		int k_value = 3;
@@ -1553,7 +1621,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 	/* Update metrics to store backend type for CPU-trained models */
 	{
-		bool gpu_enabled_guc = (ndb_gpu_get_active_backend() != NULL);
+		bool gpu_enabled_guc = neurondb_gpu_enabled;
 		bool gpu_available = neurondb_gpu_is_available();
 		
 		/* If GPU was not used (either disabled or not available), mark as CPU */

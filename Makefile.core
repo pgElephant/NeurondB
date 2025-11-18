@@ -18,11 +18,16 @@ OBJS = \
 # Vector module (consolidated)
 OBJS += \
 	src/vector/vector_distance.o \
+	src/vector/vector_distance_simd.o \
 	src/vector/vector_types.o \
 	src/vector/vector_ops.o \
 	src/vector/vector_wal.o \
 	src/vector/vector_sparse.o \
 	src/vector/vector_graph_ops.o \
+	src/vector/vector_cast.o \
+	src/vector/vector_batch.o \
+	src/vector/vector_quantization.o \
+	src/vector/vector_advanced.o \
 
 # Index access methods
 OBJS += \

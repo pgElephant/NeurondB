@@ -1,0 +1,244 @@
+\timing on
+\pset footer off
+\pset pager off
+
+\set ON_ERROR_STOP on
+
+\echo '=========================================================================='
+\echo 'K-Nearest Neighbors - Advanced Features Test'
+\echo '=========================================================================='
+
+-- This test uses test_train_view and test_test_view tables created by ml_dataset.py
+-- Run: python ml_dataset.py <dataset_name> to populate the database first
+-- Or use the test runner: python run_ml_tests.py
+--
+-- Verify required tables exist
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'test_train_view') THEN
+		RAISE EXCEPTION 'test_train_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'test_test_view') THEN
+		RAISE EXCEPTION 'test_test_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
+	END IF;
+END
+$$;
+-- Create views with 1000 rows for advance tests
+DROP VIEW IF EXISTS test_train_view;
+DROP VIEW IF EXISTS test_test_view;
+
+CREATE VIEW test_train_view AS
+SELECT features, label FROM sample_train LIMIT 1000;
+
+CREATE VIEW test_test_view AS
+SELECT features, label FROM sample_test LIMIT 1000;
+
+SET neurondb.gpu_enabled = on;
+SET neurondb.gpu_kernels = 'l2,cosine,ip,knn_train,knn_predict';
+SELECT neurondb_gpu_enable();
+
+\echo ''
+\echo 'Test 1: Training with Different K Values'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Train with k=3
+DROP TABLE IF EXISTS knn_k3;
+CREATE TEMP TABLE knn_k3 AS
+SELECT neurondb.train(
+	'knn',
+	'test_train_view',
+	'features',
+	'label',
+	'{"k": 3}'::jsonb
+)::integer AS model_id;
+
+-- Train with k=5
+DROP TABLE IF EXISTS knn_k5;
+CREATE TEMP TABLE knn_k5 AS
+SELECT neurondb.train(
+	'knn',
+	'test_train_view',
+	'features',
+	'label',
+	'{"k": 5}'::jsonb
+)::integer AS model_id;
+
+-- Train with k=7
+DROP TABLE IF EXISTS knn_k7;
+CREATE TEMP TABLE knn_k7 AS
+SELECT neurondb.train(
+	'knn',
+	'test_train_view',
+	'features',
+	'label',
+	'{"k": 7}'::jsonb
+)::integer AS model_id;
+
+SELECT 
+	'k=3' AS k_value,
+	model_id AS model_id_k3
+FROM knn_k3
+UNION ALL
+SELECT 
+	'k=5' AS k_value,
+	model_id AS model_id_k5
+FROM knn_k5
+UNION ALL
+SELECT 
+	'k=7' AS k_value,
+	model_id AS model_id_k7
+FROM knn_k7;
+
+\echo ''
+\echo 'Test 2: Model Metadata and Storage Information'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT 
+	m.model_id,
+	m.algorithm,
+	m.created_at,
+	m.metrics->>'storage' AS storage_type,
+	m.metrics->>'k' AS k_value,
+	m.metrics->>'accuracy' AS accuracy,
+	CASE 
+		WHEN m.model_data IS NULL THEN 'NULL (GPU model)'
+		ELSE format('%s bytes', pg_column_size(m.model_data))
+	END AS model_data_status
+FROM neurondb.ml_models m, knn_k5 t
+WHERE m.model_id = t.model_id;
+
+\echo ''
+\echo 'Test 3: K Value Comparison'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Compare accuracy for different k values
+SELECT 
+	'k=3' AS k_value,
+	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
+FROM neurondb.ml_models m, knn_k3 g
+WHERE m.model_id = g.model_id
+UNION ALL
+SELECT 
+	'k=5' AS k_value,
+	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
+FROM neurondb.ml_models m, knn_k5 g
+WHERE m.model_id = g.model_id
+UNION ALL
+SELECT 
+	'k=7' AS k_value,
+	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
+FROM neurondb.ml_models m, knn_k7 g
+WHERE m.model_id = g.model_id
+ORDER BY k_value;
+
+\echo ''
+\echo 'Test 4: Batch Evaluation Performance (Optimized C Batch Processing)'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Use optimized batch evaluation instead of per-row predictions
+CREATE TEMP TABLE knn_eval_temp AS
+SELECT neurondb.evaluate((SELECT model_id FROM knn_k5), 'test_test_view', 'features', 'label') AS metrics;
+
+SELECT
+	'Total Samples' AS metric,
+	(SELECT COUNT(*)::bigint FROM test_test_view WHERE features IS NOT NULL AND label IS NOT NULL)::text AS value
+UNION ALL
+SELECT 'Accuracy', ROUND((metrics->>'accuracy')::numeric, 6)::text
+FROM knn_eval_temp
+WHERE metrics->>'accuracy' IS NOT NULL
+UNION ALL
+SELECT 'Precision', ROUND((metrics->>'precision')::numeric, 6)::text
+FROM knn_eval_temp
+WHERE metrics->>'precision' IS NOT NULL
+UNION ALL
+SELECT 'Recall', ROUND((metrics->>'recall')::numeric, 6)::text
+FROM knn_eval_temp
+WHERE metrics->>'recall' IS NOT NULL
+UNION ALL
+SELECT 'F1 Score', ROUND((metrics->>'f1_score')::numeric, 6)::text
+FROM knn_eval_temp
+WHERE metrics->>'f1_score' IS NOT NULL
+ORDER BY metric;
+
+\echo ''
+\echo 'Test 5: Model Quality Metrics'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Use evaluation metrics for quality assessment (much faster than per-row predictions)
+SELECT
+	ROUND((metrics->>'accuracy')::numeric, 6) AS accuracy,
+	ROUND((metrics->>'precision')::numeric, 6) AS precision,
+	ROUND((metrics->>'recall')::numeric, 6) AS recall,
+	ROUND((metrics->>'f1_score')::numeric, 6) AS f1_score,
+	CASE 
+		WHEN (metrics->>'accuracy')::numeric > 0.8 THEN 'Excellent'
+		WHEN (metrics->>'accuracy')::numeric > 0.6 THEN 'Good'
+		WHEN (metrics->>'accuracy')::numeric > 0.4 THEN 'Moderate'
+		ELSE 'Poor (may need different k or feature engineering)'
+	END AS fit_quality
+FROM knn_eval_temp;
+
+\echo ''
+\echo 'Test 6: Model Comparison (GPU vs CPU)'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Train GPU model
+DROP TABLE IF EXISTS gpu_model_adv;
+CREATE TEMP TABLE gpu_model_adv AS
+SELECT neurondb.train(
+	'knn',
+	'test_train_view',
+	'features',
+	'label',
+	'{"k": 5, "storage": "gpu"}'::jsonb
+)::integer AS model_id;
+
+-- Train CPU model (if possible)
+DROP TABLE IF EXISTS cpu_model_adv;
+CREATE TEMP TABLE cpu_model_adv AS
+SELECT neurondb.train(
+	'knn',
+	'test_train_view',
+	'features',
+	'label',
+	'{"k": 5, "storage": "cpu"}'::jsonb
+)::integer AS model_id;
+
+-- Compare metrics
+SELECT 
+	'GPU Model' AS model_type,
+	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
+FROM neurondb.ml_models m, gpu_model_adv g
+WHERE m.model_id = g.model_id
+UNION ALL
+SELECT 
+	'CPU Model' AS model_type,
+	ROUND((m.metrics->>'accuracy')::numeric, 4) AS accuracy
+FROM neurondb.ml_models m, cpu_model_adv c
+WHERE m.model_id = c.model_id;
+
+\echo ''
+\echo 'Test 7: Model Persistence and Retrieval'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Check models are persisted
+SELECT 
+	COUNT(*) AS total_models,
+	COUNT(DISTINCT (metrics->>'k')::int) AS unique_k_values,
+	MIN(created_at) AS oldest_model,
+	MAX(created_at) AS newest_model
+FROM neurondb.ml_models
+WHERE algorithm = 'knn';
+
+-- Cleanup
+DROP TABLE IF EXISTS knn_k3;
+DROP TABLE IF EXISTS knn_k5;
+DROP TABLE IF EXISTS knn_k7;
+DROP TABLE IF EXISTS knn_eval_temp;
+DROP TABLE IF EXISTS gpu_model_adv;
+DROP TABLE IF EXISTS cpu_model_adv;
+
+\echo ''
+\echo 'Advanced KNN Test Complete!'
+\echo '=========================================================================='
+

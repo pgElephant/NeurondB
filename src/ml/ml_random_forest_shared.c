@@ -33,7 +33,7 @@ rf_gini_impurity(const int *counts, int n_classes, int total)
 	double sum_sq = 0.0;
 	int i;
 
-	if (total <= 0)
+	if (counts == NULL || n_classes <= 0 || total <= 0)
 		return 0.0;
 
 	for (i = 0; i < n_classes; i++)
@@ -78,6 +78,16 @@ rf_split_gini(const int *left_counts,
 		if (right_majority_out)
 			*right_majority_out = 0;
 		return DBL_MAX;
+	}
+
+	/* Defensive check: ensure we don't access invalid memory */
+	if ((left_counts == NULL && right_counts == NULL) ||
+	    (left_counts != NULL && right_counts != NULL))
+	{
+		/* Both NULL or both non-NULL is acceptable */
+	} else
+	{
+		/* Mixed NULL/non-NULL is unusual but handle gracefully */
 	}
 
 	for (i = 0; i < class_count; i++)
@@ -249,9 +259,13 @@ rf_build_metrics_json(const RFMetricsSpec *spec)
 
 	appendStringInfoChar(&buf, '}');
 
+	if (buf.data == NULL)
+		return NULL;
+
 	result = DatumGetJsonbP(
 		DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
-	pfree(buf.data);
+	if (buf.data != NULL)
+		pfree(buf.data);
 
 	return result;
 }

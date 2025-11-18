@@ -193,10 +193,53 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 				 errmsg("not enough vectors (%d) for %d clusters",
 						nvec, num_clusters)));
 
-	if (nvec > 5000)
-		elog(WARNING,
-			 "hierarchical clustering on %d points may be slow, "
-			 "consider K-means", nvec);
+	/* Hierarchical clustering has O(n²) complexity - limit to reasonable size */
+	{
+		int max_hierarchical_points = 10000; /* Hard limit for hierarchical clustering */
+		int original_nvec = nvec;
+		
+		if (nvec > max_hierarchical_points)
+		{
+			elog(WARNING,
+				 "hierarchical clustering on %d points is computationally infeasible (O(n²) complexity), "
+				 "limiting to %d points. Consider using K-means or Mini-batch K-means for large datasets",
+				 nvec, max_hierarchical_points);
+			
+			/* Sample the data */
+			{
+				float **sampled_data = (float **)palloc(sizeof(float *) * max_hierarchical_points);
+				int sample_step = original_nvec / max_hierarchical_points;
+				int sampled_idx = 0;
+				int sample_j;
+				
+				for (sample_j = 0; sample_j < original_nvec && sampled_idx < max_hierarchical_points; sample_j += sample_step)
+				{
+					sampled_data[sampled_idx] = (float *)palloc(sizeof(float) * dim);
+					memcpy(sampled_data[sampled_idx], data[sample_j], sizeof(float) * dim);
+					sampled_idx++;
+				}
+				
+				/* Free original data */
+				for (sample_j = 0; sample_j < original_nvec; sample_j++)
+					pfree(data[sample_j]);
+				pfree(data);
+				
+				/* Use sampled data */
+				data = sampled_data;
+				nvec = sampled_idx;
+			}
+			
+			elog(INFO,
+				 "hierarchical clustering: using %d sampled points from %d total points",
+				 nvec, original_nvec);
+		}
+		else if (nvec > 5000)
+		{
+			elog(WARNING,
+				 "hierarchical clustering on %d points may be slow, "
+				 "consider K-means", nvec);
+		}
+	}
 
 	/* Initialize clusters: each point as singleton cluster */
 	clusters = (ClusterNode *) palloc(sizeof(ClusterNode) * nvec);

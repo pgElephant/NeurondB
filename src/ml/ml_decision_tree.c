@@ -20,6 +20,7 @@
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "utils/array.h"
+#include "utils/jsonb.h"
 #include "lib/stringinfo.h"
 #include "libpq/pqformat.h"
 
@@ -33,6 +34,13 @@
 #include "neurondb_gpu_backend.h"
 #include "ml_gpu_registry.h"
 #include "ml_gpu_decision_tree.h"
+#include "neurondb_cuda_dt.h"
+
+#ifdef NDB_GPU_CUDA
+#include "neurondb_cuda_runtime.h"
+#include <cublas_v2.h>
+extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
+#endif
 
 #include <math.h>
 #include <float.h>
@@ -1057,6 +1065,533 @@ predict_decision_tree_model_id(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_FLOAT8(result);
+}
+
+/*
+ * dt_predict_batch
+ *
+ * Helper function to predict a batch of samples using Decision Tree model.
+ * Updates confusion matrix.
+ */
+static void
+dt_predict_batch(const DTModel *model,
+	const float *features,
+	const double *labels,
+	int n_samples,
+	int feature_dim,
+	int *tp_out,
+	int *tn_out,
+	int *fp_out,
+	int *fn_out)
+{
+	int i;
+	int tp = 0;
+	int tn = 0;
+	int fp = 0;
+	int fn = 0;
+
+	if (model == NULL || model->root == NULL || features == NULL || labels == NULL || n_samples <= 0)
+	{
+		elog(DEBUG1,
+			"neurondb: dt_predict_batch: early return - model=%p, model->root=%p, features=%p, labels=%p, n_samples=%d",
+			(void *)model, model ? (void *)model->root : NULL, (void *)features, (void *)labels, n_samples);
+		if (tp_out)
+			*tp_out = 0;
+		if (tn_out)
+			*tn_out = 0;
+		if (fp_out)
+			*fp_out = 0;
+		if (fn_out)
+			*fn_out = 0;
+		return;
+	}
+
+	elog(DEBUG1,
+		"neurondb: dt_predict_batch: starting - n_samples=%d, feature_dim=%d, model->n_features=%d",
+		n_samples, feature_dim, model->n_features);
+
+	for (i = 0; i < n_samples; i++)
+	{
+		const float *row = features + (i * feature_dim);
+		double y_true = labels[i];
+		int true_class;
+		double prediction;
+		int pred_class;
+
+		if (!isfinite(y_true))
+			continue;
+
+		true_class = (int)rint(y_true);
+		if (true_class < 0 || true_class > 1)
+			continue;
+
+		/* Compute prediction using tree */
+		prediction = dt_tree_predict(model->root, row, feature_dim);
+		pred_class = (int)rint(prediction);
+		if (pred_class < 0)
+			pred_class = 0;
+		if (pred_class > 1)
+			pred_class = 1;
+		
+		if (i < 5)  /* Log first 5 predictions for debugging */
+		{
+			elog(DEBUG1,
+				"neurondb: dt_predict_batch: sample %d - y_true=%.6f (class=%d), prediction=%.6f (class=%d)",
+				i, y_true, true_class, prediction, pred_class);
+		}
+
+		/* Update confusion matrix */
+		if (true_class == 1 && pred_class == 1)
+			tp++;
+		else if (true_class == 0 && pred_class == 0)
+			tn++;
+		else if (true_class == 0 && pred_class == 1)
+			fp++;
+		else if (true_class == 1 && pred_class == 0)
+			fn++;
+	}
+
+	if (tp_out)
+		*tp_out = tp;
+	if (tn_out)
+		*tn_out = tn;
+	if (fp_out)
+		*fp_out = fp;
+	if (fn_out)
+		*fn_out = fn;
+}
+
+/*
+ * evaluate_decision_tree_by_model_id
+ *
+ * Evaluates Decision Tree model by model_id using optimized batch evaluation.
+ * Supports both GPU and CPU models with GPU-accelerated batch evaluation when available.
+ *
+ * Returns jsonb with metrics: accuracy, precision, recall, f1_score, n_samples
+ */
+PG_FUNCTION_INFO_V1(evaluate_decision_tree_by_model_id);
+
+Datum
+evaluate_decision_tree_by_model_id(PG_FUNCTION_ARGS)
+{
+	int32 model_id;
+	text *table_name;
+	text *feature_col;
+	text *label_col;
+	char *tbl_str;
+	char *feat_str;
+	char *targ_str;
+	int ret;
+	int nvec = 0;
+	int i;
+	int j;
+	Oid feat_type_oid = InvalidOid;
+	bool feat_is_array = false;
+	double accuracy = 0.0;
+	double precision = 0.0;
+	double recall = 0.0;
+	double f1_score = 0.0;
+	int tp = 0;
+	int tn = 0;
+	int fp = 0;
+	int fn = 0;
+	MemoryContext oldcontext;
+	StringInfoData query;
+	DTModel *model = NULL;
+	StringInfoData jsonbuf;
+	Jsonb *result_jsonb = NULL;
+	bytea *gpu_payload = NULL;
+	Jsonb *gpu_metrics = NULL;
+	bool is_gpu_model = false;
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_decision_tree_by_model_id: model_id is required")));
+
+	model_id = PG_GETARG_INT32(0);
+
+	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_decision_tree_by_model_id: table_name, feature_col, and label_col are required")));
+
+	table_name = PG_GETARG_TEXT_PP(1);
+	feature_col = PG_GETARG_TEXT_PP(2);
+	label_col = PG_GETARG_TEXT_PP(3);
+
+	tbl_str = text_to_cstring(table_name);
+	feat_str = text_to_cstring(feature_col);
+	targ_str = text_to_cstring(label_col);
+
+	oldcontext = CurrentMemoryContext;
+
+	/* Load model from catalog - try CPU first, then GPU */
+	if (!dt_load_model_from_catalog(model_id, &model))
+	{
+		/* Try GPU model */
+		if (ml_catalog_fetch_model_payload(model_id, &gpu_payload, NULL, &gpu_metrics))
+		{
+			is_gpu_model = dt_metadata_is_gpu(gpu_metrics);
+			if (!is_gpu_model)
+			{
+				if (gpu_payload)
+					pfree(gpu_payload);
+				if (gpu_metrics)
+					pfree(gpu_metrics);
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: evaluate_decision_tree_by_model_id: model %d not found",
+							model_id)));
+			}
+		}
+		else
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_decision_tree_by_model_id: model %d not found",
+						model_id)));
+		}
+	}
+
+	/* Connect to SPI */
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	{
+		if (model != NULL)
+		{
+			if (model->root != NULL)
+				dt_free_tree(model->root);
+			pfree(model);
+		}
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_decision_tree_by_model_id: SPI_connect failed")));
+	}
+
+	/* Build query - single query to fetch all data */
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		quote_identifier(feat_str),
+		quote_identifier(targ_str),
+		quote_identifier(tbl_str),
+		quote_identifier(feat_str),
+		quote_identifier(targ_str));
+
+	ret = SPI_execute(query.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+	{
+		pfree(query.data);
+		if (model != NULL)
+		{
+			if (model->root != NULL)
+				dt_free_tree(model->root);
+			pfree(model);
+		}
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_decision_tree_by_model_id: query failed")));
+	}
+
+	nvec = SPI_processed;
+	if (nvec < 1)
+	{
+		pfree(query.data);
+		if (model != NULL)
+		{
+			if (model->root != NULL)
+				dt_free_tree(model->root);
+			pfree(model);
+		}
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
+		SPI_finish();
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_decision_tree_by_model_id: no valid rows found")));
+	}
+
+	/* Determine feature column type */
+	if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL)
+		feat_type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, 1);
+	if (feat_type_oid == FLOAT8ARRAYOID || feat_type_oid == FLOAT4ARRAYOID)
+		feat_is_array = true;
+
+	/* GPU batch evaluation path for GPU models - uses optimized evaluation kernel */
+	if (is_gpu_model && neurondb_gpu_is_available())
+	{
+#ifdef NDB_GPU_CUDA
+		/* For now, GPU evaluation for Decision Tree is not implemented, fall back to CPU */
+		elog(DEBUG1,
+			"neurondb: evaluate_decision_tree_by_model_id: GPU evaluation not yet implemented for Decision Tree, using CPU batch evaluation");
+		goto gpu_eval_fallback;
+#endif	/* NDB_GPU_CUDA */
+	}
+
+gpu_eval_fallback:
+	/* CPU evaluation path (also used as fallback for GPU models) */
+	/* Use optimized batch prediction */
+	{
+		float *h_features = NULL;
+		double *h_labels = NULL;
+		int feat_dim = 0;
+		int valid_rows = 0;
+
+		/* Determine feature dimension from model */
+		if (model != NULL)
+			feat_dim = model->n_features;
+		else if (is_gpu_model && gpu_payload != NULL)
+		{
+			const NdbCudaDtModelHeader *gpu_hdr;
+
+			gpu_hdr = (const NdbCudaDtModelHeader *)VARDATA(gpu_payload);
+			feat_dim = gpu_hdr->feature_dim;
+		}
+		else
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_decision_tree_by_model_id: could not determine feature dimension")));
+		}
+
+		if (feat_dim <= 0)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_decision_tree_by_model_id: invalid feature dimension %d",
+						feat_dim)));
+		}
+
+		/* Allocate host buffers for features and labels */
+		h_features = (float *)palloc(sizeof(float) * (size_t)nvec * (size_t)feat_dim);
+		h_labels = (double *)palloc(sizeof(double) * (size_t)nvec);
+
+		/* Extract features and labels from SPI results - optimized batch extraction */
+		/* Cache TupleDesc to avoid repeated lookups */
+		{
+			TupleDesc tupdesc = SPI_tuptable->tupdesc;
+
+			for (i = 0; i < nvec; i++)
+			{
+				HeapTuple tuple = SPI_tuptable->vals[i];
+				Datum feat_datum;
+				Datum targ_datum;
+				bool feat_null;
+				bool targ_null;
+				Vector *vec;
+				ArrayType *arr;
+				float *feat_row;
+
+				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+
+				if (feat_null || targ_null)
+					continue;
+
+				feat_row = h_features + (valid_rows * feat_dim);
+				h_labels[valid_rows] = DatumGetFloat8(targ_datum);
+
+				/* Extract feature vector - optimized paths */
+				if (feat_is_array)
+				{
+					arr = DatumGetArrayTypeP(feat_datum);
+					if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != feat_dim)
+						continue;
+					if (feat_type_oid == FLOAT8ARRAYOID)
+					{
+						/* Optimized: bulk conversion with loop unrolling hint */
+						float8 *data = (float8 *)ARR_DATA_PTR(arr);
+						int j_remain = feat_dim % 4;
+						int j_end = feat_dim - j_remain;
+
+						/* Process 4 elements at a time for better cache locality */
+						for (j = 0; j < j_end; j += 4)
+						{
+							feat_row[j] = (float)data[j];
+							feat_row[j + 1] = (float)data[j + 1];
+							feat_row[j + 2] = (float)data[j + 2];
+							feat_row[j + 3] = (float)data[j + 3];
+						}
+						/* Handle remaining elements */
+						for (j = j_end; j < feat_dim; j++)
+							feat_row[j] = (float)data[j];
+					}
+					else
+					{
+						/* FLOAT4ARRAYOID: direct memcpy (already optimal) */
+						float4 *data = (float4 *)ARR_DATA_PTR(arr);
+						memcpy(feat_row, data, sizeof(float) * feat_dim);
+					}
+				}
+				else
+				{
+					/* Vector type: direct memcpy (already optimal) */
+					vec = DatumGetVector(feat_datum);
+					if (vec->dim != feat_dim)
+						continue;
+					memcpy(feat_row, vec->data, sizeof(float) * feat_dim);
+				}
+
+				valid_rows++;
+			}
+		}
+
+		if (valid_rows == 0)
+		{
+			pfree(h_features);
+			pfree(h_labels);
+			if (model != NULL)
+			{
+				if (model->root != NULL)
+					dt_free_tree(model->root);
+				pfree(model);
+			}
+			if (gpu_payload)
+				pfree(gpu_payload);
+			if (gpu_metrics)
+				pfree(gpu_metrics);
+			pfree(query.data);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(targ_str);
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_decision_tree_by_model_id: no valid rows found")));
+		}
+
+		/* For GPU models, we cannot evaluate on CPU without model conversion */
+		if (is_gpu_model && model == NULL)
+		{
+			pfree(h_features);
+			pfree(h_labels);
+			if (gpu_payload)
+				pfree(gpu_payload);
+			if (gpu_metrics)
+				pfree(gpu_metrics);
+			pfree(query.data);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(targ_str);
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					errmsg("neurondb: evaluate_decision_tree_by_model_id: GPU model evaluation requires GPU evaluation kernel (not yet implemented)")));
+		}
+
+		/* Ensure model is not NULL before prediction */
+		if (model == NULL)
+		{
+			pfree(h_features);
+			pfree(h_labels);
+			if (gpu_payload)
+				pfree(gpu_payload);
+			if (gpu_metrics)
+				pfree(gpu_metrics);
+			pfree(query.data);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(targ_str);
+			SPI_finish();
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_decision_tree_by_model_id: model is NULL")));
+		}
+
+		/* Use batch prediction helper */
+		/* Add debug logging before prediction */
+		if (model != NULL)
+		{
+			elog(DEBUG1,
+				"neurondb: evaluate_decision_tree_by_model_id: CPU batch prediction: model->n_features=%d, model->root=%p, valid_rows=%d, feat_dim=%d",
+				model->n_features, (void *)model->root, valid_rows, feat_dim);
+		}
+		else
+		{
+			elog(WARNING,
+				"neurondb: evaluate_decision_tree_by_model_id: model is NULL before CPU batch prediction");
+		}
+		
+		dt_predict_batch(model,
+			h_features,
+			h_labels,
+			valid_rows,
+			feat_dim,
+			&tp,
+			&tn,
+			&fp,
+			&fn);
+		
+		elog(DEBUG1,
+			"neurondb: evaluate_decision_tree_by_model_id: after batch prediction: tp=%d, tn=%d, fp=%d, fn=%d, valid_rows=%d",
+			tp, tn, fp, fn, valid_rows);
+
+		/* Compute metrics */
+		if (valid_rows > 0)
+		{
+			accuracy = (double)(tp + tn) / (double)valid_rows;
+
+			if ((tp + fp) > 0)
+				precision = (double)tp / (double)(tp + fp);
+			else
+				precision = 0.0;
+
+			if ((tp + fn) > 0)
+				recall = (double)tp / (double)(tp + fn);
+			else
+				recall = 0.0;
+
+			if ((precision + recall) > 0.0)
+				f1_score = 2.0 * (precision * recall) / (precision + recall);
+			else
+				f1_score = 0.0;
+		}
+
+		/* Cleanup */
+		pfree(h_features);
+		pfree(h_labels);
+		if (model != NULL)
+		{
+			if (model->root != NULL)
+				dt_free_tree(model->root);
+			pfree(model);
+		}
+		if (gpu_payload)
+			pfree(gpu_payload);
+		if (gpu_metrics)
+			pfree(gpu_metrics);
+	}
+
+	SPI_finish();
+	pfree(query.data);
+	pfree(tbl_str);
+	pfree(feat_str);
+	pfree(targ_str);
+
+	/* Build jsonb result */
+	initStringInfo(&jsonbuf);
+	appendStringInfo(&jsonbuf,
+		"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
+		accuracy,
+		precision,
+		recall,
+		f1_score,
+		nvec);
+
+	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+		CStringGetDatum(jsonbuf.data)));
+
+	pfree(jsonbuf.data);
+	MemoryContextSwitchTo(oldcontext);
+	PG_RETURN_JSONB_P(result_jsonb);
 }
 
 /*-------------------------------------------------------------------------

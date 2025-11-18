@@ -20,12 +20,35 @@
 #include <string.h>
 
 #include "neurondb_cuda_runtime.h"
+#include "neurondb_cuda_launchers.h"
 #include "lib/stringinfo.h"
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
 
 #include "ml_ridge_regression_internal.h"
 #include "neurondb_cuda_ridge.h"
+
+#ifdef NDB_GPU_CUDA
+#include <cublas_v2.h>
+#endif
+
+/* Reuse linear regression kernels */
+extern cudaError_t launch_linreg_compute_xtx_kernel(const float *features,
+	const double *targets,
+	int n_samples,
+	int feature_dim,
+	int dim_with_intercept,
+	double *XtX,
+	double *Xty);
+extern cudaError_t launch_linreg_eval_kernel(const float *features,
+	const double *targets,
+	const double *coefficients,
+	double intercept,
+	int n_samples,
+	int feature_dim,
+	double *sse_out,
+	double *sae_out,
+	long long *count_out);
 
 int
 ndb_cuda_ridge_pack_model(const RidgeModel *model,
@@ -115,45 +138,123 @@ ndb_cuda_ridge_train(const float *features,
 					 Jsonb **metrics,
 					 char **errstr)
 {
-	double			lambda = 0.01;	/* Default regularization */
+	const double	default_lambda = 0.01;
+	double			lambda = default_lambda;
+	float		   *d_features = NULL;
+	double		   *d_targets = NULL;
+	double		   *d_XtX = NULL;
+	double		   *d_Xty = NULL;
+	double		   *d_XtX_inv = NULL;
+	double		   *d_beta = NULL;
 	double		   *h_XtX = NULL;
 	double		   *h_Xty = NULL;
 	double		   *h_XtX_inv = NULL;
 	double		   *h_beta = NULL;
 	bytea		   *payload = NULL;
 	Jsonb		   *metrics_json = NULL;
-	size_t			XtX_bytes,
-					Xty_bytes,
-					beta_bytes;
+	cudaError_t		status = cudaSuccess;
+	size_t			feature_bytes;
+	size_t			target_bytes;
+	size_t			XtX_bytes;
+	size_t			Xty_bytes;
+	size_t			beta_bytes;
 	int				dim_with_intercept;
-	int				i,
-					j,
-					k;
+	int				i;
+	int				j;
 	int				rc = -1;
 
 	if (errstr)
 		*errstr = NULL;
 
-	if (features == NULL || targets == NULL || n_samples <= 0
-		|| feature_dim <= 0)
+	/* Defensive: Comprehensive parameter validation */
+	if (model_data == NULL)
 	{
 		if (errstr)
-			*errstr = pstrdup("invalid input parameters for CUDA Ridge train");
+			*errstr = pstrdup("ndb_cuda_ridge_train: model_data is NULL");
 		return -1;
 	}
 
-	/* Extract lambda from hyperparameters */
+	if (features == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("ndb_cuda_ridge_train: features is NULL");
+		return -1;
+	}
+
+	if (targets == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("ndb_cuda_ridge_train: targets is NULL");
+		return -1;
+	}
+
+	if (n_samples <= 0 || n_samples > 10000000)
+	{
+		if (errstr)
+			*errstr = psprintf("ndb_cuda_ridge_train: invalid n_samples %d (must be 1-10000000)",
+				n_samples);
+		return -1;
+	}
+
+	if (feature_dim <= 0 || feature_dim > 10000)
+	{
+		if (errstr)
+			*errstr = psprintf("ndb_cuda_ridge_train: invalid feature_dim %d (must be 1-10000)",
+				feature_dim);
+		return -1;
+	}
+
+	elog(DEBUG1,
+		 "ndb_cuda_ridge_train: entry: model_data=%p, features=%p, "
+		 "targets=%p, n_samples=%d, feature_dim=%d",
+		 model_data,
+		 features,
+		 targets,
+		 n_samples,
+		 feature_dim);
+
+	/* Extract and validate lambda from hyperparameters */
 	if (hyperparams != NULL)
 	{
-		char *hyperparams_text = DatumGetCString(
-			DirectFunctionCall1(jsonb_out, JsonbPGetDatum(hyperparams)));
+		Datum		lambda_datum;
+		Datum		numeric_datum;
+		Numeric		num;
+		double		parsed_lambda;
 
-		if (strstr(hyperparams_text, "\"lambda\"") != NULL)
+		lambda_datum = DirectFunctionCall2(jsonb_object_field,
+										   JsonbPGetDatum(hyperparams),
+										   CStringGetTextDatum("lambda"));
+		if (DatumGetPointer(lambda_datum) != NULL)
 		{
-			/* Simple extraction - can be enhanced with proper JSON parsing */
-			/* For now, use default */
+			numeric_datum = DirectFunctionCall1(jsonb_numeric, lambda_datum);
+			if (DatumGetPointer(numeric_datum) != NULL)
+			{
+				num = DatumGetNumeric(numeric_datum);
+				parsed_lambda = DatumGetFloat8(
+					DirectFunctionCall1(numeric_float8, NumericGetDatum(num)));
+				/* Defensive: Validate lambda range and check for NaN/Inf */
+				if (isfinite(parsed_lambda) && parsed_lambda >= 0.0 && parsed_lambda <= 1000.0)
+				{
+					lambda = parsed_lambda;
+				}
+				else
+				{
+					elog(WARNING,
+						"ndb_cuda_ridge_train: invalid lambda %f (must be finite, >= 0, <= 1000.0), using default %f",
+						parsed_lambda, default_lambda);
+					lambda = default_lambda;
+				}
+			}
 		}
-		pfree(hyperparams_text);
+	}
+
+	/* Defensive: Final validation of lambda */
+	if (!isfinite(lambda) || lambda < 0.0 || lambda > 1000.0)
+	{
+		elog(WARNING,
+			"ndb_cuda_ridge_train: lambda %f invalid, using default %f",
+			lambda, default_lambda);
+		lambda = default_lambda;
 	}
 
 	dim_with_intercept = feature_dim + 1;
@@ -168,7 +269,202 @@ ndb_cuda_ridge_train(const float *features,
 	h_XtX_inv = (double *) palloc(XtX_bytes);
 	h_beta = (double *) palloc(beta_bytes);
 
-	/* Compute X'X and X'y */
+	/* Compute X'X and X'y on GPU */
+	{
+		/* Allocate device memory */
+		feature_bytes = sizeof(float) * (size_t) n_samples * (size_t) feature_dim;
+		target_bytes = sizeof(double) * (size_t) n_samples;
+
+		elog(DEBUG1,
+			 "ndb_cuda_ridge_train: allocating GPU memory: feature_bytes=%zu "
+			 "(%.2f MB), target_bytes=%zu",
+			 feature_bytes,
+			 feature_bytes / (1024.0 * 1024.0),
+			 target_bytes);
+
+		/* Defensive: Check CUDA context before proceeding */
+		status = cudaGetLastError();
+		if (status != cudaSuccess && status != cudaErrorNotReady)
+		{
+			if (errstr)
+				*errstr = psprintf("ndb_cuda_ridge_train: CUDA error before allocation: %s",
+					cudaGetErrorString(status));
+			elog(WARNING,
+				"ndb_cuda_ridge_train: CUDA error detected before allocation: %s",
+				cudaGetErrorString(status));
+			goto cpu_fallback;
+		}
+
+		status = cudaMalloc((void **) &d_features, feature_bytes);
+		if (status != cudaSuccess)
+		{
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMalloc d_features failed: %s",
+				 cudaGetErrorString(status));
+			goto cpu_fallback;
+		}
+
+		status = cudaMalloc((void **) &d_targets, target_bytes);
+		if (status != cudaSuccess)
+		{
+			cudaFree(d_features);
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMalloc d_targets failed: %s",
+				 cudaGetErrorString(status));
+			goto cpu_fallback;
+		}
+
+		status = cudaMalloc((void **) &d_XtX, XtX_bytes);
+		if (status != cudaSuccess)
+		{
+			cudaFree(d_features);
+			cudaFree(d_targets);
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMalloc d_XtX failed: %s",
+				 cudaGetErrorString(status));
+			goto cpu_fallback;
+		}
+
+		status = cudaMalloc((void **) &d_Xty, Xty_bytes);
+		if (status != cudaSuccess)
+		{
+			cudaFree(d_features);
+			cudaFree(d_targets);
+			cudaFree(d_XtX);
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMalloc d_Xty failed: %s",
+				 cudaGetErrorString(status));
+			goto cpu_fallback;
+		}
+
+		/* Initialize XtX and Xty to zero */
+		status = cudaMemset(d_XtX, 0, XtX_bytes);
+		if (status != cudaSuccess)
+			goto gpu_cleanup;
+		status = cudaMemset(d_Xty, 0, Xty_bytes);
+		if (status != cudaSuccess)
+			goto gpu_cleanup;
+
+		/* Copy data to device */
+		status = cudaMemcpy(d_features, features, feature_bytes, cudaMemcpyHostToDevice);
+		if (status != cudaSuccess)
+		{
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMemcpy d_features failed: %s",
+				 cudaGetErrorString(status));
+			goto gpu_cleanup;
+		}
+		status = cudaMemcpy(d_targets, targets, target_bytes, cudaMemcpyHostToDevice);
+		if (status != cudaSuccess)
+		{
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMemcpy d_targets failed: %s",
+				 cudaGetErrorString(status));
+			goto gpu_cleanup;
+		}
+
+		/* Use GPU kernel to compute X'X and X'y */
+		status = launch_linreg_compute_xtx_kernel(d_features,
+			d_targets,
+			n_samples,
+			feature_dim,
+			dim_with_intercept,
+			d_XtX,
+			d_Xty);
+		if (status != cudaSuccess)
+		{
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: launch_linreg_compute_xtx_kernel failed: %s",
+				 cudaGetErrorString(status));
+			goto gpu_cleanup;
+		}
+
+		/* Add Ridge penalty (λI) to diagonal (excluding intercept) on GPU */
+		/* Use a simple GPU kernel to add lambda to diagonal */
+		/* For now, copy back to host, add lambda, then copy back */
+		/* TODO: Create a GPU kernel for adding lambda to diagonal */
+		status = cudaMemcpy(h_XtX, d_XtX, XtX_bytes, cudaMemcpyDeviceToHost);
+		if (status != cudaSuccess)
+		{
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMemcpy h_XtX failed: %s",
+				 cudaGetErrorString(status));
+			goto gpu_cleanup;
+		}
+
+		/* Add Ridge penalty (λI) to diagonal (excluding intercept) */
+		for (i = 1; i < dim_with_intercept; i++)
+			h_XtX[i * dim_with_intercept + i] += lambda;
+
+		/* Copy Xty to host for CPU fallback */
+		status = cudaMemcpy(h_Xty, d_Xty, Xty_bytes, cudaMemcpyDeviceToHost);
+		if (status != cudaSuccess)
+		{
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMemcpy h_Xty failed: %s",
+				 cudaGetErrorString(status));
+			goto gpu_cleanup;
+		}
+
+		/* Copy back to GPU for matrix inversion and cuBLAS operations */
+		status = cudaMemcpy(d_XtX, h_XtX, XtX_bytes, cudaMemcpyHostToDevice);
+		if (status != cudaSuccess)
+		{
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMemcpy d_XtX failed: %s",
+				 cudaGetErrorString(status));
+			goto gpu_cleanup;
+		}
+
+		/* Allocate device memory for XtX_inv and beta */
+		status = cudaMalloc((void **) &d_XtX_inv, XtX_bytes);
+		if (status != cudaSuccess)
+		{
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMalloc d_XtX_inv failed: %s",
+				 cudaGetErrorString(status));
+			goto gpu_cleanup;
+		}
+
+		status = cudaMalloc((void **) &d_beta, beta_bytes);
+		if (status != cudaSuccess)
+		{
+			cudaFree(d_XtX_inv);
+			elog(DEBUG1,
+				 "ndb_cuda_ridge_train: cudaMalloc d_beta failed: %s",
+				 cudaGetErrorString(status));
+			goto gpu_cleanup;
+		}
+
+		/* Free feature and target memory (no longer needed) */
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		d_features = NULL;
+		d_targets = NULL;
+
+		/* Copy XtX to host for matrix inversion (CPU) */
+		/* Matrix inversion is small, CPU is fine */
+		goto matrix_inversion;
+	}
+
+gpu_cleanup:
+	if (d_features)
+		cudaFree(d_features);
+	if (d_targets)
+		cudaFree(d_targets);
+	if (d_XtX)
+		cudaFree(d_XtX);
+	if (d_Xty)
+		cudaFree(d_Xty);
+	if (d_XtX_inv)
+		cudaFree(d_XtX_inv);
+	if (d_beta)
+		cudaFree(d_beta);
+
+cpu_fallback:
+	/* Fallback to CPU computation */
+	elog(DEBUG1,
+		 "ndb_cuda_ridge_train: falling back to CPU computation");
 	for (i = 0; i < n_samples; i++)
 	{
 		const float *row = features + (i * feature_dim);
@@ -177,13 +473,13 @@ ndb_cuda_ridge_train(const float *features,
 		xi = (double *) palloc(sizeof(double) * dim_with_intercept);
 
 		xi[0] = 1.0; /* intercept */
-		for (k = 1; k < dim_with_intercept; k++)
-			xi[k] = row[k - 1];
+		for (j = 1; j < dim_with_intercept; j++)
+			xi[j] = row[j - 1];
 
 		/* X'X accumulation */
 		for (j = 0; j < dim_with_intercept; j++)
 		{
-			for (k = 0; k < dim_with_intercept; k++)
+			for (int k = 0; k < dim_with_intercept; k++)
 				h_XtX[j * dim_with_intercept + k] += xi[j] * xi[k];
 
 			/* X'y accumulation */
@@ -196,6 +492,8 @@ ndb_cuda_ridge_train(const float *features,
 	/* Add Ridge penalty (λI) to diagonal (excluding intercept) */
 	for (i = 1; i < dim_with_intercept; i++)
 		h_XtX[i * dim_with_intercept + i] += lambda;
+
+matrix_inversion:
 
 	/* Invert X'X + λI using Gauss-Jordan elimination */
 	{
@@ -279,19 +577,87 @@ ndb_cuda_ridge_train(const float *features,
 			pfree(h_Xty);
 			pfree(h_XtX_inv);
 			pfree(h_beta);
+			if (d_XtX)
+				cudaFree(d_XtX);
+			if (d_Xty)
+				cudaFree(d_Xty);
+			if (d_XtX_inv)
+				cudaFree(d_XtX_inv);
+			if (d_beta)
+				cudaFree(d_beta);
 			if (errstr)
 				*errstr = pstrdup("Matrix is singular, cannot compute Ridge regression");
 			return -1;
 		}
+
+		/* Copy XtX_inv to GPU for cuBLAS operations */
+		if (d_XtX_inv != NULL)
+		{
+			status = cudaMemcpy(d_XtX_inv, h_XtX_inv, XtX_bytes, cudaMemcpyHostToDevice);
+			if (status != cudaSuccess)
+			{
+				elog(DEBUG1,
+					 "ndb_cuda_ridge_train: cudaMemcpy d_XtX_inv failed: %s",
+					 cudaGetErrorString(status));
+				/* Fallback to CPU computation */
+			}
+			else
+			{
+				/* Use cuBLAS DGEMM for β = (X'X + λI)^(-1)X'y */
+				cublasHandle_t handle = ndb_cuda_get_cublas_handle();
+				if (handle != NULL && d_Xty != NULL && d_beta != NULL)
+				{
+					cublasStatus_t cublas_err;
+					double alpha = 1.0;
+					double beta = 0.0;
+
+					/* DGEMM: beta = alpha * XtX_inv * Xty + beta * beta */
+					/* XtX_inv is (dim_with_intercept x dim_with_intercept) */
+					/* Xty is (dim_with_intercept x 1) */
+					/* Result beta is (dim_with_intercept x 1) */
+					cublas_err = cublasDgemv(handle,
+						CUBLAS_OP_N,  /* No transpose */
+						dim_with_intercept,  /* M: rows of XtX_inv */
+						dim_with_intercept,  /* N: cols of XtX_inv */
+						&alpha,  /* alpha = 1.0 */
+						d_XtX_inv,  /* XtX_inv: (dim x dim) */
+						dim_with_intercept,  /* lda: leading dimension */
+						d_Xty,  /* Xty: (dim x 1) */
+						1,  /* incx: stride */
+						&beta,  /* beta = 0.0 */
+						d_beta,  /* beta: (dim x 1) */
+						1);  /* incy: stride */
+
+					if (cublas_err == CUBLAS_STATUS_SUCCESS)
+					{
+						/* Copy beta back to host */
+						status = cudaMemcpy(h_beta, d_beta, beta_bytes, cudaMemcpyDeviceToHost);
+						if (status == cudaSuccess)
+						{
+							/* Success - use GPU-computed beta */
+							goto build_model;
+						}
+					}
+					else
+					{
+						elog(DEBUG1,
+							 "ndb_cuda_ridge_train: cublasDgemv failed: %d, falling back to CPU",
+							 (int)cublas_err);
+					}
+				}
+			}
+		}
 	}
 
-	/* Compute β = (X'X + λI)^(-1)X'y */
+	/* Fallback to CPU computation: β = (X'X + λI)^(-1)X'y */
 	for (i = 0; i < dim_with_intercept; i++)
 	{
 		h_beta[i] = 0.0;
 		for (j = 0; j < dim_with_intercept; j++)
 			h_beta[i] += h_XtX_inv[i * dim_with_intercept + j] * h_Xty[j];
 	}
+
+build_model:
 
 	/* Build model */
 	{
@@ -350,6 +716,14 @@ ndb_cuda_ridge_train(const float *features,
 	pfree(h_Xty);
 	pfree(h_XtX_inv);
 	pfree(h_beta);
+	if (d_XtX)
+		cudaFree(d_XtX);
+	if (d_Xty)
+		cudaFree(d_Xty);
+	if (d_XtX_inv)
+		cudaFree(d_XtX_inv);
+	if (d_beta)
+		cudaFree(d_beta);
 
 	if (rc == 0 && payload != NULL)
 	{
@@ -427,6 +801,412 @@ ndb_cuda_ridge_predict(const bytea *model_data,
 		prediction += coefficients[i] * input[i];
 
 	*prediction_out = prediction;
+	return 0;
+}
+
+/*
+ * ndb_cuda_ridge_evaluate
+ *    GPU-accelerated batch evaluation for Ridge Regression
+ * 
+ * Reuses the linear regression evaluation kernel since evaluation
+ * is identical (just computes predictions and metrics).
+ */
+int
+ndb_cuda_ridge_evaluate(const bytea *model_data,
+	const float *features,
+	const double *targets,
+	int n_samples,
+	int feature_dim,
+	double *mse_out,
+	double *mae_out,
+	double *rmse_out,
+	double *r_squared_out,
+	char **errstr)
+{
+	const NdbCudaRidgeModelHeader *hdr;
+	const float *coefficients;
+	const bytea *detoasted;
+	cudaError_t cuda_err;
+	float *d_features = NULL;
+	double *d_targets = NULL;
+	double *d_coefficients = NULL;
+	double *d_sse = NULL;
+	double *d_sae = NULL;
+	long long *d_count = NULL;
+	double h_sse = 0.0;
+	double h_sae = 0.0;
+	long long h_count = 0;
+	double y_mean = 0.0;
+	double ss_tot = 0.0;
+	double mse = 0.0;
+	double mae = 0.0;
+	double rmse = 0.0;
+	double r_squared = 0.0;
+	size_t feature_bytes;
+	size_t target_bytes;
+	size_t coeff_bytes;
+	int i;
+
+	if (errstr)
+		*errstr = NULL;
+
+	/* Defensive parameter validation */
+	if (model_data == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("neurondb: ndb_cuda_ridge_evaluate: model_data is NULL");
+		return -1;
+	}
+
+	if (features == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("neurondb: ndb_cuda_ridge_evaluate: features is NULL");
+		return -1;
+	}
+
+	if (targets == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("neurondb: ndb_cuda_ridge_evaluate: targets is NULL");
+		return -1;
+	}
+
+	if (n_samples <= 0)
+	{
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: invalid n_samples %d",
+					n_samples);
+		return -1;
+	}
+
+	if (feature_dim <= 0 || feature_dim > 10000)
+	{
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: invalid feature_dim %d",
+					feature_dim);
+		return -1;
+	}
+
+	if (mse_out == NULL || mae_out == NULL || rmse_out == NULL || r_squared_out == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("neurondb: ndb_cuda_ridge_evaluate: output pointers are NULL");
+		return -1;
+	}
+
+	/* Detoast the bytea to ensure we have the full data */
+	detoasted = (const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+
+	/* Validate bytea size */
+	{
+		size_t expected_size = sizeof(NdbCudaRidgeModelHeader)
+			+ sizeof(float) * (size_t)feature_dim;
+		size_t actual_size = VARSIZE(detoasted) - VARHDRSZ;
+
+		if (actual_size < expected_size)
+		{
+			if (errstr)
+				*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: model data too small: "
+						"expected %zu bytes, got %zu",
+					expected_size,
+					actual_size);
+			return -1;
+		}
+	}
+
+	hdr = (const NdbCudaRidgeModelHeader *)VARDATA(detoasted);
+	if (hdr->feature_dim != feature_dim)
+	{
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: feature dimension mismatch: "
+					"model has %d, input has %d",
+				hdr->feature_dim,
+				feature_dim);
+		return -1;
+	}
+
+	coefficients = (const float *)((const char *)hdr + sizeof(NdbCudaRidgeModelHeader));
+
+	/* Compute y_mean for R-squared calculation */
+	for (i = 0; i < n_samples; i++)
+	{
+		if (targets != NULL)
+			y_mean += targets[i];
+	}
+	if (n_samples > 0)
+		y_mean /= (double)n_samples;
+
+	/* Allocate GPU memory for features */
+	feature_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
+	cuda_err = cudaMalloc((void **)&d_features, feature_bytes);
+	if (cuda_err != cudaSuccess)
+	{
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to allocate GPU memory for features: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	/* Allocate GPU memory for targets */
+	target_bytes = sizeof(double) * (size_t)n_samples;
+	cuda_err = cudaMalloc((void **)&d_targets, target_bytes);
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to allocate GPU memory for targets: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	/* Allocate GPU memory for coefficients */
+	coeff_bytes = sizeof(double) * (size_t)feature_dim;
+	cuda_err = cudaMalloc((void **)&d_coefficients, coeff_bytes);
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to allocate GPU memory for coefficients: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	/* Allocate GPU memory for output accumulators */
+	cuda_err = cudaMalloc((void **)&d_sse, sizeof(double));
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_coefficients);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to allocate GPU memory for SSE: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	cuda_err = cudaMalloc((void **)&d_sae, sizeof(double));
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_coefficients);
+		cudaFree(d_sse);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to allocate GPU memory for SAE: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	cuda_err = cudaMalloc((void **)&d_count, sizeof(long long));
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_coefficients);
+		cudaFree(d_sse);
+		cudaFree(d_sae);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to allocate GPU memory for count: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	/* Copy features to GPU */
+	cuda_err = cudaMemcpy(d_features, features, feature_bytes, cudaMemcpyHostToDevice);
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_coefficients);
+		cudaFree(d_sse);
+		cudaFree(d_sae);
+		cudaFree(d_count);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to copy features to GPU: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	/* Copy targets to GPU */
+	cuda_err = cudaMemcpy(d_targets, targets, target_bytes, cudaMemcpyHostToDevice);
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_coefficients);
+		cudaFree(d_sse);
+		cudaFree(d_sae);
+		cudaFree(d_count);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to copy targets to GPU: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	/* Convert coefficients from float to double and copy to GPU */
+	{
+		double *h_coefficients_double = (double *)palloc(sizeof(double) * (size_t)feature_dim);
+		if (h_coefficients_double == NULL)
+		{
+			cudaFree(d_features);
+			cudaFree(d_targets);
+			cudaFree(d_coefficients);
+			cudaFree(d_sse);
+			cudaFree(d_sae);
+			cudaFree(d_count);
+			if (errstr)
+				*errstr = pstrdup("neurondb: ndb_cuda_ridge_evaluate: failed to allocate host memory for coefficients");
+			return -1;
+		}
+
+		for (i = 0; i < feature_dim; i++)
+			h_coefficients_double[i] = (double)coefficients[i];
+
+		cuda_err = cudaMemcpy(d_coefficients, h_coefficients_double, coeff_bytes, cudaMemcpyHostToDevice);
+		pfree(h_coefficients_double);
+
+		if (cuda_err != cudaSuccess)
+		{
+			cudaFree(d_features);
+			cudaFree(d_targets);
+			cudaFree(d_coefficients);
+			cudaFree(d_sse);
+			cudaFree(d_sae);
+			cudaFree(d_count);
+			if (errstr)
+				*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to copy coefficients to GPU: %s",
+						cudaGetErrorString(cuda_err));
+			return -1;
+		}
+	}
+
+	/* Launch evaluation kernel (reuse linear regression kernel) */
+	cuda_err = launch_linreg_eval_kernel(d_features,
+		d_targets,
+		d_coefficients,
+		(double)hdr->intercept,
+		n_samples,
+		feature_dim,
+		d_sse,
+		d_sae,
+		d_count);
+
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_coefficients);
+		cudaFree(d_sse);
+		cudaFree(d_sae);
+		cudaFree(d_count);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: evaluation kernel failed: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	/* Copy results back to host */
+	cuda_err = cudaMemcpy(&h_sse, d_sse, sizeof(double), cudaMemcpyDeviceToHost);
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_coefficients);
+		cudaFree(d_sse);
+		cudaFree(d_sae);
+		cudaFree(d_count);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to copy SSE from GPU: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	cuda_err = cudaMemcpy(&h_sae, d_sae, sizeof(double), cudaMemcpyDeviceToHost);
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_coefficients);
+		cudaFree(d_sse);
+		cudaFree(d_sae);
+		cudaFree(d_count);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to copy SAE from GPU: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	cuda_err = cudaMemcpy(&h_count, d_count, sizeof(long long), cudaMemcpyDeviceToHost);
+	if (cuda_err != cudaSuccess)
+	{
+		cudaFree(d_features);
+		cudaFree(d_targets);
+		cudaFree(d_coefficients);
+		cudaFree(d_sse);
+		cudaFree(d_sae);
+		cudaFree(d_count);
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: failed to copy count from GPU: %s",
+					cudaGetErrorString(cuda_err));
+		return -1;
+	}
+
+	/* Cleanup GPU memory */
+	cudaFree(d_features);
+	cudaFree(d_targets);
+	cudaFree(d_coefficients);
+	cudaFree(d_sse);
+	cudaFree(d_sae);
+	cudaFree(d_count);
+
+	/* Defensive check: ensure count matches expected */
+	if (h_count != (long long)n_samples)
+	{
+		if (errstr)
+			*errstr = psprintf("neurondb: ndb_cuda_ridge_evaluate: count mismatch: expected %d, got %lld",
+					n_samples,
+					(long long)h_count);
+		return -1;
+	}
+
+	/* Compute final metrics */
+	if (h_count > 0)
+	{
+		mse = h_sse / (double)h_count;
+		mae = h_sae / (double)h_count;
+		rmse = sqrt(mse);
+
+		/* Compute SS_tot for R-squared */
+		for (i = 0; i < n_samples; i++)
+		{
+			if (targets != NULL)
+			{
+				double diff = targets[i] - y_mean;
+				ss_tot += diff * diff;
+			}
+		}
+
+		if (ss_tot > 1e-10)
+			r_squared = 1.0 - (h_sse / ss_tot);
+		else
+			r_squared = 0.0;
+	}
+	else
+	{
+		mse = 0.0;
+		mae = 0.0;
+		rmse = 0.0;
+		r_squared = 0.0;
+	}
+
+	/* Write outputs */
+	*mse_out = mse;
+	*mae_out = mae;
+	*rmse_out = rmse;
+	*r_squared_out = r_squared;
+
 	return 0;
 }
 

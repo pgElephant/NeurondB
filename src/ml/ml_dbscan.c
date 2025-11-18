@@ -21,6 +21,7 @@
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "utils/array.h"
+#include "utils/memutils.h"
 #include "neurondb_ml.h"
 #include "neurondb_simd.h"
 #include <math.h>
@@ -194,6 +195,25 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 	state.eps = eps;
 	state.min_pts = min_pts;
 	state.next_cluster = 0;
+	
+	/* Check memory allocation size before palloc */
+	{
+		size_t labels_size = (size_t)state.nvec * sizeof(int);
+		if (labels_size > MaxAllocSize)
+		{
+			for (i = 0; i < state.nvec; i++)
+				pfree(state.data[i]);
+			pfree(state.data);
+			pfree(tbl_str);
+			pfree(col_str);
+			ereport(ERROR,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("cluster_dbscan: labels array size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
+					labels_size, (size_t)MaxAllocSize),
+				 errhint("Reduce dataset size or use a different clustering algorithm")));
+		}
+	}
+	
 	state.labels = (int *) palloc0(state.nvec * sizeof(int));
 
 	for (i = 0; i < state.nvec; i++)

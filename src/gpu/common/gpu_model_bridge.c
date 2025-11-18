@@ -273,14 +273,80 @@ ndb_gpu_try_train_model(const char *algorithm,
 			goto lr_fallback;
 		}
 
-		gpu_rc = ndb_gpu_lr_train(feature_matrix,
-			label_vector,
-			sample_count,
-			feature_dim,
-			hyperparameters,
-			&payload,
-			&metadata,
-			errstr);
+		/* Defensive: Validate all parameters before calling CUDA function */
+		if (feature_matrix == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("logistic_regression: feature_matrix is NULL");
+			elog(WARNING,
+				"logistic_regression: feature_matrix is NULL, skipping GPU");
+			goto lr_fallback;
+		}
+
+		if (label_vector == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("logistic_regression: label_vector is NULL");
+			elog(WARNING,
+				"logistic_regression: label_vector is NULL, skipping GPU");
+			goto lr_fallback;
+		}
+
+		if (sample_count <= 0 || sample_count > 10000000)
+		{
+			if (errstr)
+				*errstr = psprintf("logistic_regression: invalid sample_count %d",
+					sample_count);
+			elog(WARNING,
+				"logistic_regression: invalid sample_count %d, skipping GPU",
+				sample_count);
+			goto lr_fallback;
+		}
+
+		if (feature_dim <= 0 || feature_dim > 10000)
+		{
+			if (errstr)
+				*errstr = psprintf("logistic_regression: invalid feature_dim %d",
+					feature_dim);
+			elog(WARNING,
+				"logistic_regression: invalid feature_dim %d, skipping GPU",
+				feature_dim);
+			goto lr_fallback;
+		}
+
+		/* Defensive: Wrap CUDA call in error handling */
+		PG_TRY();
+		{
+			gpu_rc = ndb_gpu_lr_train(feature_matrix,
+				label_vector,
+				sample_count,
+				feature_dim,
+				hyperparameters,
+				&payload,
+				&metadata,
+				errstr);
+		}
+		PG_CATCH();
+		{
+			/* Catch any PostgreSQL-level errors from CUDA code */
+			elog(WARNING,
+				"logistic_regression: exception caught during GPU training, falling back to CPU");
+			gpu_rc = -1;
+			if (errstr && *errstr == NULL)
+				*errstr = pstrdup("Exception during GPU training");
+			if (payload != NULL)
+			{
+				pfree(payload);
+				payload = NULL;
+			}
+			if (metadata != NULL)
+			{
+				pfree(metadata);
+				metadata = NULL;
+			}
+			PG_RE_THROW();
+		}
+		PG_END_TRY();
 		train_end = GetCurrentTimestamp();
 		TimestampDifference(train_start, train_end, &secs, &usecs);
 		elapsed_ms = ((double)secs * 1000.0) + ((double)usecs / 1000.0);

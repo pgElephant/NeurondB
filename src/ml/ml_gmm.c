@@ -38,12 +38,21 @@
 #include "utils/builtins.h"
 #include "catalog/pg_type.h"
 #include "utils/lsyscache.h"
+#include "executor/spi.h"
 #include "neurondb.h"
 #include "neurondb_ml.h"
 #include "ml_catalog.h"
 #include "lib/stringinfo.h"
 #include "utils/jsonb.h"
 #include "vector/vector_types.h"
+#include "neurondb_cuda_gmm.h"
+
+#ifdef NDB_GPU_CUDA
+#include "neurondb_cuda_runtime.h"
+#include <cublas_v2.h>
+extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
+#endif
+
 #include <math.h>
 #include <float.h>
 
@@ -722,6 +731,528 @@ predict_gmm_model_id(PG_FUNCTION_ARGS)
 		pfree(metrics);
 
 	PG_RETURN_INT32(predicted_cluster);
+}
+
+/*
+ * Compute Euclidean distance squared (double to double)
+ */
+static inline double
+gmm_euclidean_distance_squared_dd(const double *a, const double *b, int dim)
+{
+	double sum = 0.0;
+	int i;
+
+	for (i = 0; i < dim; i++)
+	{
+		double diff = a[i] - b[i];
+		sum += diff * diff;
+	}
+	return sum;
+}
+
+/*
+ * Compute Euclidean distance squared (float to double)
+ */
+static inline double
+gmm_euclidean_distance_squared(const float *a, const double *b, int dim)
+{
+	double sum = 0.0;
+	int i;
+
+	for (i = 0; i < dim; i++)
+	{
+		double diff = (double)a[i] - b[i];
+		sum += diff * diff;
+	}
+	return sum;
+}
+
+/*
+ * Compute Euclidean distance (float to double)
+ */
+static inline double
+gmm_euclidean_distance(const float *a, const double *b, int dim)
+{
+	return sqrt(gmm_euclidean_distance_squared(a, b, dim));
+}
+
+/*
+ * Compute Euclidean distance (double to double)
+ */
+static inline double
+gmm_euclidean_distance_dd(const double *a, const double *b, int dim)
+{
+	return sqrt(gmm_euclidean_distance_squared_dd(a, b, dim));
+}
+
+/*
+ * evaluate_gmm_by_model_id
+ *
+ * Evaluates GMM clustering model by computing:
+ * - Inertia (within-cluster sum of squares)
+ * - Silhouette score
+ * - Davies-Bouldin index
+ */
+PG_FUNCTION_INFO_V1(evaluate_gmm_by_model_id);
+
+Datum
+evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
+{
+	int32 model_id;
+	text *table_name;
+	text *vector_col;
+	char *tbl_str;
+	char *col_str;
+	int nvec = 0;
+	int i, j, k, c;
+	float **data = NULL;
+	int dim = 0;
+	GMMModel *model = NULL;
+	int *assignments = NULL;
+	int *cluster_sizes = NULL;
+	double inertia = 0.0;
+	double silhouette = 0.0;
+	double davies_bouldin = 0.0;
+	double *cluster_scatter = NULL;
+	double *a_scores = NULL;
+	double *b_scores = NULL;
+	double *probabilities = NULL;
+	MemoryContext oldcontext;
+	StringInfoData jsonbuf;
+	Jsonb *result_jsonb = NULL;
+	bytea *model_payload = NULL;
+	Jsonb *model_metrics = NULL;
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_gmm_by_model_id: model_id is required")));
+
+	model_id = PG_GETARG_INT32(0);
+
+	if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_gmm_by_model_id: table_name and vector_col are required")));
+
+	table_name = PG_GETARG_TEXT_PP(1);
+	vector_col = PG_GETARG_TEXT_PP(2);
+
+	tbl_str = text_to_cstring(table_name);
+	col_str = text_to_cstring(vector_col);
+
+	oldcontext = CurrentMemoryContext;
+
+	/* Load model from catalog */
+	if (!ml_catalog_fetch_model_payload(model_id, &model_payload, NULL, &model_metrics))
+	{
+		pfree(tbl_str);
+		pfree(col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_gmm_by_model_id: model %d not found",
+					model_id)));
+	}
+
+	if (model_payload == NULL)
+	{
+		pfree(tbl_str);
+		pfree(col_str);
+		if (model_metrics)
+			pfree(model_metrics);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_gmm_by_model_id: model %d has no model_data",
+					model_id)));
+	}
+
+	/* Deserialize model */
+	model = gmm_model_deserialize_from_bytea(model_payload);
+	if (model == NULL)
+	{
+		pfree(tbl_str);
+		pfree(col_str);
+		if (model_payload)
+			pfree(model_payload);
+		if (model_metrics)
+			pfree(model_metrics);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_gmm_by_model_id: failed to deserialize model")));
+	}
+
+	dim = model->dim;
+
+	/* Fetch test data with defensive checks */
+	/* Note: neurondb_fetch_vectors_from_table manages its own SPI connection */
+	/* so we don't need to call SPI_connect() here */
+	PG_TRY();
+	{
+		data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
+	}
+	PG_CATCH();
+	{
+		for (k = 0; k < model->k; k++)
+		{
+			if (model->means && model->means[k])
+				pfree(model->means[k]);
+			if (model->variances && model->variances[k])
+				pfree(model->variances[k]);
+		}
+		if (model->means)
+			pfree(model->means);
+		if (model->variances)
+			pfree(model->variances);
+		if (model->mixing_coeffs)
+			pfree(model->mixing_coeffs);
+		pfree(model);
+		pfree(tbl_str);
+		pfree(col_str);
+		if (model_payload)
+			pfree(model_payload);
+		if (model_metrics)
+			pfree(model_metrics);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("neurondb: evaluate_gmm_by_model_id: failed to fetch data: %s",
+					error_severity(ERROR) ? "ERROR" : "WARNING")));
+	}
+	PG_END_TRY();
+
+	if (!data || nvec < 1)
+	{
+		for (k = 0; k < model->k; k++)
+		{
+			pfree(model->means[k]);
+			pfree(model->variances[k]);
+		}
+		pfree(model->means);
+		pfree(model->variances);
+		pfree(model->mixing_coeffs);
+		pfree(model);
+		pfree(tbl_str);
+		pfree(col_str);
+		if (model_payload)
+			pfree(model_payload);
+		if (model_metrics)
+			pfree(model_metrics);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_gmm_by_model_id: no valid data found")));
+	}
+
+
+	/* Defensive checks */
+	if (model == NULL || model->k <= 0 || model->k > 1000 || dim <= 0 || dim > 100000)
+	{
+		for (k = 0; k < model->k; k++)
+		{
+			if (model->means && model->means[k])
+				pfree(model->means[k]);
+			if (model->variances && model->variances[k])
+				pfree(model->variances[k]);
+		}
+		if (model->means)
+			pfree(model->means);
+		if (model->variances)
+			pfree(model->variances);
+		if (model->mixing_coeffs)
+			pfree(model->mixing_coeffs);
+		pfree(model);
+		pfree(tbl_str);
+		pfree(col_str);
+		if (model_payload)
+			pfree(model_payload);
+		if (model_metrics)
+			pfree(model_metrics);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: evaluate_gmm_by_model_id: invalid model parameters (k=%d, dim=%d)",
+					model ? model->k : -1, dim)));
+	}
+
+	/* Assign points to clusters (hard assignment based on highest probability) */
+	assignments = (int *)palloc(sizeof(int) * nvec);
+	cluster_sizes = (int *)palloc0(sizeof(int) * model->k);
+	probabilities = (double *)palloc(sizeof(double) * model->k);
+
+	if (assignments == NULL || cluster_sizes == NULL || probabilities == NULL)
+	{
+		if (assignments)
+			pfree(assignments);
+		if (cluster_sizes)
+			pfree(cluster_sizes);
+		if (probabilities)
+			pfree(probabilities);
+		for (k = 0; k < model->k; k++)
+		{
+			if (model->means && model->means[k])
+				pfree(model->means[k]);
+			if (model->variances && model->variances[k])
+				pfree(model->variances[k]);
+		}
+		if (model->means)
+			pfree(model->means);
+		if (model->variances)
+			pfree(model->variances);
+		if (model->mixing_coeffs)
+			pfree(model->mixing_coeffs);
+		pfree(model);
+		pfree(tbl_str);
+		pfree(col_str);
+		if (model_payload)
+			pfree(model_payload);
+		if (model_metrics)
+			pfree(model_metrics);
+		ereport(ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				errmsg("neurondb: evaluate_gmm_by_model_id: memory allocation failed")));
+	}
+
+	for (i = 0; i < nvec; i++)
+	{
+		double max_prob = -DBL_MAX;
+		int best = 0;
+		double sum = 0.0;
+
+		/* Defensive check */
+		if (data[i] == NULL || i >= nvec)
+			continue;
+
+		/* Compute probabilities for each component */
+		for (k = 0; k < model->k; k++)
+		{
+			double pdf;
+
+			if (model->means == NULL || model->means[k] == NULL ||
+				model->variances == NULL || model->variances[k] == NULL ||
+				model->mixing_coeffs == NULL)
+				continue;
+
+			pdf = gaussian_pdf(data[i], model->means[k], model->variances[k], dim);
+			probabilities[k] = model->mixing_coeffs[k] * pdf;
+			sum += probabilities[k];
+		}
+
+		if (sum < GMM_MIN_PROB)
+			sum = GMM_MIN_PROB;
+
+		/* Find component with highest probability */
+		for (k = 0; k < model->k; k++)
+		{
+			probabilities[k] /= sum;
+			if (probabilities[k] > max_prob)
+			{
+				max_prob = probabilities[k];
+				best = k;
+			}
+		}
+		assignments[i] = best;
+		cluster_sizes[best]++;
+
+		/* Compute inertia (distance to assigned cluster mean) */
+		inertia += gmm_euclidean_distance_squared(data[i], model->means[best], dim);
+	}
+
+	/* Compute silhouette score */
+	a_scores = (double *)palloc0(sizeof(double) * nvec);
+	b_scores = (double *)palloc0(sizeof(double) * nvec);
+
+	for (i = 0; i < nvec; i++)
+	{
+		int my_cluster = assignments[i];
+		int same_count = 0;
+		double same_dist = 0.0;
+		double min_other_dist = DBL_MAX;
+		int other_cluster;
+
+		if (cluster_sizes[my_cluster] <= 1)
+		{
+			a_scores[i] = 0.0;
+			b_scores[i] = 0.0;
+			continue;
+		}
+
+		/* Average distance to same cluster */
+		for (j = 0; j < nvec; j++)
+		{
+			if (i == j)
+				continue;
+			if (assignments[j] == my_cluster)
+			{
+				double dist = 0.0;
+				int d;
+
+				for (d = 0; d < dim; d++)
+				{
+					double diff = (double)data[i][d] - (double)data[j][d];
+					dist += diff * diff;
+				}
+				same_dist += sqrt(dist);
+				same_count++;
+			}
+		}
+		if (same_count > 0)
+			a_scores[i] = same_dist / (double)same_count;
+		else
+			a_scores[i] = 0.0;
+
+		/* Minimum average distance to other clusters */
+		for (other_cluster = 0; other_cluster < model->k; other_cluster++)
+		{
+			double other_dist = 0.0;
+			int other_count = 0;
+
+			if (other_cluster == my_cluster)
+				continue;
+			if (cluster_sizes[other_cluster] == 0)
+				continue;
+
+			for (j = 0; j < nvec; j++)
+			{
+				if (assignments[j] == other_cluster)
+				{
+					double dist = 0.0;
+					int d;
+
+					for (d = 0; d < dim; d++)
+					{
+						double diff = (double)data[i][d] - (double)data[j][d];
+						dist += diff * diff;
+					}
+					other_dist += sqrt(dist);
+					other_count++;
+				}
+			}
+			if (other_count > 0)
+			{
+				other_dist /= (double)other_count;
+				if (other_dist < min_other_dist)
+					min_other_dist = other_dist;
+			}
+		}
+		b_scores[i] = min_other_dist;
+	}
+
+	/* Compute average silhouette */
+	{
+		int valid_count = 0;
+		double sum_silhouette = 0.0;
+
+		for (i = 0; i < nvec; i++)
+		{
+			double max_ab = (a_scores[i] > b_scores[i]) ? a_scores[i] : b_scores[i];
+			if (max_ab > 0.0)
+			{
+				double s = (b_scores[i] - a_scores[i]) / max_ab;
+				sum_silhouette += s;
+				valid_count++;
+			}
+		}
+		if (valid_count > 0)
+			silhouette = sum_silhouette / (double)valid_count;
+	}
+
+	/* Compute Davies-Bouldin index */
+	cluster_scatter = (double *)palloc0(sizeof(double) * model->k);
+
+	for (i = 0; i < nvec; i++)
+	{
+		c = assignments[i];
+		cluster_scatter[c] += gmm_euclidean_distance(data[i], model->means[c], dim);
+	}
+
+	for (c = 0; c < model->k; c++)
+	{
+		if (cluster_sizes[c] > 0)
+			cluster_scatter[c] /= (double)cluster_sizes[c];
+	}
+
+	{
+		int valid_clusters = 0;
+		double sum_dbi = 0.0;
+
+		for (i = 0; i < model->k; i++)
+		{
+			double max_ratio = 0.0;
+
+			if (cluster_sizes[i] < 2)
+				continue;
+
+			for (j = 0; j < model->k; j++)
+			{
+				double centroid_dist;
+				double ratio;
+
+				if (i == j || cluster_sizes[j] < 2)
+					continue;
+
+				centroid_dist = gmm_euclidean_distance_dd(model->means[i], model->means[j], dim);
+				if (centroid_dist < 1e-10)
+					continue;
+
+				ratio = (cluster_scatter[i] + cluster_scatter[j]) / centroid_dist;
+				if (ratio > max_ratio)
+					max_ratio = ratio;
+			}
+			sum_dbi += max_ratio;
+			valid_clusters++;
+		}
+		if (valid_clusters > 0)
+			davies_bouldin = sum_dbi / (double)valid_clusters;
+	}
+
+	/* Build jsonb result */
+	/* Note: SPI_finish() is not needed here since neurondb_fetch_vectors_from_table */
+	/* already called SPI_finish() internally */
+	initStringInfo(&jsonbuf);
+	appendStringInfo(&jsonbuf,
+		"{\"inertia\":%.6f,\"silhouette_score\":%.6f,\"davies_bouldin_index\":%.6f,\"n_samples\":%d,\"n_clusters\":%d}",
+		inertia,
+		silhouette,
+		davies_bouldin,
+		nvec,
+		model->k);
+
+	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+		CStringGetDatum(jsonbuf.data)));
+
+	pfree(jsonbuf.data);
+
+	/* Cleanup */
+	if (data != NULL)
+	{
+		for (i = 0; i < nvec; i++)
+		{
+			if (data[i] != NULL)
+				pfree(data[i]);
+		}
+		pfree(data);
+	}
+	for (k = 0; k < model->k; k++)
+	{
+		pfree(model->means[k]);
+		pfree(model->variances[k]);
+	}
+	pfree(model->means);
+	pfree(model->variances);
+	pfree(model->mixing_coeffs);
+	pfree(model);
+	pfree(assignments);
+	pfree(cluster_sizes);
+	pfree(cluster_scatter);
+	pfree(a_scores);
+	pfree(b_scores);
+	pfree(probabilities);
+	pfree(tbl_str);
+	pfree(col_str);
+	if (model_payload)
+		pfree(model_payload);
+	if (model_metrics)
+		pfree(model_metrics);
+
+	MemoryContextSwitchTo(oldcontext);
+	PG_RETURN_JSONB_P(result_jsonb);
 }
 
 /*-------------------------------------------------------------------------

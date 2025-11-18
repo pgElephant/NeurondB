@@ -49,8 +49,7 @@ vector_l2_distance_op(PG_FUNCTION_ARGS)
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	float4 result;
-	double sum = 0.0;
-	int i;
+	extern float4 l2_distance_simd(Vector *a, Vector *b);
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
@@ -60,13 +59,8 @@ vector_l2_distance_op(PG_FUNCTION_ARGS)
 					a->dim,
 					b->dim)));
 
-	for (i = 0; i < a->dim; i++)
-	{
-		double diff = a->data[i] - b->data[i];
-		sum += diff * diff;
-	}
-
-	result = (float4)sqrt(sum);
+	/* Use SIMD-optimized version */
+	result = l2_distance_simd(a, b);
 	PG_RETURN_FLOAT4(result);
 }
 
@@ -84,9 +78,7 @@ vector_cosine_distance_op(PG_FUNCTION_ARGS)
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	float4 result;
-	double dot = 0.0, norm_a = 0.0, norm_b = 0.0;
-	double similarity;
-	int i;
+	extern float4 cosine_distance_simd(Vector *a, Vector *b);
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
@@ -94,19 +86,8 @@ vector_cosine_distance_op(PG_FUNCTION_ARGS)
 				errmsg("neurondb: vector dimensions must "
 				       "match")));
 
-	for (i = 0; i < a->dim; i++)
-	{
-		dot += a->data[i] * b->data[i];
-		norm_a += a->data[i] * a->data[i];
-		norm_b += b->data[i] * b->data[i];
-	}
-
-	if (norm_a == 0.0 || norm_b == 0.0)
-		PG_RETURN_FLOAT4(1.0); /* Maximum distance for zero vectors */
-
-	similarity = dot / (sqrt(norm_a) * sqrt(norm_b));
-	result = 1.0 - similarity;
-
+	/* Use SIMD-optimized version */
+	result = cosine_distance_simd(a, b);
 	PG_RETURN_FLOAT4(result);
 }
 
@@ -124,8 +105,7 @@ vector_inner_product_distance_op(PG_FUNCTION_ARGS)
 	Vector *a = PG_GETARG_VECTOR_P(0);
 	Vector *b = PG_GETARG_VECTOR_P(1);
 	float4 result;
-	double dot = 0.0;
-	int i;
+	extern float4 inner_product_simd(Vector *a, Vector *b);
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
@@ -133,11 +113,8 @@ vector_inner_product_distance_op(PG_FUNCTION_ARGS)
 				errmsg("neurondb: vector dimensions must "
 				       "match")));
 
-	for (i = 0; i < a->dim; i++)
-		dot += a->data[i] * b->data[i];
-
-	result = -dot; /* Negative for distance ordering */
-
+	/* Use SIMD-optimized version */
+	result = inner_product_simd(a, b);
 	PG_RETURN_FLOAT4(result);
 }
 

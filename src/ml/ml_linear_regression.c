@@ -2088,6 +2088,9 @@ evaluate_linear_regression_by_model_id(PG_FUNCTION_ARGS)
 	MemoryContext oldcontext;
 	Jsonb *result_jsonb;
 	StringInfoData jsonbuf;
+	bytea *gpu_payload = NULL;
+	Jsonb *gpu_metrics = NULL;
+	bool is_gpu_model = false;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
@@ -2112,10 +2115,6 @@ evaluate_linear_regression_by_model_id(PG_FUNCTION_ARGS)
 	oldcontext = CurrentMemoryContext;
 
 	/* Load model from catalog - try CPU first, then GPU */
-	bytea *gpu_payload = NULL;
-	Jsonb *gpu_metrics = NULL;
-	bool is_gpu_model = false;
-
 	if (!linreg_load_model_from_catalog(model_id, &model))
 	{
 		/* Try GPU model */
@@ -2232,56 +2231,75 @@ evaluate_linear_regression_by_model_id(PG_FUNCTION_ARGS)
 		h_features = (float *)palloc(sizeof(float) * (size_t)nvec * (size_t)feat_dim);
 		h_targets = (double *)palloc(sizeof(double) * (size_t)nvec);
 
-		/* Extract features and targets from SPI results */
-		for (i = 0; i < nvec; i++)
+		/* Extract features and targets from SPI results - optimized batch extraction */
+		/* Cache TupleDesc to avoid repeated lookups */
 		{
-			HeapTuple tuple = SPI_tuptable->vals[i];
 			TupleDesc tupdesc = SPI_tuptable->tupdesc;
-			Datum feat_datum;
-			Datum targ_datum;
-			bool feat_null;
-			bool targ_null;
-			Vector *vec;
-			ArrayType *arr;
-			float *feat_row;
-
-			feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
-			targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
-
-			if (feat_null || targ_null)
-				continue;
-
-			feat_row = h_features + (valid_rows * feat_dim);
-			h_targets[valid_rows] = DatumGetFloat8(targ_datum);
-			y_mean += h_targets[valid_rows];
-
-			/* Extract feature vector */
-			if (feat_is_array)
+			
+			for (i = 0; i < nvec; i++)
 			{
-				arr = DatumGetArrayTypeP(feat_datum);
-				if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != feat_dim)
+				HeapTuple tuple = SPI_tuptable->vals[i];
+				Datum feat_datum;
+				Datum targ_datum;
+				bool feat_null;
+				bool targ_null;
+				Vector *vec;
+				ArrayType *arr;
+				float *feat_row;
+
+				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+
+				if (feat_null || targ_null)
 					continue;
-				if (feat_type_oid == FLOAT8ARRAYOID)
+
+				feat_row = h_features + (valid_rows * feat_dim);
+				h_targets[valid_rows] = DatumGetFloat8(targ_datum);
+				y_mean += h_targets[valid_rows];
+
+				/* Extract feature vector - optimized paths */
+				if (feat_is_array)
 				{
-					float8 *data = (float8 *)ARR_DATA_PTR(arr);
-					for (j = 0; j < feat_dim; j++)
-						feat_row[j] = (float)data[j];
+					arr = DatumGetArrayTypeP(feat_datum);
+					if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != feat_dim)
+						continue;
+					if (feat_type_oid == FLOAT8ARRAYOID)
+					{
+						/* Optimized: bulk conversion with loop unrolling hint */
+						float8 *data = (float8 *)ARR_DATA_PTR(arr);
+						int j_remain = feat_dim % 4;
+						int j_end = feat_dim - j_remain;
+						
+						/* Process 4 elements at a time for better cache locality */
+						for (j = 0; j < j_end; j += 4)
+						{
+							feat_row[j] = (float)data[j];
+							feat_row[j + 1] = (float)data[j + 1];
+							feat_row[j + 2] = (float)data[j + 2];
+							feat_row[j + 3] = (float)data[j + 3];
+						}
+						/* Handle remaining elements */
+						for (j = j_end; j < feat_dim; j++)
+							feat_row[j] = (float)data[j];
+					}
+					else
+					{
+						/* FLOAT4ARRAYOID: direct memcpy (already optimal) */
+						float4 *data = (float4 *)ARR_DATA_PTR(arr);
+						memcpy(feat_row, data, sizeof(float) * feat_dim);
+					}
 				}
 				else
 				{
-					float4 *data = (float4 *)ARR_DATA_PTR(arr);
-					memcpy(feat_row, data, sizeof(float) * feat_dim);
+					/* Vector type: direct memcpy (already optimal) */
+					vec = DatumGetVector(feat_datum);
+					if (vec->dim != feat_dim)
+						continue;
+					memcpy(feat_row, vec->data, sizeof(float) * feat_dim);
 				}
-			}
-			else
-			{
-				vec = DatumGetVector(feat_datum);
-				if (vec->dim != feat_dim)
-					continue;
-				memcpy(feat_row, vec->data, sizeof(float) * feat_dim);
-			}
 
-			valid_rows++;
+				valid_rows++;
+			}
 		}
 
 		if (valid_rows == 0)
