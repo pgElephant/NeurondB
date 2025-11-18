@@ -358,39 +358,13 @@ CREATE FUNCTION vector_l2_distance(vector, vector) RETURNS real
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION vector_l2_distance IS 'L2 (Euclidean) distance between vectors';
 
-CREATE OPERATOR <-> (
-    LEFTARG = vector,
-    RIGHTARG = vector,
-    PROCEDURE = vector_l2_distance,
-    COMMUTATOR = '<->'
-);
-
--- Distance operators for halfvec type (moved after function definitions)
--- CREATE OPERATOR <-> (
---     LEFTARG = halfvec,
---     RIGHTARG = halfvec,
---     PROCEDURE = halfvec_l2_distance,
---     COMMUTATOR = '<->'
--- );
-
--- Halfvec operators moved after function definitions (see line ~1927)
-
--- Distance operators for sparsevec type (moved after function definitions, see line ~1934)
-
--- Distance operator for bit type (moved after function definition, see line ~1960)
-
 -- Inner Product (Negative for ordering)
 CREATE FUNCTION vector_inner_product(vector, vector) RETURNS real
     AS 'MODULE_PATHNAME', 'vector_inner_product'
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION vector_inner_product IS 'Negative inner product (for ordering)';
 
-CREATE OPERATOR <#> (
-    LEFTARG = vector,
-    RIGHTARG = vector,
-    PROCEDURE = vector_inner_product,
-    COMMUTATOR = '<#>'
-);
+-- Note: Operator <#> is created after vector_inner_product_distance_op function definition (see line ~2470)
 
 -- Cosine Distance
 CREATE FUNCTION vector_cosine_distance(vector, vector) RETURNS real
@@ -398,12 +372,7 @@ CREATE FUNCTION vector_cosine_distance(vector, vector) RETURNS real
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 COMMENT ON FUNCTION vector_cosine_distance IS 'Cosine distance (1 - cosine similarity)';
 
-CREATE OPERATOR <=> (
-    LEFTARG = vector,
-    RIGHTARG = vector,
-    PROCEDURE = vector_cosine_distance,
-    COMMUTATOR = '<=>'
-);
+-- Note: Operator <=> is created after vector_cosine_distance_op function definition (see line ~2472)
 
 -- L1 (Manhattan) Distance
 CREATE FUNCTION vector_l1_distance(vector, vector) RETURNS real
@@ -814,11 +783,7 @@ CREATE FUNCTION predict_linear_regression_model_id(integer, vector)
     LANGUAGE C STABLE STRICT;
 COMMENT ON FUNCTION predict_linear_regression_model_id(integer, vector) IS 'Predict using model_id from catalog. Supports both CPU and GPU models.';
 
-CREATE FUNCTION evaluate_linear_regression(text, text, text, float8[])
-    RETURNS float8[]
-    AS 'MODULE_PATHNAME', 'evaluate_linear_regression'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION evaluate_linear_regression IS 'Evaluate linear regression. Built for macos_pg16.';
+/* Legacy evaluate_linear_regression removed - use evaluate_linear_regression_by_model_id instead */
 
 CREATE FUNCTION evaluate_linear_regression_by_model_id(integer, text, text, text)
     RETURNS jsonb
@@ -849,6 +814,18 @@ CREATE FUNCTION predict_lasso_regression_model_id(integer, vector)
     AS 'MODULE_PATHNAME', 'predict_lasso_regression_model_id'
     LANGUAGE C STABLE STRICT;
 COMMENT ON FUNCTION predict_lasso_regression_model_id(integer, vector) IS 'Predict using Lasso Regression model_id from catalog. Supports both CPU and GPU models.';
+
+CREATE FUNCTION evaluate_ridge_regression_by_model_id(integer, text, text, text)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_ridge_regression_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_ridge_regression_by_model_id IS 'Evaluate Ridge Regression model by model_id. Uses GPU-accelerated batch evaluation when available.';
+
+CREATE FUNCTION evaluate_lasso_regression_by_model_id(integer, text, text, text)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_lasso_regression_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_lasso_regression_by_model_id IS 'Evaluate Lasso Regression model by model_id. Uses GPU-accelerated batch evaluation when available.';
 
 CREATE OR REPLACE FUNCTION train_elastic_net(text, text, text, float8, float8)
     RETURNS float8[]
@@ -891,11 +868,13 @@ CREATE FUNCTION predict_logistic_regression(integer, vector)
     LANGUAGE C STABLE STRICT;
 COMMENT ON FUNCTION predict_logistic_regression(integer, vector) IS 'Predict probability using model_id from catalog. Supports both CPU and GPU models.';
 
-CREATE FUNCTION evaluate_logistic_regression(text, text, text, float8[], float8 DEFAULT 0.5)
-    RETURNS float8[]
-    AS 'MODULE_PATHNAME', 'evaluate_logistic_regression'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION evaluate_logistic_regression IS 'Evaluate logistic regression. Built for macos_pg16.';
+/* Legacy evaluate_logistic_regression removed - use evaluate_logistic_regression_by_model_id instead */
+
+CREATE FUNCTION evaluate_logistic_regression_by_model_id(integer, text, text, text, float8 DEFAULT 0.5)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_logistic_regression_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_logistic_regression_by_model_id IS 'Evaluate logistic regression model by model_id. Uses GPU-accelerated batch evaluation when available.';
 
 -- ============================================================================
 -- ML INSTANCE-BASED LEARNING
@@ -936,11 +915,7 @@ CREATE FUNCTION knn_regress(text, text, text, vector, integer)
     LANGUAGE C STABLE;
 COMMENT ON FUNCTION knn_regress IS 'KNN regression. Built for macos_pg16.';
 
-CREATE FUNCTION evaluate_knn_classifier(text, text, text, integer)
-    RETURNS float8[]
-    AS 'MODULE_PATHNAME', 'evaluate_knn_classifier'
-    LANGUAGE C STABLE;
-COMMENT ON FUNCTION evaluate_knn_classifier IS 'Evaluate KNN. Built for macos_pg16.';
+/* Legacy evaluate_knn_classifier removed - use evaluate_knn_by_model_id instead */
 
 -- ============================================================================
 -- ML ENSEMBLE METHODS
@@ -1013,6 +988,36 @@ LANGUAGE sql STABLE AS $$
     SELECT evaluate_random_forest(table_name, feature_col, label_col, model_id);
 $$;
 COMMENT ON FUNCTION neurondb_evaluate_random_forest IS 'Evaluate Random Forest model';
+
+CREATE FUNCTION evaluate_random_forest_by_model_id(integer, text, text, text)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_random_forest_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_random_forest_by_model_id IS 'Evaluate Random Forest model by model_id. Uses optimized batch evaluation with GPU support when available.';
+
+CREATE FUNCTION evaluate_svm_by_model_id(integer, text, text, text)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_svm_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_svm_by_model_id IS 'Evaluate SVM model by model_id. Uses optimized batch evaluation with GPU support when available.';
+
+CREATE FUNCTION evaluate_naive_bayes_by_model_id(integer, text, text, text)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_naive_bayes_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_naive_bayes_by_model_id IS 'Evaluate Naive Bayes model by model_id. Uses optimized batch evaluation with GPU support when available.';
+
+CREATE FUNCTION evaluate_decision_tree_by_model_id(integer, text, text, text)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_decision_tree_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_decision_tree_by_model_id IS 'Evaluate Decision Tree model by model_id. Uses optimized batch evaluation with GPU support when available.';
+
+CREATE FUNCTION evaluate_knn_by_model_id(integer, text, text, text)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_knn_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_knn_by_model_id IS 'Evaluate KNN model by model_id. Uses optimized batch evaluation with GPU support when available.';
 
 -- Decision Tree - Complete C Implementation
 CREATE FUNCTION train_decision_tree_classifier(
@@ -1518,6 +1523,16 @@ CREATE FUNCTION cluster_gmm(text, text, integer, integer DEFAULT 100)
     LANGUAGE C STABLE STRICT;
 COMMENT ON FUNCTION cluster_gmm IS 'GMM (EM): (table, vector_col, k_components, max_iters) returns soft cluster assignments';
 
+CREATE FUNCTION train_kmeans_model_id(
+    table_name text,
+    vector_column text,
+    num_clusters integer,
+    max_iters integer DEFAULT 100
+) RETURNS integer
+    AS 'MODULE_PATHNAME', 'train_kmeans_model_id'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION train_kmeans_model_id IS 'Train K-Means and store centroids in catalog, returns model_id';
+
 CREATE FUNCTION train_gmm_model_id(
     table_name text,
     vector_col text,
@@ -1527,6 +1542,18 @@ CREATE FUNCTION train_gmm_model_id(
     AS 'MODULE_PATHNAME', 'train_gmm_model_id'
     LANGUAGE C STABLE;
 COMMENT ON FUNCTION train_gmm_model_id IS 'Train GMM and store in catalog, returns model_id';
+
+CREATE FUNCTION evaluate_kmeans_by_model_id(integer, text, text)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_kmeans_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_kmeans_by_model_id IS 'Evaluate K-Means clustering model by model_id. Computes inertia, silhouette score, and Davies-Bouldin index.';
+
+CREATE FUNCTION evaluate_gmm_by_model_id(integer, text, text)
+	RETURNS jsonb
+	AS 'MODULE_PATHNAME', 'evaluate_gmm_by_model_id'
+	LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_gmm_by_model_id IS 'Evaluate GMM clustering model by model_id. Computes inertia, silhouette score, and Davies-Bouldin index.';
 
 CREATE FUNCTION predict_gmm_model_id(
     model_id integer,
@@ -1676,6 +1703,153 @@ CREATE FUNCTION vector_to_array(vector) RETURNS real[]
     LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION vector_to_array IS 'Convert vector to float array';
 
+-- Additional type casting functions
+CREATE FUNCTION array_to_vector_float4(real[]) RETURNS vector
+    AS 'MODULE_PATHNAME', 'array_to_vector_float4'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION array_to_vector_float4 IS 'Convert float4 array to vector';
+
+CREATE FUNCTION array_to_vector_float8(double precision[]) RETURNS vector
+    AS 'MODULE_PATHNAME', 'array_to_vector_float8'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION array_to_vector_float8 IS 'Convert float8 array to vector';
+
+CREATE FUNCTION array_to_vector_integer(integer[]) RETURNS vector
+    AS 'MODULE_PATHNAME', 'array_to_vector_integer'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION array_to_vector_integer IS 'Convert integer array to vector';
+
+CREATE FUNCTION vector_to_array_float4(vector) RETURNS real[]
+    AS 'MODULE_PATHNAME', 'vector_to_array_float4'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_to_array_float4 IS 'Convert vector to float4 array';
+
+CREATE FUNCTION vector_to_array_float8(vector) RETURNS double precision[]
+    AS 'MODULE_PATHNAME', 'vector_to_array_float8'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_to_array_float8 IS 'Convert vector to float8 array';
+
+CREATE FUNCTION vector_cast_dimension(vector, integer) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_cast_dimension'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_cast_dimension IS 'Change vector dimension (truncate or pad with zeros)';
+
+-- ============================================================================
+-- BATCH OPERATIONS
+-- ============================================================================
+
+CREATE FUNCTION vector_l2_distance_batch(vector[], vector) RETURNS real[]
+    AS 'MODULE_PATHNAME', 'vector_l2_distance_batch'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_l2_distance_batch IS 'Compute L2 distance between query vector and array of vectors';
+
+CREATE FUNCTION vector_cosine_distance_batch(vector[], vector) RETURNS real[]
+    AS 'MODULE_PATHNAME', 'vector_cosine_distance_batch'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_cosine_distance_batch IS 'Compute cosine distance between query vector and array of vectors';
+
+CREATE FUNCTION vector_inner_product_batch(vector[], vector) RETURNS real[]
+    AS 'MODULE_PATHNAME', 'vector_inner_product_batch'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_inner_product_batch IS 'Compute inner product between query vector and array of vectors';
+
+CREATE FUNCTION vector_normalize_batch(vector[]) RETURNS vector[]
+    AS 'MODULE_PATHNAME', 'vector_normalize_batch'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_normalize_batch IS 'Normalize array of vectors (L2 normalization)';
+
+CREATE FUNCTION vector_sum_batch(vector[]) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_sum_batch'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_sum_batch IS 'Sum array of vectors element-wise';
+
+CREATE FUNCTION vector_avg_batch(vector[]) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_avg_batch'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_avg_batch IS 'Average array of vectors element-wise';
+
+-- ============================================================================
+-- QUANTIZATION FUNCTIONS
+-- ============================================================================
+
+CREATE FUNCTION vector_quantize_fp16(vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_quantize_fp16'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_quantize_fp16 IS 'Quantize vector to FP16 format (2x compression)';
+
+CREATE FUNCTION vector_dequantize_fp16(bytea) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_dequantize_fp16'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_dequantize_fp16 IS 'Dequantize FP16 vector back to FP32';
+
+CREATE FUNCTION vector_quantize_int8(vector, vector, vector) RETURNS bytea
+    AS 'MODULE_PATHNAME', 'vector_quantize_int8'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_quantize_int8 IS 'Quantize vector to INT8 format (4x compression, requires min/max vectors)';
+
+CREATE FUNCTION vector_dequantize_int8(bytea, vector, vector) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_dequantize_int8'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_dequantize_int8 IS 'Dequantize INT8 vector back to FP32 (requires min/max vectors)';
+
+CREATE FUNCTION vector_l2_distance_fp16(bytea, bytea) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_l2_distance_fp16'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_l2_distance_fp16 IS 'Compute L2 distance between two FP16 quantized vectors';
+
+CREATE FUNCTION vector_cosine_distance_fp16(bytea, bytea) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_cosine_distance_fp16'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_cosine_distance_fp16 IS 'Compute cosine distance between two FP16 quantized vectors';
+
+-- ============================================================================
+-- ADVANCED VECTOR OPERATIONS
+-- ============================================================================
+
+-- Linear algebra operations
+CREATE FUNCTION vector_cross_product(vector, vector) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_cross_product'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_cross_product IS 'Compute cross product of two 3D vectors';
+
+-- Statistics operations
+CREATE FUNCTION vector_percentile(vector, double precision) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_percentile'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_percentile IS 'Compute percentile value of vector elements (0.0-1.0)';
+
+CREATE FUNCTION vector_median(vector) RETURNS real
+    AS 'MODULE_PATHNAME', 'vector_median'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_median IS 'Compute median value of vector elements';
+
+CREATE FUNCTION vector_quantile(vector, double precision[]) RETURNS real[]
+    AS 'MODULE_PATHNAME', 'vector_quantile'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_quantile IS 'Compute multiple quantiles of vector elements';
+
+-- Transformations
+CREATE FUNCTION vector_scale(vector, real[]) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_scale'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_scale IS 'Scale vector by per-dimension scaling factors';
+
+CREATE FUNCTION vector_translate(vector, vector) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_translate'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_translate IS 'Translate vector by adding offset vector';
+
+-- Filtering operations
+CREATE FUNCTION vector_filter(vector, boolean[]) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_filter'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_filter IS 'Filter vector elements using boolean mask';
+
+CREATE FUNCTION vector_where(vector, vector, real) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_where'
+    LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION vector_where IS 'Conditional vector assignment: where(condition, value_if_true, value_if_false)';
+
 -- =============================================================================
 -- Advanced Vector Operations (Superior to pgvector)
 -- =============================================================================
@@ -1763,10 +1937,49 @@ CREATE FUNCTION vector_max(vector) RETURNS real
     LANGUAGE C IMMUTABLE STRICT;
 COMMENT ON FUNCTION vector_max IS 'Maximum element in vector';
 
-CREATE FUNCTION vector_sum(vector) RETURNS double precision
+CREATE FUNCTION vector_element_sum(vector) RETURNS double precision
     AS 'MODULE_PATHNAME', 'vector_sum'
     LANGUAGE C IMMUTABLE STRICT;
-COMMENT ON FUNCTION vector_sum IS 'Sum of all vector elements';
+COMMENT ON FUNCTION vector_element_sum IS 'Sum of all vector elements (scalar result)';
+
+-- Vector aggregate functions (transition and final functions)
+CREATE FUNCTION vector_avg_transfn(internal, vector) RETURNS internal
+    AS 'MODULE_PATHNAME', 'vector_avg_transfn'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION vector_avg_transfn IS 'Transition function for vector_avg aggregate';
+
+CREATE FUNCTION vector_avg_finalfn(internal) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_avg_finalfn'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION vector_avg_finalfn IS 'Final function for vector_avg aggregate';
+
+CREATE FUNCTION vector_sum_transfn(internal, vector) RETURNS internal
+    AS 'MODULE_PATHNAME', 'vector_avg_transfn'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION vector_sum_transfn IS 'Transition function for vector_sum aggregate (reuses vector_avg_transfn)';
+
+CREATE FUNCTION vector_sum_finalfn(internal) RETURNS vector
+    AS 'MODULE_PATHNAME', 'vector_sum_finalfn'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION vector_sum_finalfn IS 'Final function for vector_sum aggregate';
+
+-- Vector AVG aggregate
+CREATE AGGREGATE vector_avg(vector) (
+    SFUNC = vector_avg_transfn,
+    STYPE = internal,
+    FINALFUNC = vector_avg_finalfn,
+    INITCOND = ''
+);
+COMMENT ON AGGREGATE vector_avg(vector) IS 'Average of vectors (element-wise mean)';
+
+-- Vector SUM aggregate (returns vector, not scalar)
+CREATE AGGREGATE vector_sum(vector) (
+    SFUNC = vector_sum_transfn,
+    STYPE = internal,
+    FINALFUNC = vector_sum_finalfn,
+    INITCOND = ''
+);
+COMMENT ON AGGREGATE vector_sum(vector) IS 'Sum of vectors (element-wise sum)';
 
 -- Vector comparison
 CREATE FUNCTION vector_eq(vector, vector) RETURNS boolean
@@ -2231,6 +2444,37 @@ CREATE FUNCTION vector_cosine_distance_op(vector, vector) RETURNS real
 CREATE FUNCTION vector_inner_product_distance_op(vector, vector) RETURNS real
     AS 'MODULE_PATHNAME', 'vector_inner_product_distance_op'
     LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+-- ============================================================================
+-- DISTANCE OPERATORS (created after function definitions)
+-- ============================================================================
+
+-- L2 (Euclidean) Distance Operator <-> 
+CREATE OPERATOR <-> (
+    LEFTARG = vector,
+    RIGHTARG = vector,
+    PROCEDURE = vector_l2_distance_op,
+    COMMUTATOR = '<->'
+);
+COMMENT ON OPERATOR <->(vector, vector) IS 'L2 (Euclidean) distance operator';
+
+-- Inner Product Distance Operator <#>
+CREATE OPERATOR <#> (
+    LEFTARG = vector,
+    RIGHTARG = vector,
+    PROCEDURE = vector_inner_product_distance_op,
+    COMMUTATOR = <#>
+);
+COMMENT ON OPERATOR <#>(vector, vector) IS 'Negative inner product distance operator';
+
+-- Cosine Distance Operator <=>
+CREATE OPERATOR <=> (
+    LEFTARG = vector,
+    RIGHTARG = vector,
+    PROCEDURE = vector_cosine_distance_op,
+    COMMUTATOR = <=>
+);
+COMMENT ON OPERATOR <=>(vector, vector) IS 'Cosine distance operator';
 
 -- Operator class comparison functions
 CREATE FUNCTION vector_l2_less(vector, vector, vector) RETURNS boolean
@@ -4209,6 +4453,14 @@ BEGIN
 			RETURN train_lasso_regression(table_name, feature_col, label_col,
 				COALESCE((params->>'lambda')::float8, 0.1),
 				COALESCE((params->>'max_iters')::integer, 1000));
+		WHEN 'rag' THEN
+			-- RAG is a special algorithm that doesn't require traditional training
+			-- Return a placeholder model_id for compatibility
+			RETURN neurondb.train('default', 'rag', table_name, label_col, ARRAY[feature_col], params);
+		WHEN 'hybrid_search' THEN
+			-- Hybrid search is a special algorithm that doesn't require traditional training
+			-- Return a placeholder model_id for compatibility
+			RETURN neurondb.train('default', 'hybrid_search', table_name, label_col, ARRAY[feature_col], params);
 		ELSE
 			RAISE EXCEPTION 'Unknown algorithm: %. Use neurondb.list_algorithms() to see supported algorithms', algorithm;
 	END CASE;
@@ -4333,295 +4585,320 @@ BEGIN
 	END IF;
 	CASE algo
 		WHEN 'random_forest' THEN
-			metrics := evaluate_random_forest(model_id_param);
-			accuracy_val := metrics[1];
-			
-			/* Compute precision, recall, F1 from test set */
+			/* Use optimized C batch evaluation function */
 			BEGIN
-				EXECUTE format(
-				'WITH predictions AS (
-					SELECT 
-						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
-						%I::int AS actual
-					FROM %I
-				)
-				SELECT 
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
-				FROM predictions',
-					model_id_param, feature_col, label_col, table_name
-				) INTO tp, fp, tn, fn;
+				result := evaluate_random_forest_by_model_id(model_id_param, table_name, feature_col, label_col);
 			EXCEPTION
 				WHEN OTHERS THEN
-					/* If evaluation fails, set metrics to NULL */
-					tp := 0;
-					fp := 0;
-					tn := 0;
-					fn := 0;
+					/* If evaluation fails, fall back to row-by-row prediction */
+					BEGIN
+						metrics := evaluate_random_forest(model_id_param);
+						accuracy_val := metrics[1];
+						
+						/* Compute precision, recall, F1 from test set */
+						BEGIN
+							EXECUTE format(
+							'WITH predictions AS (
+								SELECT 
+									CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
+									%I::int AS actual
+								FROM %I
+							)
+							SELECT 
+								COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+								COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+								COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+								COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+							FROM predictions',
+								model_id_param, feature_col, label_col, table_name
+							) INTO tp, fp, tn, fn;
+						EXCEPTION
+							WHEN OTHERS THEN
+								/* If evaluation fails, set metrics to NULL */
+								tp := 0;
+								fp := 0;
+								tn := 0;
+								fn := 0;
+						END;
+						
+						/* Calculate precision, recall, F1 */
+						IF (tp + fp) > 0 THEN
+							precision_val := tp::float8 / (tp + fp)::float8;
+						ELSE
+							precision_val := 0.0;
+						END IF;
+						
+						IF (tp + fn) > 0 THEN
+							recall_val := tp::float8 / (tp + fn)::float8;
+						ELSE
+							recall_val := 0.0;
+						END IF;
+						
+						IF (precision_val + recall_val) > 0 THEN
+							f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
+						ELSE
+							f1_score_val := 0.0;
+						END IF;
+						
+						result := jsonb_build_object(
+							'accuracy', accuracy_val,
+							'error_rate', metrics[2],
+							'gini', metrics[3],
+							'n_classes', metrics[4],
+							'precision', precision_val,
+							'recall', recall_val,
+							'f1_score', f1_score_val
+						);
+					EXCEPTION
+						WHEN OTHERS THEN
+							result := jsonb_build_object(
+								'error', 'Evaluation failed: ' || SQLERRM
+							);
+					END;
 			END;
-			
-			/* Calculate precision, recall, F1 */
-			IF (tp + fp) > 0 THEN
-				precision_val := tp::float8 / (tp + fp)::float8;
-			ELSE
-				precision_val := 0.0;
-			END IF;
-			
-			IF (tp + fn) > 0 THEN
-				recall_val := tp::float8 / (tp + fn)::float8;
-			ELSE
-				recall_val := 0.0;
-			END IF;
-			
-			IF (precision_val + recall_val) > 0 THEN
-				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
-			ELSE
-				f1_score_val := 0.0;
-			END IF;
-			
-			result := jsonb_build_object(
-				'accuracy', accuracy_val,
-				'error_rate', metrics[2],
-				'gini', metrics[3],
-				'n_classes', metrics[4],
-				'precision', precision_val,
-				'recall', recall_val,
-				'f1_score', f1_score_val
-			);
 		WHEN 'logistic_regression' THEN
-			/* Compute metrics by making predictions on test set */
+			/* Use optimized C batch evaluation function */
 			BEGIN
-				EXECUTE format(
-				'WITH predictions AS (
-					SELECT 
-						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
-						%I::int AS actual
-					FROM %I
-				)
-				SELECT 
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
-				FROM predictions',
-					model_id_param, feature_col, label_col, table_name
-				) INTO tp, fp, tn, fn;
+				result := evaluate_logistic_regression_by_model_id(model_id_param, table_name, feature_col, label_col, 0.5);
 			EXCEPTION
 				WHEN OTHERS THEN
-					/* If evaluation fails, set metrics to NULL */
-					tp := 0;
-					fp := 0;
-					tn := 0;
-					fn := 0;
+					/* If evaluation fails, fall back to row-by-row prediction */
+					BEGIN
+						BEGIN
+							EXECUTE format(
+							'WITH predictions AS (
+								SELECT 
+									CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
+									%I::int AS actual
+								FROM %I
+							)
+							SELECT 
+								COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+								COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+								COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+								COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+							FROM predictions',
+								model_id_param, feature_col, label_col, table_name
+							) INTO tp, fp, tn, fn;
+						EXCEPTION
+							WHEN OTHERS THEN
+								/* If evaluation fails, set metrics to NULL */
+								tp := 0;
+								fp := 0;
+								tn := 0;
+								fn := 0;
+						END;
+						
+						/* Calculate metrics */
+						IF (tp + fp + tn + fn) > 0 THEN
+							accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
+						ELSE
+							accuracy_val := 0.0;
+						END IF;
+						
+						IF (tp + fp) > 0 THEN
+							precision_val := tp::float8 / (tp + fp)::float8;
+						ELSE
+							precision_val := 0.0;
+						END IF;
+						
+						IF (tp + fn) > 0 THEN
+							recall_val := tp::float8 / (tp + fn)::float8;
+						ELSE
+							recall_val := 0.0;
+						END IF;
+						
+						IF (precision_val + recall_val) > 0 THEN
+							f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
+						ELSE
+							f1_score_val := 0.0;
+						END IF;
+						
+						result := jsonb_build_object(
+							'accuracy', accuracy_val,
+							'precision', precision_val,
+							'recall', recall_val,
+							'f1_score', f1_score_val
+						);
+					EXCEPTION
+						WHEN OTHERS THEN
+							result := jsonb_build_object(
+								'error', 'Evaluation failed: ' || SQLERRM
+							);
+					END;
 			END;
-			
-			/* Calculate metrics */
-			IF (tp + fp + tn + fn) > 0 THEN
-				accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
-			ELSE
-				accuracy_val := 0.0;
-			END IF;
-			
-			IF (tp + fp) > 0 THEN
-				precision_val := tp::float8 / (tp + fp)::float8;
-			ELSE
-				precision_val := 0.0;
-			END IF;
-			
-			IF (tp + fn) > 0 THEN
-				recall_val := tp::float8 / (tp + fn)::float8;
-			ELSE
-				recall_val := 0.0;
-			END IF;
-			
-			IF (precision_val + recall_val) > 0 THEN
-				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
-			ELSE
-				f1_score_val := 0.0;
-			END IF;
-			
-			result := jsonb_build_object(
-				'accuracy', accuracy_val,
-				'precision', precision_val,
-				'recall', recall_val,
-				'f1_score', f1_score_val
-			);
 		WHEN 'svm' THEN
-			/* Compute metrics by making predictions on test set */
+			/* Use optimized C batch evaluation function */
 			BEGIN
-				EXECUTE format(
-				'WITH predictions AS (
-					SELECT 
-						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
-						%I::int AS actual
-					FROM %I
-				)
-				SELECT 
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
-				FROM predictions',
-					model_id_param, feature_col, label_col, table_name
-				) INTO tp, fp, tn, fn;
+				result := evaluate_svm_by_model_id(model_id_param, table_name, feature_col, label_col);
 			EXCEPTION
 				WHEN OTHERS THEN
-					/* If evaluation fails, set metrics to NULL */
-					tp := 0;
-					fp := 0;
-					tn := 0;
-					fn := 0;
+					/* If evaluation fails, fall back to row-by-row prediction */
+					BEGIN
+						BEGIN
+							EXECUTE format(
+							'WITH predictions AS (
+								SELECT 
+									CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
+									%I::int AS actual
+								FROM %I
+							)
+							SELECT 
+								COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+								COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+								COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+								COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+							FROM predictions',
+								model_id_param, feature_col, label_col, table_name
+							) INTO tp, fp, tn, fn;
+						EXCEPTION
+							WHEN OTHERS THEN
+								/* If evaluation fails, set metrics to NULL */
+								tp := 0;
+								fp := 0;
+								tn := 0;
+								fn := 0;
+						END;
+						
+						/* Calculate metrics */
+						IF (tp + fp + tn + fn) > 0 THEN
+							accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
+						ELSE
+							accuracy_val := 0.0;
+						END IF;
+						
+						IF (tp + fp) > 0 THEN
+							precision_val := tp::float8 / (tp + fp)::float8;
+						ELSE
+							precision_val := 0.0;
+						END IF;
+						
+						IF (tp + fn) > 0 THEN
+							recall_val := tp::float8 / (tp + fn)::float8;
+						ELSE
+							recall_val := 0.0;
+						END IF;
+						
+						IF (precision_val + recall_val) > 0 THEN
+							f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
+						ELSE
+							f1_score_val := 0.0;
+						END IF;
+						
+						result := jsonb_build_object(
+							'accuracy', accuracy_val,
+							'precision', precision_val,
+							'recall', recall_val,
+							'f1_score', f1_score_val
+						);
+					EXCEPTION
+						WHEN OTHERS THEN
+							result := jsonb_build_object(
+								'error', 'Evaluation failed: ' || SQLERRM
+							);
+					END;
 			END;
-			
-			/* Calculate metrics */
-			IF (tp + fp + tn + fn) > 0 THEN
-				accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
-			ELSE
-				accuracy_val := 0.0;
-			END IF;
-			
-			IF (tp + fp) > 0 THEN
-				precision_val := tp::float8 / (tp + fp)::float8;
-			ELSE
-				precision_val := 0.0;
-			END IF;
-			
-			IF (tp + fn) > 0 THEN
-				recall_val := tp::float8 / (tp + fn)::float8;
-			ELSE
-				recall_val := 0.0;
-			END IF;
-			
-			IF (precision_val + recall_val) > 0 THEN
-				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
-			ELSE
-				f1_score_val := 0.0;
-			END IF;
-			
-			result := jsonb_build_object(
-				'accuracy', accuracy_val,
-				'precision', precision_val,
-				'recall', recall_val,
-				'f1_score', f1_score_val
-			);
 		WHEN 'naive_bayes' THEN
-			/* Compute metrics by making predictions on test set */
+			/* Use optimized C batch evaluation function */
 			BEGIN
-				EXECUTE format(
-				'WITH predictions AS (
-					SELECT 
-						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
-						%I::int AS actual
-					FROM %I
-				)
-				SELECT 
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
-				FROM predictions',
-					model_id_param, feature_col, label_col, table_name
-				) INTO tp, fp, tn, fn;
+				result := evaluate_naive_bayes_by_model_id(model_id_param, table_name, feature_col, label_col);
 			EXCEPTION
 				WHEN OTHERS THEN
-					/* If evaluation fails, set metrics to NULL */
-					tp := 0;
-					fp := 0;
-					tn := 0;
-					fn := 0;
+					/* If evaluation fails, fall back to row-by-row prediction */
+					BEGIN
+						BEGIN
+							EXECUTE format(
+							'WITH predictions AS (
+								SELECT 
+									CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
+									%I::int AS actual
+								FROM %I
+							)
+							SELECT 
+								COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
+								COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
+								COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
+								COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
+							FROM predictions',
+								model_id_param, feature_col, label_col, table_name
+							) INTO tp, fp, tn, fn;
+						EXCEPTION
+							WHEN OTHERS THEN
+								/* If evaluation fails, set metrics to NULL */
+								tp := 0;
+								fp := 0;
+								tn := 0;
+								fn := 0;
+						END;
+						
+						/* Calculate metrics */
+						IF (tp + fp + tn + fn) > 0 THEN
+							accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
+						ELSE
+							accuracy_val := 0.0;
+						END IF;
+						
+						IF (tp + fp) > 0 THEN
+							precision_val := tp::float8 / (tp + fp)::float8;
+						ELSE
+							precision_val := 0.0;
+						END IF;
+						
+						IF (tp + fn) > 0 THEN
+							recall_val := tp::float8 / (tp + fn)::float8;
+						ELSE
+							recall_val := 0.0;
+						END IF;
+						
+						IF (precision_val + recall_val) > 0 THEN
+							f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
+						ELSE
+							f1_score_val := 0.0;
+						END IF;
+						
+						result := jsonb_build_object(
+							'accuracy', accuracy_val,
+							'precision', precision_val,
+							'recall', recall_val,
+							'f1_score', f1_score_val
+						);
+					EXCEPTION
+						WHEN OTHERS THEN
+							result := jsonb_build_object(
+								'error', 'Evaluation failed: ' || SQLERRM
+							);
+					END;
 			END;
-			
-			/* Calculate metrics */
-			IF (tp + fp + tn + fn) > 0 THEN
-				accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
-			ELSE
-				accuracy_val := 0.0;
-			END IF;
-			
-			IF (tp + fp) > 0 THEN
-				precision_val := tp::float8 / (tp + fp)::float8;
-			ELSE
-				precision_val := 0.0;
-			END IF;
-			
-			IF (tp + fn) > 0 THEN
-				recall_val := tp::float8 / (tp + fn)::float8;
-			ELSE
-				recall_val := 0.0;
-			END IF;
-			
-			IF (precision_val + recall_val) > 0 THEN
-				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
-			ELSE
-				f1_score_val := 0.0;
-			END IF;
-			
-			result := jsonb_build_object(
-				'accuracy', accuracy_val,
-				'precision', precision_val,
-				'recall', recall_val,
-				'f1_score', f1_score_val
-			);
 		WHEN 'decision_tree' THEN
-			/* Compute metrics by making predictions on test set */
 			BEGIN
-				EXECUTE format(
-				'WITH predictions AS (
-					SELECT 
-						CASE WHEN neurondb.predict(%L, %I) >= 0.5 THEN 1 ELSE 0 END AS pred,
-						%I::int AS actual
-					FROM %I
-				)
-				SELECT 
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 1)::int,
-					COUNT(*) FILTER (WHERE pred = 1 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 0)::int,
-					COUNT(*) FILTER (WHERE pred = 0 AND actual = 1)::int
-				FROM predictions',
-					model_id_param, feature_col, label_col, table_name
-				) INTO tp, fp, tn, fn;
+				result := evaluate_decision_tree_by_model_id(model_id_param, table_name, feature_col, label_col);
 			EXCEPTION
 				WHEN OTHERS THEN
-					/* If evaluation fails, set metrics to NULL */
-					tp := 0;
-					fp := 0;
-					tn := 0;
-					fn := 0;
+					/* If evaluation fails, return error details */
+					result := jsonb_build_object(
+						'error', SQLERRM,
+						'accuracy', 0.0,
+						'precision', 0.0,
+						'recall', 0.0,
+						'f1_score', 0.0,
+						'n_samples', 0
+					);
 			END;
-			
-			/* Calculate metrics */
-			IF (tp + fp + tn + fn) > 0 THEN
-				accuracy_val := (tp + tn)::float8 / (tp + fp + tn + fn)::float8;
-			ELSE
-				accuracy_val := 0.0;
-			END IF;
-			
-			IF (tp + fp) > 0 THEN
-				precision_val := tp::float8 / (tp + fp)::float8;
-			ELSE
-				precision_val := 0.0;
-			END IF;
-			
-			IF (tp + fn) > 0 THEN
-				recall_val := tp::float8 / (tp + fn)::float8;
-			ELSE
-				recall_val := 0.0;
-			END IF;
-			
-			IF (precision_val + recall_val) > 0 THEN
-				f1_score_val := 2.0 * (precision_val * recall_val) / (precision_val + recall_val);
-			ELSE
-				f1_score_val := 0.0;
-			END IF;
-			
-			result := jsonb_build_object(
-				'accuracy', accuracy_val,
-				'precision', precision_val,
-				'recall', recall_val,
-				'f1_score', f1_score_val
-			);
+		WHEN 'knn' THEN
+			BEGIN
+				result := evaluate_knn_by_model_id(model_id_param, table_name, feature_col, label_col);
+			EXCEPTION
+				WHEN OTHERS THEN
+					/* If evaluation fails, return error details */
+					result := jsonb_build_object(
+						'error', SQLERRM,
+						'accuracy', 0.0,
+						'precision', 0.0,
+						'recall', 0.0,
+						'f1_score', 0.0,
+						'n_samples', 0
+					);
+			END;
 		WHEN 'linear_regression' THEN
 			/* Use optimized one-shot C evaluation function */
 			BEGIN
@@ -4684,196 +4961,155 @@ BEGIN
 							);
 					END;
 			END;
-		WHEN 'gmm' THEN
-			/* Compute clustering metrics (inertia and silhouette approximation) */
+		WHEN 'kmeans' THEN
 			BEGIN
-				EXECUTE format(
-				'WITH preds AS (
-					SELECT %I AS features, neurondb.predict(%L, %I) AS c
-					FROM %I
-					WHERE %I IS NOT NULL
-				),
-				arr AS (
-					SELECT c, vector_to_array(features)::real[] AS a
-					FROM preds
-				),
-				dims AS (
-					SELECT COALESCE(MAX(array_length(a,1)), 0) AS d FROM arr
-				),
-				centroid_elems AS (
-					SELECT c, idx, AVG(a[idx])::real AS avg_val
-					FROM arr, LATERAL generate_subscripts(a,1) AS idx
-					GROUP BY c, idx
-				),
-				centroids AS (
-					SELECT c,
-						   ARRAY_AGG(avg_val ORDER BY idx)::real[] AS centroid
-					FROM centroid_elems
-					GROUP BY c
-				),
-				inertia_calc AS (
-					SELECT SUM(
-						(SELECT SUM( ((a[i] - centroid[i])::float8 * (a[i] - centroid[i])::float8) )
-						 FROM generate_subscripts(a,1) AS i)
-					)::float8 AS inertia
-					FROM arr
-					JOIN centroids USING (c)
-				),
-				silhouette_point AS (
-					/* Approximate silhouette using centroid distances */
-					SELECT a.c,
-						   /* a: distance to own centroid */
-						   (SELECT sqrt(SUM(((a.a[i]-centroids.centroid[i])::float8)^2))
-							FROM generate_subscripts(a.a,1) AS i
-						   )::float8 AS a_dist,
-						   /* b: min distance to any other centroid */
-						   (SELECT MIN(
-								(SELECT sqrt(SUM(((a.a[i]-c2.centroid[i])::float8)^2))
-								 FROM generate_subscripts(a.a,1) AS i)
-							)
-							FROM centroids c2
-							WHERE c2.c <> a.c
-						   )::float8 AS b_dist
-					FROM arr a
-					JOIN centroids ON centroids.c = a.c
-				),
-				silhouette_agg AS (
-					SELECT CASE
-								WHEN COUNT(*) = 0 THEN 0.0::float8
-								ELSE AVG(
-									CASE
-										WHEN GREATEST(a_dist, b_dist) > 0 THEN (b_dist - a_dist) / GREATEST(a_dist, b_dist)
-										ELSE 0.0
-									END
-								)::float8
-						   END AS silhouette_score
-					FROM silhouette_point
-				)
-				SELECT i.inertia, s.silhouette_score
-				FROM inertia_calc i, silhouette_agg s',
-					feature_col, model_id_param, feature_col, table_name, feature_col
-				)
-				INTO mse_val, r2_val;  /* reuse holders: mse_val=inertia, r2_val=silhouette */
-				
-				result := jsonb_build_object(
-					'inertia', COALESCE(mse_val, 0.0),
-					'silhouette_score', COALESCE(r2_val, 0.0)
-				);
+				result := evaluate_kmeans_by_model_id(model_id_param, table_name, feature_col);
 			EXCEPTION
 				WHEN OTHERS THEN
+					/* If evaluation fails, return error details */
 					result := jsonb_build_object(
+						'error', SQLERRM,
 						'inertia', 0.0,
 						'silhouette_score', 0.0,
-						'warning', 'GMM metrics fallback due to error: ' || SQLERRM
+						'davies_bouldin_index', 0.0,
+						'n_samples', 0,
+						'n_clusters', 0
+					);
+			END;
+		WHEN 'gmm' THEN
+			BEGIN
+				result := evaluate_gmm_by_model_id(model_id_param, table_name, feature_col);
+			EXCEPTION
+				WHEN OTHERS THEN
+					/* If evaluation fails, return error details */
+					result := jsonb_build_object(
+						'error', SQLERRM,
+						'inertia', 0.0,
+						'silhouette_score', 0.0,
+						'davies_bouldin_index', 0.0,
+						'n_samples', 0,
+						'n_clusters', 0
 					);
 			END;
 		WHEN 'ridge' THEN
-			/* Compute regression metrics: R², MSE, MAE, RMSE (same as linear_regression) */
+			/* Use optimized C batch evaluation function */
 			BEGIN
-				EXECUTE format(
-					'WITH predictions AS (
-						SELECT 
-							neurondb.predict(%L, %I) AS pred,
-							%I::float8 AS actual
-						FROM %I
-					),
-					avg_actual AS (
-						SELECT AVG(actual)::float8 AS y_avg FROM predictions
-					),
-					stats AS (
-						SELECT 
-							COUNT(*)::int AS n,
-							SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
-							SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
-							SUM((p.actual - (SELECT y_avg FROM avg_actual)) * (p.actual - (SELECT y_avg FROM avg_actual)))::float8 AS var_tot
-						FROM predictions p
-					)
-					SELECT n, err_sq, err_abs, var_tot FROM stats',
-					model_id_param, feature_col, label_col, table_name
-				) INTO n_samples, total_error_sq, total_error_abs, total_var;
-				
-				IF n_samples > 0 THEN
-					mse_val := total_error_sq / n_samples;
-					mae_val := total_error_abs / n_samples;
-					rmse_val := SQRT(mse_val);
-					
-					IF total_var > 0 THEN
-						r2_val := 1.0 - (total_error_sq / total_var);
-					ELSE
-						r2_val := 0.0;
-					END IF;
-				ELSE
-					mse_val := 0.0;
-					mae_val := 0.0;
-					rmse_val := 0.0;
-					r2_val := 0.0;
-				END IF;
-				
-				result := jsonb_build_object(
-					'r_squared', r2_val,
-					'mse', mse_val,
-					'mae', mae_val,
-					'rmse', rmse_val
-				);
+				result := evaluate_ridge_regression_by_model_id(model_id_param, table_name, feature_col, label_col);
 			EXCEPTION
 				WHEN OTHERS THEN
-					result := jsonb_build_object(
-						'error', 'Evaluation failed: ' || SQLERRM
-					);
+					/* If evaluation fails, fall back to row-by-row prediction */
+					BEGIN
+						EXECUTE format(
+							'WITH predictions AS (
+								SELECT 
+									neurondb.predict(%L, %I) AS pred,
+									%I::float8 AS actual
+								FROM %I
+							),
+							avg_actual AS (
+								SELECT AVG(actual)::float8 AS y_avg FROM predictions
+							),
+							stats AS (
+								SELECT 
+									COUNT(*)::int AS n,
+									SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
+									SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
+									SUM((p.actual - (SELECT y_avg FROM avg_actual)) * (p.actual - (SELECT y_avg FROM avg_actual)))::float8 AS var_tot
+								FROM predictions p
+							)
+							SELECT n, err_sq, err_abs, var_tot FROM stats',
+							model_id_param, feature_col, label_col, table_name
+						) INTO n_samples, total_error_sq, total_error_abs, total_var;
+						
+						IF n_samples > 0 THEN
+							mse_val := total_error_sq / n_samples;
+							mae_val := total_error_abs / n_samples;
+							rmse_val := SQRT(mse_val);
+							
+							IF total_var > 0 THEN
+								r2_val := 1.0 - (total_error_sq / total_var);
+							ELSE
+								r2_val := 0.0;
+							END IF;
+						ELSE
+							mse_val := 0.0;
+							mae_val := 0.0;
+							rmse_val := 0.0;
+							r2_val := 0.0;
+						END IF;
+						
+						result := jsonb_build_object(
+							'r_squared', r2_val,
+							'mse', mse_val,
+							'mae', mae_val,
+							'rmse', rmse_val
+						);
+					EXCEPTION
+						WHEN OTHERS THEN
+							result := jsonb_build_object(
+								'error', 'Evaluation failed: ' || SQLERRM
+							);
+					END;
 			END;
 		WHEN 'lasso' THEN
-			/* Compute regression metrics: R², MSE, MAE, RMSE (same as linear_regression) */
+			/* Use optimized C batch evaluation function */
 			BEGIN
-				EXECUTE format(
-					'WITH predictions AS (
-						SELECT 
-							neurondb.predict(%L, %I) AS pred,
-							%I::float8 AS actual
-						FROM %I
-					),
-					avg_actual AS (
-						SELECT AVG(actual)::float8 AS y_avg FROM predictions
-					),
-					stats AS (
-						SELECT 
-							COUNT(*)::int AS n,
-							SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
-							SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
-							SUM((p.actual - (SELECT y_avg FROM avg_actual)) * (p.actual - (SELECT y_avg FROM avg_actual)))::float8 AS var_tot
-						FROM predictions p
-					)
-					SELECT n, err_sq, err_abs, var_tot FROM stats',
-					model_id_param, feature_col, label_col, table_name
-				) INTO n_samples, total_error_sq, total_error_abs, total_var;
-				
-				IF n_samples > 0 THEN
-					mse_val := total_error_sq / n_samples;
-					mae_val := total_error_abs / n_samples;
-					rmse_val := SQRT(mse_val);
-					
-					IF total_var > 0 THEN
-						r2_val := 1.0 - (total_error_sq / total_var);
-					ELSE
-						r2_val := 0.0;
-					END IF;
-				ELSE
-					mse_val := 0.0;
-					mae_val := 0.0;
-					rmse_val := 0.0;
-					r2_val := 0.0;
-				END IF;
-				
-				result := jsonb_build_object(
-					'r_squared', r2_val,
-					'mse', mse_val,
-					'mae', mae_val,
-					'rmse', rmse_val
-				);
+				result := evaluate_lasso_regression_by_model_id(model_id_param, table_name, feature_col, label_col);
 			EXCEPTION
 				WHEN OTHERS THEN
-					result := jsonb_build_object(
-						'error', 'Evaluation failed: ' || SQLERRM
-					);
+					/* If evaluation fails, fall back to row-by-row prediction */
+					BEGIN
+						EXECUTE format(
+							'WITH predictions AS (
+								SELECT 
+									neurondb.predict(%L, %I) AS pred,
+									%I::float8 AS actual
+								FROM %I
+							),
+							avg_actual AS (
+								SELECT AVG(actual)::float8 AS y_avg FROM predictions
+							),
+							stats AS (
+								SELECT 
+									COUNT(*)::int AS n,
+									SUM((p.pred - p.actual) * (p.pred - p.actual))::float8 AS err_sq,
+									SUM(ABS(p.pred - p.actual))::float8 AS err_abs,
+									SUM((p.actual - (SELECT y_avg FROM avg_actual)) * (p.actual - (SELECT y_avg FROM avg_actual)))::float8 AS var_tot
+								FROM predictions p
+							)
+							SELECT n, err_sq, err_abs, var_tot FROM stats',
+							model_id_param, feature_col, label_col, table_name
+						) INTO n_samples, total_error_sq, total_error_abs, total_var;
+						
+						IF n_samples > 0 THEN
+							mse_val := total_error_sq / n_samples;
+							mae_val := total_error_abs / n_samples;
+							rmse_val := SQRT(mse_val);
+							
+							IF total_var > 0 THEN
+								r2_val := 1.0 - (total_error_sq / total_var);
+							ELSE
+								r2_val := 0.0;
+							END IF;
+						ELSE
+							mse_val := 0.0;
+							mae_val := 0.0;
+							rmse_val := 0.0;
+							r2_val := 0.0;
+						END IF;
+						
+						result := jsonb_build_object(
+							'r_squared', r2_val,
+							'mse', mse_val,
+							'mae', mae_val,
+							'rmse', rmse_val
+						);
+					EXCEPTION
+						WHEN OTHERS THEN
+							result := jsonb_build_object(
+								'error', 'Evaluation failed: ' || SQLERRM
+							);
+					END;
 			END;
 		ELSE
 			result := jsonb_build_object('error', 'Evaluation not implemented for: ' || algo);

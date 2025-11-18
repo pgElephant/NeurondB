@@ -333,7 +333,14 @@ embed_text_batch(PG_FUNCTION_ARGS)
 		vector_oid = cached_vector_oid;
 	}
 
-	result = construct_array(result_datums, nitems, vector_oid, -1, false, 'i');
+	{
+		int16		typlen;
+		bool		typbyval;
+		char		typalign;
+
+		get_typlenbyvalalign(vector_oid, &typlen, &typbyval, &typalign);
+		result = construct_array(result_datums, nitems, vector_oid, typlen, typbyval, typalign);
+	}
 
 	SAFE_PFREE(result_datums);
 	if (text_datums)
