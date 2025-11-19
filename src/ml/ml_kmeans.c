@@ -825,9 +825,8 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 			davies_bouldin = sum_dbi / (double)valid_clusters;
 	}
 
-	SPI_finish();
-
-	/* Build jsonb result */
+	/* Build jsonb result in old context before SPI_finish */
+	MemoryContextSwitchTo(oldcontext);
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
 		"{\"inertia\":%.6f,\"silhouette_score\":%.6f,\"davies_bouldin_index\":%.6f,\"n_samples\":%d,\"n_clusters\":%d}",
@@ -842,26 +841,16 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 
 	pfree(jsonbuf.data);
 
-	/* Cleanup */
-	for (i = 0; i < nvec; i++)
-		pfree(data[i]);
-	pfree(data);
-	for (c = 0; c < num_clusters; c++)
-		pfree(centers[c]);
-	pfree(centers);
-	pfree(assignments);
-	pfree(cluster_sizes);
-	pfree(cluster_scatter);
-	pfree(a_scores);
-	pfree(b_scores);
+	/* Cleanup - Note: data[], centers[] allocated by neurondb_fetch_vectors_from_table 
+	 * in SPI context, will be freed by SPI_finish(). Do not double-free. */
 	pfree(tbl_str);
 	pfree(col_str);
 	if (model_payload)
 		pfree(model_payload);
 	if (model_metrics)
 		pfree(model_metrics);
-
-	MemoryContextSwitchTo(oldcontext);
+	
+	SPI_finish();
 	PG_RETURN_JSONB_P(result_jsonb);
 }
 

@@ -735,7 +735,6 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
         pfree(tbl_str);
         pfree(feat_str);
         pfree(targ_str);
-        pfree(query.data);
         ereport(ERROR,
             (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                 errmsg("neurondb: evaluate_xgboost_by_model_id: need at least 2 samples, got %d",
@@ -801,7 +800,6 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
                 pfree(tbl_str);
                 pfree(feat_str);
                 pfree(targ_str);
-                pfree(query.data);
                 ereport(ERROR,
                     (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                         errmsg("xgboost: features array must be 1-D")));
@@ -880,7 +878,6 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
     pfree(tbl_str);
     pfree(feat_str);
     pfree(targ_str);
-    pfree(query.data);
 
     PG_RETURN_JSONB_P(result);
 #else

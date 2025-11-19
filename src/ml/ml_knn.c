@@ -144,7 +144,6 @@ knn_classify(PG_FUNCTION_ARGS)
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 	{
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(label_str);
@@ -164,7 +163,6 @@ knn_classify(PG_FUNCTION_ARGS)
 	if (nvec < k)
 	{
 		SPI_finish();
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(label_str);
@@ -207,7 +205,6 @@ knn_classify(PG_FUNCTION_ARGS)
 			{
 				int j;
 				SPI_finish();
-				pfree(query.data);
 				for (j = 0; j < nsamples; j++)
 					pfree(samples[j].features);
 				pfree(samples);
@@ -237,7 +234,6 @@ knn_classify(PG_FUNCTION_ARGS)
 		if (nsamples < k)
 		{
 			SPI_finish();
-			pfree(query.data);
 			for (i = 0; i < nsamples; i++)
 				pfree(samples[i].features);
 			pfree(samples);
@@ -252,7 +248,6 @@ knn_classify(PG_FUNCTION_ARGS)
 		}
 
 		SPI_finish();
-		pfree(query.data);
 
 		/* Sort samples by distance */
 		qsort(samples, nsamples, sizeof(KNNSample), compare_samples);
@@ -341,7 +336,6 @@ knn_regress(PG_FUNCTION_ARGS)
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 	{
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -361,7 +355,6 @@ knn_regress(PG_FUNCTION_ARGS)
 	if (nvec < k)
 	{
 		SPI_finish();
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -404,7 +397,6 @@ knn_regress(PG_FUNCTION_ARGS)
 			{
 				int j;
 				SPI_finish();
-				pfree(query.data);
 				for (j = 0; j < nsamples; j++)
 					pfree(samples[j].features);
 				pfree(samples);
@@ -434,7 +426,6 @@ knn_regress(PG_FUNCTION_ARGS)
 		if (nsamples < k)
 		{
 			SPI_finish();
-			pfree(query.data);
 			for (i = 0; i < nsamples; i++)
 				pfree(samples[i].features);
 			pfree(samples);
@@ -449,7 +440,6 @@ knn_regress(PG_FUNCTION_ARGS)
 		}
 
 		SPI_finish();
-		pfree(query.data);
 
 		/* Sort by distance */
 		qsort(samples, nsamples, sizeof(KNNSample), compare_samples);
@@ -528,7 +518,6 @@ evaluate_knn_classifier(PG_FUNCTION_ARGS)
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 	{
-		pfree(query.data);
 		pfree(train_str);
 		pfree(test_str);
 		pfree(feat_str);
@@ -591,7 +580,6 @@ evaluate_knn_classifier(PG_FUNCTION_ARGS)
 	}
 
 	SPI_finish();
-	pfree(query.data);
 
 	/* Compute metrics */
 	accuracy = (double)(tp + tn) / (tp + tn + fp + fn);
@@ -707,7 +695,6 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(label_str);
-			pfree(query.data);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 					errmsg("neurondb: failed to fetch training data")));
@@ -720,7 +707,6 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(label_str);
-			pfree(query.data);
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("KNN: need at least %d samples, got %d", k_value, nvec)));
@@ -739,7 +725,6 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(label_str);
-				pfree(query.data);
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("neurondb: NULL feature in first row")));
@@ -754,7 +739,6 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 					pfree(tbl_str);
 					pfree(feat_str);
 					pfree(label_str);
-					pfree(query.data);
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("neurondb: feature array must be 1-dimensional")));
@@ -770,7 +754,6 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 					pfree(tbl_str);
 					pfree(feat_str);
 					pfree(label_str);
-					pfree(query.data);
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("neurondb: invalid vector in first row")));
@@ -794,7 +777,6 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 					pfree(tbl_str);
 					pfree(feat_str);
 					pfree(label_str);
-					pfree(query.data);
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							errmsg("neurondb: NULL feature at row %d", i)));
@@ -809,7 +791,6 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 						pfree(tbl_str);
 						pfree(feat_str);
 						pfree(label_str);
-						pfree(query.data);
 						ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 								errmsg("neurondb: inconsistent feature array dimension at row %d (expected %d)",
@@ -825,7 +806,6 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 						pfree(tbl_str);
 						pfree(feat_str);
 						pfree(label_str);
-						pfree(query.data);
 						ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 								errmsg("neurondb: inconsistent vector dimension at row %d (expected %d)",
@@ -1613,7 +1593,6 @@ knn_predict_batch(int32 model_id,
 			/* Load training data using nested SPI (PostgreSQL supports this) */
 			if (SPI_connect() != SPI_OK_CONNECT)
 			{
-				pfree(query.data);
 				if (metrics)
 					pfree(metrics);
 				if (model_data)
@@ -1705,7 +1684,6 @@ knn_predict_batch(int32 model_id,
 
 			SPI_finish();
 			/* Free query.data after SPI_finish() - it's allocated in outer context */
-			pfree(query.data);
 
 			if (train_valid < k_value)
 			{
@@ -1905,7 +1883,6 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	/* Load model from catalog to determine feature dimension */
 	if (!ml_catalog_fetch_model_payload(model_id, &gpu_payload, NULL, &gpu_metrics))
 	{
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -1945,7 +1922,6 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 			}
 			else
 			{
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -1963,7 +1939,6 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 
 	if (feat_dim <= 0)
 	{
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -1979,7 +1954,6 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 	{
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -1998,7 +1972,6 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -2034,7 +2007,6 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 		}
 		pfree(check_query.data);
 		
-		pfree(query.data);
 		/* Free original strings before SPI_finish() */
 		pfree(tbl_str);
 		pfree(feat_str);
@@ -2253,7 +2225,6 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -2322,7 +2293,6 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 					if (gpu_metrics)
 						pfree(gpu_metrics);
 					/* Note: gpu_errstr is allocated by GPU function, don't free it */
-					pfree(query.data);
 					SPI_finish();
 					
 					/* Switch back to oldcontext and free strings allocated before SPI_connect */
@@ -2480,7 +2450,6 @@ cpu_evaluation_path:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -2512,7 +2481,6 @@ cpu_evaluation_path:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -2611,7 +2579,6 @@ cpu_evaluation_path:
 	
 	/* Now safe to finish SPI and free SPI-allocated memory */
 	SPI_finish();
-	pfree(query.data);
 	
 	/* Free strings allocated before SPI_connect (in oldcontext) */
 	pfree(tbl_str);

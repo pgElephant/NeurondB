@@ -796,7 +796,6 @@ evaluate_arima_by_model_id(PG_FUNCTION_ARGS)
 		pfree(tbl_str);
 		pfree(time_str);
 		pfree(value_str);
-		pfree(query.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("neurondb: evaluate_arima_by_model_id: need at least %d observations for evaluation with horizon %d, got %d",
@@ -836,7 +835,6 @@ evaluate_arima_by_model_id(PG_FUNCTION_ARGS)
 		pfree(tbl_str);
 		pfree(time_str);
 		pfree(value_str);
-		pfree(query.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("neurondb: evaluate_arima_by_model_id: no valid predictions could be made")));
@@ -860,7 +858,6 @@ evaluate_arima_by_model_id(PG_FUNCTION_ARGS)
 	pfree(tbl_str);
 	pfree(time_str);
 	pfree(value_str);
-	pfree(query.data);
 
 	PG_RETURN_JSONB_P(result);
 }

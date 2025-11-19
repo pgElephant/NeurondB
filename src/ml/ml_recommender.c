@@ -401,19 +401,16 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 			pfree(rating_col_str);
 		if (model_mcxt)
 			MemoryContextDelete(model_mcxt);
+		
 		SPI_finish();
-
-		resetStringInfo(&sql);
-		appendStringInfo(&sql,
-			"Collaborative filter model created, model_id=%ld",
-			(long)model_id);
-		PG_RETURN_TEXT_P(cstring_to_text(sql.data));
+		elog(INFO, "Collaborative filter model created, model_id=%ld", (long)model_id);
+		PG_RETURN_INT64(model_id);
 	}
 }
 
 /* Helper functions for loading factors from database */
 static bool
-als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_factors)
+als_load_user_factors(int64 model_id, int32 user_id, float **factors, int *n_factors)
 {
 	StringInfoData query;
 	int ret;
@@ -421,8 +418,8 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 
 	initStringInfo(&query);
 	appendStringInfo(&query,
-		"SELECT factors FROM neurondb_cf_user_factors WHERE model_id = %d AND user_id = %d",
-		model_id, user_id);
+		"SELECT factors FROM neurondb_cf_user_factors WHERE model_id = %ld AND user_id = %d",
+		(long)model_id, user_id);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 		return false;
@@ -431,7 +428,6 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 	if (ret != SPI_OK_SELECT)
 	{
 		SPI_finish();
-		pfree(query.data);
 		return false;
 	}
 
@@ -439,7 +435,6 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 	if (n_rows != 1)
 	{
 		SPI_finish();
-		pfree(query.data);
 		return false;
 	}
 
@@ -464,7 +459,6 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 		if (factors_null)
 		{
 			SPI_finish();
-			pfree(query.data);
 			return false;
 		}
 
@@ -473,7 +467,6 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 		if (n_dims != 1)
 		{
 			SPI_finish();
-			pfree(query.data);
 			return false;
 		}
 
@@ -491,7 +484,6 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 	}
 
 	SPI_finish();
-	pfree(query.data);
 	return true;
 }
 
@@ -514,7 +506,6 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 	if (ret != SPI_OK_SELECT)
 	{
 		SPI_finish();
-		pfree(query.data);
 		return false;
 	}
 
@@ -522,7 +513,6 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 	if (n_rows != 1)
 	{
 		SPI_finish();
-		pfree(query.data);
 		return false;
 	}
 
@@ -547,7 +537,6 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 		if (factors_null)
 		{
 			SPI_finish();
-			pfree(query.data);
 			return false;
 		}
 
@@ -556,7 +545,6 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 		if (n_dims != 1)
 		{
 			SPI_finish();
-			pfree(query.data);
 			return false;
 		}
 
@@ -576,7 +564,6 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 	}
 
 	SPI_finish();
-	pfree(query.data);
 	return true;
 }
 
@@ -589,7 +576,7 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 Datum
 predict_collaborative_filter(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
+	int64 model_id = PG_GETARG_INT64(0);
 	int32 user_id = PG_GETARG_INT32(1);
 	int32 item_id = PG_GETARG_INT32(2);
 
@@ -644,7 +631,7 @@ predict_collaborative_filter(PG_FUNCTION_ARGS)
 Datum
 evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
+	int64 model_id;
 	text *table_name;
 	text *user_col;
 	text *item_col;
@@ -675,7 +662,7 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("neurondb: evaluate_collaborative_filter_by_model_id: model_id is required")));
 
-	model_id = PG_GETARG_INT32(0);
+	model_id = PG_GETARG_INT64(0);
 
 	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3) || PG_ARGISNULL(4))
 		ereport(ERROR,
@@ -720,7 +707,6 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 		pfree(user_str);
 		pfree(item_str);
 		pfree(rating_str);
-		pfree(query.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("neurondb: evaluate_collaborative_filter_by_model_id: need at least 2 ratings, got %d",
@@ -788,7 +774,6 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 	pfree(user_str);
 	pfree(item_str);
 	pfree(rating_str);
-	pfree(query.data);
 
 	PG_RETURN_JSONB_P(result);
 }

@@ -179,13 +179,33 @@ dt_dataset_load(const char *quoted_tbl,
 		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
 		Datum		feat_datum;
 		bool		feat_null = false;
-		Vector	   *vec;
+		Oid			feat_type;
 
 		feat_datum = SPI_getbinval(first_tuple, tupdesc, 1, &feat_null);
 		if (!feat_null)
 		{
-			vec = DatumGetVector(feat_datum);
-			feature_dim = vec->dim;
+			feat_type = SPI_gettypeid(tupdesc, 1);
+
+			/* Check if it's an array type (double precision[] or real[]) */
+			if (feat_type == FLOAT8ARRAYOID)
+			{
+				ArrayType *arr = DatumGetArrayTypeP(feat_datum);
+				if (arr != NULL)
+					feature_dim = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+			}
+			else if (feat_type == FLOAT4ARRAYOID)
+			{
+				ArrayType *arr = DatumGetArrayTypeP(feat_datum);
+				if (arr != NULL)
+					feature_dim = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+			}
+			/* Try Vector type (check by attempting to cast) */
+			else
+			{
+				Vector *vec = DatumGetVector(feat_datum);
+				if (vec != NULL && vec->dim > 0)
+					feature_dim = vec->dim;
+			}
 		}
 	}
 
@@ -210,24 +230,59 @@ dt_dataset_load(const char *quoted_tbl,
 		Datum		label_datum;
 		bool		feat_null = false;
 		bool		label_null = false;
-		Vector	   *vec;
+		Oid			feat_type;
 		float	   *row;
 
 		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 		if (feat_null)
 			continue;
 
-		vec = DatumGetVector(feat_datum);
-		if (vec->dim != feature_dim)
-		{
-			SPI_finish();
-			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("neurondb: dt_dataset_load: inconsistent vector dimensions")));
-		}
-
+		feat_type = SPI_gettypeid(tupdesc, 1);
 		row = dataset->features + (i * feature_dim);
-		memcpy(row, vec->data, sizeof(float) * feature_dim);
+
+		/* Handle different feature types */
+		if (feat_type == FLOAT8ARRAYOID)
+		{
+			ArrayType *arr = DatumGetArrayTypeP(feat_datum);
+			int arr_dim = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+			if (arr_dim != feature_dim)
+			{
+				SPI_finish();
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: dt_dataset_load: inconsistent array dimensions")));
+			}
+			float8 *data = (float8 *)ARR_DATA_PTR(arr);
+			for (int j = 0; j < feature_dim; j++)
+				row[j] = (float)data[j];
+		}
+		else if (feat_type == FLOAT4ARRAYOID)
+		{
+			ArrayType *arr = DatumGetArrayTypeP(feat_datum);
+			int arr_dim = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+			if (arr_dim != feature_dim)
+			{
+				SPI_finish();
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: dt_dataset_load: inconsistent array dimensions")));
+			}
+			float4 *data = (float4 *)ARR_DATA_PTR(arr);
+			memcpy(row, data, sizeof(float) * feature_dim);
+		}
+		else
+		{
+			/* Vector type */
+			Vector *vec = DatumGetVector(feat_datum);
+			if (vec->dim != feature_dim)
+			{
+				SPI_finish();
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: dt_dataset_load: inconsistent vector dimensions")));
+			}
+			memcpy(row, vec->data, sizeof(float) * feature_dim);
+		}
 
 		label_datum = SPI_getbinval(tuple, tupdesc, 2, &label_null);
 		if (label_null)
@@ -1318,7 +1373,6 @@ evaluate_decision_tree_by_model_id(PG_FUNCTION_ARGS)
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		pfree(query.data);
 		if (model != NULL)
 		{
 			if (model->root != NULL)
@@ -1356,7 +1410,6 @@ evaluate_decision_tree_by_model_id(PG_FUNCTION_ARGS)
 		}
 		pfree(check_query.data);
 		
-		pfree(query.data);
 		if (model != NULL)
 		{
 			if (model->root != NULL)
@@ -1569,7 +1622,6 @@ evaluate_decision_tree_by_model_id(PG_FUNCTION_ARGS)
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -1632,7 +1684,6 @@ evaluate_decision_tree_by_model_id(PG_FUNCTION_ARGS)
 						pfree(gpu_metrics);
 					if (gpu_errstr)
 						pfree(gpu_errstr);
-					pfree(query.data);
 					pfree(tbl_str);
 					pfree(feat_str);
 					pfree(targ_str);
@@ -1791,7 +1842,6 @@ cpu_evaluation_path:
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -1810,7 +1860,6 @@ cpu_evaluation_path:
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -1829,7 +1878,6 @@ cpu_evaluation_path:
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -1904,7 +1952,6 @@ cpu_evaluation_path:
 	}
 
 	SPI_finish();
-	pfree(query.data);
 	pfree(tbl_str);
 	pfree(feat_str);
 	pfree(targ_str);

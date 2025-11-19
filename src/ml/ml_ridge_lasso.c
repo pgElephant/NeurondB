@@ -478,7 +478,6 @@ ridge_dataset_load_limited(const char *quoted_tbl,
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		pfree(query.data);
 		SPI_finish();
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -488,7 +487,6 @@ ridge_dataset_load_limited(const char *quoted_tbl,
 	n_samples = SPI_processed;
 	if (n_samples < 10)
 	{
-		pfree(query.data);
 		SPI_finish();
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -520,7 +518,6 @@ ridge_dataset_load_limited(const char *quoted_tbl,
 
 				if (ARR_NDIM(arr) != 1)
 				{
-					pfree(query.data);
 					SPI_finish();
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -538,7 +535,6 @@ ridge_dataset_load_limited(const char *quoted_tbl,
 
 	if (feature_dim <= 0)
 	{
-		pfree(query.data);
 		SPI_finish();
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -575,7 +571,6 @@ ridge_dataset_load_limited(const char *quoted_tbl,
 
 			if (ndims != 1 || dimlen != feature_dim)
 			{
-				pfree(query.data);
 				SPI_finish();
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -601,7 +596,6 @@ ridge_dataset_load_limited(const char *quoted_tbl,
 			vec = DatumGetVector(feat_datum);
 			if (vec->dim != feature_dim)
 			{
-				pfree(query.data);
 				SPI_finish();
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -631,7 +625,6 @@ ridge_dataset_load_limited(const char *quoted_tbl,
 	dataset->n_samples = n_samples;
 	dataset->feature_dim = feature_dim;
 
-	pfree(query.data);
 	SPI_finish();
 }
 
@@ -869,7 +862,6 @@ ridge_stream_process_chunk(const char *quoted_tbl,
 		char *query_str = pstrdup(query.data);
 		const char *error_msg;
 		
-		pfree(query.data);
 		
 		/* Provide more specific error messages for common SPI errors */
 		switch (ret)
@@ -902,7 +894,6 @@ ridge_stream_process_chunk(const char *quoted_tbl,
 	n_rows = SPI_processed;
 	if (n_rows == 0)
 	{
-		pfree(query.data);
 		*rows_processed = 0;
 		return;
 	}
@@ -920,7 +911,6 @@ ridge_stream_process_chunk(const char *quoted_tbl,
 	row_buffer = (float *)palloc(sizeof(float) * accum->feature_dim);
 	if (row_buffer == NULL)
 	{
-		pfree(query.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_OUT_OF_MEMORY),
 				errmsg("neurondb: ridge_stream_process_chunk: failed to allocate row buffer")));
@@ -952,7 +942,6 @@ ridge_stream_process_chunk(const char *quoted_tbl,
 			if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != accum->feature_dim)
 			{
 				pfree(row_buffer);
-				pfree(query.data);
 				continue; /* Skip inconsistent rows */
 			}
 			if (feat_type_oid == FLOAT8ARRAYOID)
@@ -973,7 +962,6 @@ ridge_stream_process_chunk(const char *quoted_tbl,
 			if (vec->dim != accum->feature_dim)
 			{
 				pfree(row_buffer);
-				pfree(query.data);
 				continue; /* Skip inconsistent rows */
 			}
 			memcpy(row_buffer, vec->data, sizeof(float) * accum->feature_dim);
@@ -995,7 +983,6 @@ ridge_stream_process_chunk(const char *quoted_tbl,
 	}
 
 	pfree(row_buffer);
-	pfree(query.data);
 }
 
 /*
@@ -3155,7 +3142,6 @@ evaluate_ridge_regression_by_model_id(PG_FUNCTION_ARGS)
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		pfree(query.data);
 		if (model != NULL)
 		{
 			if (model->coefficients != NULL)
@@ -3174,7 +3160,6 @@ evaluate_ridge_regression_by_model_id(PG_FUNCTION_ARGS)
 	nvec = SPI_processed;
 	if (nvec < 1)
 	{
-		pfree(query.data);
 		if (model != NULL)
 		{
 			if (model->coefficients != NULL)
@@ -3290,7 +3275,6 @@ evaluate_ridge_regression_by_model_id(PG_FUNCTION_ARGS)
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -3357,7 +3341,6 @@ evaluate_ridge_regression_by_model_id(PG_FUNCTION_ARGS)
 		}
 
 		SPI_finish();
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -3436,7 +3419,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -3455,7 +3437,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -3478,7 +3459,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -3521,7 +3501,7 @@ gpu_eval_fallback:
 					{
 						float8 *data = (float8 *)ARR_DATA_PTR(arr);
 						for (k = 0; k < feat_dim; k++)
-							feat_row[j] = (float)data[j];
+							feat_row[k] = (float)data[k];
 					}
 					else
 					{
@@ -3551,7 +3531,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -3580,7 +3559,7 @@ gpu_eval_fallback:
 			int k;
 
 			for (k = 0; k < feat_dim; k++)
-				prediction += cpu_coefficients[j] * (double)feat_row[j];
+				prediction += cpu_coefficients[k] * (double)feat_row[k];
 
 			predictions[i] = prediction;
 		}
@@ -3618,7 +3597,8 @@ gpu_eval_fallback:
 			pfree(cpu_coefficients);
 	}
 
-	/* Build jsonb result */
+	/* Build jsonb result in old context to survive SPI_finish */
+	MemoryContextSwitchTo(oldcontext);
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
 		"{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"r_squared\":%.6f,\"n_samples\":%d}",
@@ -3632,7 +3612,7 @@ gpu_eval_fallback:
 		CStringGetDatum(jsonbuf.data)));
 
 	pfree(jsonbuf.data);
-	MemoryContextSwitchTo(oldcontext);
+	SPI_finish();
 	PG_RETURN_JSONB_P(result_jsonb);
 }
 
@@ -3801,7 +3781,6 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		pfree(query.data);
 		if (model != NULL)
 		{
 			if (model->coefficients != NULL)
@@ -3824,7 +3803,6 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 	nvec = SPI_processed;
 	if (nvec < 1)
 	{
-		pfree(query.data);
 		if (model != NULL)
 		{
 			if (model->coefficients != NULL)
@@ -3860,7 +3838,6 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 		/* Defensive: validate GPU payload */
 		if (gpu_payload == NULL || VARSIZE(gpu_payload) < sizeof(NdbCudaLassoModelHeader))
 		{
-			pfree(query.data);
 			if (gpu_payload)
 				pfree(gpu_payload);
 			if (gpu_metrics)
@@ -3881,7 +3858,6 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 		/* Defensive: validate feature dimension */
 		if (feat_dim <= 0 || feat_dim > 100000)
 		{
-			pfree(query.data);
 			if (gpu_payload)
 				pfree(gpu_payload);
 			if (gpu_metrics)
@@ -3904,7 +3880,6 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 			/* Defensive: check for overflow */
 			if (features_size > MaxAllocSize || targets_size > MaxAllocSize)
 			{
-				pfree(query.data);
 				if (gpu_payload)
 					pfree(gpu_payload);
 				if (gpu_metrics)
@@ -3928,7 +3903,6 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 					pfree(h_features);
 				if (h_targets)
 					pfree(h_targets);
-				pfree(query.data);
 				if (gpu_payload)
 					pfree(gpu_payload);
 				if (gpu_metrics)
@@ -3952,7 +3926,6 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 			{
 				pfree(h_features);
 				pfree(h_targets);
-				pfree(query.data);
 				if (gpu_payload)
 					pfree(gpu_payload);
 				if (gpu_metrics)
@@ -4052,7 +4025,6 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -4118,13 +4090,12 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 			}
 		}
 
-		SPI_finish();
-		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
 
-		/* Build jsonb result */
+		/* Build jsonb result in old context to survive SPI_finish */
+		MemoryContextSwitchTo(oldcontext);
 		initStringInfo(&jsonbuf);
 		appendStringInfo(&jsonbuf,
 			"{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"r_squared\":%.6f,\"n_samples\":%d}",
@@ -4138,7 +4109,7 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 			CStringGetDatum(jsonbuf.data)));
 
 		pfree(jsonbuf.data);
-		MemoryContextSwitchTo(oldcontext);
+		SPI_finish();
 		PG_RETURN_JSONB_P(result_jsonb);
 #endif	/* NDB_GPU_CUDA */
 	}
@@ -4165,7 +4136,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4187,7 +4157,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4206,7 +4175,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4230,7 +4198,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4249,7 +4216,6 @@ gpu_eval_fallback:
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -4276,7 +4242,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4295,7 +4260,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4319,7 +4283,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4345,7 +4308,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4369,7 +4331,6 @@ gpu_eval_fallback:
 						pfree(gpu_payload);
 					if (gpu_metrics)
 						pfree(gpu_metrics);
-					pfree(query.data);
 					pfree(tbl_str);
 					pfree(feat_str);
 					pfree(targ_str);
@@ -4449,7 +4410,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4478,7 +4438,6 @@ gpu_eval_fallback:
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -4505,7 +4464,6 @@ gpu_eval_fallback:
 				pfree(gpu_payload);
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -4536,7 +4494,6 @@ gpu_eval_fallback:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -4587,7 +4544,8 @@ gpu_eval_fallback:
 			pfree(cpu_coefficients);
 	}
 
-	/* Build jsonb result */
+	/* Build jsonb result in old context to survive SPI_finish */
+	MemoryContextSwitchTo(oldcontext);
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
 		"{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"r_squared\":%.6f,\"n_samples\":%d}",
@@ -4611,12 +4569,10 @@ gpu_eval_fallback:
 		pfree(gpu_payload);
 	if (gpu_metrics)
 		pfree(gpu_metrics);
-	pfree(query.data);
 	pfree(tbl_str);
 	pfree(feat_str);
 	pfree(targ_str);
 	SPI_finish();
-	MemoryContextSwitchTo(oldcontext);
 	PG_RETURN_JSONB_P(result_jsonb);
 }
 
@@ -4993,7 +4949,6 @@ evaluate_elastic_net_by_model_id(PG_FUNCTION_ARGS)
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
-		pfree(query.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("neurondb: evaluate_elastic_net_by_model_id: need at least 2 samples, got %d",
@@ -5057,7 +5012,6 @@ evaluate_elastic_net_by_model_id(PG_FUNCTION_ARGS)
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
-				pfree(query.data);
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("elastic_net: features array must be 1-D")));
@@ -5142,7 +5096,6 @@ evaluate_elastic_net_by_model_id(PG_FUNCTION_ARGS)
 	pfree(tbl_str);
 	pfree(feat_str);
 	pfree(targ_str);
-	pfree(query.data);
 
 	PG_RETURN_JSONB_P(result);
 }

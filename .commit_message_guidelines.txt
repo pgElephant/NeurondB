@@ -29,14 +29,16 @@ PostgreSQL Commit Message Guidelines for NeurondB:
   a concise narrative that describes the change, breaking details into
   additional paragraphs as necessary for clarity.
 
+- Each line contains max 80-90 character.
+
 Example:
 
 Improve embedding vector normalization logic.
 
-This commit adjusts the normalization routine to use a more numerically 
-stable approach, addressing issues with denormalized input data.
-
-Additional refactoring ensures consistent vector sizing across all 
-embedding interfaces, providing clearer behavior for callers and simplifying 
-future maintenance.
+This commit adjusts the normalization routine to
+use a more numerically stable approach, addressing
+issues with denormalized input data. Additional
+refactoring ensures consistent vector sizing across all 
+embedding interfaces, providing clearer behavior for
+callers and simplifying future maintenance.
 

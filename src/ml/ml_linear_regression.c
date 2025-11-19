@@ -468,7 +468,6 @@ linreg_dataset_load_limited(const char *quoted_tbl,
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		pfree(query.data);
 		SPI_finish();
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
@@ -478,7 +477,6 @@ linreg_dataset_load_limited(const char *quoted_tbl,
 	n_samples = SPI_processed;
 	if (n_samples < 10)
 	{
-		pfree(query.data);
 		SPI_finish();
 		elog(DEBUG1,
 			"linreg_dataset_load_limited: need at least 10 samples, got %d",
@@ -513,7 +511,6 @@ linreg_dataset_load_limited(const char *quoted_tbl,
 
 				if (ARR_NDIM(arr) != 1)
 				{
-					pfree(query.data);
 					SPI_finish();
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -531,7 +528,6 @@ linreg_dataset_load_limited(const char *quoted_tbl,
 
 	if (feature_dim <= 0)
 	{
-		pfree(query.data);
 		SPI_finish();
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -568,7 +564,6 @@ linreg_dataset_load_limited(const char *quoted_tbl,
 
 			if (ndims != 1 || dimlen != feature_dim)
 			{
-				pfree(query.data);
 				SPI_finish();
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -594,7 +589,6 @@ linreg_dataset_load_limited(const char *quoted_tbl,
 			vec = DatumGetVector(feat_datum);
 			if (vec->dim != feature_dim)
 			{
-				pfree(query.data);
 				SPI_finish();
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -624,7 +618,6 @@ linreg_dataset_load_limited(const char *quoted_tbl,
 	dataset->n_samples = n_samples;
 	dataset->feature_dim = feature_dim;
 
-	pfree(query.data);
 	SPI_finish();
 }
 
@@ -855,7 +848,6 @@ linreg_stream_process_chunk(const char *quoted_tbl,
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		pfree(query.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("neurondb: linreg_stream_process_chunk: query failed")));
@@ -864,7 +856,6 @@ linreg_stream_process_chunk(const char *quoted_tbl,
 	n_rows = SPI_processed;
 	if (n_rows == 0)
 	{
-		pfree(query.data);
 		*rows_processed = 0;
 		return;
 	}
@@ -882,7 +873,6 @@ linreg_stream_process_chunk(const char *quoted_tbl,
 	row_buffer = (float *)palloc(sizeof(float) * accum->feature_dim);
 	if (row_buffer == NULL)
 	{
-		pfree(query.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_OUT_OF_MEMORY),
 				errmsg("neurondb: linreg_stream_process_chunk: failed to allocate row buffer")));
@@ -914,7 +904,6 @@ linreg_stream_process_chunk(const char *quoted_tbl,
 			if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != accum->feature_dim)
 			{
 				pfree(row_buffer);
-				pfree(query.data);
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("neurondb: linreg_stream_process_chunk: inconsistent feature dimensions")));
@@ -940,7 +929,6 @@ linreg_stream_process_chunk(const char *quoted_tbl,
 			if (vec->dim != accum->feature_dim)
 			{
 				pfree(row_buffer);
-				pfree(query.data);
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("neurondb: linreg_stream_process_chunk: feature dimension mismatch")));
@@ -965,7 +953,6 @@ linreg_stream_process_chunk(const char *quoted_tbl,
 	}
 
 	pfree(row_buffer);
-	pfree(query.data);
 }
 
 /*

@@ -512,7 +512,6 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 		SPI_finish();
 		pfree(tbl_str);
 		pfree(feat_str);
-		pfree(query.data);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("neurondb: evaluate_minibatch_kmeans_by_model_id: need at least 2 points, got %d",
@@ -541,7 +540,6 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	pfree(tbl_str);
 	pfree(feat_str);
-	pfree(query.data);
 
 	PG_RETURN_JSONB_P(result);
 }

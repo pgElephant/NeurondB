@@ -236,7 +236,6 @@ extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
 	 pfree(model.means);
 	 pfree(model.variances);
 	 pfree(result_datums);
-	 pfree(query.data);
 	 pfree(tbl_str);
 	 pfree(feat_str);
 	 pfree(label_str);
@@ -1335,7 +1334,6 @@ nb_evaluate_naive_bayes_internal(FunctionCallInfo fcinfo)
 	 ret = SPI_execute(query.data, true, 0);
 	 if (ret != SPI_OK_SELECT)
 	 {
-		 pfree(query.data);
 		 nb_free_model_and_metadata(model, NULL, gpu_metrics);
 		 if (gpu_payload)
 			 pfree(gpu_payload);
@@ -1420,7 +1418,6 @@ nb_evaluate_naive_bayes_internal(FunctionCallInfo fcinfo)
 		 }
 		 pfree(check_query.data);
  
-		 pfree(query.data);
 		 nb_free_model_and_metadata(model, NULL, gpu_metrics);
 		 if (gpu_payload)
 			 pfree(gpu_payload);
@@ -1677,7 +1674,6 @@ nb_evaluate_naive_bayes_internal(FunctionCallInfo fcinfo)
 				 pfree(gpu_payload);
 			 if (gpu_metrics)
 				 pfree(gpu_metrics);
-			 pfree(query.data);
 			 /* Do not free tbl_str/feat_str/targ_str
 			  * before ereport, they are used below.
 			  */
@@ -1977,7 +1973,6 @@ nb_evaluate_naive_bayes_internal(FunctionCallInfo fcinfo)
 			 nb_free_model_and_metadata(model, NULL, gpu_metrics);
 			 if (gpu_payload)
 				 pfree(gpu_payload);
-			 pfree(query.data);
 			 /* Do not free tbl_str / feat_str / targ_str
 			  * before using them in ereport.
 			  */
@@ -2024,7 +2019,6 @@ nb_evaluate_naive_bayes_internal(FunctionCallInfo fcinfo)
 				 pfree(gpu_payload);
 			 if (gpu_metrics)
 				 pfree(gpu_metrics);
-			 pfree(query.data);
 			 SPI_finish();
 			 ereport(ERROR,
 				 (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),

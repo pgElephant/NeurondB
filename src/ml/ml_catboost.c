@@ -677,7 +677,6 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
         pfree(tbl_str);
         pfree(feat_str);
         pfree(targ_str);
-        pfree(query.data);
         ereport(ERROR,
             (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                 errmsg("neurondb: evaluate_catboost_by_model_id: need at least 2 samples, got %d",
@@ -743,7 +742,6 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
                 pfree(tbl_str);
                 pfree(feat_str);
                 pfree(targ_str);
-                pfree(query.data);
                 ereport(ERROR,
                     (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                         errmsg("catboost: features array must be 1-D")));
@@ -822,7 +820,6 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
     pfree(tbl_str);
     pfree(feat_str);
     pfree(targ_str);
-    pfree(query.data);
 
     PG_RETURN_JSONB_P(result);
 #else
