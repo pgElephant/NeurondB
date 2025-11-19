@@ -51,9 +51,15 @@ extern int ndb_cuda_rf_infer(const NdbCudaRfNode *nodes,
 	int *votes);
 
 /* GPU model cache entry - keyed by hash of model_data */
-typedef struct RfGpuModelCacheEntry
+typedef struct RfGpuModelCacheKey
 {
 	uint32 model_hash;		/* Hash of model_data bytea */
+	uint32 model_size;		/* Size of model_data bytea */
+} RfGpuModelCacheKey;
+
+typedef struct RfGpuModelCacheEntry
+{
+	RfGpuModelCacheKey key;		/* Compound key */
 	NdbCudaRfGpuModel *gpu_model;	/* GPU-resident model */
 } RfGpuModelCacheEntry;
 
@@ -70,10 +76,11 @@ static uint32
 rf_model_hash(const void *key, Size keysize)
 {
 	uint32 hash_val;
-	const uint32 *hash_key = (const uint32 *)key;
+	const RfGpuModelCacheKey *cache_key = (const RfGpuModelCacheKey *)key;
 
 	(void)keysize;
-	hash_val = *hash_key;
+	/* Combine hash and size for better collision resistance */
+	hash_val = cache_key->model_hash ^ cache_key->model_size;
 	return hash_val;
 }
 
@@ -318,7 +325,11 @@ ndb_cuda_rf_train(const float *features,
 	if (n_trees <= 0)
 		n_trees = default_n_trees;
 	if (class_count > 4096)
-		class_count = 4096;
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA RF training: class_count exceeds maximum of 4096");
+		return -1;
+	}
 
 	{
 		size_t label_size = sizeof(int) * (size_t)n_samples;
@@ -589,6 +600,7 @@ ndb_cuda_rf_train(const float *features,
 				tree_hdrs[i].node_count = 1;
 				tree_hdrs[i].nodes_start = node_offset;
 				tree_hdrs[i].root_index = 0;
+				tree_hdrs[i].max_feature_index = -1;
 				rf_fill_single_node_tree(
 					&nodes[node_offset], majority_class);
 				continue;
@@ -613,6 +625,7 @@ ndb_cuda_rf_train(const float *features,
 			tree_hdrs[i].node_count = 3;
 			tree_hdrs[i].nodes_start = node_offset;
 			tree_hdrs[i].root_index = 0;
+			tree_hdrs[i].max_feature_index = best_feature;
 
 			nodes[node_offset].feature_idx = best_feature;
 			nodes[node_offset].threshold = best_threshold;
@@ -714,8 +727,8 @@ ndb_cuda_rf_predict(const bytea *model_data,
 	int best_class;
 	int best_votes;
 	int effective_dim;
-	uint32 model_hash;
 	RfGpuModelCacheEntry *cache_entry;
+	RfGpuModelCacheKey cache_key;
 	bool found;
 	NdbCudaRfGpuModel *gpu_model = NULL;
 
@@ -741,21 +754,33 @@ ndb_cuda_rf_predict(const bytea *model_data,
 		return -1;
 	}
 
-	effective_dim = model_hdr->feature_dim > 0 ? model_hdr->feature_dim
-						   : feature_dim;
-	if (effective_dim <= 0)
-		effective_dim = feature_dim;
+	/* Require feature_dim to match model expectations */
+	if (model_hdr->feature_dim > 0 && model_hdr->feature_dim != feature_dim)
+	{
+		if (errstr)
+			*errstr = psprintf("CUDA RF predict: feature dimension mismatch (model expects %d, got %d)",
+							 model_hdr->feature_dim, feature_dim);
+		return -1;
+	}
+	if (feature_dim <= 0)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA RF predict: invalid feature dimension");
+		return -1;
+	}
+	effective_dim = feature_dim;
 
-	/* Compute hash of model_data for cache lookup */
-	model_hash = hash_any((const unsigned char *)VARDATA(model_data),
+	/* Compute hash and size of model_data for cache lookup */
+	cache_key.model_hash = hash_any((const unsigned char *)VARDATA(model_data),
 		VARSIZE(model_data) - VARHDRSZ);
+	cache_key.model_size = VARSIZE(model_data) - VARHDRSZ;
 
 	/* Look up in cache */
 	if (rf_gpu_model_cache != NULL)
 	{
 		cache_entry = (RfGpuModelCacheEntry *) hash_search(
 			rf_gpu_model_cache,
-			&model_hash,
+			&cache_key,
 			HASH_FIND,
 			&found);
 
@@ -788,7 +813,7 @@ ndb_cuda_rf_predict(const bytea *model_data,
 			/* Store in cache */
 			cache_entry = (RfGpuModelCacheEntry *) hash_search(
 				rf_gpu_model_cache,
-				&model_hash,
+				&cache_key,
 				HASH_ENTER,
 				&found);
 
@@ -799,7 +824,7 @@ ndb_cuda_rf_predict(const bytea *model_data,
 					&& cache_entry->gpu_model != gpu_model)
 					ndb_cuda_rf_model_free(cache_entry->gpu_model);
 
-				cache_entry->model_hash = model_hash;
+				cache_entry->key.model_hash = cache_key.model_hash;
 				cache_entry->gpu_model = gpu_model;
 			}
 		}
@@ -951,6 +976,11 @@ ndb_cuda_rf_model_upload(const NdbCudaRfNode *nodes,
 
 	for (i = 0; i < tree_count; i++)
 		total_nodes += trees[i].node_count;
+
+	if (total_nodes <= 0)
+	{
+		return -1;
+	}
 
 	model = (NdbCudaRfGpuModel *) palloc0(sizeof(NdbCudaRfGpuModel));
 	if (model == NULL)
@@ -1183,8 +1213,8 @@ ndb_cuda_rf_predict_batch(const bytea *model_data,
 	const NdbCudaRfNode *nodes_base;
 	size_t header_bytes;
 	int effective_dim;
-	uint32 model_hash;
 	RfGpuModelCacheEntry *cache_entry;
+	RfGpuModelCacheKey cache_key;
 	bool found;
 	NdbCudaRfGpuModel *gpu_model = NULL;
 	float *d_features = NULL;
@@ -1220,20 +1250,32 @@ ndb_cuda_rf_predict_batch(const bytea *model_data,
 		return -1;
 	}
 
-	effective_dim = model_hdr->feature_dim > 0 ? model_hdr->feature_dim
-						   : feature_dim;
-	if (effective_dim <= 0)
-		effective_dim = feature_dim;
+	/* Require feature_dim to match model expectations */
+	if (model_hdr->feature_dim > 0 && model_hdr->feature_dim != feature_dim)
+	{
+		if (errstr)
+			*errstr = psprintf("CUDA RF batch predict: feature dimension mismatch (model expects %d, got %d)",
+							 model_hdr->feature_dim, feature_dim);
+		return -1;
+	}
+	if (feature_dim <= 0)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA RF batch predict: invalid feature dimension");
+		return -1;
+	}
+	effective_dim = feature_dim;
 
-	/* Compute hash and lookup cache */
-	model_hash = hash_any((const unsigned char *)VARDATA(model_data),
+	/* Compute hash and size for cache lookup */
+	cache_key.model_hash = hash_any((const unsigned char *)VARDATA(model_data),
 		VARSIZE(model_data) - VARHDRSZ);
+	cache_key.model_size = VARSIZE(model_data) - VARHDRSZ;
 
 	if (rf_gpu_model_cache != NULL)
 	{
 		cache_entry = (RfGpuModelCacheEntry *) hash_search(
 			rf_gpu_model_cache,
-			&model_hash,
+			&cache_key,
 			HASH_FIND,
 			&found);
 
@@ -1265,7 +1307,7 @@ ndb_cuda_rf_predict_batch(const bytea *model_data,
 		{
 			cache_entry = (RfGpuModelCacheEntry *) hash_search(
 				rf_gpu_model_cache,
-				&model_hash,
+				&cache_key,
 				HASH_ENTER,
 				&found);
 
@@ -1275,7 +1317,7 @@ ndb_cuda_rf_predict_batch(const bytea *model_data,
 					&& cache_entry->gpu_model != gpu_model)
 					ndb_cuda_rf_model_free(cache_entry->gpu_model);
 
-				cache_entry->model_hash = model_hash;
+				cache_entry->key = cache_key;
 				cache_entry->gpu_model = gpu_model;
 			}
 		}

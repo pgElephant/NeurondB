@@ -1,6 +1,11 @@
 /*
  * gpu_rf_kernels.cu
  *	  CUDA kernels for Random Forest inference.
+ *
+ * Note: This code uses atomicAdd on double precision values in the feature
+ * statistics kernel, which requires CUDA compute capability sm_60+ (Pascal
+ * and later). On older GPUs, this may result in compilation errors or
+ * runtime failures.
  */
 
 #include <cuda_runtime.h>
@@ -23,6 +28,11 @@ ndb_cuda_rf_predict_kernel(const NdbCudaRfNode *nodes,
 		return;
 
 	const NdbCudaRfTreeHeader *tree = &trees[tid];
+
+	/* Guard against zero-node trees */
+	if (tree->node_count <= 0)
+		return;
+
 	const NdbCudaRfNode *tree_nodes = nodes + tree->nodes_start;
 	int idx = (tree->root_index >= 0) ? tree->root_index : 0;
 	int steps = 0;
@@ -422,6 +432,11 @@ ndb_cuda_rf_predict_batch_kernel(const NdbCudaRfNode *nodes,
 		for (t = tree_idx; t < tree_count; t += tree_stride)
 		{
 			const NdbCudaRfTreeHeader *tree = &trees[t];
+
+			/* Guard against zero-node trees */
+			if (tree->node_count <= 0)
+				continue;
+
 			const NdbCudaRfNode *tree_nodes = nodes + tree->nodes_start;
 			const float *input = features + (sample_idx * feature_dim);
 			int idx = (tree->root_index >= 0) ? tree->root_index : 0;
@@ -430,10 +445,14 @@ ndb_cuda_rf_predict_batch_kernel(const NdbCudaRfNode *nodes,
 			int cls = 0;
 
 			/* Pre-check max_feature_index if available */
-			if (tree->max_feature_index >= 0
-				&& tree->max_feature_index >= feature_dim)
+			if (tree->max_feature_index >= feature_dim)
 			{
-				cls = (int)rintf(tree_nodes[0].value);
+				/* Tree requires features beyond input dimension, use root prediction */
+				if (tree->node_count > 0)
+					cls = (int)rintf(tree_nodes[0].value);
+				else
+					cls = 0; /* Default fallback */
+
 				if (cls >= 0 && cls < class_count)
 				{
 					int *sample_votes = votes + (sample_idx * class_count);

@@ -94,6 +94,7 @@ WHERE features IS NOT NULL AND label IS NOT NULL;
 /* Step 7: Evaluation using neurondb.evaluate (optimized C batch processing - single call) */
 \echo 'Step 7: Evaluating model (optimized C batch processing)...'
 
+DROP TABLE IF EXISTS gpu_metrics_temp;
 CREATE TEMP TABLE gpu_metrics_temp AS
 SELECT neurondb.evaluate((SELECT model_id FROM gpu_model_temp), 'test_test_view', 'features', 'label') AS metrics;
 

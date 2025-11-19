@@ -317,14 +317,12 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 					model_id);
 		}
 
-		/* Update model_data separately if provided (bytea can't be embedded in SQL string) */
 		if (spec->model_data != NULL && model_id > 0)
 		{
 			Oid argtypes[2];
 			Datum values[2];
 			char nulls[2];
 
-			/* Reuse existing sql StringInfo to avoid memory context issues */
 			resetStringInfo(&sql);
 			appendStringInfo(&sql,
 				"UPDATE neurondb.ml_models SET model_data = $1 WHERE model_id = $2");
@@ -337,10 +335,12 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			nulls[1] = ' ';
 
 			ret = SPI_execute_with_args(sql.data, 2, argtypes, values, nulls, false, 0);
-			if (ret != SPI_OK_UPDATE)
-				elog(DEBUG1,
-					"ml_catalog_register_model: failed to update model_data for model_id %d (ret=%d)",
-					model_id, ret);
+			if (ret != SPI_OK_UPDATE || SPI_processed != 1)
+			{
+				elog(WARNING,
+					"ml_catalog_register_model: failed to update model_data (ret=%d, processed=%lu)",
+					ret, (unsigned long)SPI_processed);
+			}
 		}
 
 		/* Cleanup */
@@ -351,12 +351,12 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 		if (params_txt) pfree(params_txt);
 		if (params_quoted) pfree(params_quoted);
 		if (metrics_txt) pfree(metrics_txt);
-		if (metrics_quoted) pfree(metrics_quoted);
+		if (metrics_quoted) 		pfree(metrics_quoted);
 	}
 
-	pfree(DatumGetPointer(values[0]));
-	pfree(DatumGetPointer(values[1]));
-	pfree(DatumGetPointer(values[2]));
+	/* Note: values[] array contains Datums, not pointers to free */
+	/* Only free the model_data bytea if it was provided and we're responsible for it */
+	/* But spec->model_data is owned by caller, so don't free it here */
 
 	SPI_finish();
 
@@ -366,6 +366,11 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	return model_id;
 }
 
+/*
+ * Fetch model payload from catalog.
+ * Returns palloc'd detoasted copies in caller's memory context.
+ * Caller is responsible for pfree'ing *model_data_out, *parameters_out, and *metrics_out if non-NULL.
+ */
 bool
 ml_catalog_fetch_model_payload(int32 model_id,
 							  bytea **model_data_out,
@@ -397,6 +402,7 @@ ml_catalog_fetch_model_payload(int32 model_id,
 					 "FROM neurondb.ml_models WHERE model_id = %d",
 					 model_id);
 
+	/* Use SPI_EXEC_REPEAT_OK to allow seeing uncommitted changes in same transaction */
 	ret = SPI_execute(sql.data, true, 1);
 	if (ret != SPI_OK_SELECT)
 	{
@@ -407,6 +413,7 @@ ml_catalog_fetch_model_payload(int32 model_id,
 
 	if (SPI_processed == 0)
 	{
+		elog(DEBUG1, "ml_catalog_fetch_model_payload: model_id %d not found in catalog", model_id);
 		pfree(sql.data);
 		SPI_finish();
 		return false;
@@ -417,6 +424,8 @@ ml_catalog_fetch_model_payload(int32 model_id,
 		bool		isnull;
 
 		found = true;
+		
+		elog(DEBUG1, "ml_catalog_fetch_model_payload: found model_id %d in catalog", model_id);
 
 		/* Switch to caller's context for detoasted copies */
 		oldcontext = MemoryContextSwitchTo(caller_context);
@@ -432,6 +441,13 @@ ml_catalog_fetch_model_payload(int32 model_id,
 				copy = DatumGetByteaP(datum);
 				copy = (bytea *) PG_DETOAST_DATUM_COPY((Datum) copy);
 				*model_data_out = copy;
+				elog(DEBUG1, "ml_catalog_fetch_model_payload: loaded model_data for model_id %d (size=%u)",
+					 model_id, copy ? VARSIZE(copy) : 0);
+			}
+			else
+			{
+				*model_data_out = NULL;
+				elog(WARNING, "ml_catalog_fetch_model_payload: model_data is NULL for model_id %d - model may not have been stored correctly", model_id);
 			}
 		}
 

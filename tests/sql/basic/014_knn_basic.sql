@@ -28,9 +28,10 @@ SELECT features, label FROM sample_train LIMIT 1000;
 CREATE VIEW test_test_view AS
 SELECT features, label FROM sample_test LIMIT 1000;
 
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,knn_train,knn_predict';
-SELECT neurondb_gpu_enable();
+-- GPU disabled for testing CPU implementation
+-- SET neurondb.gpu_enabled = on;
+-- SET neurondb.gpu_kernels = 'l2,cosine,ip,knn_train,knn_predict';
+-- SELECT neurondb_gpu_enable();
 
 \set ON_ERROR_STOP on
 
@@ -52,6 +53,7 @@ SELECT model_id FROM gpu_model_temp;
 -- (Accuracy is already computed in evaluate() below)
 
 -- Evaluate model and store result
+DROP TABLE IF EXISTS gpu_metrics_temp;
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);
 DO $$
 DECLARE

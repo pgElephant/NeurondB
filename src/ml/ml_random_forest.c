@@ -5387,7 +5387,7 @@ rf_read_double_array(StringInfo buf, int expected_count)
 	/* Check buffer has enough space for flag (1 byte) */
 	if (buf->cursor + 1 > buf->len)
 	{
-		elog(ERROR,
+		elog(WARNING,
 			"random_forest: buffer overrun reading double array flag: cursor=%d, len=%d, need 1 byte",
 			buf->cursor, buf->len);
 		return NULL;
@@ -5405,7 +5405,7 @@ rf_read_double_array(StringInfo buf, int expected_count)
 	/* Check buffer has enough space for length (4 bytes) */
 	if (buf->cursor + 4 > buf->len)
 	{
-		elog(ERROR,
+		elog(WARNING,
 			"random_forest: buffer overrun reading double array length: cursor=%d, len=%d, need 4 bytes (flag was %d)",
 			buf->cursor, buf->len, flag);
 		/* Cursor was already advanced by flag (1 byte), buffer is corrupted */
@@ -5417,7 +5417,7 @@ rf_read_double_array(StringInfo buf, int expected_count)
 	/* Validate length before allocation */
 	if (len < 0 || len > 1000000)
 	{
-		elog(ERROR,
+		elog(WARNING,
 			"random_forest: invalid double array length %d (cursor=%d/%d)",
 			len, buf->cursor, buf->len);
 		/* Cursor was already advanced by flag (1 byte) + length (4 bytes) = 5 bytes */
@@ -5679,11 +5679,6 @@ rf_model_deserialize(const bytea *data)
 					elog(DEBUG1, "rf_model_deserialize: reading feature_importance, cursor=%d/%d, n_features=%d", buf.cursor, buf.len, model->n_features);
 					
 					/* Wrap in PG_TRY to catch errors from rf_read_double_array */
-					/* Suppress shadow warning from nested PG_TRY in PostgreSQL macros */
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wshadow=compatible-local"
-#endif
 					PG_TRY();
 					{
 						model->feature_importance = rf_read_double_array(&buf, model->n_features);
@@ -5775,11 +5770,6 @@ rf_model_deserialize(const bytea *data)
 					{
 						/* Continue with deserialization */
 					elog(DEBUG1, "rf_model_deserialize: reading left_branch_means, cursor=%d/%d, feature_limit=%d", buf.cursor, buf.len, model->feature_limit);
-					/* Suppress shadow warning from nested PG_TRY in PostgreSQL macros */
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wshadow=compatible-local"
-#endif
 					PG_TRY();
 					{
 						model->left_branch_means = rf_read_double_array(&buf, model->feature_limit);
@@ -5802,9 +5792,6 @@ rf_model_deserialize(const bytea *data)
 						PG_RE_THROW();
 					}
 					PG_END_TRY();
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 						
 						if (model != NULL && model->left_branch_means == NULL && model->feature_limit > 0)
 						{
@@ -5824,11 +5811,6 @@ rf_model_deserialize(const bytea *data)
 						else if (model != NULL)
 						{
 						elog(DEBUG1, "rf_model_deserialize: reading right_branch_means, cursor=%d/%d, feature_limit=%d", buf.cursor, buf.len, model->feature_limit);
-						/* Suppress shadow warning from nested PG_TRY in PostgreSQL macros */
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wshadow=compatible-local"
-#endif
 						PG_TRY();
 						{
 							model->right_branch_means = rf_read_double_array(&buf, model->feature_limit);
@@ -5853,9 +5835,6 @@ rf_model_deserialize(const bytea *data)
 							PG_RE_THROW();
 						}
 						PG_END_TRY();
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 							
 							if (model != NULL && model->right_branch_means == NULL && model->feature_limit > 0)
 							{

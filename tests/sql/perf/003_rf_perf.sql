@@ -54,6 +54,7 @@ DROP TABLE IF EXISTS sample_test_subset;
 CREATE TEMP TABLE sample_test_subset AS
 SELECT features, label FROM sample_test;
 
+DROP TABLE IF EXISTS gpu_metrics_temp;
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);
 DO $$
 DECLARE

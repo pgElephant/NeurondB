@@ -970,6 +970,7 @@ COMMENT ON FUNCTION knn_regress IS 'KNN regression. Built for macos_pg16.';
 -- Random Forest - Complete C Implementation
 -- =============================================================================
 
+-- Wrapper function that redirects to new unified API
 CREATE FUNCTION train_random_forest_classifier(
     table_name text,
     feature_col text,
@@ -981,7 +982,7 @@ CREATE FUNCTION train_random_forest_classifier(
 ) RETURNS integer
     AS 'MODULE_PATHNAME', 'train_random_forest_classifier'
     LANGUAGE C STABLE;
-COMMENT ON FUNCTION train_random_forest_classifier IS 'Train Random Forest classifier: (table, features, labels, n_trees, max_depth, min_samples_split, max_features) returns model_id';
+COMMENT ON FUNCTION train_random_forest_classifier IS 'Train Random Forest classifier (wrapper for neurondb.train): (table, features, labels, n_trees, max_depth, min_samples_split, max_features) returns model_id';
 
 CREATE FUNCTION predict_random_forest(
     model_id integer,
@@ -1616,6 +1617,30 @@ CREATE FUNCTION cluster_dbscan(text, text, float8, integer DEFAULT 5)
     AS 'MODULE_PATHNAME', 'cluster_dbscan'
     LANGUAGE C STABLE STRICT;
 COMMENT ON FUNCTION cluster_dbscan IS 'DBSCAN clustering: (table, vector_col, eps, min_pts) - returns cluster assignments (-1 for noise)';
+
+-- ============================================================================
+-- ML RECOMMENDER SYSTEMS
+-- ============================================================================
+-- Collaborative Filtering (ALS Matrix Factorization)
+-- ============================================================================
+
+CREATE FUNCTION train_collaborative_filter(text, text, text, text, integer DEFAULT 50)
+    RETURNS integer
+    AS 'MODULE_PATHNAME', 'train_collaborative_filter'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION train_collaborative_filter IS 'Train collaborative filtering model using ALS matrix factorization. Returns model_id.';
+
+CREATE FUNCTION predict_collaborative_filter(integer, integer, integer)
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'predict_collaborative_filter'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION predict_collaborative_filter IS 'Predict rating for user-item pair using collaborative filtering model.';
+
+CREATE FUNCTION evaluate_collaborative_filter_by_model_id(integer, text, text, text)
+    RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'evaluate_collaborative_filter_by_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_collaborative_filter_by_model_id IS 'Evaluate collaborative filtering model by model_id. Computes RMSE and MAE.';
 
 -- =============================================================================
 -- Distance Distribution & Analytics

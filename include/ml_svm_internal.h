@@ -26,6 +26,7 @@ typedef struct SVMModel
 	double *alphas;
 	float *support_vectors;
 	int *support_vector_indices;
+	double *support_labels;   /* y_i for each SV, in {-1, 1} */
 	double C;
 	int max_iters;
 } SVMModel;

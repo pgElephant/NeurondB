@@ -23,6 +23,7 @@
 #include "lib/stringinfo.h"
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
+#include "utils/memutils.h"
 
 #include "ml_svm_internal.h"
 #include "neurondb_cuda_svm.h"
@@ -54,6 +55,10 @@ ndb_cuda_svm_pack_model(const SVMModel *model,
 	float *sv_dest;
 	int32 *indices_dest;
 	int i, j;
+	size_t alphas_size;
+	size_t sv_size;
+	size_t indices_size;
+	size_t total_payload;
 
 	if (errstr)
 		*errstr = NULL;
@@ -64,11 +69,41 @@ ndb_cuda_svm_pack_model(const SVMModel *model,
 		return -1;
 	}
 
-	payload_bytes = sizeof(NdbCudaSvmModelHeader)
-		+ sizeof(float) * (size_t)model->n_support_vectors
-		+ sizeof(float) * (size_t)model->n_support_vectors
-			* (size_t)model->n_features
-		+ sizeof(int32) * (size_t)model->n_support_vectors;
+	/* Validate model fields */
+	if (model->n_support_vectors <= 0 || model->n_support_vectors > 100000)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid n_support_vectors for CUDA pack");
+		return -1;
+	}
+	if (model->n_features <= 0 || model->n_features > 10000)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid n_features for CUDA pack");
+		return -1;
+	}
+	if (model->n_samples <= 0 || model->n_samples > 10000000)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid n_samples for CUDA pack");
+		return -1;
+	}
+
+	/* Compute payload size with overflow protection */
+	alphas_size = sizeof(float) * (size_t)model->n_support_vectors;
+	sv_size = sizeof(float) * (size_t)model->n_support_vectors * (size_t)model->n_features;
+	indices_size = sizeof(int32) * (size_t)model->n_support_vectors;
+	total_payload = sizeof(NdbCudaSvmModelHeader) + alphas_size + sv_size + indices_size;
+
+	/* Check against MaxAllocSize */
+	if (total_payload > MaxAllocSize || total_payload + VARHDRSZ > MaxAllocSize)
+	{
+		if (errstr)
+			*errstr = pstrdup("SVM model too large for CUDA pack");
+		return -1;
+	}
+
+	payload_bytes = total_payload;
 
 	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
 	SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
@@ -159,6 +194,10 @@ ndb_cuda_svm_train(const float *features,
 	SVMModel model;
 	int i, j;
 	int rc = -1;
+	size_t alphas_size;
+	size_t errors_size;
+	size_t kernel_matrix_size;
+	size_t kernel_row_size;
 
 	if (errstr)
 		*errstr = NULL;
@@ -250,13 +289,20 @@ ndb_cuda_svm_train(const float *features,
 	actual_max_iters = (max_iters > 1000 && n_samples > 1000) ? 1000 : max_iters;
 	sample_limit = (n_samples > 5000) ? 5000 : n_samples;
 
-	/* Validate input data for NaN/Inf */
+	/* Validate input data for NaN/Inf and label domain */
 	for (i = 0; i < n_samples && i < sample_limit; i++)
 	{
 		if (!isfinite(labels[i]))
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA SVM train: non-finite value in labels array");
+			return -1;
+		}
+		/* SVM requires labels to be exactly -1 or 1 */
+		if (labels[i] != -1.0 && labels[i] != 1.0)
+		{
+			if (errstr)
+				*errstr = pstrdup("CUDA SVM train: labels must be exactly -1.0 or 1.0");
 			return -1;
 		}
 		for (j = 0; j < feature_dim; j++)
@@ -270,11 +316,24 @@ ndb_cuda_svm_train(const float *features,
 		}
 	}
 
-	/* Allocate memory */
-	alphas = (float *)palloc0(sizeof(float) * (size_t)sample_limit);
-	errors = (float *)palloc(sizeof(float) * (size_t)sample_limit);
-	kernel_matrix = (float *)palloc(sizeof(float) * (size_t)sample_limit * (size_t)sample_limit);
-	kernel_row = (float *)palloc(sizeof(float) * (size_t)sample_limit);
+	/* Allocate memory with size validation */
+	alphas_size = sizeof(float) * (size_t)sample_limit;
+	errors_size = sizeof(float) * (size_t)sample_limit;
+	kernel_matrix_size = sizeof(float) * (size_t)sample_limit * (size_t)sample_limit;
+	kernel_row_size = sizeof(float) * (size_t)sample_limit;
+
+	if (alphas_size > MaxAllocSize || errors_size > MaxAllocSize ||
+		kernel_matrix_size > MaxAllocSize || kernel_row_size > MaxAllocSize)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM train: training size too large");
+		return -1;
+	}
+
+	alphas = (float *)palloc0(alphas_size);
+	errors = (float *)palloc(errors_size);
+	kernel_matrix = (float *)palloc(kernel_matrix_size);
+	kernel_row = (float *)palloc(kernel_row_size);
 
 	if (alphas == NULL || errors == NULL || kernel_matrix == NULL || kernel_row == NULL)
 	{
@@ -479,7 +538,7 @@ ndb_cuda_svm_train(const float *features,
 		{
 			if (alphas[i] > (float)eps || (sv_count == 1 && sv_idx == 0))
 			{
-				model.alphas[sv_idx] = (double)alphas[i];
+				model.alphas[sv_idx] = (double)alphas[i] * (double)labels[i];
 				model.support_vector_indices[sv_idx] = i;
 				memcpy(model.support_vectors + sv_idx * feature_dim,
 					features + i * feature_dim,
@@ -490,7 +549,7 @@ ndb_cuda_svm_train(const float *features,
 		if (sv_idx == 0)
 		{
 			/* Fallback: use first sample */
-			model.alphas[0] = 1.0;
+			model.alphas[0] = 1.0 * (double)labels[0];
 			model.support_vector_indices[0] = 0;
 			memcpy(model.support_vectors, features, sizeof(float) * feature_dim);
 		}
@@ -545,6 +604,7 @@ ndb_cuda_svm_predict(const bytea *model_data,
 	const bytea *detoasted;
 	double prediction;
 	int i, j;
+	size_t expected_size;
 
 	if (errstr)
 		*errstr = NULL;
@@ -558,9 +618,24 @@ ndb_cuda_svm_predict(const bytea *model_data,
 
 	/* Detoast the bytea to ensure we have the full data */
 	detoasted =
-		(const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+		(const bytea *)PG_DETOAST_DATUM_COPY(PointerGetDatum(model_data));
 
 	hdr = (const NdbCudaSvmModelHeader *)VARDATA(detoasted);
+
+	/* Validate payload size */
+	expected_size = sizeof(NdbCudaSvmModelHeader)
+		+ sizeof(float) * (size_t)hdr->n_support_vectors
+		+ sizeof(float) * (size_t)hdr->n_support_vectors * (size_t)hdr->feature_dim
+		+ sizeof(int32) * (size_t)hdr->n_support_vectors;
+
+	if (VARSIZE_ANY_EXHDR(detoasted) < expected_size)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM predict: model_data too small for expected layout");
+		pfree((void *)detoasted);
+		return -1;
+	}
+
 	if (hdr->feature_dim != feature_dim)
 	{
 		if (errstr)
@@ -568,6 +643,7 @@ ndb_cuda_svm_predict(const bytea *model_data,
 					   "has %d, input has %d",
 				hdr->feature_dim,
 				feature_dim);
+		pfree((void *)detoasted);
 		return -1;
 	}
 
@@ -588,14 +664,16 @@ ndb_cuda_svm_predict(const bytea *model_data,
 		for (j = 0; j < feature_dim; j++)
 			kernel_val += sv[j] * input[j];
 
-		/* Note: y_i is stored implicitly via label sign in training */
-		/* For now, assume positive label for all support vectors */
+		/* Note: y_i is stored explicitly via alpha sign in model building */
 		prediction += alphas[i] * kernel_val;
 	}
 
 	*class_out = (prediction >= 0.0) ? 1 : 0;
 	if (confidence_out != NULL)
 		*confidence_out = fabs(prediction);
+
+	/* Free detoasted copy */
+	pfree((void *)detoasted);
 
 	return 0;
 }
@@ -616,6 +694,7 @@ ndb_cuda_svm_predict_batch(const bytea *model_data,
 	const bytea *detoasted;
 	int i;
 	int rc;
+	size_t expected_size;
 
 	if (errstr)
 		*errstr = NULL;
@@ -630,18 +709,33 @@ ndb_cuda_svm_predict_batch(const bytea *model_data,
 
 	/* Detoast the bytea to ensure we have the full data */
 	detoasted =
-		(const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+		(const bytea *)PG_DETOAST_DATUM_COPY(PointerGetDatum(model_data));
 
 	/* Validate model_data bytea */
 	if (VARSIZE_ANY_EXHDR(detoasted) < sizeof(NdbCudaSvmModelHeader))
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA SVM batch predict: model_data too small");
+		pfree((void *)detoasted);
 		return -1;
 	}
 
 	base = VARDATA_ANY(detoasted);
 	hdr = (const NdbCudaSvmModelHeader *)base;
+
+	/* Validate full payload size */
+	expected_size = sizeof(NdbCudaSvmModelHeader)
+		+ sizeof(float) * (size_t)hdr->n_support_vectors
+		+ sizeof(float) * (size_t)hdr->n_support_vectors * (size_t)hdr->feature_dim
+		+ sizeof(int32) * (size_t)hdr->n_support_vectors;
+
+	if (VARSIZE_ANY_EXHDR(detoasted) < expected_size)
+	{
+		if (errstr)
+			*errstr = pstrdup("CUDA SVM batch predict: model_data too small for expected layout");
+		pfree((void *)detoasted);
+		return -1;
+	}
 
 	/* Validate model header */
 	if (hdr->feature_dim != feature_dim)
@@ -649,6 +743,7 @@ ndb_cuda_svm_predict_batch(const bytea *model_data,
 		if (errstr)
 			*errstr = psprintf("CUDA SVM batch predict: feature dimension mismatch (expected %d, got %d)",
 				hdr->feature_dim, feature_dim);
+		pfree((void *)detoasted);
 		return -1;
 	}
 
@@ -675,6 +770,9 @@ ndb_cuda_svm_predict_batch(const bytea *model_data,
 
 		predictions_out[i] = class_out;
 	}
+
+	/* Free detoasted copy */
+	pfree((void *)detoasted);
 
 	return 0;
 }

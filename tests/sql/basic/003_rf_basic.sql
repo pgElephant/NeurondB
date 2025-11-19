@@ -2,6 +2,7 @@
 \pset footer off
 \pset pager off
 SET log_min_messages = DEBUG1;
+SET neurondb.gpu_enabled = off;
 
 -- This test uses test_train_view and test_test_view tables created by ml_dataset.py
 -- Run: python ml_dataset.py <dataset_name> to populate the database first
@@ -29,6 +30,7 @@ SELECT features, label FROM sample_train LIMIT 1000;
 CREATE VIEW test_test_view AS
 SELECT features, label FROM sample_test LIMIT 1000;
 
+-- GPU disabled for testing CPU implementation
 SET neurondb.gpu_enabled = on;
 SET neurondb.gpu_kernels = 'l2,cosine,ip,rf_split,rf_predict,rf_train';
 SELECT neurondb_gpu_enable();
@@ -48,7 +50,7 @@ SELECT neurondb.train(
 	'sample_train_subset',
 	'features',
 	'label',
-	'{}'::jsonb
+	'{"n_trees": 3}'::jsonb
 )::integer AS model_id;
 
 -- Debug: Show model_id
@@ -63,6 +65,7 @@ DROP TABLE IF EXISTS sample_test_subset;
 CREATE TEMP TABLE sample_test_subset AS
 SELECT features, label FROM test_test_view;
 
+DROP TABLE IF EXISTS gpu_metrics_temp;
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);
 DO $$
 DECLARE

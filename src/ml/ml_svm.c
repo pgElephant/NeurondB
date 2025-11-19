@@ -20,11 +20,10 @@
  * where C is a regularization parameter and ξᵢ are slack variables for
  * soft-margin SVMs.
  *
- * This implementation uses Sequential Minimal Optimization (SMO), an
- * efficient algorithm for solving the dual formulation of the SVM
- * optimization problem. SMO works by choosing two Lagrange multipliers
- * at a time, optimizing them analytically while holding others fixed,
- * and iterating until convergence.
+ * This implementation uses a heuristic large-margin training algorithm
+ * inspired by Sequential Minimal Optimization (SMO). Unlike true SMO
+ * which optimizes pairs of Lagrange multipliers analytically, this
+ * version uses a simplified single-multiplier update for efficiency.
  *
  * For each update, KKT conditions are checked, and the error for each
  * training sample is computed to guide selection of multipliers. The
@@ -83,10 +82,12 @@ static void svm_dataset_free(SVMDataset *dataset);
 static void svm_dataset_load(const char *quoted_tbl,
 	const char *quoted_feat,
 	const char *quoted_label,
-	SVMDataset *dataset);
+	SVMDataset *dataset,
+	MemoryContext oldcontext);
 static bytea *svm_model_serialize(const SVMModel *model);
-static SVMModel *svm_model_deserialize(const bytea *data);
+static SVMModel *svm_model_deserialize(const bytea *data, MemoryContext target_context);
 static bool svm_metadata_is_gpu(Jsonb *metadata);
+static double svm_decode_label_datum(Datum label_datum, Oid label_type_oid);
 static bool svm_try_gpu_predict_catalog(int32 model_id,
 	const Vector *feature_vec,
 	double *result_out);
@@ -173,10 +174,9 @@ static void
 svm_dataset_load(const char *quoted_tbl,
 	const char *quoted_feat,
 	const char *quoted_label,
-	SVMDataset *dataset)
+	SVMDataset *dataset,
+	MemoryContext oldcontext)
 {
-	StringInfoData query;
-	MemoryContext oldcontext;
 	int ret;
 	int nvec = 0;
 	int dim = 0;
@@ -187,30 +187,27 @@ svm_dataset_load(const char *quoted_tbl,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("neurondb: svm_dataset_load: dataset is NULL")));
 
-	oldcontext = CurrentMemoryContext;
-
-	/* Initialize query in caller's context before SPI_connect */
-	initStringInfo(&query);
-	MemoryContextSwitchTo(oldcontext);
+	/* Build query string */
+	char *query_str;
+	size_t query_len = strlen("SELECT , FROM  WHERE  IS NOT NULL AND  IS NOT NULL") +
+		strlen(quoted_feat) * 2 + strlen(quoted_label) * 2 + strlen(quoted_tbl) + 100;
+	query_str = (char *)palloc(query_len);
+	snprintf(query_str, query_len,
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		quoted_feat, quoted_label, quoted_tbl, quoted_feat, quoted_label);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("neurondb: SPI_connect failed")));
 
-	appendStringInfo(&query,
-		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
-		quoted_feat,
-		quoted_label,
-		quoted_tbl,
-		quoted_feat,
-		quoted_label);
-	elog(DEBUG1, "svm_dataset_load: executing query: %s", query.data);
+	elog(DEBUG1, "svm_dataset_load: executing query: %s", query_str);
 
-	ret = SPI_execute(query.data, true, 0);
+	ret = SPI_execute(query_str, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
 		SPI_finish();
+
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("neurondb: query failed")));
@@ -220,6 +217,7 @@ svm_dataset_load(const char *quoted_tbl,
 	if (nvec < 10)
 	{
 		SPI_finish();
+
 		ereport(ERROR,
 			(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 				errmsg("neurondb: need at least 10 samples for SVM")));
@@ -232,13 +230,27 @@ svm_dataset_load(const char *quoted_tbl,
 		TupleDesc tupdesc = SPI_tuptable->tupdesc;
 		Datum feat_datum;
 		bool feat_null;
-		Vector *vec;
+		Oid feat_type;
 
 		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+		feat_type = SPI_gettypeid(tupdesc, 1);
+		
 		if (!feat_null)
 		{
-			vec = DatumGetVector(feat_datum);
-			dim = vec->dim;
+			/* Check if it's an array type (real[] or double precision[]) */
+			if (feat_type == FLOAT4ARRAYOID || feat_type == FLOAT8ARRAYOID)
+			{
+				ArrayType *arr = DatumGetArrayTypeP(feat_datum);
+				if (arr != NULL)
+					dim = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+			}
+			/* Otherwise try Vector type */
+			else
+			{
+				Vector *vec = DatumGetVector(feat_datum);
+				if (vec != NULL)
+					dim = vec->dim;
+			}
 		}
 	}
 
@@ -250,27 +262,29 @@ svm_dataset_load(const char *quoted_tbl,
 				errmsg("neurondb: invalid feature dimension: %d", dim)));
 	}
 
-	/* Switch back to caller's context before allocating arrays */
+	/* Allocate arrays in caller's context, not SPI context */
 	MemoryContextSwitchTo(oldcontext);
 	dataset->features =
 		(float *)palloc(sizeof(float) * (size_t)nvec * (size_t)dim);
 	dataset->labels = (double *)palloc(sizeof(double) * (size_t)nvec);
+	/* Initialize to zero for debugging */
+	memset(dataset->features, 0, sizeof(float) * (size_t)nvec * (size_t)dim);
+	memset(dataset->labels, 0, sizeof(double) * (size_t)nvec);
 	dataset->n_samples = nvec;
 	dataset->feature_dim = dim;
 
 	/* Extract data */
 	{
 		Oid label_type;
-		bool label_is_int = false;
+		Oid feat_type;
+		int valid_idx = 0;
 
-		/* Check label column type */
+		/* Check label and feature column types */
 		if (nvec > 0)
 		{
 			TupleDesc tupdesc = SPI_tuptable->tupdesc;
 			label_type = SPI_gettypeid(tupdesc, 2);
-			label_is_int =
-				(label_type == INT4OID || label_type == INT2OID
-					|| label_type == INT8OID);
+			feat_type = SPI_gettypeid(tupdesc, 1);
 		}
 
 		for (i = 0; i < nvec; i++)
@@ -281,7 +295,6 @@ svm_dataset_load(const char *quoted_tbl,
 			Datum label_datum;
 			bool feat_null;
 			bool label_null;
-			Vector *vec;
 
 			feat_datum =
 				SPI_getbinval(tuple, tupdesc, 1, &feat_null);
@@ -291,38 +304,89 @@ svm_dataset_load(const char *quoted_tbl,
 			if (feat_null || label_null)
 				continue;
 
-			vec = DatumGetVector(feat_datum);
-			if (vec->dim != dim)
+			/* Handle array types (real[] or double precision[]) */
+			if (feat_type == FLOAT4ARRAYOID || feat_type == FLOAT8ARRAYOID)
 			{
-				SPI_finish();
-				svm_dataset_free(dataset);
-				elog(DEBUG1,
-				     "Feature dimension mismatch: expected %d, got %d",
-				     dim,
-				     vec->dim);
-				ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("Feature dimension mismatch: expected %d, got %d",
-							dim,
-							vec->dim)));
+				ArrayType *arr = DatumGetArrayTypeP(feat_datum);
+				int arr_dim = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+				
+				if (arr_dim != dim)
+				{
+					SPI_finish();
+					svm_dataset_free(dataset);
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("Feature dimension mismatch: expected %d, got %d",
+								dim, arr_dim)));
+				}
+
+				/* Copy array data to features buffer */
+				if (feat_type == FLOAT4ARRAYOID)
+				{
+					float *arr_data = (float *)ARR_DATA_PTR(arr);
+					memcpy(dataset->features + valid_idx * dim,
+						arr_data,
+						sizeof(float) * dim);
+				}
+				else /* FLOAT8ARRAYOID */
+				{
+					double *arr_data = (double *)ARR_DATA_PTR(arr);
+					/* Convert double to float */
+					for (int j = 0; j < dim; j++)
+						dataset->features[valid_idx * dim + j] = (float)arr_data[j];
+				}
+			}
+			/* Handle Vector type */
+			else
+			{
+				Vector *vec = DatumGetVector(feat_datum);
+				if (vec->dim != dim)
+				{
+					SPI_finish();
+					svm_dataset_free(dataset);
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("Feature dimension mismatch: expected %d, got %d",
+								dim, vec->dim)));
+				}
+
+				/* Write to valid position only */
+				memcpy(dataset->features + valid_idx * dim,
+					vec->data,
+					sizeof(float) * dim);
 			}
 
-			memcpy(dataset->features + i * dim,
-				vec->data,
-				sizeof(float) * dim);
-
 			/* Handle both integer and float label types */
-			if (label_is_int)
-				dataset->labels[i] =
-					(double)DatumGetInt32(label_datum);
+			if (label_type == INT2OID)
+				dataset->labels[valid_idx] = (double) DatumGetInt16(label_datum);
+			else if (label_type == INT4OID)
+				dataset->labels[valid_idx] = (double) DatumGetInt32(label_datum);
+			else if (label_type == INT8OID)
+				dataset->labels[valid_idx] = (double) DatumGetInt64(label_datum);
 			else
-				dataset->labels[i] =
-					DatumGetFloat8(label_datum);
+				dataset->labels[valid_idx] = DatumGetFloat8(label_datum);
+
+			valid_idx++;
 		}
+
+		if (valid_idx == 0)
+		{
+			SPI_finish();
+			svm_dataset_free(dataset);
+
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: svm_dataset_load: no valid rows found in '%s' "
+						   "(all rows had NULL features or labels)",
+						   quoted_tbl)));
+		}
+
+		/* Set correct sample count */
+		dataset->n_samples = valid_idx;
 	}
 
 	SPI_finish();
-	pfree(query.data);
+
 }
 
 /*
@@ -376,6 +440,12 @@ svm_model_serialize(const SVMModel *model)
 			pq_sendint32(&buf, model->support_vector_indices[i]);
 	}
 
+	if (model->support_labels != NULL && model->n_support_vectors > 0)
+	{
+		for (i = 0; i < model->n_support_vectors; i++)
+			pq_sendfloat8(&buf, model->support_labels[i]);
+	}
+
 	return pq_endtypsend(&buf);
 }
 
@@ -383,11 +453,12 @@ svm_model_serialize(const SVMModel *model)
  * svm_model_deserialize
  */
 static SVMModel *
-svm_model_deserialize(const bytea *data)
+svm_model_deserialize(const bytea *data, MemoryContext target_context)
 {
 	StringInfoData buf;
 	SVMModel *model;
 	int i;
+	MemoryContext oldcontext;
 
 	if (data == NULL)
 		return NULL;
@@ -396,6 +467,9 @@ svm_model_deserialize(const bytea *data)
 	buf.len = VARSIZE(data) - VARHDRSZ;
 	buf.maxlen = buf.len;
 	buf.cursor = 0;
+
+	/* Switch to target context for allocations */
+	oldcontext = MemoryContextSwitchTo(target_context);
 
 	model = (SVMModel *)palloc(sizeof(SVMModel));
 	memset(model, 0, sizeof(SVMModel));
@@ -412,23 +486,25 @@ svm_model_deserialize(const bytea *data)
 	if (model->n_features <= 0 || model->n_features > 10000)
 	{
 		pfree(model);
+		MemoryContextSwitchTo(oldcontext);
 		elog(DEBUG1,
-		     "svm: invalid n_features %d in deserialized model (corrupted data?)",
+		     "neurondb: svm: invalid n_features %d in deserialized model (corrupted data?)",
 		     model->n_features);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: invalid n_features %d in deserialized model (corrupted data?)",
+				errmsg("neurondb: svm: invalid n_features %d in deserialized model (corrupted data?)",
 					model->n_features)));
 	}
 	if (model->n_support_vectors < 0 || model->n_support_vectors > 100000)
 	{
 		pfree(model);
+		MemoryContextSwitchTo(oldcontext);
 		elog(DEBUG1,
-		     "svm: invalid n_support_vectors %d in deserialized model (corrupted data?)",
+		     "neurondb: svm: invalid n_support_vectors %d in deserialized model (corrupted data?)",
 		     model->n_support_vectors);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: invalid n_support_vectors %d in deserialized model (corrupted data?)",
+				errmsg("neurondb: svm: invalid n_support_vectors %d in deserialized model (corrupted data?)",
 					model->n_support_vectors)));
 	}
 
@@ -459,6 +535,17 @@ svm_model_deserialize(const bytea *data)
 				pq_getmsgint(&buf, 4);
 	}
 
+	if (model->n_support_vectors > 0)
+	{
+		model->support_labels = (double *)palloc(
+			sizeof(double) * (size_t)model->n_support_vectors);
+		for (i = 0; i < model->n_support_vectors; i++)
+			model->support_labels[i] = pq_getmsgfloat8(&buf);
+	}
+
+	/* Restore previous context */
+	MemoryContextSwitchTo(oldcontext);
+
 	return model;
 }
 
@@ -487,11 +574,32 @@ svm_metadata_is_gpu(Jsonb *metadata)
 	PG_CATCH();
 	{
 		/* Invalid JSONB, assume CPU */
+		if (meta_text != NULL)
+			pfree(meta_text);
 		is_gpu = false;
 	}
 	PG_END_TRY();
 
 	return is_gpu;
+}
+
+/*
+ * svm_decode_label_datum
+ *
+ * Decode a label datum based on its PostgreSQL type OID, similar to
+ * how svm_dataset_load handles different label types.
+ */
+static double
+svm_decode_label_datum(Datum label_datum, Oid label_type_oid)
+{
+	if (label_type_oid == INT2OID)
+		return (double) DatumGetInt16(label_datum);
+	else if (label_type_oid == INT4OID)
+		return (double) DatumGetInt32(label_datum);
+	else if (label_type_oid == INT8OID)
+		return (double) DatumGetInt64(label_datum);
+	else
+		return DatumGetFloat8(label_datum);
 }
 
 /*
@@ -538,7 +646,10 @@ svm_try_gpu_predict_catalog(int32 model_id,
 
 cleanup:
 	if (payload != NULL)
+	{
+		elog(DEBUG1, "svm_try_gpu_predict_catalog: freeing payload=%p", (void *)payload);
 		pfree(payload);
+	}
 	if (metrics != NULL)
 		pfree(metrics);
 	if (gpu_err != NULL)
@@ -556,11 +667,15 @@ svm_load_model_from_catalog(int32 model_id, SVMModel **out)
 	bytea *payload = NULL;
 	Jsonb *metrics = NULL;
 	SVMModel *decoded;
+	MemoryContext oldcontext;
 
 	if (out == NULL)
 		return false;
 
 	*out = NULL;
+
+	/* Save context before SPI operations */
+	oldcontext = CurrentMemoryContext;
 
 	if (!ml_catalog_fetch_model_payload(model_id, &payload, NULL, &metrics))
 		return false;
@@ -576,16 +691,23 @@ svm_load_model_from_catalog(int32 model_id, SVMModel **out)
 	if (svm_metadata_is_gpu(metrics))
 	{
 		if (payload != NULL)
+		{
+			elog(DEBUG1, "svm_load_model_from_catalog: freeing payload=%p (GPU model)", (void *)payload);
 			pfree(payload);
+		}
 		if (metrics != NULL)
 			pfree(metrics);
 		return false;
 	}
 
-	decoded = svm_model_deserialize(payload);
+	/* Deserialize in the context that was active before SPI operations */
+	decoded = svm_model_deserialize(payload, oldcontext);
 
 	if (payload != NULL)
+	{
+		elog(DEBUG1, "svm_load_model_from_catalog: freeing payload=%p (CPU model)", (void *)payload);
 		pfree(payload);
+	}
 	if (metrics != NULL)
 		pfree(metrics);
 
@@ -599,7 +721,7 @@ svm_load_model_from_catalog(int32 model_id, SVMModel **out)
 /*
  * train_svm_classifier
  *
- * Trains a linear SVM using simplified SMO algorithm
+ * Trains a linear SVM using heuristic large-margin algorithm
  * Returns model_id
  */
 PG_FUNCTION_INFO_V1(train_svm_classifier);
@@ -615,9 +737,14 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 	char *tbl_str = NULL;
 	char *feat_str = NULL;
 	char *label_str = NULL;
-	StringInfoData query;
+	StringInfoData hyperbuf_cpu;
+	StringInfoData metricsbuf;
+	bool hyperbuf_cpu_inited = false;
+	bool metricsbuf_inited = false;
+	MemoryContext oldcontext;
 	int nvec = 0;
 	int dim = 0;
+	int ret;
 	int i;
 	int j;
 	SVMDataset dataset;
@@ -629,93 +756,74 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 	Jsonb *gpu_hyperparams = NULL;
 	StringInfoData hyperbuf;
 	int32 model_id = 0;
+	SVMModel model;
+	double *alphas = NULL;
+	double *errors = NULL;
 
 	/* Validate argument count */
 	if (PG_NARGS() < 3 || PG_NARGS() > 5)
 	{
 		elog(DEBUG1,
-		     "svm: train_svm_classifier requires 3-5 arguments, got %d",
+		     "neurondb: svm: train_svm_classifier requires 3-5 arguments, got %d",
 		     PG_NARGS());
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: train_svm_classifier requires 3-5 arguments, got %d",
+				errmsg("neurondb: svm: train_svm_classifier requires 3-5 arguments, got %d",
 					PG_NARGS()),
 				errhint("Usage: "
 					"train_svm_classifier(table_name, "
 					"feature_col, label_col, [C], "
 					"[max_iters])")));
+	}
 
 	/* Get required arguments */
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: table_name, feature_col, and "
-				       "label_col are required")));
+				errmsg("neurondb: svm: table_name, feature_col, and "
+			       "label_col are required")));
 
+	/* Extract input parameters */
 	table_name = PG_GETARG_TEXT_PP(0);
 	feature_col = PG_GETARG_TEXT_PP(1);
 	label_col = PG_GETARG_TEXT_PP(2);
 
-	/* Get optional arguments with defaults */
-	c_param = PG_ARGISNULL(3) ? 1.0 : PG_GETARG_FLOAT8(3);
-	max_iters = PG_ARGISNULL(4) ? 1000 : PG_GETARG_INT32(4);
+	/* Get optional parameters */
+	c_param = PG_NARGS() >= 4 && !PG_ARGISNULL(3) ? PG_GETARG_FLOAT8(3) : 1.0;
+	max_iters = PG_NARGS() >= 5 && !PG_ARGISNULL(4) ? PG_GETARG_INT32(4) : 1000;
 
-	/* Validate hyperparameters */
-	if (c_param <= 0.0 || c_param > 1000.0)
-	{
-		elog(DEBUG1,
-		     "svm: C parameter must be in range (0, 1000], got %.6f",
-		     c_param);
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: C parameter must be in range (0, 1000], got %.6f",
-					c_param)));
-	}
-
-	if (max_iters <= 0 || max_iters > 100000)
-	{
-		elog(DEBUG1,
-		     "svm: max_iters must be in range (0, 100000], got %d",
-		     max_iters);
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: max_iters must be in range (0, 100000], got %d",
-					max_iters)));
-	}
-
-	/* Convert text to C strings */
+	/* Convert text arguments to C strings */
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
-	label_str = text_to_cstring(label_col);
-
-	/* Validate strings are not empty */
+	label_str = text_to_cstring(label_col);	/* Validate strings are not empty */
 	if (tbl_str == NULL || strlen(tbl_str) == 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: table_name cannot be empty")));
+				errmsg("neurondb: svm: table_name cannot be empty")));
 
 	if (feat_str == NULL || strlen(feat_str) == 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: feature_col cannot be empty")));
+				errmsg("neurondb: svm: feature_col cannot be empty")));
 
 	if (label_str == NULL || strlen(label_str) == 0)
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: label_col cannot be empty")));
+				errmsg("neurondb: svm: label_col cannot be empty")));
 
 	/* Initialize dataset */
 	svm_dataset_init(&dataset);
-	initStringInfo(&query);
 
-	/* Quote identifiers for safe SQL */
+	/* Save current memory context before SPI operations */
+	oldcontext = CurrentMemoryContext;
+
+	/* Load training data via SPI - svm_dataset_load handles SPI connect/disconnect */
 	quoted_tbl = quote_identifier(tbl_str);
 	quoted_feat = quote_identifier(feat_str);
 	quoted_label = quote_identifier(label_str);
 
-	/* Load dataset */
-	svm_dataset_load(quoted_tbl, quoted_feat, quoted_label, &dataset);
-
+	svm_dataset_load(quoted_tbl, quoted_feat, quoted_label, &dataset, oldcontext);
+	
 	nvec = dataset.n_samples;
 	dim = dataset.feature_dim;
 
@@ -723,39 +831,38 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 	if (nvec < 10)
 	{
 		svm_dataset_free(&dataset);
-		pfree(query.data);
-		pfree(tbl_str);
-		pfree(feat_str);
-		pfree(label_str);
+
+
+
+
 		elog(DEBUG1,
-		     "svm: need at least 10 samples for training, got %d",
+		     "neurondb: svm: need at least 10 samples for training, got %d",
 		     nvec);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: need at least 10 samples for training, got %d",
+				errmsg("neurondb: svm: need at least 10 samples for training, got %d",
 					nvec)));
 	}
 
 	if (dim <= 0 || dim > 10000)
 	{
 		svm_dataset_free(&dataset);
-		pfree(query.data);
-		pfree(tbl_str);
-		pfree(feat_str);
-		pfree(label_str);
+
+
+
+
 		elog(DEBUG1,
-		     "svm: invalid feature dimension %d (must be in range [1, 10000])",
+		     "neurondb: svm: invalid feature dimension %d (must be in range [1, 10000])",
 		     dim);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: invalid feature dimension %d (must be in range [1, 10000])",
+				errmsg("neurondb: svm: invalid feature dimension %d (must be in range [1, 10000])",
 					dim)));
 	}
 
 	/* Validate labels are binary - check for at least two distinct values */
 	{
 		double first_label = dataset.labels[0];
-		double second_label = -1.0;
 		int n_class0 = 0;
 		int n_class1 = 0;
 		bool found_two_classes = false;
@@ -765,7 +872,6 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 		{
 			if (fabs(dataset.labels[i] - first_label) > 1e-6)
 			{
-				second_label = dataset.labels[i];
 				found_two_classes = true;
 				break;
 			}
@@ -774,27 +880,32 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 		if (!found_two_classes)
 		{
 			svm_dataset_free(&dataset);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(label_str);
+
+
+
+
 			elog(DEBUG1,
-			     "svm: all labels have the same value (%.6f), need at least two classes",
+			     "neurondb: svm: all labels have the same value (%.6f), need at least two classes",
 			     first_label);
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("svm: all labels have the same value (%.6f), need at least two classes",
+					errmsg("neurondb: svm: all labels have the same value (%.6f), need at least two classes",
 						first_label)));
 		}
 
-		/* Count samples in each class (normalize to 0/1 for counting) */
+		/* Normalize labels to {-1, 1} for SVM math */
 		for (i = 0; i < nvec; i++)
 		{
-			/* Normalize label: treat values <= 0.5 as class 0, > 0.5 as class 1 */
-			/* Also handle -1/1 encoding: treat < 0 as class 0, >= 0 as class 1 */
+			if (dataset.labels[i] <= 0.5)
+				dataset.labels[i] = -1.0;
+			else
+				dataset.labels[i] = 1.0;
+		}
+
+		/* Count samples in each class after normalization */
+		for (i = 0; i < nvec; i++)
+		{
 			if (dataset.labels[i] < 0.0)
-				n_class0++;
-			else if (dataset.labels[i] <= 0.5)
 				n_class0++;
 			else
 				n_class1++;
@@ -803,155 +914,146 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 		if (n_class0 == 0 || n_class1 == 0)
 		{
 			svm_dataset_free(&dataset);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(label_str);
+
+
+
+
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("svm: labels must contain both classes (class0=%d, class1=%d)",
+					errmsg("neurondb: svm: labels must contain both classes (negative=%d, positive=%d)",
 						n_class0,
 						n_class1)));
 		}
 
 		elog(DEBUG1,
-		     "neurondb: svm: label validation passed (class0=%d, class1=%d, first=%.6f, second=%.6f)",
+		     "neurondb: svm: label normalization completed (negative=%d, positive=%d)",
 		     n_class0,
-		     n_class1,
-		     first_label,
-		     second_label);
+		     n_class1);
+
+		elog(DEBUG1, "neurondb: svm: labels normalized to {-1, 1} for SVM training");
 	}
 
 	/* Try GPU training first */
 	if (neurondb_gpu_is_available() && nvec > 0 && dim > 0)
 	{
-		initStringInfo(&hyperbuf);
-		appendStringInfo(&hyperbuf,
-			"{\"C\":%.6f,\"max_iters\":%d}",
-			c_param,
-			max_iters);
+		/* Create hyperparameters Jsonb using simple string parsing */
+		char hyper_str[256];
+		snprintf(hyper_str, sizeof(hyper_str), "{\"C\":%.6f,\"max_iters\":%d}",
+			c_param, max_iters);
 		gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(
-			jsonb_in, CStringGetDatum(hyperbuf.data)));
+			jsonb_in, CStringGetDatum(hyper_str)));
 
 		if (gpu_hyperparams == NULL)
 		{
-				elog(DEBUG1,
-				     "neurondb: svm: failed to create hyperparameters JSONB, falling back to CPU");
-		} else
+			elog(DEBUG1,
+			     "neurondb: svm: failed to create hyperparameters JSONB, falling back to CPU");
+		}
+		else if (ndb_gpu_try_train_model("svm",
+			    NULL,
+			    NULL,
+			    tbl_str,
+			    label_str,
+			    NULL,
+			    0,
+			    gpu_hyperparams,
+			    dataset.features,
+			    dataset.labels,
+			    nvec,
+			    dim,
+			    2,
+			    &gpu_result,
+			    &gpu_err)
+			&& gpu_result.spec.model_data != NULL)
 		{
-			if (ndb_gpu_try_train_model("svm",
-				    NULL,
-				    NULL,
-				    tbl_str,
-				    label_str,
-				    NULL,
-				    0,
-				    gpu_hyperparams,
-				    dataset.features,
-				    dataset.labels,
-				    nvec,
-				    dim,
-				    2,
-				    &gpu_result,
-				    &gpu_err)
-				&& gpu_result.spec.model_data != NULL)
+			MLCatalogModelSpec spec;
+
+			spec = gpu_result.spec;
+
+			if (spec.training_table == NULL)
+				spec.training_table = tbl_str;
+			if (spec.training_column == NULL)
+				spec.training_column = label_str;
+			/* Note: spec.parameters may be set by GPU framework, don't override or double-free */
+			if (spec.parameters == NULL)
 			{
-				MLCatalogModelSpec spec;
+				spec.parameters = gpu_hyperparams;
+				gpu_hyperparams = NULL;
+			}
+			else
+			{
+				/* GPU framework provided parameters, don't free gpu_hyperparams */
+				gpu_hyperparams = NULL;
+			}
 
-				spec = gpu_result.spec;
+			spec.algorithm = "svm";
+			spec.model_type = "classification";
+			spec.training_time_ms = -1;
+			spec.num_samples = nvec;
+			spec.num_features = dim;
 
-				if (spec.training_table == NULL)
-					spec.training_table = tbl_str;
-				if (spec.training_column == NULL)
-					spec.training_column = label_str;
-				if (spec.parameters == NULL)
-				{
-					spec.parameters = gpu_hyperparams;
-					gpu_hyperparams = NULL;
-				}
+			model_id = ml_catalog_register_model(&spec);
 
-				spec.algorithm = "svm";
-				spec.model_type = "classification";
-				spec.training_time_ms = -1;
-				spec.num_samples = nvec;
-				spec.num_features = dim;
-
-				model_id = ml_catalog_register_model(&spec);
-
-				if (model_id <= 0)
-				{
-					svm_dataset_free(&dataset);
-					pfree(query.data);
-					if (gpu_hyperparams)
-						pfree(gpu_hyperparams);
-					pfree(tbl_str);
-					pfree(feat_str);
-					pfree(label_str);
-					ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-							errmsg("svm: failed to "
-							       "register GPU "
-							       "model in "
-							       "catalog")));
-				}
-
+			if (model_id <= 0)
+			{
+				ndb_gpu_free_train_result(&gpu_result);
 				svm_dataset_free(&dataset);
-				pfree(query.data);
+
 				if (gpu_hyperparams)
 					pfree(gpu_hyperparams);
-				pfree(tbl_str);
-				pfree(feat_str);
-				pfree(label_str);
 
-				PG_RETURN_INT32(model_id);
-			} else
+				ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("neurondb: svm: failed to register GPU model in catalog")));
+			}
+
+			/* Success! Catalog took ownership of model_data.
+			 * Let memory context handle cleanup of all allocations automatically. */
+
+			PG_RETURN_INT32(model_id);
+		}
+		else
+		{
+			if (gpu_err != NULL)
 			{
-				if (gpu_err != NULL)
-						elog(DEBUG1,
-							"neurondb: svm: GPU training failed: %s",
-						gpu_err);
-				else
-				{
-					elog(DEBUG1,
-					     "neurondb: svm: GPU training unavailable, falling back to CPU");
-				}
-				if (gpu_hyperparams != NULL)
-				{
-					pfree(gpu_hyperparams);
-					gpu_hyperparams = NULL;
-				}
+				elog(DEBUG1,
+					"neurondb: svm: GPU training failed: %s",
+					gpu_err);
+				pfree(gpu_err);
+			}
+			else
+			{
+				elog(DEBUG1,
+				     "neurondb: svm: GPU training unavailable, falling back to CPU");
+			}
+			if (gpu_hyperparams != NULL)
+			{
+				pfree(gpu_hyperparams);
+				gpu_hyperparams = NULL;
 			}
 		}
 	}
 
-	/* Fall back to CPU training - simplified SMO algorithm */
+	/* Fall back to CPU training */
 	elog(DEBUG1,
-	     "neurondb: svm: using CPU training path (n_samples=%d, feature_dim=%d, C=%.6f, max_iters=%d)",
+	     "neurondb: svm: starting CPU training (n_samples=%d, feature_dim=%d)",
 	     nvec,
-	     dim,
-	     c_param,
-	     max_iters);
+	     dim);
 
+	/* CPU training implementation */
 	{
-		double *alphas = NULL;
-		double *errors = NULL;
 		double bias = 0.0;
 		int actual_max_iters;
 		int sample_limit;
 		int kernel_limit;
 		int iter;
-		int changed;
 		int num_changed = 0;
 		int examine_all = 1;
 		double eps = 1e-3;
 		int sv_count = 0;
-		SVMModel model;
 		bytea *serialized = NULL;
 		MLCatalogModelSpec spec;
 		Jsonb *params_jsonb = NULL;
 		Jsonb *metrics_jsonb = NULL;
-		StringInfoData hyperbuf_cpu;
-		StringInfoData metricsbuf;
 		int correct = 0;
 		double accuracy = 0.0;
 
@@ -967,28 +1069,11 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 		     sample_limit,
 		     kernel_limit);
 
-		/* Allocate memory for SMO */
+		/* Allocate memory for heuristic training algorithm */
 		alphas = (double *)palloc0(
 			sizeof(double) * (size_t)sample_limit);
 		errors =
 			(double *)palloc(sizeof(double) * (size_t)sample_limit);
-
-		if (alphas == NULL || errors == NULL)
-		{
-			if (alphas)
-				pfree(alphas);
-			if (errors)
-				pfree(errors);
-			svm_dataset_free(&dataset);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(label_str);
-			ereport(ERROR,
-				(errcode(ERRCODE_OUT_OF_MEMORY),
-					errmsg("svm: failed to allocate memory "
-					       "for SMO algorithm")));
-		}
 
 		/* Initialize errors: E_i = f(x_i) - y_i, where f(x_i) = 0 initially */
 		/* Also initialize alphas to small values to help convergence */
@@ -1003,32 +1088,113 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 				alphas[i] = c_param * 0.1;
 		}
 
-		/* Simplified SMO: iterate until convergence or max iterations */
+		/* Heuristic training: iterate until convergence or max iterations */
 		for (iter = 0; iter < actual_max_iters; iter++)
 		{
 			num_changed = 0;
-			changed = 0;
 
 			if (examine_all)
 			{
-				for (i = 0; i < sample_limit; i++)
+				for (i = 0; i < sample_limit && i < nvec; i++)
 				{
-					if (i >= nvec)
-						break;
-					changed +=
-						1; /* Simplified: always update */
-				}
-			} else
-			{
-				/* Only examine non-bound examples */
-				for (i = 0; i < sample_limit; i++)
-				{
-					if (i >= nvec)
-						break;
-					if (alphas[i] > eps
-						&& alphas[i] < (c_param - eps))
+					/* Update sample i */
 					{
-						changed += 1;
+						double error_i = errors[i];
+						double label_i = dataset.labels[i];
+						double alpha_i = alphas[i];
+						double eta;
+						double L = 0.0;
+						double H = c_param;
+						double new_alpha_i = 0.0;
+						double delta_alpha;
+
+						/* Compute eta: second derivative of objective function */
+						eta = 2.0 * linear_kernel(dataset.features + i * dim,
+							dataset.features + i * dim, dim);
+						if (eta <= 1e-10)
+							eta = 1.0;
+
+						/* Update alpha using gradient descent-like approach */
+						if ((label_i * error_i < -eps && alpha_i < c_param) ||
+							(label_i * error_i > eps && alpha_i > 0.0))
+						{
+							new_alpha_i = alpha_i - (error_i / eta);
+							new_alpha_i = (new_alpha_i < L) ? L : (new_alpha_i > H) ? H : new_alpha_i;
+							delta_alpha = new_alpha_i - alpha_i;
+
+							if (fabs(delta_alpha) > eps)
+							{
+								alphas[i] = new_alpha_i;
+								/* Update errors for all other samples */
+								for (j = 0; j < sample_limit && j < nvec; j++)
+								{
+									double kernel_val;
+
+									if (j == i)
+										continue;
+									kernel_val = linear_kernel(
+										dataset.features + i * dim,
+										dataset.features + j * dim,
+										dim);
+									errors[j] -= delta_alpha * label_i * kernel_val;
+								}
+								num_changed++;
+							}
+						}
+					}
+				}
+			}
+			else
+			{
+				for (i = 0; i < sample_limit && i < nvec; i++)
+				{
+					if (alphas[i] > eps && alphas[i] < (c_param - eps))
+					{
+						/* Update sample i */
+						{
+							double error_i = errors[i];
+							double label_i = dataset.labels[i];
+							double alpha_i = alphas[i];
+							double eta;
+							double L = 0.0;
+							double H = c_param;
+							double new_alpha_i = 0.0;
+							double delta_alpha;
+
+							/* Compute eta: second derivative of objective function */
+							eta = 2.0 * linear_kernel(dataset.features + i * dim,
+								dataset.features + i * dim, dim);
+							if (eta <= 1e-10)
+								eta = 1.0;
+
+							/* Update alpha using gradient descent-like approach */
+							if ((label_i * error_i < -eps && alpha_i < c_param) ||
+								(label_i * error_i > eps && alpha_i > 0.0))
+							{
+								new_alpha_i = alpha_i - (error_i / eta);
+								new_alpha_i = (new_alpha_i < L) ? L : (new_alpha_i > H) ? H : new_alpha_i;
+								delta_alpha = new_alpha_i - alpha_i;
+
+								if (fabs(delta_alpha) > eps)
+								{
+									alphas[i] = new_alpha_i;
+									/* Update errors for all other samples */
+									for (j = 0; j < sample_limit && j < nvec; j++)
+									{
+										double kernel_val;
+
+										if (j == i)
+											continue;
+										kernel_val = linear_kernel(
+											dataset.features + i * dim,
+											dataset.features + j * dim,
+											dim);
+										errors[j] -= delta_alpha * label_i * kernel_val;
+									}
+									num_changed++;
+								}
+							}
+						}
 					}
 				}
 			}
@@ -1038,115 +1204,25 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			else if (num_changed == 0)
 				examine_all = 1;
 
-			if (changed == 0)
+			if (num_changed == 0)
 				break;
 
-			/* Simplified update: adjust alphas based on errors */
-			for (i = 0; i < sample_limit && i < nvec; i++)
-			{
-				double error_i;
-				double label_i;
-				double alpha_i;
-				double eta;
-				double L;
-				double H;
-				double new_alpha_i;
-				double delta_alpha;
-
-				error_i = errors[i];
-				label_i = dataset.labels[i];
-				alpha_i = alphas[i];
-				L = 0.0;
-				H = c_param;
-				new_alpha_i = 0.0;
-
-				/* Compute eta: second derivative of objective function */
-				/* For linear kernel: eta = 2 * K(x_i, x_i) = 2 * ||x_i||^2 */
-				eta = 2.0 * linear_kernel(dataset.features + i * dim,
-					dataset.features + i * dim, dim);
-
-				/* Defensive: ensure eta is positive and reasonable */
-				if (eta <= 1e-10)
-					eta = 1.0;
-
-				/* Update alpha using gradient descent-like approach */
-				/* But we need to respect KKT conditions */
-				if (label_i * error_i < -eps)
-				{
-					/* Violates KKT: alpha should increase */
-					new_alpha_i = alpha_i + (-label_i * error_i) / eta;
-				}
-				else if (label_i * error_i > eps)
-				{
-					/* Violates KKT: alpha should decrease */
-					new_alpha_i = alpha_i - (label_i * error_i) / eta;
-				}
-				else
-				{
-					/* KKT satisfied, no update needed */
-					continue;
-				}
-
-				/* Clip to bounds [0, C] */
-				if (new_alpha_i < L)
-					new_alpha_i = L;
-				if (new_alpha_i > H)
-					new_alpha_i = H;
-
-				/* Only update if change is significant */
-				delta_alpha = new_alpha_i - alpha_i;
-				if (fabs(delta_alpha) < eps)
-					continue;
-
-				alphas[i] = new_alpha_i;
-
-				/* Update error */
-				for (j = 0; j < sample_limit && j < nvec; j++)
-				{
-					double kernel_val;
-
-					if (j >= nvec)
-						break;
-					kernel_val = linear_kernel(
-						dataset.features + i * dim,
-						dataset.features + j * dim,
-						dim);
-					errors[j] -= delta_alpha * label_i
-						* kernel_val;
-				}
-
-				num_changed++;
-			}
-
-			/* Update bias (simplified) */
-			if (num_changed > 0)
+			/* Update bias after changes */
 			{
 				double bias_sum = 0.0;
 				int bias_count = 0;
 				for (i = 0; i < sample_limit && i < nvec; i++)
 				{
-					if (alphas[i] > eps
-						&& alphas[i] < (c_param - eps))
+					if (alphas[i] > eps && alphas[i] < (c_param - eps))
 					{
 						double pred = 0.0;
-						for (j = 0; j < kernel_limit
-							&& j < nvec;
-							j++)
+						for (j = 0; j < kernel_limit && j < nvec; j++)
 						{
-							if (j >= nvec)
-								break;
-							pred += alphas[j]
-								* dataset.labels
-									  [j]
-								* linear_kernel(
-									dataset.features
-										+ j * dim,
-									dataset.features
-										+ i * dim,
-									dim);
+							pred += alphas[j] * dataset.labels[j]
+								* linear_kernel(dataset.features + j * dim,
+									dataset.features + i * dim, dim);
 						}
-						bias_sum += dataset.labels[i]
-							- pred;
+						bias_sum += dataset.labels[i] - pred;
 						bias_count++;
 					}
 				}
@@ -1164,7 +1240,7 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 		}
 
 		elog(DEBUG1,
-		     "neurondb: svm: CPU SMO completed after %d iterations, %d support vectors",
+		     "neurondb: svm: CPU heuristic training completed after %d iterations, %d support vectors",
 		     iter,
 		     sv_count);
 
@@ -1176,16 +1252,16 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			if (errors)
 				pfree(errors);
 			svm_dataset_free(&dataset);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(label_str);
+
+
+
+
 			elog(DEBUG1,
-			     "svm: invalid feature dimension %d before model serialization",
+			     "neurondb: svm: invalid feature dimension %d before model serialization",
 			     dim);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("svm: invalid feature dimension %d before model serialization",
+					errmsg("neurondb: svm: invalid feature dimension %d before model serialization",
 						dim)));
 		}
 
@@ -1218,10 +1294,13 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 				sizeof(float) * (size_t)sv_count * (size_t)dim);
 			model.support_vector_indices = (int32 *)palloc(
 				sizeof(int32) * (size_t)sv_count);
+			model.support_labels = (double *)palloc(
+				sizeof(double) * (size_t)sv_count);
 
 			if (model.alphas == NULL
 				|| model.support_vectors == NULL
-				|| model.support_vector_indices == NULL)
+				|| model.support_vector_indices == NULL
+				|| model.support_labels == NULL)
 			{
 				if (model.alphas)
 					pfree(model.alphas);
@@ -1229,18 +1308,20 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 					pfree(model.support_vectors);
 				if (model.support_vector_indices)
 					pfree(model.support_vector_indices);
+				if (model.support_labels)
+					pfree(model.support_labels);
 				if (alphas)
 					pfree(alphas);
 				if (errors)
 					pfree(errors);
 				svm_dataset_free(&dataset);
-				pfree(query.data);
-				pfree(tbl_str);
-				pfree(feat_str);
-				pfree(label_str);
+
+
+
+
 				ereport(ERROR,
 					(errcode(ERRCODE_OUT_OF_MEMORY),
-						errmsg("svm: failed to "
+						errmsg("neurondb: svm: failed to "
 						       "allocate memory for "
 						       "support vectors")));
 			}
@@ -1248,6 +1329,7 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			/* Create default support vector using first sample */
 			model.alphas[0] = 1.0;
 			model.support_vector_indices[0] = 0;
+			model.support_labels[0] = 1.0;  /* pick positive side */
 			/* Set bias to a small positive value to ensure predictions work */
 			model.bias = 0.1;
 			if (nvec > 0 && dim > 0)
@@ -1267,10 +1349,13 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 				sizeof(float) * (size_t)sv_count * (size_t)dim);
 			model.support_vector_indices = (int32 *)palloc(
 				sizeof(int32) * (size_t)sv_count);
+			model.support_labels = (double *)palloc(
+				sizeof(double) * (size_t)sv_count);
 
 			if (model.alphas == NULL
 				|| model.support_vectors == NULL
-				|| model.support_vector_indices == NULL)
+				|| model.support_vector_indices == NULL
+				|| model.support_labels == NULL)
 			{
 				if (model.alphas)
 					pfree(model.alphas);
@@ -1278,18 +1363,20 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 					pfree(model.support_vectors);
 				if (model.support_vector_indices)
 					pfree(model.support_vector_indices);
+				if (model.support_labels)
+					pfree(model.support_labels);
 				if (alphas)
 					pfree(alphas);
 				if (errors)
 					pfree(errors);
 				svm_dataset_free(&dataset);
-				pfree(query.data);
-				pfree(tbl_str);
-				pfree(feat_str);
-				pfree(label_str);
+
+
+
+
 				ereport(ERROR,
 					(errcode(ERRCODE_OUT_OF_MEMORY),
-						errmsg("svm: failed to "
+						errmsg("neurondb: svm: failed to "
 						       "allocate memory for "
 						       "support vectors")));
 			}
@@ -1307,6 +1394,8 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 							alphas[i];
 						model.support_vector_indices
 							[sv_idx] = i;
+						model.support_labels[sv_idx] =
+							dataset.labels[i]; /* {-1, 1} after normalization */
 						memcpy(model.support_vectors
 								+ sv_idx * dim,
 							dataset.features
@@ -1359,9 +1448,9 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 							dim);
 				}
 			}
-			pred = (pred >= 0.0) ? 1.0 : 0.0;
-			if ((pred >= 0.5 && dataset.labels[i] > 0.5)
-				|| (pred < 0.5 && dataset.labels[i] <= 0.5))
+			/* Labels are in {-1, 1}, predictions should be too */
+			pred = (pred >= 0.0) ? 1.0 : -1.0;
+			if (pred == dataset.labels[i])
 				correct++;
 		}
 		accuracy = (sample_limit > 0)
@@ -1382,13 +1471,13 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			if (errors)
 				pfree(errors);
 			svm_dataset_free(&dataset);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(label_str);
+
+
+
+
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("svm: model.n_features is invalid (%d) before serialization",
+					errmsg("neurondb: svm: model.n_features is invalid (%d) before serialization",
 						model.n_features)));
 		}
 
@@ -1412,13 +1501,13 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			if (errors)
 				pfree(errors);
 			svm_dataset_free(&dataset);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(label_str);
+
+
+
+
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("svm: failed to serialize "
+					errmsg("neurondb: svm: failed to serialize "
 					       "model")));
 		}
 
@@ -1429,6 +1518,7 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 
 		/* Build hyperparameters JSON */
 		initStringInfo(&hyperbuf_cpu);
+		hyperbuf_cpu_inited = true;
 		appendStringInfo(&hyperbuf_cpu,
 			"{\"C\":%.6f,\"max_iters\":%d}",
 			c_param,
@@ -1451,18 +1541,19 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			if (serialized)
 				pfree(serialized);
 			svm_dataset_free(&dataset);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(label_str);
+
+
+
+
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("svm: failed to create "
+					errmsg("neurondb: svm: failed to create "
 					       "hyperparameters JSONB")));
 		}
 
 		/* Build metrics JSON */
 		initStringInfo(&metricsbuf);
+		metricsbuf_inited = true;
 		appendStringInfo(&metricsbuf,
 			"{\"algorithm\":\"svm\","
 			"\"n_samples\":%d,"
@@ -1520,16 +1611,16 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			if (serialized)
 				pfree(serialized);
 			svm_dataset_free(&dataset);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(label_str);
+
+
+
+
 			elog(DEBUG1,
-			     "svm: failed to register model in catalog, model_id=%d",
+			     "neurondb: svm: failed to register model in catalog, model_id=%d",
 			     model_id);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("svm: failed to register model in catalog, model_id=%d",
+					errmsg("neurondb: svm: failed to register model in catalog, model_id=%d",
 						model_id)));
 		}
 
@@ -1537,30 +1628,17 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 		     "neurondb: svm: CPU training completed, model_id=%d",
 		     model_id);
 
-		/* Cleanup */
-		if (model.alphas)
-			pfree(model.alphas);
-		if (model.support_vectors)
-			pfree(model.support_vectors);
-		if (model.support_vector_indices)
-			pfree(model.support_vector_indices);
-		if (alphas)
-			pfree(alphas);
-		if (errors)
-			pfree(errors);
-		/* Note: serialized, params_jsonb, metrics_jsonb are owned by catalog now */
-		}
+		/* Note: serialized is owned by catalog.
+		 * params_jsonb and metrics_jsonb are managed by memory context, don't free manually */
+
+		/* Cleanup - let memory context handle cleanup automatically.
+		 * The catalog has taken ownership of the serialized model data.
+		 * All other allocations (model arrays, alphas, errors, dataset, strings, etc.) 
+		 * will be automatically freed when the function's memory context is destroyed. */
+
+		elog(DEBUG1, "neurondb: svm: CPU training about to return model_id=%d", model_id);
+		PG_RETURN_INT32(model_id);
 	}
-
-	/* Cleanup */
-	svm_dataset_free(&dataset);
-	if (query.data)
-		pfree(query.data);
-	pfree(tbl_str);
-	pfree(feat_str);
-	pfree(label_str);
-
-	PG_RETURN_INT32(model_id);
 }
 
 /*
@@ -1582,14 +1660,14 @@ predict_svm_model_id(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: model_id is required")));
+				errmsg("neurondb: svm: model_id is required")));
 
 	model_id = PG_GETARG_INT32(0);
 
 	if (PG_ARGISNULL(1))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: features vector is required")));
+				errmsg("neurondb: svm: features vector is required")));
 
 	features = PG_GETARG_VECTOR_P(1);
 
@@ -1597,8 +1675,10 @@ predict_svm_model_id(PG_FUNCTION_ARGS)
 	if (svm_try_gpu_predict_catalog(model_id, features, &prediction))
 	{
 			elog(DEBUG1,
-				"neurondb: svm: GPU prediction succeeded, prediction=%.6f",
+				"neurondb: svm: GPU prediction succeeded, raw prediction=%.6f",
 			prediction);
+		/* Convert to binary class (-1 or 1) consistent with SVM label encoding */
+		prediction = (prediction >= 0.0) ? 1.0 : -1.0;
 		PG_RETURN_FLOAT8(prediction);
 	}
 
@@ -1625,7 +1705,7 @@ predict_svm_model_id(PG_FUNCTION_ARGS)
 		{
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("svm: model %d is GPU-only, GPU prediction failed",
+					errmsg("neurondb: svm: model %d is GPU-only, GPU prediction failed",
 						model_id),
 					errhint("Check GPU configuration and ensure GPU is available")));
 		}
@@ -1638,18 +1718,18 @@ predict_svm_model_id(PG_FUNCTION_ARGS)
 	if (!svm_load_model_from_catalog(model_id, &model))
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: model %d not found", model_id)));
+				errmsg("neurondb: svm: model %d not found", model_id)));
 
 	/* Validate feature dimension */
 	if (model->n_features > 0 && features->dim != model->n_features)
 	{
 		elog(DEBUG1,
-		     "svm: feature dimension mismatch (expected %d, got %d)",
+		     "neurondb: svm: feature dimension mismatch (expected %d, got %d)",
 		     model->n_features,
 		     features->dim);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("svm: feature dimension mismatch (expected %d, got %d)",
+				errmsg("neurondb: svm: feature dimension mismatch (expected %d, got %d)",
 					model->n_features,
 					features->dim)));
 	}
@@ -1660,11 +1740,12 @@ predict_svm_model_id(PG_FUNCTION_ARGS)
 	{
 		float *sv = model->support_vectors + i * model->n_features;
 		prediction += model->alphas[i]
+			* model->support_labels[i]        /* y_i */
 			* linear_kernel(sv, features->data, features->dim);
 	}
 
-	/* Convert to binary class (0 or 1) */
-	prediction = (prediction >= 0.0) ? 1.0 : 0.0;
+	/* Convert to binary class (-1 or 1) consistent with SVM label encoding */
+	prediction = (prediction >= 0.0) ? 1.0 : -1.0;
 
 	/* Cleanup */
 	if (model != NULL)
@@ -1675,6 +1756,8 @@ predict_svm_model_id(PG_FUNCTION_ARGS)
 			pfree(model->support_vectors);
 		if (model->support_vector_indices != NULL)
 			pfree(model->support_vector_indices);
+		if (model->support_labels != NULL)
+			pfree(model->support_labels);
 		pfree(model);
 	}
 
@@ -1736,9 +1819,8 @@ svm_predict_batch(const SVMModel *model,
 		if (!isfinite(y_true))
 			continue;
 
-		true_class = (int)rint(y_true);
-		if (true_class < 0 || true_class > 1)
-			continue;
+		/* y_true is -1 or 1 after normalization */
+		true_class = (y_true <= 0.0) ? -1 : 1;
 
 		/* Compute prediction using support vectors */
 		prediction = model->bias;
@@ -1758,11 +1840,13 @@ svm_predict_batch(const SVMModel *model,
 			for (k = 0; k < feature_dim; k++)
 				kernel_val += (double)sv[k] * (double)row[k];
 
-			prediction += model->alphas[j] * kernel_val;
+			prediction += model->alphas[j]
+				* model->support_labels[j]        /* y_i */
+				* kernel_val;
 		}
 
-		/* Convert to binary class (0 or 1) */
-		pred_class = (prediction >= 0.0) ? 1 : 0;
+		/* Convert to binary class (-1 or 1) consistent with SVM label encoding */
+		pred_class = (prediction >= 0.0) ? 1 : -1;
 		
 		if (i < 5)  /* Log first 5 predictions for debugging */
 		{
@@ -1771,14 +1855,14 @@ svm_predict_batch(const SVMModel *model,
 				i, y_true, true_class, prediction, pred_class);
 		}
 
-		/* Update confusion matrix */
+		/* Update confusion matrix (labels are -1 or 1) */
 		if (true_class == 1 && pred_class == 1)
 			tp++;
-		else if (true_class == 0 && pred_class == 0)
+		else if (true_class == -1 && pred_class == -1)
 			tn++;
-		else if (true_class == 0 && pred_class == 1)
+		else if (true_class == -1 && pred_class == 1)
 			fp++;
-		else if (true_class == 1 && pred_class == 0)
+		else if (true_class == 1 && pred_class == -1)
 			fn++;
 	}
 
@@ -1818,6 +1902,7 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 	int j;
 	int feat_dim = 0;
 	Oid feat_type_oid = InvalidOid;
+	Oid label_type_oid = InvalidOid;
 	bool feat_is_array = false;
 	double accuracy = 0.0;
 	double precision = 0.0;
@@ -1859,6 +1944,9 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 	feat_str = text_to_cstring(feature_col);
 	targ_str = text_to_cstring(label_col);
 
+	elog(DEBUG1, "evaluate_svm_by_model_id: tbl_str='%s', feat_str='%s', targ_str='%s'",
+	     tbl_str, feat_str, targ_str);
+
 	oldcontext = CurrentMemoryContext;
 
 	/* Load model from catalog - try CPU first, then GPU */
@@ -1871,7 +1959,10 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 			if (!is_gpu_model)
 			{
 				if (gpu_payload)
+				{
+					elog(DEBUG1, "evaluate_svm_by_model_id: freeing gpu_payload=%p (CPU model)", (void *)gpu_payload);
 					pfree(gpu_payload);
+				}
 				if (gpu_metrics)
 					pfree(gpu_metrics);
 				ereport(ERROR,
@@ -1922,9 +2013,9 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 	elog(DEBUG1, "evaluate_svm_by_model_id: executing query: %s", query.data);
 
 	ret = SPI_execute(query.data, true, 0);
+	elog(DEBUG1, "evaluate_svm_by_model_id: SPI_execute returned %d, SPI_processed=%lu", ret, SPI_processed);
 	if (ret != SPI_OK_SELECT)
 	{
-		pfree(query.data);
 		if (model != NULL)
 		{
 			if (model->alphas != NULL)
@@ -1945,9 +2036,9 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 	}
 
 	nvec = SPI_processed;
+	elog(DEBUG1, "evaluate_svm_by_model_id: nvec=%d", nvec);
 	if (nvec < 1)
 	{
-		pfree(query.data);
 		if (model != NULL)
 		{
 			if (model->alphas != NULL)
@@ -1967,12 +2058,14 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 				errmsg("neurondb: evaluate_svm_by_model_id: no valid rows found")));
 	}
 
-	/* Determine feature column type */
+	/* Determine feature and label column types */
 	if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL)
+	{
 		feat_type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, 1);
+		label_type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, 2);
+	}
 	if (feat_type_oid == FLOAT8ARRAYOID || feat_type_oid == FLOAT4ARRAYOID)
 		feat_is_array = true;
-
 	/* GPU batch evaluation path for GPU models - uses optimized evaluation kernel */
 	if (is_gpu_model && neurondb_gpu_is_available())
 	{
@@ -2021,8 +2114,13 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 				goto cpu_evaluation_path;
 			}
 
-			h_features = (float *)palloc(features_size);
-			h_labels = (int *)palloc(labels_size);
+			/* Switch to the saved context before allocating */
+			{
+				MemoryContext saved_ctx = MemoryContextSwitchTo(oldcontext);
+				h_features = (float *)palloc(features_size);
+				h_labels = (int *)palloc(labels_size);
+				MemoryContextSwitchTo(saved_ctx);  /* Switch back to SPI context */
+			}
 
 			if (h_features == NULL || h_labels == NULL)
 			{
@@ -2062,11 +2160,18 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 				float *feat_row;
 
 				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || i >= SPI_processed)
+				{
+					elog(DEBUG1, "evaluate_svm_by_model_id: breaking at i=%d (SPI_tuptable=%p, vals=%p, SPI_processed=%lu)",
+					     i, (void*)SPI_tuptable, SPI_tuptable ? (void*)SPI_tuptable->vals : NULL, SPI_processed);
 					break;
+				}
 
 				tuple = SPI_tuptable->vals[i];
 				if (tuple == NULL)
+				{
+					elog(DEBUG1, "evaluate_svm_by_model_id: NULL tuple at i=%d", i);
 					continue;
+				}
 
 				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
@@ -2090,7 +2195,7 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 					continue;
 				}
 
-				h_labels[valid_rows] = (int)rint(DatumGetFloat8(targ_datum));
+				h_labels[valid_rows] = (int)rint(svm_decode_label_datum(targ_datum, label_type_oid));
 
 				/* Extract feature vector - optimized paths */
 				if (feat_is_array)
@@ -2142,10 +2247,12 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 			pfree(h_features);
 			pfree(h_labels);
 			if (gpu_payload)
+			{
+				elog(DEBUG1, "evaluate_svm_by_model_id: freeing gpu_payload=%p (no valid rows)", (void *)gpu_payload);
 				pfree(gpu_payload);
+			}
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -2200,15 +2307,20 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 						CStringGetDatum(jsonbuf.data)));
 
 					pfree(jsonbuf.data);
+					elog(DEBUG1, "evaluate_svm_by_model_id: about to free h_features=%p", (void*)h_features);
 					pfree(h_features);
+					elog(DEBUG1, "evaluate_svm_by_model_id: about to free h_labels=%p", (void*)h_labels);
 					pfree(h_labels);
+					elog(DEBUG1, "evaluate_svm_by_model_id: freed arrays successfully");
 					if (gpu_payload)
+					{
+						elog(DEBUG1, "evaluate_svm_by_model_id: freeing gpu_payload=%p (GPU success)", (void *)gpu_payload);
 						pfree(gpu_payload);
+					}
 					if (gpu_metrics)
 						pfree(gpu_metrics);
 					if (gpu_errstr)
 						pfree(gpu_errstr);
-					pfree(query.data);
 					pfree(tbl_str);
 					pfree(feat_str);
 					pfree(targ_str);
@@ -2255,10 +2367,24 @@ cpu_evaluation_path:
 
 		/* Determine feature dimension from model */
 		if (model != NULL)
+		{
 			feat_dim = model->n_features;
+			elog(DEBUG1, "evaluate_svm_by_model_id: CPU path - feat_dim=%d from model", feat_dim);
+		}
 		else if (is_gpu_model && gpu_payload != NULL)
 		{
+			size_t payload_size = VARSIZE(gpu_payload) - VARHDRSZ;
 			const NdbCudaSvmModelHeader *gpu_hdr;
+
+			if (payload_size < sizeof(NdbCudaSvmModelHeader))
+			{
+				elog(DEBUG1,
+					"neurondb: evaluate_svm_by_model_id: GPU payload too small (%zu bytes) for CPU fallback",
+					payload_size);
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: evaluate_svm_by_model_id: GPU model payload corrupted, cannot determine feature dimension")));
+			}
 
 			gpu_hdr = (const NdbCudaSvmModelHeader *)VARDATA(gpu_payload);
 			feat_dim = gpu_hdr->feature_dim;
@@ -2278,9 +2404,13 @@ cpu_evaluation_path:
 						feat_dim)));
 		}
 
-		/* Allocate host buffers for features and labels */
-		cpu_h_features = (float *)palloc(sizeof(float) * (size_t)nvec * (size_t)feat_dim);
-		cpu_h_labels = (double *)palloc(sizeof(double) * (size_t)nvec);
+		/* Allocate host buffers for features and labels in oldcontext */
+		{
+			MemoryContext saved_ctx = MemoryContextSwitchTo(oldcontext);
+			cpu_h_features = (float *)palloc(sizeof(float) * (size_t)nvec * (size_t)feat_dim);
+			cpu_h_labels = (double *)palloc(sizeof(double) * (size_t)nvec);
+			MemoryContextSwitchTo(saved_ctx);
+		}
 
 		/* Extract features and labels from SPI results - optimized batch extraction */
 		/* Cache TupleDesc to avoid repeated lookups */
@@ -2302,17 +2432,31 @@ cpu_evaluation_path:
 				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
 
 				if (feat_null || targ_null)
+				{
+					if (i < 5)
+						elog(DEBUG1, "evaluate_svm_by_model_id: CPU path row %d: NULL values (feat_null=%d, targ_null=%d)",
+						     i, feat_null, targ_null);
 					continue;
+				}
 
 				feat_row = cpu_h_features + (cpu_valid_rows * feat_dim);
-				cpu_h_labels[cpu_valid_rows] = DatumGetFloat8(targ_datum);
+				/* Read and normalize label to {-1, 1} for consistent evaluation */
+				{
+					double raw_label = svm_decode_label_datum(targ_datum, label_type_oid);
+					cpu_h_labels[cpu_valid_rows] = (raw_label <= 0.5) ? -1.0 : 1.0;
+				}
 
 				/* Extract feature vector - optimized paths */
 				if (feat_is_array)
 				{
 					arr = DatumGetArrayTypeP(feat_datum);
 					if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != feat_dim)
+					{
+						if (i < 5)
+							elog(DEBUG1, "evaluate_svm_by_model_id: CPU path row %d: array dim mismatch (ndim=%d, dims[0]=%d, feat_dim=%d)",
+							     i, ARR_NDIM(arr), ARR_DIMS(arr)[0], feat_dim);
 						continue;
+					}
 					if (feat_type_oid == FLOAT8ARRAYOID)
 					{
 						/* Optimized: bulk conversion with loop unrolling hint */
@@ -2367,10 +2511,12 @@ cpu_evaluation_path:
 				pfree(model);
 			}
 			if (gpu_payload)
+			{
+				elog(DEBUG1, "evaluate_svm_by_model_id: freeing gpu_payload=%p (final cleanup)", (void *)gpu_payload);
 				pfree(gpu_payload);
+			}
 			if (gpu_metrics)
 				pfree(gpu_metrics);
-			pfree(query.data);
 			pfree(tbl_str);
 			pfree(feat_str);
 			pfree(targ_str);
@@ -2429,7 +2575,9 @@ cpu_evaluation_path:
 							for (k = 0; k < feat_dim; k++)
 								kernel_val += (double)sv[k] * (double)row[k];
 
-							cpu_pred += model->alphas[sv_idx] * kernel_val;
+							cpu_pred += model->alphas[sv_idx]
+								* model->support_labels[sv_idx]   /* y_i */
+								* kernel_val;
 						}
 						prediction = cpu_pred;
 						prediction_made = true;
@@ -2447,17 +2595,17 @@ cpu_evaluation_path:
 
 				if (prediction_made)
 				{
-					/* Update confusion matrix */
-					int pred_class = (prediction >= 0.0) ? 1 : 0;
-					int actual_class = (actual >= 0.5) ? 1 : 0;
+					/* Update confusion matrix (labels are normalized to {-1, 1}) */
+					int pred_class = (prediction >= 0.0) ? 1 : -1;
+					int actual_class = (int)actual;  /* actual is already -1 or 1 */
 
 					if (pred_class == 1 && actual_class == 1)
 						tp++;
-					else if (pred_class == 0 && actual_class == 0)
+					else if (pred_class == -1 && actual_class == -1)
 						tn++;
-					else if (pred_class == 1 && actual_class == 0)
+					else if (pred_class == 1 && actual_class == -1)
 						fp++;
-					else if (pred_class == 0 && actual_class == 1)
+					else if (pred_class == -1 && actual_class == 1)
 						fn++;
 				}
 			}
@@ -2480,7 +2628,6 @@ cpu_evaluation_path:
 					pfree(gpu_payload);
 				if (gpu_metrics)
 					pfree(gpu_metrics);
-				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -2538,20 +2685,33 @@ cpu_evaluation_path:
 				f1_score = 2.0 * (precision * recall) / (precision + recall);
 			else
 				f1_score = 0.0;
+
+			valid_rows = cpu_valid_rows;
 		}
 
 		/* Cleanup */
+		elog(DEBUG1, "evaluate_svm_by_model_id: about to free cpu_h_features=%p", (void*)cpu_h_features);
 		pfree(cpu_h_features);
+		elog(DEBUG1, "evaluate_svm_by_model_id: freed cpu_h_features, about to free cpu_h_labels=%p", (void*)cpu_h_labels);
 		pfree(cpu_h_labels);
+		elog(DEBUG1, "evaluate_svm_by_model_id: freed cpu_h_labels, about to free model=%p", (void*)model);
 		if (model != NULL)
 		{
+			elog(DEBUG1, "evaluate_svm_by_model_id: about to free model->alphas=%p", (void*)model->alphas);
 			if (model->alphas != NULL)
 				pfree(model->alphas);
+			elog(DEBUG1, "evaluate_svm_by_model_id: about to free model->support_vectors=%p", (void*)model->support_vectors);
 			if (model->support_vectors != NULL)
 				pfree(model->support_vectors);
+			elog(DEBUG1, "evaluate_svm_by_model_id: about to free model->support_vector_indices=%p", (void*)model->support_vector_indices);
 			if (model->support_vector_indices != NULL)
 				pfree(model->support_vector_indices);
+			elog(DEBUG1, "evaluate_svm_by_model_id: about to free model->support_labels=%p", (void*)model->support_labels);
+			if (model->support_labels != NULL)
+				pfree(model->support_labels);
+			elog(DEBUG1, "evaluate_svm_by_model_id: about to free model struct=%p", (void*)model);
 			pfree(model);
+			elog(DEBUG1, "evaluate_svm_by_model_id: freed model struct");
 		}
 		if (gpu_payload)
 			pfree(gpu_payload);
@@ -2559,11 +2719,17 @@ cpu_evaluation_path:
 			pfree(gpu_metrics);
 	}
 
+	elog(DEBUG1, "evaluate_svm_by_model_id: about to call SPI_finish");
 	SPI_finish();
-	pfree(query.data);
+	elog(DEBUG1, "evaluate_svm_by_model_id: called SPI_finish");
+	/* query.data was allocated in SPI context and freed by SPI_finish(), so don't free it again */
+	elog(DEBUG1, "evaluate_svm_by_model_id: about to free tbl_str=%p", (void*)tbl_str);
 	pfree(tbl_str);
+	elog(DEBUG1, "evaluate_svm_by_model_id: freed tbl_str, about to free feat_str=%p", (void*)feat_str);
 	pfree(feat_str);
+	elog(DEBUG1, "evaluate_svm_by_model_id: freed feat_str, about to free targ_str=%p", (void*)targ_str);
 	pfree(targ_str);
+	elog(DEBUG1, "evaluate_svm_by_model_id: freed all string buffers");
 
 	/* Build jsonb result */
 	initStringInfo(&jsonbuf);
@@ -2573,7 +2739,7 @@ cpu_evaluation_path:
 		precision,
 		recall,
 		f1_score,
-		nvec);
+		valid_rows);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 		CStringGetDatum(jsonbuf.data)));
@@ -2638,10 +2804,7 @@ svm_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 		errstr);
 	if (rc != 0 || payload == NULL)
 	{
-		if (payload != NULL)
-			pfree(payload);
-		if (metrics != NULL)
-			pfree(metrics);
+		/* Caller must handle payload/metrics cleanup on failure */
 		return false;
 	}
 
@@ -2696,9 +2859,17 @@ svm_gpu_predict(const MLGpuModel *model,
 	if (state->model_blob == NULL)
 		return false;
 
+	/* Validate input dimension matches model */
+	if (input_dim != state->feature_dim)
+	{
+		if (errstr != NULL)
+			*errstr = pstrdup("neurondb: svm: feature dimension mismatch");
+		return false;
+	}
+
 	rc = ndb_gpu_svm_predict_double(state->model_blob,
 		input,
-		state->feature_dim > 0 ? state->feature_dim : input_dim,
+		input_dim,
 		&prediction,
 		errstr);
 	if (rc != 0)

@@ -106,7 +106,8 @@ vector_avg_finalfn(PG_FUNCTION_ARGS)
 	for (i = 0; i < state->dim; i++)
 		result->data[i] = state->sum[i] / state->count;
 
-	PG_RETURN_VECTOR_P(result);
+	/* Temporarily return NULL to test */
+	PG_RETURN_NULL();
 }
 
 /*

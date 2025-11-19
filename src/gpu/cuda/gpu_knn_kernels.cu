@@ -137,7 +137,8 @@ ndb_cuda_knn_top_k_kernel(const float *distances,
 			if (label >= 0 && label < 2)
 				class_votes[label]++;
 		}
-		*prediction_out = (class_votes[0] > class_votes[1]) ? 0.0 : 1.0;
+		/* Match CPU semantics: class 1 only if strictly greater, tie goes to class 0 */
+		*prediction_out = (class_votes[1] > class_votes[0]) ? 1.0 : 0.0;
 	}
 	else
 	{
@@ -277,6 +278,14 @@ ndb_cuda_knn_find_top_k(const float *distances,
 
 	if (distances == NULL || labels == NULL || prediction_out == NULL
 		|| n_samples <= 0 || k <= 0 || k > n_samples)
+		return -1;
+
+	/* Validate task_type: 0 = classification, 1 = regression */
+	if (task_type != 0 && task_type != 1)
+		return -1;
+
+	/* Sanity check: cap k to prevent excessive memory allocation */
+	if (k > 1000000)
 		return -1;
 
 	distance_bytes = sizeof(float) * (size_t)n_samples;

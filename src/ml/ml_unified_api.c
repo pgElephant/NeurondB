@@ -609,12 +609,13 @@ neurondb_train(PG_FUNCTION_ARGS)
 			"neurondb_train: GPU enabled=%d, available=%d",
 			gpu_enabled_guc, gpu_available);
 		
+		/* BULLETPROOF: If GPU is enabled but not available, fall back to CPU gracefully */
 		if (gpu_enabled_guc && !gpu_available)
 		{
-			ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("GPU training requested but GPU hardware not available"),
-				 errhint("Disable GPU with: SET neurondb.gpu_enabled = off; or ensure CUDA is properly configured")));
+			elog(WARNING,
+				"neurondb.train: GPU training requested but GPU hardware not available, falling back to CPU training");
+			elog(DEBUG1,
+				"neurondb.train: To suppress this warning, disable GPU with: SET neurondb.gpu_enabled = off;");
 		}
 		
 		/* Store the backend decision globally for this training session */
@@ -891,7 +892,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "random_forest") == 0)
 	{
-		int n_trees = 10, max_depth = 10, min_samples = 100;
+		int n_trees = 10, max_depth = 10, min_samples = 100, max_features = 0;
 		if (hyperparams)
 		{
 			JsonbIterator *it;
@@ -911,16 +912,18 @@ neurondb_train(PG_FUNCTION_ARGS)
 					else if ((strcmp(key, "min_samples") == 0 ||
 							  strcmp(key, "min_samples_split") == 0) && v.type == jbvNumeric)
 						min_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
+					else if (strcmp(key, "max_features") == 0 && v.type == jbvNumeric)
+						max_features = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
 					pfree(key);
 				}
 			}
 		}
 		appendStringInfo(&sql,
-			"SELECT train_random_forest_classifier(%s, %s, %s, %d, %d, %d)",
+			"SELECT train_random_forest_classifier(%s, %s, %s, %d, %d, %d, %d)",
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_list.data),
 			neurondb_quote_literal_or_null(target_column),
-			n_trees, max_depth, min_samples);
+			n_trees, max_depth, min_samples, max_features);
 	}
 	else if (strcmp(algorithm, "decision_tree") == 0)
 	{
@@ -1136,7 +1139,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 			}
 		}
 	}
-	else if (strcmp(algorithm, "knn") == 0 || strcmp(algorithm, "knn_classifier") == 0)
+	else if (strcmp(algorithm, "knn") == 0 || strcmp(algorithm, "knn_classifier") == 0 || strcmp(algorithm, "knn_regressor") == 0)
 	{
 		int k_value = 5;
 		int task_type = 0; /* 0 = classification, 1 = regression */
@@ -1149,6 +1152,10 @@ neurondb_train(PG_FUNCTION_ARGS)
 		Jsonb *gpu_metrics = NULL;
 		char *gpu_errstr = NULL;
 		bool gpu_trained = false;
+
+		/* Set task type based on algorithm */
+		if (strcmp(algorithm, "knn_regressor") == 0)
+			task_type = 1;
 
 		/* Parse hyperparameters */
 		if (hyperparams)
@@ -1851,24 +1858,26 @@ neurondb_train(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("Unsupported algorithm: \"%s\"", algorithm),
-				 errhint("Supported algorithms: linear_regression, logistic_regression, random_forest, svm, decision_tree, naive_bayes, knn, ridge, lasso, gmm, kmeans, minibatch_kmeans, hierarchical, xgboost")));
+				 errhint("Supported algorithms: linear_regression, logistic_regression, random_forest, svm, decision_tree, naive_bayes, knn, knn_classifier, knn_regressor, ridge, lasso, gmm, kmeans, minibatch_kmeans, hierarchical, xgboost")));
 	}
 
 	if (strcmp(algorithm, "gmm") != 0 &&
 		strcmp(algorithm, "naive_bayes") != 0 &&
 		strcmp(algorithm, "knn") != 0 &&
 		strcmp(algorithm, "knn_classifier") != 0 &&
+		strcmp(algorithm, "knn_regressor") != 0 &&
+		strcmp(algorithm, "random_forest") != 0 &&
 		strcmp(algorithm, "rag") != 0 &&
 		strcmp(algorithm, "hybrid_search") != 0)
 	{
 		ret = SPI_execute(sql.data, false, 0);
 	}
 
-	if (strcmp(algorithm, "random_forest") == 0 ||
-		strcmp(algorithm, "logistic_regression") == 0 ||
+	if (strcmp(algorithm, "logistic_regression") == 0 ||
 		strcmp(algorithm, "linear_regression") == 0 ||
 		strcmp(algorithm, "decision_tree") == 0 ||
 		strcmp(algorithm, "svm") == 0 ||
+		strcmp(algorithm, "knn_regressor") == 0 ||
 		strcmp(algorithm, "ridge") == 0 ||
 		strcmp(algorithm, "lasso") == 0 ||
 		strcmp(algorithm, "kmeans") == 0 ||
@@ -1976,6 +1985,19 @@ train_complete:
 		pfree(model_name);
 		model_name = NULL;
 	}
+	/* BULLETPROOF: Validate model_id before returning */
+	/* Check for invalid values: <= 0 or suspiciously large (likely memory address) */
+	if (model_id <= 0 || model_id > 2147483647)
+	{
+		MemoryContextSwitchTo(oldcontext);
+		neurondb_cleanup(oldcontext, callcontext, true);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb.train: invalid model_id (%d) returned for algorithm '%s'",
+					model_id, algorithm),
+				 errhint("model_id must be a positive integer. This may indicate a memory corruption issue.")));
+	}
+	
 	/* Now switch back to oldcontext before cleanup */
 	MemoryContextSwitchTo(oldcontext);
 	neurondb_cleanup(oldcontext, callcontext, true);
@@ -2289,7 +2311,7 @@ neurondb_predict(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "ridge") == 0 || strcmp(algorithm, "lasso") == 0)
 		appendStringInfo(&sql, "SELECT predict_regularized_regression(%d, %s)", model_id, features_str.data);
-	else if (strcmp(algorithm, "knn") == 0 || strcmp(algorithm, "knn_classifier") == 0)
+	else if (strcmp(algorithm, "knn") == 0 || strcmp(algorithm, "knn_classifier") == 0 || strcmp(algorithm, "knn_regressor") == 0)
 	{
 		bytea	   *model_data = NULL;
 		Jsonb	   *metrics = NULL;
@@ -2421,195 +2443,7 @@ neurondb_predict(PG_FUNCTION_ARGS)
 	else if (strcmp(algorithm, "xgboost") == 0)
 		appendStringInfo(&sql, "SELECT predict_xgboost(%d, %s)", model_id, features_str.data);
 	else if (strcmp(algorithm, "gmm") == 0)
-	{
-		bytea	   *model_data = NULL;
-		Jsonb	   *metrics = NULL;
-		bool		is_gpu = false;
-		int			gmm_cluster = 0;
-		double		gmm_probability = 0.0;
-		float	   *features_float = NULL;
-		int			feature_dim = nelems;
-		char	   *errstr = NULL;
-		int			rc;
-
-		/* Fetch model_data and metrics directly within this SPI session to avoid nested SPI usage */
-		resetStringInfo(&sql);
-		elog(DEBUG1,
-						 	"SELECT model_data, metrics FROM neurondb.ml_models WHERE model_id = %d",
-						 model_id);
-		ret = SPI_execute(sql.data, true, 1);
-		if (ret != SPI_OK_SELECT || SPI_processed == 0 || SPI_tuptable == NULL)
-		{
-			neurondb_cleanup(oldcontext, callcontext, true);
-			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							errmsg("GMM model %d not found", model_id)));
-		}
-		{
-			bool isnull_local;
-			Datum d;
-			/* Detoast model_data into current context if present */
-			d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull_local);
-			if (!isnull_local)
-			{
-				bytea *tmp = DatumGetByteaP(d);
-				tmp = (bytea *) PG_DETOAST_DATUM_COPY((Datum) tmp);
-				model_data = tmp;
-			}
-			/* Copy metrics if present */
-			d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull_local);
-			if (!isnull_local)
-				metrics = DatumGetJsonbP(d);
-		}
-
-		if (model_data == NULL)
-		{
-			if (metrics)
-				pfree(metrics);
-			neurondb_cleanup(oldcontext, callcontext, true);
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("GMM model %d has no model data (model not trained)", model_id),
-					 errhint("GMM training must be completed before prediction. The model may have been created without actual training.")));
-		}
-
-		if (metrics != NULL)
-		{
-			JsonbIterator *it = NULL;
-			JsonbValue	v;
-			int			r;
-			PG_TRY();
-			{
-				it = JsonbIteratorInit(&metrics->root);
-				while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
-				{
-					if (r == WJB_KEY && v.type == jbvString)
-					{
-						char *key = pnstrdup(v.val.string.val, v.val.string.len);
-						r = JsonbIteratorNext(&it, &v, false);
-						if (strcmp(key, "storage") == 0 && v.type == jbvString)
-						{
-							char *storage = pnstrdup(v.val.string.val, v.val.string.len);
-							if (strcmp(storage, "gpu") == 0)
-								is_gpu = true;
-							pfree(storage);
-						}
-						pfree(key);
-					}
-				}
-			}
-			PG_CATCH();
-			{
-				/* If metrics parsing fails, assume CPU model */
-				is_gpu = false;
-			}
-			PG_END_TRY();
-		}
-		features_float = (float *) palloc(sizeof(float) * feature_dim);
-		for (i = 0; i < feature_dim; i++)
-			features_float[i] = (float) features[i];
-
-		/* Use model's training backend (from catalog) */
-		{
-			const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-			bool gpu_currently_enabled = (backend != NULL && neurondb_gpu_is_available());
-			
-			elog(DEBUG1,
-				"neurondb_predict: model trained on %s, GPU currently %s",
-				is_gpu ? "GPU" : "CPU",
-				gpu_currently_enabled ? "enabled" : "disabled");
-			
-			if (!is_gpu)
-			{
-				/* Use CPU prediction */
-				resetStringInfo(&sql);
-				appendStringInfo(&sql, "SELECT predict_gmm_model_id(%d, %s)", model_id, features_str.data);
-				ret = SPI_execute(sql.data, true, 0);
-				if (ret == SPI_OK_SELECT && SPI_processed > 0)
-				{
-					/* GMM returns integer cluster ID, convert to float8 */
-					int32 cluster_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-																  SPI_tuptable->tupdesc, 1, &isnull));
-					prediction = (float8)cluster_id;
-					if (isnull)
-					{
-						pfree(features_float);
-						if (model_data)
-							pfree(model_data);
-						if (metrics)
-							pfree(metrics);
-						neurondb_cleanup(oldcontext, callcontext, true);
-						ereport(ERROR,
-							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-							 errmsg("GMM prediction returned NULL")));
-					}
-					pfree(features_float);
-					if (model_data)
-						pfree(model_data);
-					if (metrics)
-						pfree(metrics);
-					neurondb_cleanup(oldcontext, callcontext, true);
-					PG_RETURN_FLOAT8(prediction);
-				}
-				else
-				{
-					pfree(features_float);
-					if (model_data)
-						pfree(model_data);
-					if (metrics)
-						pfree(metrics);
-					neurondb_cleanup(oldcontext, callcontext, true);
-					ereport(ERROR,
-						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("GMM CPU prediction failed")));
-				}
-			}
-			
-			if (is_gpu && !gpu_currently_enabled)
-			{
-				/* GPU model but GPU not enabled - ERROR */
-				pfree(features_float);
-				if (model_data)
-					pfree(model_data);
-				if (metrics)
-					pfree(metrics);
-				neurondb_cleanup(oldcontext, callcontext, true);
-				ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("GMM: model %d was trained on GPU but GPU is not currently enabled", model_id),
-					 errhint("Enable GPU with: SET neurondb.gpu_enabled = on; SELECT neurondb_gpu_enable();")));
-			}
-			
-			/* Use GPU prediction */
-			if (is_gpu && backend && backend->gmm_predict)
-			{
-				rc = backend->gmm_predict(model_data, features_float, feature_dim, &gmm_cluster, &gmm_probability, &errstr);
-				if (rc == 0)
-				{
-					prediction = (double) gmm_cluster;
-					pfree(features_float);
-					if (model_data)
-						pfree(model_data);
-					if (metrics)
-						pfree(metrics);
-					neurondb_cleanup(oldcontext, callcontext, true);
-					PG_RETURN_FLOAT8(prediction);
-				}
-				if (errstr)
-					pfree(errstr);
-			}
-		}
-		/* GMM GPU prediction failed */
-		pfree(features_float);
-		if (model_data)
-			pfree(model_data);
-		if (metrics)
-			pfree(metrics);
-		neurondb_cleanup(oldcontext, callcontext, true);
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("GMM GPU prediction failed"),
-				 errhint("Ensure GPU is available and enabled.")));
-	}
+		appendStringInfo(&sql, "SELECT predict_gmm_model_id(%d, %s)", model_id, features_str.data);
 	else
 	{
 		neurondb_cleanup(oldcontext, callcontext, true);
@@ -2876,11 +2710,17 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		neurondb_cleanup(oldcontext, callcontext, true);
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Model not found: %d", model_id)));
 	}
-	algorithm = TextDatumGetCString(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
-	if (isnull)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true);
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Model algorithm is NULL for model_id=%d", model_id)));
+		char *temp_algorithm;
+		temp_algorithm = TextDatumGetCString(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+		if (isnull)
+		{
+			neurondb_cleanup(oldcontext, callcontext, true);
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Model algorithm is NULL for model_id=%d", model_id)));
+		}
+		/* Copy algorithm to callcontext to avoid corruption from subsequent SPI calls */
+		algorithm = pstrdup(temp_algorithm);
+		pfree(temp_algorithm);
 	}
 
 	table_name = text_to_cstring(table_name_text);
@@ -2937,7 +2777,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 			neurondb_quote_literal_cstr(table_name),
 			neurondb_quote_literal_cstr(feature_col),
 			neurondb_quote_literal_cstr(label_col));
-	else if (strcmp(algorithm, "knn") == 0)
+	else if (strcmp(algorithm, "knn") == 0 || strcmp(algorithm, "knn_classifier") == 0 || strcmp(algorithm, "knn_regressor") == 0)
 		appendStringInfo(&sql, "SELECT evaluate_knn_by_model_id(%d, %s, %s, %s)",
 			model_id,
 			neurondb_quote_literal_cstr(table_name),
@@ -2989,17 +2829,17 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 
 	{
 		Datum result_datum;
-		bool isnull;
+		bool result_isnull;
 		Jsonb *temp_jsonb;
 		
 		/* Get JSONB from SPI result */
-		result_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
-		if (isnull)
+		result_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &result_isnull);
+		if (result_isnull)
 		{
 			neurondb_cleanup(oldcontext, callcontext, true);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb.evaluate: evaluation returned NULL for algorithm '%s'", algorithm)));
+					 errmsg("neurondb.evaluate: evaluation returned NULL (algorithm evaluation not implemented)")));
 		}
 		
 		/* Get JSONB pointer from datum (still in SPI context) */

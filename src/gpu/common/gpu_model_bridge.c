@@ -566,7 +566,7 @@ ndb_gpu_try_train_model(const char *algorithm,
 		result->spec.project_name =
 			ndb_gpu_strdup_or_null(project_name);
 		result->spec.model_name = ndb_gpu_strdup_or_null(model_name);
-		result->spec.parameters = hyperparameters;
+		/* Note: parameters are handled by caller, don't set here to avoid ownership confusion */
 
 		/* Ensure metrics Jsonb is in the correct memory context */
 		if (metadata != NULL)
@@ -630,6 +630,10 @@ ndb_gpu_free_train_result(MLGpuTrainResult *result)
 		pfree(result->spec.model_data);
 	if (result->spec.metrics)
 		pfree(result->spec.metrics);
+	if (result->metadata && result->metadata != result->spec.metrics)
+		pfree(result->metadata);
+	if (result->metrics && result->metrics != result->spec.metrics)
+		pfree(result->metrics);
 
 	memset(result, 0, sizeof(MLGpuTrainResult));
 }

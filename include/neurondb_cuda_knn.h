@@ -85,7 +85,7 @@ extern int ndb_cuda_knn_predict_batch(const bytea *model_data,
 
 extern int ndb_cuda_knn_evaluate_batch(const bytea *model_data,
 	const float *features,
-	const int *labels,
+	const double *labels,
 	int n_samples,
 	int feature_dim,
 	double *accuracy_out,

@@ -114,13 +114,8 @@ ndb_cuda_nb_pack_model(const GaussianNBModel *model,
 		return -1;
 	}
 
+	/* Note: palloc never returns NULL in PostgreSQL - it errors on failure */
 	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
-	if (blob == NULL)
-	{
-		if (errstr)
-			*errstr = pstrdup("CUDA NB pack: memory allocation failed");
-		return -1;
-	}
 
 	SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
 	base = VARDATA(blob);
@@ -134,22 +129,22 @@ ndb_cuda_nb_pack_model(const GaussianNBModel *model,
 	means_dest = (double *)(base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t)model->n_classes);
 	variances_dest = (double *)(base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t)model->n_classes + sizeof(double) * (size_t)model->n_classes * (size_t)model->n_features);
 
-	if (model->class_priors != NULL)
-	{
-		for (i = 0; i < model->n_classes; i++)
+		if (model->class_priors != NULL)
 		{
-			double prior = model->class_priors[i];
-			/* Validate prior: must be finite and non-negative */
-			if (!isfinite(prior) || prior < 0.0)
+			for (i = 0; i < model->n_classes; i++)
 			{
-				if (errstr)
-					*errstr = pstrdup("invalid NB model: class_priors contains invalid value");
-				pfree(blob);
-				return -1;
+				double prior = model->class_priors[i];
+				/* Validate prior: must be finite and in [0, 1] */
+				if (!isfinite(prior) || prior < 0.0 || prior > 1.0)
+				{
+					if (errstr)
+						*errstr = pstrdup("invalid NB model: class_priors contains invalid value (must be in [0, 1])");
+					pfree(blob);
+					return -1;
+				}
+				priors_dest[i] = prior;
 			}
-			priors_dest[i] = prior;
 		}
-	}
 	else
 	{
 		/* Initialize with default values if NULL */
@@ -275,6 +270,9 @@ ndb_cuda_nb_train(const float *features,
 	int j;
 	int rc = -1;
 
+	/* Initialize model structure to avoid undefined behavior in cleanup */
+	memset(&model, 0, sizeof(GaussianNBModel));
+
 	if (errstr)
 		*errstr = NULL;
 
@@ -328,21 +326,9 @@ ndb_cuda_nb_train(const float *features,
 		n_samples, feature_dim, class_count);
 
 	/* Allocate host memory with overflow checks */
+	/* Note: palloc never returns NULL in PostgreSQL - it errors on failure */
 	class_counts = (int *)palloc0(sizeof(int) * class_count);
-	if (class_counts == NULL)
-	{
-		if (errstr)
-			*errstr = pstrdup("CUDA NB train: failed to allocate class_counts array");
-		return -1;
-	}
-
 	class_priors = (double *)palloc(sizeof(double) * class_count);
-	if (class_priors == NULL)
-	{
-		if (errstr)
-			*errstr = pstrdup("CUDA NB train: failed to allocate class_priors array");
-		goto cleanup;
-	}
 
 	if (feature_dim > 0 && (size_t)class_count > MaxAllocSize / sizeof(double) / (size_t)feature_dim)
 	{
@@ -351,35 +337,30 @@ ndb_cuda_nb_train(const float *features,
 		goto cleanup;
 	}
 	means = (double *)palloc0(sizeof(double) * (size_t)class_count * (size_t)feature_dim);
-	if (means == NULL)
-	{
-		if (errstr)
-			*errstr = pstrdup("CUDA NB train: failed to allocate means array");
-		goto cleanup;
-	}
-
 	variances = (double *)palloc0(sizeof(double) * (size_t)class_count * (size_t)feature_dim);
-	if (variances == NULL)
-	{
-		if (errstr)
-			*errstr = pstrdup("CUDA NB train: failed to allocate variances array");
-		goto cleanup;
-	}
 
 	/* Validate input data for NaN/Inf before processing */
+	/* Use rint() to match CPU training behavior - labels must be integral */
 	for (i = 0; i < n_samples; i++)
 	{
-		int class = (int)labels[i];
-		if (class < 0 || class >= class_count)
-		{
-			if (errstr)
-				*errstr = pstrdup("CUDA NB train: invalid class label in labels array");
-			goto cleanup;
-		}
-		if (!isfinite(labels[i]))
+		double label_val = labels[i];
+		int class;
+
+		if (!isfinite(label_val))
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA NB train: non-finite value in labels array");
+			goto cleanup;
+		}
+
+		/* Round to nearest integer, matching CPU training behavior */
+		class = (int) rint(label_val);
+
+		/* Check label is close to an integer and in valid range */
+		if (class < 0 || class >= class_count || fabs(label_val - (double)class) > 1e-6)
+		{
+			if (errstr)
+				*errstr = pstrdup("CUDA NB train: invalid class label in labels array (must be integral 0 or 1 for binary)");
 			goto cleanup;
 		}
 	}
@@ -563,11 +544,7 @@ ndb_cuda_nb_predict(const bytea *model_data,
 	if (feature_dim != hdr->n_features)
 	{
 		if (errstr)
-		{
-			char *msg = psprintf("CUDA NB predict: feature dimension mismatch (expected %d, got %d)", hdr->n_features, feature_dim);
-			*errstr = pstrdup(msg);
-			pfree(msg);
-		}
+			*errstr = psprintf("CUDA NB predict: feature dimension mismatch (expected %d, got %d)", hdr->n_features, feature_dim);
 		return -1;
 	}
 
@@ -583,13 +560,7 @@ ndb_cuda_nb_predict(const bytea *model_data,
 		return -1;
 	}
 
-	/* Validate input array */
-	if (input == NULL)
-	{
-		if (errstr)
-			*errstr = pstrdup("CUDA NB predict: input array is NULL");
-		return -1;
-	}
+	/* Validate input array (input already checked at function entry) */
 	for (i = 0; i < feature_dim; i++)
 	{
 		if (!isfinite(input[i]))
@@ -604,22 +575,10 @@ ndb_cuda_nb_predict(const bytea *model_data,
 	means = (const double *)(base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t)hdr->n_classes);
 	variances = (const double *)(base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t)hdr->n_classes + sizeof(double) * (size_t)hdr->n_classes * (size_t)hdr->n_features);
 
+	/* Note: palloc never returns NULL in PostgreSQL - it errors on failure */
 	class_log_probs = (double *)palloc(sizeof(double) * hdr->n_classes);
-	if (class_log_probs == NULL)
-	{
-		if (errstr)
-			*errstr = pstrdup("CUDA NB predict: failed to allocate class_log_probs array");
-		return -1;
-	}
 
-	/* Validate model data pointers */
-	if (priors == NULL || means == NULL || variances == NULL)
-	{
-		if (errstr)
-			*errstr = pstrdup("CUDA NB predict: model data pointers are NULL (corrupted model)");
-		pfree(class_log_probs);
-		return -1;
-	}
+	/* Note: priors, means, variances are computed from valid bytea offsets, so they cannot be NULL */
 
 	/* Compute log probability for each class */
 	for (i = 0; i < hdr->n_classes; i++)
@@ -871,13 +830,8 @@ ndb_cuda_nb_evaluate_batch(const bytea *model_data,
 	}
 
 	/* Allocate predictions array */
+	/* Note: palloc never returns NULL in PostgreSQL - it errors on failure */
 	predictions = (int *)palloc(sizeof(int) * (size_t)n_samples);
-	if (predictions == NULL)
-	{
-		if (errstr)
-			*errstr = pstrdup("failed to allocate predictions array");
-		return -1;
-	}
 
 	/* Batch predict */
 	rc = ndb_cuda_nb_predict_batch(model_data,
@@ -948,12 +902,107 @@ ndb_cuda_nb_evaluate_batch(const bytea *model_data,
 
 #else
 
-void
-ndb_cuda_nb_train(void) { }
-void
-ndb_cuda_nb_predict(void) { }
-void
-ndb_cuda_nb_pack_model(void) { }
+/* Stubs for non-CUDA builds - match function signatures from header */
+
+int
+ndb_cuda_nb_train(const float *features,
+	const double *labels,
+	int n_samples,
+	int feature_dim,
+	int class_count,
+	const Jsonb *hyperparams,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	(void) features;
+	(void) labels;
+	(void) n_samples;
+	(void) feature_dim;
+	(void) class_count;
+	(void) hyperparams;
+	(void) model_data;
+	(void) metrics;
+	if (errstr)
+		*errstr = pstrdup("CUDA Naive Bayes not built with GPU support");
+	return -1;
+}
+
+int
+ndb_cuda_nb_predict(const bytea *model_data,
+	const float *input,
+	int feature_dim,
+	int *class_out,
+	double *probability_out,
+	char **errstr)
+{
+	(void) model_data;
+	(void) input;
+	(void) feature_dim;
+	(void) class_out;
+	(void) probability_out;
+	if (errstr)
+		*errstr = pstrdup("CUDA Naive Bayes not built with GPU support");
+	return -1;
+}
+
+int
+ndb_cuda_nb_pack_model(const struct GaussianNBModel *model,
+	bytea **model_data,
+	Jsonb **metrics,
+	char **errstr)
+{
+	(void) model;
+	(void) model_data;
+	(void) metrics;
+	if (errstr)
+		*errstr = pstrdup("CUDA Naive Bayes not built with GPU support");
+	return -1;
+}
+
+int
+ndb_cuda_nb_predict_batch(const bytea *model_data,
+	const float *features,
+	int n_samples,
+	int feature_dim,
+	int *predictions_out,
+	char **errstr)
+{
+	(void) model_data;
+	(void) features;
+	(void) n_samples;
+	(void) feature_dim;
+	(void) predictions_out;
+	if (errstr)
+		*errstr = pstrdup("CUDA Naive Bayes not built with GPU support");
+	return -1;
+}
+
+int
+ndb_cuda_nb_evaluate_batch(const bytea *model_data,
+	const float *features,
+	const int *labels,
+	int n_samples,
+	int feature_dim,
+	double *accuracy_out,
+	double *precision_out,
+	double *recall_out,
+	double *f1_out,
+	char **errstr)
+{
+	(void) model_data;
+	(void) features;
+	(void) labels;
+	(void) n_samples;
+	(void) feature_dim;
+	(void) accuracy_out;
+	(void) precision_out;
+	(void) recall_out;
+	(void) f1_out;
+	if (errstr)
+		*errstr = pstrdup("CUDA Naive Bayes not built with GPU support");
+	return -1;
+}
 
 #endif /* NDB_GPU_CUDA */
 

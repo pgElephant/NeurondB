@@ -108,13 +108,11 @@ ndb_cuda_svm_compute_kernel_row_kernel(const float *features,
  * CUDA kernel to compute errors: E_i = f(x_i) - y_i
  */
 __global__ void
-ndb_cuda_svm_compute_errors_kernel(const float *features,
-	const float *alphas,
+ndb_cuda_svm_compute_errors_kernel(const float *alphas,
 	const double *labels,
 	const float *kernel_matrix,
 	float bias,
 	int n_samples,
-	int feature_dim,
 	float *errors)
 {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -176,13 +174,18 @@ ndb_cuda_svm_launch_compute_kernel_row(const float *features,
 		return -1;
 	if (row_idx < 0 || row_idx >= n_samples)
 		return -1;
+	if (n_samples <= 0 || feature_dim <= 0)
+		return -1;
 
 	/* Allocate device memory */
-	err = cudaMalloc((void **)&d_features, sizeof(float) * n_samples * feature_dim);
+	size_t features_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
+	size_t row_bytes = sizeof(float) * (size_t)n_samples;
+
+	err = cudaMalloc((void **)&d_features, features_bytes);
 	if (err != cudaSuccess)
 		return -1;
 
-	err = cudaMalloc((void **)&d_kernel_row, sizeof(float) * n_samples);
+	err = cudaMalloc((void **)&d_kernel_row, row_bytes);
 	if (err != cudaSuccess)
 	{
 		cudaFree(d_features);
@@ -190,7 +193,7 @@ ndb_cuda_svm_launch_compute_kernel_row(const float *features,
 	}
 
 	/* Copy features to device */
-	err = cudaMemcpy(d_features, features, sizeof(float) * n_samples * feature_dim, cudaMemcpyHostToDevice);
+	err = cudaMemcpy(d_features, features, features_bytes, cudaMemcpyHostToDevice);
 	if (err != cudaSuccess)
 	{
 		cudaFree(d_features);
@@ -220,7 +223,7 @@ ndb_cuda_svm_launch_compute_kernel_row(const float *features,
 	}
 
 	/* Copy result back to host */
-	err = cudaMemcpy(kernel_row, d_kernel_row, sizeof(float) * n_samples, cudaMemcpyDeviceToHost);
+	err = cudaMemcpy(kernel_row, d_kernel_row, row_bytes, cudaMemcpyDeviceToHost);
 	if (err != cudaSuccess)
 	{
 		cudaFree(d_features);
@@ -237,16 +240,13 @@ ndb_cuda_svm_launch_compute_kernel_row(const float *features,
  * Host-side launcher for compute_errors kernel
  */
 extern "C" int
-ndb_cuda_svm_launch_compute_errors(const float *features,
-	const float *alphas,
+ndb_cuda_svm_launch_compute_errors(const float *alphas,
 	const double *labels,
 	const float *kernel_matrix,
 	float bias,
 	int n_samples,
-	int feature_dim,
 	float *errors)
 {
-	float *d_features = NULL;
 	float *d_alphas = NULL;
 	double *d_labels = NULL;
 	float *d_kernel_matrix = NULL;
@@ -255,42 +255,39 @@ ndb_cuda_svm_launch_compute_errors(const float *features,
 	int blocks = (n_samples + threads_per_block - 1) / threads_per_block;
 	cudaError_t err;
 
-	if (features == NULL || alphas == NULL || labels == NULL || kernel_matrix == NULL || errors == NULL)
+	if (alphas == NULL || labels == NULL || kernel_matrix == NULL || errors == NULL)
+		return -1;
+	if (n_samples <= 0)
 		return -1;
 
 	/* Allocate device memory */
-	err = cudaMalloc((void **)&d_features, sizeof(float) * n_samples * feature_dim);
+	size_t alphas_bytes = sizeof(float) * (size_t)n_samples;
+	size_t labels_bytes = sizeof(double) * (size_t)n_samples;
+	size_t kernel_matrix_bytes = sizeof(float) * (size_t)n_samples * (size_t)n_samples;
+	size_t errors_bytes = sizeof(float) * (size_t)n_samples;
+
+	err = cudaMalloc((void **)&d_alphas, alphas_bytes);
 	if (err != cudaSuccess)
 		return -1;
 
-	err = cudaMalloc((void **)&d_alphas, sizeof(float) * n_samples);
+	err = cudaMalloc((void **)&d_labels, labels_bytes);
 	if (err != cudaSuccess)
 	{
-		cudaFree(d_features);
-		return -1;
-	}
-
-	err = cudaMalloc((void **)&d_labels, sizeof(double) * n_samples);
-	if (err != cudaSuccess)
-	{
-		cudaFree(d_features);
 		cudaFree(d_alphas);
 		return -1;
 	}
 
-	err = cudaMalloc((void **)&d_kernel_matrix, sizeof(float) * n_samples * n_samples);
+	err = cudaMalloc((void **)&d_kernel_matrix, kernel_matrix_bytes);
 	if (err != cudaSuccess)
 	{
-		cudaFree(d_features);
 		cudaFree(d_alphas);
 		cudaFree(d_labels);
 		return -1;
 	}
 
-	err = cudaMalloc((void **)&d_errors, sizeof(float) * n_samples);
+	err = cudaMalloc((void **)&d_errors, errors_bytes);
 	if (err != cudaSuccess)
 	{
-		cudaFree(d_features);
 		cudaFree(d_alphas);
 		cudaFree(d_labels);
 		cudaFree(d_kernel_matrix);
@@ -298,26 +295,22 @@ ndb_cuda_svm_launch_compute_errors(const float *features,
 	}
 
 	/* Copy data to device */
-	err = cudaMemcpy(d_features, features, sizeof(float) * n_samples * feature_dim, cudaMemcpyHostToDevice);
+	err = cudaMemcpy(d_alphas, alphas, alphas_bytes, cudaMemcpyHostToDevice);
 	if (err != cudaSuccess)
 		goto cleanup;
 
-	err = cudaMemcpy(d_alphas, alphas, sizeof(float) * n_samples, cudaMemcpyHostToDevice);
+	err = cudaMemcpy(d_labels, labels, labels_bytes, cudaMemcpyHostToDevice);
 	if (err != cudaSuccess)
 		goto cleanup;
 
-	err = cudaMemcpy(d_labels, labels, sizeof(double) * n_samples, cudaMemcpyHostToDevice);
-	if (err != cudaSuccess)
-		goto cleanup;
-
-	err = cudaMemcpy(d_kernel_matrix, kernel_matrix, sizeof(float) * n_samples * n_samples, cudaMemcpyHostToDevice);
+	err = cudaMemcpy(d_kernel_matrix, kernel_matrix, kernel_matrix_bytes, cudaMemcpyHostToDevice);
 	if (err != cudaSuccess)
 		goto cleanup;
 
 	/* Launch kernel */
 	ndb_cuda_svm_compute_errors_kernel<<<blocks, threads_per_block>>>(
-		d_features, d_alphas, d_labels, d_kernel_matrix, bias,
-		n_samples, feature_dim, d_errors);
+		d_alphas, d_labels, d_kernel_matrix, bias,
+		n_samples, d_errors);
 
 	err = cudaGetLastError();
 	if (err != cudaSuccess)
@@ -329,11 +322,10 @@ ndb_cuda_svm_launch_compute_errors(const float *features,
 		goto cleanup;
 
 	/* Copy result back to host */
-	err = cudaMemcpy(errors, d_errors, sizeof(float) * n_samples, cudaMemcpyDeviceToHost);
+	err = cudaMemcpy(errors, d_errors, errors_bytes, cudaMemcpyDeviceToHost);
 	if (err != cudaSuccess)
 		goto cleanup;
 
-	cudaFree(d_features);
 	cudaFree(d_alphas);
 	cudaFree(d_labels);
 	cudaFree(d_kernel_matrix);
@@ -341,8 +333,6 @@ ndb_cuda_svm_launch_compute_errors(const float *features,
 	return 0;
 
 cleanup:
-	if (d_features)
-		cudaFree(d_features);
 	if (d_alphas)
 		cudaFree(d_alphas);
 	if (d_labels)
@@ -372,13 +362,18 @@ ndb_cuda_svm_launch_update_errors(const float *kernel_row,
 
 	if (kernel_row == NULL || errors == NULL)
 		return -1;
+	if (n_samples <= 0)
+		return -1;
 
 	/* Allocate device memory */
-	err = cudaMalloc((void **)&d_kernel_row, sizeof(float) * n_samples);
+	size_t kernel_row_bytes = sizeof(float) * (size_t)n_samples;
+	size_t errors_bytes = sizeof(float) * (size_t)n_samples;
+
+	err = cudaMalloc((void **)&d_kernel_row, kernel_row_bytes);
 	if (err != cudaSuccess)
 		return -1;
 
-	err = cudaMalloc((void **)&d_errors, sizeof(float) * n_samples);
+	err = cudaMalloc((void **)&d_errors, errors_bytes);
 	if (err != cudaSuccess)
 	{
 		cudaFree(d_kernel_row);
@@ -386,7 +381,7 @@ ndb_cuda_svm_launch_update_errors(const float *kernel_row,
 	}
 
 	/* Copy data to device */
-	err = cudaMemcpy(d_kernel_row, kernel_row, sizeof(float) * n_samples, cudaMemcpyHostToDevice);
+	err = cudaMemcpy(d_kernel_row, kernel_row, kernel_row_bytes, cudaMemcpyHostToDevice);
 	if (err != cudaSuccess)
 	{
 		cudaFree(d_kernel_row);
@@ -394,7 +389,7 @@ ndb_cuda_svm_launch_update_errors(const float *kernel_row,
 		return -1;
 	}
 
-	err = cudaMemcpy(d_errors, errors, sizeof(float) * n_samples, cudaMemcpyHostToDevice);
+	err = cudaMemcpy(d_errors, errors, errors_bytes, cudaMemcpyHostToDevice);
 	if (err != cudaSuccess)
 	{
 		cudaFree(d_kernel_row);
@@ -424,7 +419,7 @@ ndb_cuda_svm_launch_update_errors(const float *kernel_row,
 	}
 
 	/* Copy result back to host */
-	err = cudaMemcpy(errors, d_errors, sizeof(float) * n_samples, cudaMemcpyDeviceToHost);
+	err = cudaMemcpy(errors, d_errors, errors_bytes, cudaMemcpyDeviceToHost);
 	if (err != cudaSuccess)
 	{
 		cudaFree(d_kernel_row);

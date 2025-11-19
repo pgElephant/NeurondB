@@ -44,6 +44,7 @@ SELECT model_id FROM gpu_model_temp;
 -- (MSE, RMSE, MAE are already computed in evaluate() below)
 
 -- Evaluate model and store result
+DROP TABLE IF EXISTS gpu_metrics_temp;
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);
 DO $$
 DECLARE

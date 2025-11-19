@@ -49,6 +49,7 @@ GROUP BY cluster_id
 ORDER BY cluster_id;
 
 -- Evaluate model and store result
+DROP TABLE IF EXISTS gpu_metrics_temp;
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);
 DO $$
 DECLARE

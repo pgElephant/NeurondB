@@ -51,7 +51,7 @@ ndb_cuda_nb_compute_means_kernel(const float *features,
 	int feature_dim,
 	int n_classes,
 	double *means,
-	const int *class_counts)
+	const int *class_counts /* unused - kept for API compatibility */)
 {
 	int class_id = blockIdx.x;
 	int feature_id = threadIdx.x;
@@ -88,7 +88,7 @@ ndb_cuda_nb_compute_variances_kernel(const float *features,
 	int feature_dim,
 	int n_classes,
 	double *variances,
-	const int *class_counts)
+	const int *class_counts /* unused - kept for API compatibility */)
 {
 	int class_id = blockIdx.x;
 	int feature_id = threadIdx.x;
@@ -151,14 +151,9 @@ ndb_cuda_nb_count_classes(const double *labels,
 	status = cudaSetDevice(0);
 	if (status != cudaSuccess)
 		return -1;
-	
-	/* Reset any pending errors */
-	cudaGetLastError();
 
 	label_bytes = sizeof(double) * (size_t)n_samples;
 	count_bytes = sizeof(int) * (size_t)n_classes;
-
-	cudaGetLastError();
 
 	status = cudaMalloc((void **)&d_labels, label_bytes);
 	if (status != cudaSuccess)
@@ -246,12 +241,30 @@ ndb_cuda_nb_compute_means(const float *features,
 		|| n_samples <= 0 || feature_dim <= 0 || n_classes <= 0)
 		return -1;
 
+	/* Check feature_dim does not exceed maxThreadsPerBlock (typically 1024) */
+	if (feature_dim > 1024)
+		return -1;
+
+	/* Initialize CUDA runtime if needed (for consistency with count_classes) */
+	status = cudaFree(0);
+	if (status != cudaSuccess && status != cudaErrorInitializationError)
+		return -1;
+
+	/* Check CUDA device availability */
+	int device_count = 0;
+	status = cudaGetDeviceCount(&device_count);
+	if (status != cudaSuccess || device_count <= 0)
+		return -1;
+
+	/* Ensure device is set */
+	status = cudaSetDevice(0);
+	if (status != cudaSuccess)
+		return -1;
+
 	feature_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
 	label_bytes = sizeof(double) * (size_t)n_samples;
 	mean_bytes = sizeof(double) * (size_t)n_classes * (size_t)feature_dim;
 	count_bytes = sizeof(int) * (size_t)n_classes;
-
-	cudaGetLastError();
 
 	status = cudaMalloc((void **)&d_features, feature_bytes);
 	if (status != cudaSuccess)
@@ -390,13 +403,31 @@ ndb_cuda_nb_compute_variances(const float *features,
 		|| n_samples <= 0 || feature_dim <= 0 || n_classes <= 0)
 		return -1;
 
+	/* Check feature_dim does not exceed maxThreadsPerBlock (typically 1024) */
+	if (feature_dim > 1024)
+		return -1;
+
+	/* Initialize CUDA runtime if needed (for consistency with count_classes) */
+	status = cudaFree(0);
+	if (status != cudaSuccess && status != cudaErrorInitializationError)
+		return -1;
+
+	/* Check CUDA device availability */
+	int device_count = 0;
+	status = cudaGetDeviceCount(&device_count);
+	if (status != cudaSuccess || device_count <= 0)
+		return -1;
+
+	/* Ensure device is set */
+	status = cudaSetDevice(0);
+	if (status != cudaSuccess)
+		return -1;
+
 	feature_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
 	label_bytes = sizeof(double) * (size_t)n_samples;
 	mean_bytes = sizeof(double) * (size_t)n_classes * (size_t)feature_dim;
 	variance_bytes = sizeof(double) * (size_t)n_classes * (size_t)feature_dim;
 	count_bytes = sizeof(int) * (size_t)n_classes;
-
-	cudaGetLastError();
 
 	status = cudaMalloc((void **)&d_features, feature_bytes);
 	if (status != cudaSuccess)

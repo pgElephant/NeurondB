@@ -68,7 +68,7 @@ compare_samples(const void *a, const void *b)
 
 /* Compute Euclidean distance between two vectors */
 static double
-euclidean_distance(float *a, float *b, int dim)
+euclidean_distance(const float *a, const float *b, int dim)
 {
 	double sum = 0.0;
 	int i;
@@ -130,21 +130,28 @@ knn_classify(PG_FUNCTION_ARGS)
 
 	oldcontext = CurrentMemoryContext;
 
+	/* Build query to fetch all training samples before SPI */
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		quote_identifier(feat_str),
+		quote_identifier(label_str),
+		quote_identifier(tbl_str),
+		quote_identifier(feat_str),
+		quote_identifier(label_str));
+	elog(DEBUG1, "knn_classify: executing query: %s", query.data);
+
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	{
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(label_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("neurondb: SPI_connect failed")));
-
-	/* Build query to fetch all training samples */
-	initStringInfo(&query);
-	elog(DEBUG1,
-			"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
-		feat_str,
-		label_str,
-		tbl_str,
-		feat_str,
-		label_str);
+	}
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -155,76 +162,117 @@ knn_classify(PG_FUNCTION_ARGS)
 	nvec = SPI_processed;
 
 	if (nvec < k)
+	{
+		SPI_finish();
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(label_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 				errmsg("neurondb: need at least k=%d samples, but found only %d",
 					k,
 					nvec)));
+	}
 
 	/* Allocate samples array in caller's context */
 	MemoryContextSwitchTo(oldcontext);
 	samples = (KNNSample *)palloc(sizeof(KNNSample) * nvec);
 
-	/* Extract data and compute distances */
-	for (i = 0; i < nvec; i++)
+	/* Extract data and compute distances - track valid sample count */
 	{
-		HeapTuple tuple = SPI_tuptable->vals[i];
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
-		Datum feat_datum;
-		Datum label_datum;
-		bool feat_null;
-		bool label_null;
-		Vector *vec;
+		int nsamples = 0;
 
-		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
-		label_datum = SPI_getbinval(tuple, tupdesc, 2, &label_null);
+		for (i = 0; i < nvec; i++)
+		{
+			HeapTuple tuple = SPI_tuptable->vals[i];
+			TupleDesc tupdesc = SPI_tuptable->tupdesc;
+			Datum feat_datum;
+			Datum label_datum;
+			bool feat_null;
+			bool label_null;
+			Vector *vec;
 
-		if (feat_null || label_null)
-			continue;
+			feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+			label_datum = SPI_getbinval(tuple, tupdesc, 2, &label_null);
 
-		vec = DatumGetVector(feat_datum);
-		if (vec == NULL || vec->dim <= 0)
-			continue;
+			if (feat_null || label_null)
+				continue;
 
-		if (vec->dim != dim)
+			vec = DatumGetVector(feat_datum);
+			if (vec == NULL || vec->dim <= 0)
+				continue;
+
+			if (vec->dim != dim)
+			{
+				int j;
+				SPI_finish();
+				pfree(query.data);
+				for (j = 0; j < nsamples; j++)
+					pfree(samples[j].features);
+				pfree(samples);
+				pfree(tbl_str);
+				pfree(feat_str);
+				pfree(label_str);
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: dimension mismatch: expected %d, got %d",
+							dim, vec->dim)));
+			}
+
+			/* Copy features */
+			samples[nsamples].features = (float *)palloc(sizeof(float) * dim);
+			memcpy(samples[nsamples].features, vec->data, sizeof(float) * dim);
+			samples[nsamples].dim = dim;
+
+			/* Get label */
+			samples[nsamples].label = DatumGetFloat8(label_datum);
+
+			/* Compute distance */
+			samples[nsamples].distance = euclidean_distance(
+				query_vector->data, samples[nsamples].features, dim);
+			nsamples++;
+		}
+
+		if (nsamples < k)
+		{
+			SPI_finish();
+			pfree(query.data);
+			for (i = 0; i < nsamples; i++)
+				pfree(samples[i].features);
+			pfree(samples);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(label_str);
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Dimension mismatch: expected %d, got %d",
-						dim, vec->dim)));
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+					errmsg("neurondb: need at least k=%d valid samples, but found only %d",
+						k,
+						nsamples)));
+		}
 
-		/* Copy features */
-		samples[i].features = (float *)palloc(sizeof(float) * dim);
-		memcpy(samples[i].features, vec->data, sizeof(float) * dim);
-		samples[i].dim = dim;
+		SPI_finish();
+		pfree(query.data);
 
-		/* Get label */
-		samples[i].label = DatumGetFloat8(label_datum);
+		/* Sort samples by distance */
+		qsort(samples, nsamples, sizeof(KNNSample), compare_samples);
 
-		/* Compute distance */
-		samples[i].distance = euclidean_distance(
-			query_vector->data, samples[i].features, dim);
+		/* Vote among k nearest neighbors */
+		for (i = 0; i < k && i < nsamples; i++)
+		{
+			int label_class = (int)samples[i].label;
+			if (label_class >= 0 && label_class < 2)
+				class_votes[label_class] += 1.0;
+		}
+
+		/* Determine predicted class */
+		predicted_class = (class_votes[1] > class_votes[0]) ? 1 : 0;
+
+		/* Cleanup */
+		for (i = 0; i < nsamples; i++)
+			pfree(samples[i].features);
+		pfree(samples);
 	}
-
-	SPI_finish();
-
-	/* Sort samples by distance */
-	qsort(samples, nvec, sizeof(KNNSample), compare_samples);
-
-	/* Vote among k nearest neighbors */
-	for (i = 0; i < k && i < nvec; i++)
-	{
-		int label_class = (int)samples[i].label;
-		if (label_class >= 0 && label_class < 2)
-			class_votes[label_class] += 1.0;
-	}
-
-	/* Determine predicted class */
-	predicted_class = (class_votes[1] > class_votes[0]) ? 1 : 0;
-
-	/* Cleanup */
-	for (i = 0; i < nvec; i++)
-		pfree(samples[i].features);
-	pfree(samples);
 	pfree(tbl_str);
 	pfree(feat_str);
 	pfree(label_str);
@@ -279,21 +327,28 @@ knn_regress(PG_FUNCTION_ARGS)
 
 	oldcontext = CurrentMemoryContext;
 
+	/* Build query before SPI */
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		quote_identifier(feat_str),
+		quote_identifier(targ_str),
+		quote_identifier(tbl_str),
+		quote_identifier(feat_str),
+		quote_identifier(targ_str));
+	elog(DEBUG1, "knn_regress: executing query: %s", query.data);
+
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	{
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("neurondb: SPI_connect failed")));
-
-	/* Build query */
-	initStringInfo(&query);
-	elog(DEBUG1,
-			"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
-		feat_str,
-		targ_str,
-		tbl_str,
-		feat_str,
-		targ_str);
+	}
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -304,69 +359,111 @@ knn_regress(PG_FUNCTION_ARGS)
 	nvec = SPI_processed;
 
 	if (nvec < k)
+	{
+		SPI_finish();
+		pfree(query.data);
+		pfree(tbl_str);
+		pfree(feat_str);
+		pfree(targ_str);
 		ereport(ERROR,
-			(errmsg("Need at least k=%d samples, but found only %d",
-				k,
-				nvec)));
+			(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				errmsg("neurondb: need at least k=%d samples, but found only %d",
+					k,
+					nvec)));
+	}
 
 	/* Allocate samples array */
 	MemoryContextSwitchTo(oldcontext);
 	samples = (KNNSample *)palloc(sizeof(KNNSample) * nvec);
 
-	/* Extract data and compute distances */
-	for (i = 0; i < nvec; i++)
+	/* Extract data and compute distances - track valid sample count */
 	{
-		HeapTuple tuple = SPI_tuptable->vals[i];
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
-		Datum feat_datum;
-		Datum targ_datum;
-		bool feat_null;
-		bool targ_null;
-		Vector *vec;
+		int nsamples = 0;
 
-		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
-		targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+		for (i = 0; i < nvec; i++)
+		{
+			HeapTuple tuple = SPI_tuptable->vals[i];
+			TupleDesc tupdesc = SPI_tuptable->tupdesc;
+			Datum feat_datum;
+			Datum targ_datum;
+			bool feat_null;
+			bool targ_null;
+			Vector *vec;
 
-		if (feat_null || targ_null)
-			continue;
+			feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+			targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
 
-		vec = DatumGetVector(feat_datum);
-		if (vec == NULL || vec->dim <= 0)
-			continue;
+			if (feat_null || targ_null)
+				continue;
 
-		if (vec->dim != dim)
+			vec = DatumGetVector(feat_datum);
+			if (vec == NULL || vec->dim <= 0)
+				continue;
+
+			if (vec->dim != dim)
+			{
+				int j;
+				SPI_finish();
+				pfree(query.data);
+				for (j = 0; j < nsamples; j++)
+					pfree(samples[j].features);
+				pfree(samples);
+				pfree(tbl_str);
+				pfree(feat_str);
+				pfree(targ_str);
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: dimension mismatch: expected %d, got %d",
+							dim, vec->dim)));
+			}
+
+			/* Copy features */
+			samples[nsamples].features = (float *)palloc(sizeof(float) * dim);
+			memcpy(samples[nsamples].features, vec->data, sizeof(float) * dim);
+			samples[nsamples].dim = dim;
+
+			/* Get target value */
+			samples[nsamples].label = DatumGetFloat8(targ_datum);
+
+			/* Compute distance */
+			samples[nsamples].distance = euclidean_distance(
+				query_vector->data, samples[nsamples].features, dim);
+			nsamples++;
+		}
+
+		if (nsamples < k)
+		{
+			SPI_finish();
+			pfree(query.data);
+			for (i = 0; i < nsamples; i++)
+				pfree(samples[i].features);
+			pfree(samples);
+			pfree(tbl_str);
+			pfree(feat_str);
+			pfree(targ_str);
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("Dimension mismatch: expected %d, got %d",
-						dim, vec->dim)));
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+					errmsg("neurondb: need at least k=%d valid samples, but found only %d",
+						k,
+						nsamples)));
+		}
 
-		/* Copy features */
-		samples[i].features = (float *)palloc(sizeof(float) * dim);
-		memcpy(samples[i].features, vec->data, sizeof(float) * dim);
-		samples[i].dim = dim;
+		SPI_finish();
+		pfree(query.data);
 
-		/* Get target value */
-		samples[i].label = DatumGetFloat8(targ_datum);
+		/* Sort by distance */
+		qsort(samples, nsamples, sizeof(KNNSample), compare_samples);
 
-		/* Compute distance */
-		samples[i].distance = euclidean_distance(
-			query_vector->data, samples[i].features, dim);
+		/* Average k nearest neighbors */
+		for (i = 0; i < k && i < nsamples; i++)
+			prediction += samples[i].label;
+		prediction /= k;
+
+		/* Cleanup */
+		for (i = 0; i < nsamples; i++)
+			pfree(samples[i].features);
+		pfree(samples);
 	}
-
-	SPI_finish();
-
-	/* Sort by distance */
-	qsort(samples, nvec, sizeof(KNNSample), compare_samples);
-
-	/* Average k nearest neighbors */
-	for (i = 0; i < k && i < nvec; i++)
-		prediction += samples[i].label;
-	prediction /= k;
-
-	/* Cleanup */
-	for (i = 0; i < nvec; i++)
-		pfree(samples[i].features);
-	pfree(samples);
 	pfree(tbl_str);
 	pfree(feat_str);
 	pfree(targ_str);
@@ -417,21 +514,29 @@ evaluate_knn_classifier(PG_FUNCTION_ARGS)
 
 	oldcontext = CurrentMemoryContext;
 
+	/* Build query to fetch test samples before SPI */
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		quote_identifier(feat_str),
+		quote_identifier(label_str),
+		quote_identifier(test_str),
+		quote_identifier(feat_str),
+		quote_identifier(label_str));
+	elog(DEBUG1, "evaluate_knn_classifier: executing query: %s", query.data);
+
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	{
+		pfree(query.data);
+		pfree(train_str);
+		pfree(test_str);
+		pfree(feat_str);
+		pfree(label_str);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("neurondb: SPI_connect failed")));
-
-	/* Build query to fetch test samples */
-	initStringInfo(&query);
-	elog(DEBUG1,
-			"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
-		feat_str,
-		label_str,
-		test_str,
-		feat_str,
-		label_str);
+	}
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -450,7 +555,6 @@ evaluate_knn_classifier(PG_FUNCTION_ARGS)
 		Datum label_datum;
 		bool feat_null;
 		bool label_null;
-		Vector *vec;
 		int y_true;
 		int y_pred;
 
@@ -460,15 +564,14 @@ evaluate_knn_classifier(PG_FUNCTION_ARGS)
 		if (feat_null || label_null)
 			continue;
 
-		vec = DatumGetVector(feat_datum);
 		y_true = (int)DatumGetFloat8(label_datum);
 
-		/* Call knn_classify for this sample */
+		/* Call knn_classify for this sample - pass feat_datum, not vec */
 		y_pred = DatumGetInt32(DirectFunctionCall5(knn_classify,
 			PointerGetDatum(train_table),
 			PointerGetDatum(feature_col),
 			PointerGetDatum(label_col),
-			PointerGetDatum(vec),
+			feat_datum,
 			Int32GetDatum(k)));
 
 		/* Update confusion matrix */
@@ -488,6 +591,7 @@ evaluate_knn_classifier(PG_FUNCTION_ARGS)
 	}
 
 	SPI_finish();
+	pfree(query.data);
 
 	/* Compute metrics */
 	accuracy = (double)(tp + tn) / (tp + tn + fp + fn);
@@ -590,7 +694,11 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 		
 		initStringInfo(&query);
 		appendStringInfo(&query, "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
-			feat_str, label_str, tbl_str, feat_str, label_str);
+			quote_identifier(feat_str),
+			quote_identifier(label_str),
+			quote_identifier(tbl_str),
+			quote_identifier(feat_str),
+			quote_identifier(label_str));
 		
 		ret = SPI_execute(query.data, true, 0);
 		if (ret != SPI_OK_SELECT)
@@ -618,28 +726,13 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 				 errmsg("KNN: need at least %d samples, got %d", k_value, nvec)));
 		}
 		
-		/* Get dimension from first vector */
-		vec_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
-		if (isnull)
+		/* Get dimension from first row - handle both array and vector types */
 		{
-			SPI_finish();
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(label_str);
-			pfree(query.data);
-			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("neurondb: NULL vector in first row")));
-		}
-		first_vec = DatumGetVector(vec_datum);
-		dim = first_vec->dim;
-		
-		/* Verify all vectors have same dimension (we don't need to store the data) */
-		for (i = 0; i < nvec; i++)
-		{
-			Vector *vec;
-			
-			vec_datum = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1, &isnull);
+			TupleDesc tupdesc = SPI_tuptable->tupdesc;
+			Oid feat_type_oid = SPI_gettypeid(tupdesc, 1);
+			bool feat_is_array = (feat_type_oid == FLOAT8ARRAYOID || feat_type_oid == FLOAT4ARRAYOID);
+
+			vec_datum = SPI_getbinval(SPI_tuptable->vals[0], tupdesc, 1, &isnull);
 			if (isnull)
 			{
 				SPI_finish();
@@ -649,19 +742,96 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 				pfree(query.data);
 				ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("neurondb: NULL vector at row %d", i)));
+						errmsg("neurondb: NULL feature in first row")));
 			}
-			vec = DatumGetVector(vec_datum);
-			if (vec->dim != dim)
+
+			if (feat_is_array)
 			{
-				SPI_finish();
-				pfree(tbl_str);
-				pfree(feat_str);
-				pfree(label_str);
-				pfree(query.data);
-				ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("neurondb: inconsistent vector dimension at row %d", i)));
+				ArrayType *arr = DatumGetArrayTypeP(vec_datum);
+				if (ARR_NDIM(arr) != 1)
+				{
+					SPI_finish();
+					pfree(tbl_str);
+					pfree(feat_str);
+					pfree(label_str);
+					pfree(query.data);
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("neurondb: feature array must be 1-dimensional")));
+				}
+				dim = ARR_DIMS(arr)[0];
+			}
+			else
+			{
+				first_vec = DatumGetVector(vec_datum);
+				if (first_vec == NULL)
+				{
+					SPI_finish();
+					pfree(tbl_str);
+					pfree(feat_str);
+					pfree(label_str);
+					pfree(query.data);
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("neurondb: invalid vector in first row")));
+				}
+				dim = first_vec->dim;
+			}
+		}
+		
+		/* Verify all features have same dimension (we don't need to store the data) */
+		{
+			TupleDesc tupdesc = SPI_tuptable->tupdesc;
+			Oid feat_type_oid = SPI_gettypeid(tupdesc, 1);
+			bool feat_is_array = (feat_type_oid == FLOAT8ARRAYOID || feat_type_oid == FLOAT4ARRAYOID);
+
+			for (i = 0; i < nvec; i++)
+			{
+				vec_datum = SPI_getbinval(SPI_tuptable->vals[i], tupdesc, 1, &isnull);
+				if (isnull)
+				{
+					SPI_finish();
+					pfree(tbl_str);
+					pfree(feat_str);
+					pfree(label_str);
+					pfree(query.data);
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("neurondb: NULL feature at row %d", i)));
+				}
+
+				if (feat_is_array)
+				{
+					ArrayType *arr = DatumGetArrayTypeP(vec_datum);
+					if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != dim)
+					{
+						SPI_finish();
+						pfree(tbl_str);
+						pfree(feat_str);
+						pfree(label_str);
+						pfree(query.data);
+						ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+								errmsg("neurondb: inconsistent feature array dimension at row %d (expected %d)",
+									i, dim)));
+					}
+				}
+				else
+				{
+					Vector *vec = DatumGetVector(vec_datum);
+					if (vec == NULL || vec->dim != dim)
+					{
+						SPI_finish();
+						pfree(tbl_str);
+						pfree(feat_str);
+						pfree(label_str);
+						pfree(query.data);
+						ereport(ERROR,
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+								errmsg("neurondb: inconsistent vector dimension at row %d (expected %d)",
+									i, dim)));
+					}
+				}
 			}
 		}
 		
@@ -924,11 +1094,12 @@ predict_knn_model_id(PG_FUNCTION_ARGS)
 				/* Validate feature value before formatting */
 				if (!isfinite(features[i]))
 				{
-					SPI_finish();
 					pfree(sql_query.data);
 					pfree(tbl_lit.data);
 					pfree(feat_lit.data);
 					pfree(label_lit.data);
+					if (features_allocated)
+						pfree(features_allocated);
 					MemoryContextSwitchTo(oldcontext);
 					MemoryContextDelete(callcontext);
 					if (metrics)
@@ -937,7 +1108,7 @@ predict_knn_model_id(PG_FUNCTION_ARGS)
 						pfree(model_data);
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("Non-finite value in features array at index %d", i)));
+							errmsg("neurondb: non-finite value in features array at index %d", i)));
 				}
 				appendStringInfo(&sql_query, "%.6f", features[i]);
 			}
@@ -1140,6 +1311,12 @@ predict_knn_model_id(PG_FUNCTION_ARGS)
 	pfree(query_features);
 	pfree(distances);
 	pfree(indices);
+	if (features_allocated)
+		pfree(features_allocated);
+	if (model_data)
+		pfree(model_data);
+	if (metrics)
+		pfree(metrics);
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(callcontext);
 
@@ -1217,7 +1394,7 @@ knn_predict_batch(int32 model_id,
 
 	base = VARDATA(model_data);
 
-	/* Detect CPU vs GPU format */
+	/* Detect CPU vs GPU format and get k_value */
 	{
 		int first_int = *(int *)base;
 		if (first_int >= 1 && first_int <= 1000)
@@ -1268,79 +1445,360 @@ knn_predict_batch(int32 model_id,
 		return;
 	}
 
-	/* For each test sample, predict using predict_knn_model_id */
-	for (i = 0; i < n_samples; i++)
+	/* Predict directly - avoid calling predict_knn_model_id which uses SPI */
 	{
-		const float *row = features + (i * feature_dim);
-		double y_true = labels[i];
-		int true_class;
-		double prediction;
-		int pred_class;
-		ArrayType *feat_array;
-		Datum pred_datum;
+		int first_int = *(int *)base;
+		bool is_gpu = (first_int < 1 || first_int > 1000);
 
-		if (!isfinite(y_true))
-			continue;
-
-		/* Convert label to class: handle both integer and float labels */
-		/* Allow small epsilon for floating point labels (e.g., 0.0, 1.0) */
-		if (y_true < -0.5 || y_true > 1.5)
-			continue;
-		
-		true_class = (int)rint(y_true);
-		/* Clamp to valid binary classification range [0, 1] */
-		if (true_class < 0)
-			true_class = 0;
-		if (true_class > 1)
-			true_class = 1;
-
-		/* Convert float features to float8 array for predict_knn_model_id */
+		if (is_gpu)
 		{
-			float8 *feat_f8;
-			int j;
+			/* GPU model: use payload directly */
+			const NdbCudaKnnModelHeader *gpu_hdr;
+			const float *training_features;
+			const double *training_labels;
 
-			feat_f8 = (float8 *)palloc(sizeof(float8) * feature_dim);
-			for (j = 0; j < feature_dim; j++)
-				feat_f8[j] = (float8)row[j];
+			if (VARSIZE(model_data) - VARHDRSZ < (int)sizeof(NdbCudaKnnModelHeader))
+			{
+				if (metrics)
+					pfree(metrics);
+				if (model_data)
+					pfree(model_data);
+				if (tp_out)
+					*tp_out = 0;
+				if (tn_out)
+					*tn_out = 0;
+				if (fp_out)
+					*fp_out = 0;
+				if (fn_out)
+					*fn_out = 0;
+				return;
+			}
 
-			feat_array = construct_array((Datum *)feat_f8,
-				feature_dim,
-				FLOAT8OID,
-				sizeof(float8),
-				FLOAT8PASSBYVAL,
-				'd');
-			pfree(feat_f8);
+			gpu_hdr = (const NdbCudaKnnModelHeader *)base;
+			training_features = (const float *)(base + sizeof(NdbCudaKnnModelHeader));
+			training_labels = (const double *)(base + sizeof(NdbCudaKnnModelHeader) +
+				sizeof(float) * (size_t)gpu_hdr->n_samples * (size_t)gpu_hdr->n_features);
+
+			/* For each test sample, compute distances and predict */
+			for (i = 0; i < n_samples; i++)
+			{
+				const float *row = features + (i * feature_dim);
+				double y_true = labels[i];
+				int true_class;
+				double prediction = 0.0;
+				int pred_class;
+				float *distances_local = NULL;
+				int *indices_local = NULL;
+				int j;
+
+				if (!isfinite(y_true))
+					continue;
+
+				true_class = (int)rint(y_true);
+				if (true_class < 0)
+					true_class = 0;
+				if (true_class > 1)
+					true_class = 1;
+
+				/* Compute distances to all training samples */
+				distances_local = (float *)palloc(sizeof(float) * gpu_hdr->n_samples);
+				indices_local = (int *)palloc(sizeof(int) * gpu_hdr->n_samples);
+
+				for (j = 0; j < gpu_hdr->n_samples; j++)
+				{
+					double sum = 0.0;
+					const float *train_feat = training_features + (j * gpu_hdr->n_features);
+					int k;
+
+					for (k = 0; k < feature_dim; k++)
+					{
+						double diff = row[k] - train_feat[k];
+						sum += diff * diff;
+					}
+					distances_local[j] = (float)sqrt(sum);
+					indices_local[j] = j;
+				}
+
+				/* Selection sort for k nearest */
+				for (j = 0; j < k_value && j < gpu_hdr->n_samples; j++)
+				{
+					int min_idx = j;
+					int k;
+
+					for (k = j + 1; k < gpu_hdr->n_samples; k++)
+					{
+						if (distances_local[k] < distances_local[min_idx])
+							min_idx = k;
+					}
+					if (min_idx != j)
+					{
+						float tmp_dist = distances_local[j];
+						int tmp_idx = indices_local[j];
+						distances_local[j] = distances_local[min_idx];
+						indices_local[j] = indices_local[min_idx];
+						distances_local[min_idx] = tmp_dist;
+						indices_local[min_idx] = tmp_idx;
+					}
+				}
+
+				/* Majority vote */
+				{
+					double class_votes[2] = {0.0, 0.0};
+					int k;
+
+					for (k = 0; k < k_value && k < gpu_hdr->n_samples; k++)
+					{
+						int label = (int)training_labels[indices_local[k]];
+						if (label >= 0 && label < 2)
+							class_votes[label] += 1.0;
+					}
+					prediction = (class_votes[1] > class_votes[0]) ? 1.0 : 0.0;
+				}
+
+				pred_class = (int)rint(prediction);
+				if (pred_class < 0)
+					pred_class = 0;
+				if (pred_class > 1)
+					pred_class = 1;
+
+				pfree(distances_local);
+				pfree(indices_local);
+
+				/* Update confusion matrix */
+				if (true_class == 1 && pred_class == 1)
+					tp++;
+				else if (true_class == 0 && pred_class == 0)
+					tn++;
+				else if (true_class == 0 && pred_class == 1)
+					fp++;
+				else if (true_class == 1 && pred_class == 0)
+					fn++;
+			}
 		}
+		else
+		{
+			/* CPU model: load training data and predict */
+			char *table_name_cpu, *feature_col_cpu, *label_col_cpu;
+			const char *str_ptr;
+			StringInfoData query;
+			int ret;
+			int n_train = 0;
+			float *train_features = NULL;
+			double *train_labels = NULL;
+			int train_valid = 0;
+			int j;
+			MemoryContext outer_context;
 
-		/* Call predict_knn_model_id */
-		pred_datum = DirectFunctionCall2(predict_knn_model_id,
-			Int32GetDatum(model_id),
-			PointerGetDatum(feat_array));
-		prediction = DatumGetFloat8(pred_datum);
-		pfree(feat_array);
+			/* Extract strings from model */
+			str_ptr = base + sizeof(int) * 3; /* Skip k, n_samples, n_features */
+			table_name_cpu = (char *)str_ptr;
+			str_ptr += strlen(table_name_cpu) + 1;
+			feature_col_cpu = (char *)str_ptr;
+			str_ptr += strlen(feature_col_cpu) + 1;
+			label_col_cpu = (char *)str_ptr;
 
-		/* Convert prediction to class: handle both integer and float predictions */
-		/* Clamp prediction to valid binary classification range [0, 1] */
-		if (prediction < 0.0)
-			prediction = 0.0;
-		if (prediction > 1.0)
-			prediction = 1.0;
-		
-		pred_class = (int)rint(prediction);
-		if (pred_class < 0)
-			pred_class = 0;
-		if (pred_class > 1)
-			pred_class = 1;
+			/* Save outer memory context before nested SPI */
+			outer_context = CurrentMemoryContext;
 
-		/* Update confusion matrix */
-		if (true_class == 1 && pred_class == 1)
-			tp++;
-		else if (true_class == 0 && pred_class == 0)
-			tn++;
-		else if (true_class == 0 && pred_class == 1)
-			fp++;
-		else if (true_class == 1 && pred_class == 0)
-			fn++;
+			/* Build query in outer context before nested SPI */
+			initStringInfo(&query);
+			appendStringInfo(&query,
+				"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+				quote_identifier(feature_col_cpu),
+				quote_identifier(label_col_cpu),
+				quote_identifier(table_name_cpu),
+				quote_identifier(feature_col_cpu),
+				quote_identifier(label_col_cpu));
+
+			/* Load training data using nested SPI (PostgreSQL supports this) */
+			if (SPI_connect() != SPI_OK_CONNECT)
+			{
+				pfree(query.data);
+				if (metrics)
+					pfree(metrics);
+				if (model_data)
+					pfree(model_data);
+				if (tp_out)
+					*tp_out = 0;
+				if (tn_out)
+					*tn_out = 0;
+				if (fp_out)
+					*fp_out = 0;
+				if (fn_out)
+					*fn_out = 0;
+				return;
+			}
+
+			ret = SPI_execute(query.data, true, 0);
+			if (ret == SPI_OK_SELECT)
+			{
+				n_train = SPI_processed;
+				if (n_train >= k_value)
+				{
+					TupleDesc tupdesc;
+					Oid feat_type_oid;
+					bool feat_is_array;
+					MemoryContext nested_context;
+
+					/* Save nested SPI context */
+					nested_context = CurrentMemoryContext;
+
+					/* Allocate in outer context so it survives SPI_finish() */
+					MemoryContextSwitchTo(outer_context);
+					train_features = (float *)palloc(sizeof(float) * (size_t)n_train * (size_t)feature_dim);
+					train_labels = (double *)palloc(sizeof(double) * (size_t)n_train);
+					MemoryContextSwitchTo(nested_context); /* Back to nested SPI context */
+
+					tupdesc = SPI_tuptable->tupdesc;
+					feat_type_oid = SPI_gettypeid(tupdesc, 1);
+					feat_is_array = (feat_type_oid == FLOAT8ARRAYOID || feat_type_oid == FLOAT4ARRAYOID);
+
+					for (i = 0; i < n_train; i++)
+					{
+						HeapTuple tuple = SPI_tuptable->vals[i];
+						Datum feat_datum;
+						Datum label_datum;
+						bool feat_null;
+						bool label_null;
+						Vector *vec;
+						ArrayType *arr;
+						float *train_row;
+
+						feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+						label_datum = SPI_getbinval(tuple, tupdesc, 2, &label_null);
+
+						if (feat_null || label_null)
+							continue;
+
+						train_row = train_features + (train_valid * feature_dim);
+						train_labels[train_valid] = DatumGetFloat8(label_datum);
+
+						if (feat_is_array)
+						{
+							arr = DatumGetArrayTypeP(feat_datum);
+							if (ARR_NDIM(arr) != 1 || ARR_DIMS(arr)[0] != feature_dim)
+								continue;
+							if (feat_type_oid == FLOAT8ARRAYOID)
+							{
+								float8 *data = (float8 *)ARR_DATA_PTR(arr);
+								for (j = 0; j < feature_dim; j++)
+									train_row[j] = (float)data[j];
+							}
+							else
+							{
+								float4 *data = (float4 *)ARR_DATA_PTR(arr);
+								memcpy(train_row, data, sizeof(float) * feature_dim);
+							}
+						}
+						else
+						{
+							vec = DatumGetVector(feat_datum);
+							if (vec == NULL || vec->dim != feature_dim)
+								continue;
+							memcpy(train_row, vec->data, sizeof(float) * feature_dim);
+						}
+
+						train_valid++;
+					}
+				}
+			}
+
+			SPI_finish();
+			/* Free query.data after SPI_finish() - it's allocated in outer context */
+			pfree(query.data);
+
+			if (train_valid < k_value)
+			{
+				if (train_features)
+					pfree(train_features);
+				if (train_labels)
+					pfree(train_labels);
+				if (metrics)
+					pfree(metrics);
+				if (model_data)
+					pfree(model_data);
+				if (tp_out)
+					*tp_out = 0;
+				if (tn_out)
+					*tn_out = 0;
+				if (fp_out)
+					*fp_out = 0;
+				if (fn_out)
+					*fn_out = 0;
+				return;
+			}
+
+			/* For each test sample, compute distances and predict */
+			for (i = 0; i < n_samples; i++)
+			{
+				const float *row = features + (i * feature_dim);
+				double y_true = labels[i];
+				int true_class;
+				double prediction = 0.0;
+				int pred_class;
+				KNNSample *samples_local = NULL;
+
+				if (!isfinite(y_true))
+					continue;
+
+				true_class = (int)rint(y_true);
+				if (true_class < 0)
+					true_class = 0;
+				if (true_class > 1)
+					true_class = 1;
+
+				/* Compute distances to all training samples */
+				samples_local = (KNNSample *)palloc(sizeof(KNNSample) * train_valid);
+				for (j = 0; j < train_valid; j++)
+				{
+					samples_local[j].features = train_features + (j * feature_dim);
+					samples_local[j].label = train_labels[j];
+					samples_local[j].distance = euclidean_distance(
+						row, samples_local[j].features, feature_dim);
+					samples_local[j].dim = feature_dim;
+				}
+
+				/* Sort by distance */
+				qsort(samples_local, train_valid, sizeof(KNNSample), compare_samples);
+
+				/* Majority vote */
+				{
+					double class_votes[2] = {0.0, 0.0};
+					int k;
+
+					for (k = 0; k < k_value && k < train_valid; k++)
+					{
+						int label = (int)samples_local[k].label;
+						if (label >= 0 && label < 2)
+							class_votes[label] += 1.0;
+					}
+					prediction = (class_votes[1] > class_votes[0]) ? 1.0 : 0.0;
+				}
+
+				pred_class = (int)rint(prediction);
+				if (pred_class < 0)
+					pred_class = 0;
+				if (pred_class > 1)
+					pred_class = 1;
+
+				pfree(samples_local);
+
+				/* Update confusion matrix */
+				if (true_class == 1 && pred_class == 1)
+					tp++;
+				else if (true_class == 0 && pred_class == 0)
+					tn++;
+				else if (true_class == 0 && pred_class == 1)
+					fp++;
+				else if (true_class == 1 && pred_class == 0)
+					fn++;
+			}
+
+			if (train_features)
+				pfree(train_features);
+			if (train_labels)
+				pfree(train_labels);
+		}
 	}
 
 	if (metrics)
@@ -1382,6 +1840,7 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	int nvec = 0;
 	int i;
 	int j;
+	int valid_rows = 0;
 	Oid feat_type_oid = InvalidOid;
 	bool feat_is_array = false;
 	double accuracy = 0.0;
@@ -1393,6 +1852,7 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	int fp = 0;
 	int fn = 0;
 	MemoryContext oldcontext;
+	MemoryContext callcontext;
 	StringInfoData query;
 	StringInfoData jsonbuf;
 	Jsonb *result_jsonb = NULL;
@@ -1400,6 +1860,10 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	Jsonb *gpu_metrics = NULL;
 	bool is_gpu_model = false;
 	int feat_dim = 0;
+	/* BULLETPROOF: Copy strings immediately to preserve them for error messages */
+	char *tbl_str_copy = NULL;
+	char *feat_str_copy = NULL;
+	char *targ_str_copy = NULL;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
@@ -1422,10 +1886,26 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	targ_str = text_to_cstring(label_col);
 
 	oldcontext = CurrentMemoryContext;
+	
+	/* BULLETPROOF: Copy strings immediately to preserve them for error messages */
+	tbl_str_copy = pstrdup(tbl_str);
+	feat_str_copy = pstrdup(feat_str);
+	targ_str_copy = pstrdup(targ_str);
+
+	/* Build query in caller context, before SPI */
+	initStringInfo(&query);
+	appendStringInfo(&query,
+		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		quote_identifier(feat_str),
+		quote_identifier(targ_str),
+		quote_identifier(tbl_str),
+		quote_identifier(feat_str),
+		quote_identifier(targ_str));
 
 	/* Load model from catalog to determine feature dimension */
 	if (!ml_catalog_fetch_model_payload(model_id, &gpu_payload, NULL, &gpu_metrics))
 	{
+		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -1465,6 +1945,7 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 			}
 			else
 			{
+				pfree(query.data);
 				pfree(tbl_str);
 				pfree(feat_str);
 				pfree(targ_str);
@@ -1482,6 +1963,7 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 
 	if (feat_dim <= 0)
 	{
+		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -1497,6 +1979,7 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 	{
+		pfree(query.data);
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -1509,15 +1992,8 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 				errmsg("neurondb: evaluate_knn_by_model_id: SPI_connect failed")));
 	}
 
-	/* Build query - single query to fetch all data */
-	initStringInfo(&query);
-	elog(DEBUG1,
-			"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
-		quote_identifier(feat_str),
-		quote_identifier(targ_str),
-		quote_identifier(tbl_str),
-		quote_identifier(feat_str),
-		quote_identifier(targ_str));
+	/* Save SPI context for later cleanup */
+	callcontext = CurrentMemoryContext;
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -1539,7 +2015,27 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	nvec = SPI_processed;
 	if (nvec < 1)
 	{
+		/* Check if table/view exists and has any rows at all */
+		StringInfoData check_query;
+		int check_ret;
+		int total_rows = 0;
+		
+		initStringInfo(&check_query);
+		appendStringInfo(&check_query,
+			"SELECT COUNT(*) FROM %s",
+			quote_identifier(tbl_str));
+		check_ret = SPI_execute(check_query.data, true, 0);
+		if (check_ret == SPI_OK_SELECT && SPI_processed > 0)
+		{
+			bool isnull;
+			Datum count_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+			if (!isnull)
+				total_rows = DatumGetInt64(count_datum);
+		}
+		pfree(check_query.data);
+		
 		pfree(query.data);
+		/* Free original strings before SPI_finish() */
 		pfree(tbl_str);
 		pfree(feat_str);
 		pfree(targ_str);
@@ -1548,9 +2044,25 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 		if (gpu_metrics)
 			pfree(gpu_metrics);
 		SPI_finish();
-		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_knn_by_model_id: no valid rows found")));
+		
+		/* Now use copies for error messages */
+		if (total_rows == 0)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_knn_by_model_id: table/view '%s' has no rows",
+						tbl_str_copy),
+					errhint("Ensure the table/view exists and contains data")));
+		}
+		else
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: evaluate_knn_by_model_id: no valid rows found in '%s' (query returned %d rows, but all were filtered out due to NULL values)",
+						tbl_str_copy, total_rows),
+					errhint("Ensure columns '%s' and '%s' are not NULL",
+						feat_str_copy, targ_str_copy)));
+		}
 	}
 
 	/* Determine feature column type */
@@ -1564,10 +2076,10 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	{
 #ifdef NDB_GPU_CUDA
 		const NdbCudaKnnModelHeader *gpu_hdr;
-		int *h_labels = NULL;
+		double *h_labels = NULL;
 		float *h_features = NULL;
-		int valid_rows = 0;
 		size_t payload_size;
+		valid_rows = 0;
 
 		/* Defensive check: validate payload size */
 		payload_size = VARSIZE(gpu_payload) - VARHDRSZ;
@@ -1607,7 +2119,7 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 		/* Allocate host buffers for features and labels with size checks */
 		{
 			size_t features_size = sizeof(float) * (size_t)nvec * (size_t)feat_dim;
-			size_t labels_size = sizeof(int) * (size_t)nvec;
+			size_t labels_size = sizeof(double) * (size_t)nvec;
 
 			if (features_size > MaxAllocSize || labels_size > MaxAllocSize)
 			{
@@ -1618,7 +2130,7 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 			}
 
 			h_features = (float *)palloc(features_size);
-			h_labels = (int *)palloc(labels_size);
+			h_labels = (double *)palloc(labels_size);
 
 			if (h_features == NULL || h_labels == NULL)
 			{
@@ -1686,7 +2198,7 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 					continue;
 				}
 
-				h_labels[valid_rows] = (int)rint(DatumGetFloat8(targ_datum));
+				h_labels[valid_rows] = DatumGetFloat8(targ_datum);
 
 				/* Extract feature vector - optimized paths */
 				if (feat_is_array)
@@ -1796,20 +2308,29 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 						CStringGetDatum(jsonbuf.data)));
 
 					pfree(jsonbuf.data);
+					
+					/* BULLETPROOF: Copy result_jsonb to caller's context before SPI_finish() */
+					MemoryContextSwitchTo(oldcontext);
+					result_jsonb = (Jsonb *)PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result_jsonb));
+					
+					/* Now safe to finish SPI and free SPI-allocated memory */
+					MemoryContextSwitchTo(callcontext);
 					pfree(h_features);
 					pfree(h_labels);
 					if (gpu_payload)
 						pfree(gpu_payload);
 					if (gpu_metrics)
 						pfree(gpu_metrics);
-					if (gpu_errstr)
-						pfree(gpu_errstr);
+					/* Note: gpu_errstr is allocated by GPU function, don't free it */
 					pfree(query.data);
+					SPI_finish();
+					
+					/* Switch back to oldcontext and free strings allocated before SPI_connect */
+					MemoryContextSwitchTo(oldcontext);
 					pfree(tbl_str);
 					pfree(feat_str);
 					pfree(targ_str);
-					SPI_finish();
-					MemoryContextSwitchTo(oldcontext);
+					
 					PG_RETURN_JSONB_P(result_jsonb);
 				}
 				else
@@ -1847,7 +2368,7 @@ cpu_evaluation_path:
 	{
 		float *h_features = NULL;
 		double *h_labels = NULL;
-		int valid_rows = 0;
+		valid_rows = 0;
 
 		/* Allocate host buffers for features and labels */
 		h_features = (float *)palloc(sizeof(float) * (size_t)nvec * (size_t)feat_dim);
@@ -1925,20 +2446,82 @@ cpu_evaluation_path:
 
 		if (valid_rows == 0)
 		{
-			pfree(h_features);
-			pfree(h_labels);
-			if (gpu_payload)
-				pfree(gpu_payload);
-			if (gpu_metrics)
-				pfree(gpu_metrics);
-			pfree(query.data);
-			pfree(tbl_str);
-			pfree(feat_str);
-			pfree(targ_str);
-			SPI_finish();
-			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("neurondb: evaluate_knn_by_model_id: no valid rows found")));
+			/* Check if we had rows but they were all filtered out */
+			if (nvec > 0)
+			{
+				/* Try to determine why rows were filtered */
+				HeapTuple tuple = SPI_tuptable->vals[0];
+				TupleDesc tupdesc = SPI_tuptable->tupdesc;
+				Datum feat_datum;
+				bool feat_null;
+				Vector *vec;
+				int actual_dim = 0;
+
+				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+				if (!feat_null)
+				{
+					if (feat_is_array)
+					{
+						ArrayType *arr = DatumGetArrayTypeP(feat_datum);
+						if (ARR_NDIM(arr) == 1)
+							actual_dim = ARR_DIMS(arr)[0];
+					}
+					else
+					{
+						vec = DatumGetVector(feat_datum);
+						if (vec != NULL)
+							actual_dim = vec->dim;
+					}
+				}
+
+				pfree(h_features);
+				pfree(h_labels);
+				if (gpu_payload)
+					pfree(gpu_payload);
+				if (gpu_metrics)
+					pfree(gpu_metrics);
+				pfree(query.data);
+				pfree(tbl_str);
+				pfree(feat_str);
+				pfree(targ_str);
+				SPI_finish();
+				if (actual_dim > 0 && actual_dim != feat_dim)
+				{
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("neurondb: evaluate_knn_by_model_id: feature dimension mismatch"),
+							errdetail("Model expects %d features but test data has %d features. All %d rows were filtered out due to dimension mismatch.",
+								feat_dim,
+								actual_dim,
+								nvec)));
+				}
+				else
+				{
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("neurondb: evaluate_knn_by_model_id: no valid rows found"),
+							errdetail("Query returned %d rows but all were filtered out (NULL values or dimension mismatches).",
+								nvec)));
+				}
+			}
+			else
+			{
+				pfree(h_features);
+				pfree(h_labels);
+				if (gpu_payload)
+					pfree(gpu_payload);
+				if (gpu_metrics)
+					pfree(gpu_metrics);
+				pfree(query.data);
+				pfree(tbl_str);
+				pfree(feat_str);
+				pfree(targ_str);
+				SPI_finish();
+				ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("neurondb: evaluate_knn_by_model_id: no valid rows found"),
+						errdetail("Query returned 0 rows from table '%s'.", tbl_str_copy)));
+			}
 		}
 
 		/* Use batch prediction helper */
@@ -2007,13 +2590,7 @@ cpu_evaluation_path:
 			pfree(gpu_metrics);
 	}
 
-	SPI_finish();
-	pfree(query.data);
-	pfree(tbl_str);
-	pfree(feat_str);
-	pfree(targ_str);
-
-	/* Build jsonb result */
+	/* Build jsonb result in SPI context */
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
 		"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
@@ -2021,13 +2598,34 @@ cpu_evaluation_path:
 		precision,
 		recall,
 		f1_score,
-		nvec);
+		valid_rows > 0 ? valid_rows : nvec);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 		CStringGetDatum(jsonbuf.data)));
 
 	pfree(jsonbuf.data);
+	
+	/* BULLETPROOF: Copy result_jsonb to caller's context before SPI_finish() */
 	MemoryContextSwitchTo(oldcontext);
+	result_jsonb = (Jsonb *)PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result_jsonb));
+	
+	/* Now safe to finish SPI and free SPI-allocated memory */
+	SPI_finish();
+	pfree(query.data);
+	
+	/* Free strings allocated before SPI_connect (in oldcontext) */
+	pfree(tbl_str);
+	pfree(feat_str);
+	pfree(targ_str);
+	
+	/* Free string copies used for error messages */
+	if (tbl_str_copy)
+		pfree(tbl_str_copy);
+	if (feat_str_copy)
+		pfree(feat_str_copy);
+	if (targ_str_copy)
+		pfree(targ_str_copy);
+	
 	PG_RETURN_JSONB_P(result_jsonb);
 }
 
