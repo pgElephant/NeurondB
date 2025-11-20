@@ -9,7 +9,6 @@
 SET client_min_messages TO WARNING;
 
 /* Step 1: Verify prerequisites and create test data */
-\echo 'Step 1: Creating test data...'
 
 DROP TABLE IF EXISTS lgb_data;
 CREATE TABLE lgb_data (
@@ -28,12 +27,8 @@ FROM generate_series(1, 100) AS x;
 SELECT COUNT(*)::bigint AS data_rows FROM lgb_data;
 
 /* Step 2: Configure CPU */
-\echo 'Step 2: Testing LightGBM on CPU...'
-
-SET neurondb.gpu_enabled = off;
 
 \echo '=========================================================================='
-\echo 'LightGBM - Basic Test (CPU)'
 \echo '=========================================================================='
 
 -- Train LightGBM model on CPU
@@ -68,14 +63,10 @@ BEGIN
 END $$;
 
 /* Step 3: Configure GPU */
-\echo 'Step 3: Testing LightGBM on GPU...'
 
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
 SELECT neurondb_gpu_enable() AS gpu_available;
 
 \echo '=========================================================================='
-\echo 'LightGBM - Basic Test (GPU)'
 \echo '=========================================================================='
 
 -- Train LightGBM model on GPU
@@ -111,4 +102,4 @@ END $$;
 
 DROP TABLE IF EXISTS lgb_data;
 
-\echo 'LightGBM basic test completed successfully'
+\echo 'Test completed successfully'

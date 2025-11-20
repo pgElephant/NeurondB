@@ -5,12 +5,10 @@
 \set ON_ERROR_STOP on
 
 \echo '=========================================================================='
-\echo 'Vector Operations Test'
 \echo '=========================================================================='
 
 -- Test 1: Vector Creation and Basic Properties
 \echo ''
-\echo 'Test 1: Vector Creation and Basic Properties'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT 
@@ -20,7 +18,6 @@ SELECT
 
 -- Test 2: Vector Arithmetic Operations
 \echo ''
-\echo 'Test 2: Vector Arithmetic Operations'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT 
@@ -30,7 +27,6 @@ SELECT
 
 -- Test 3: Vector Distance Functions
 \echo ''
-\echo 'Test 3: Vector Distance Functions'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 WITH vectors AS (
@@ -46,7 +42,6 @@ FROM vectors;
 
 -- Test 4: Vector Concatenation
 \echo ''
-\echo 'Test 4: Vector Concatenation'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT 
@@ -55,7 +50,6 @@ SELECT
 
 -- Test 5: Vector Conversion
 \echo ''
-\echo 'Test 5: Vector Conversion'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT 
@@ -63,6 +57,6 @@ SELECT
 	pg_column_size(vector_to_binary('[1,2,3,4,5]'::vector)) AS binary_size;
 
 \echo ''
-\echo 'Vector Operations Test Complete!'
 \echo '=========================================================================='
 
+\echo 'Test completed successfully'

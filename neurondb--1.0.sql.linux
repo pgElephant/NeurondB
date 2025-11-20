@@ -984,10 +984,11 @@ CREATE FUNCTION train_random_forest_classifier(
     AS $$
 BEGIN
     RETURN neurondb.train(
+        'default',
         'random_forest',
         table_name,
-        feature_col,
         label_col,
+        ARRAY[feature_col]::text[],
         jsonb_build_object(
             'n_trees', n_trees,
             'max_depth', max_depth,
@@ -4569,14 +4570,8 @@ BEGIN
 			min_samples := COALESCE((params->>'min_samples_split')::integer, 2);
 			RETURN train_decision_tree_classifier(table_name, feature_col, label_col, max_depth, min_samples);
 		WHEN 'random_forest' THEN
-			n_trees := COALESCE((params->>'n_trees')::integer, 100);
-			max_depth := COALESCE((params->>'max_depth')::integer, 10);
-			min_samples := COALESCE((params->>'min_samples_split')::integer, 2);
-			max_features := COALESCE((params->>'max_features')::integer, 0);
-			RETURN train_random_forest_classifier(
-				table_name, feature_col, label_col,
-				n_trees, max_depth, min_samples, max_features
-			);
+			-- Delegate to C function with default project
+			RETURN neurondb.train('default', 'random_forest', table_name, label_col, ARRAY[feature_col], params);
 		WHEN 'svm' THEN
 			c_param := COALESCE((params->>'C')::float8, 1.0);
 			max_iters := COALESCE((params->>'max_iters')::integer, 1000);

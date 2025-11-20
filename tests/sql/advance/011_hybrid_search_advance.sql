@@ -42,12 +42,10 @@ SELECT
 	(SELECT vector_dims(features) FROM test_train_view LIMIT 1) AS feature_dim
 FROM test_train_view;
 
-/*---- Register required GPU kernels ----*/
+/*---- GPU configuration via GUC (ALTER SYSTEM) ----*/
 \echo ''
 \echo 'GPU Configuration'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
 SELECT neurondb_gpu_enable() AS gpu_available;
 SELECT neurondb_gpu_info() AS gpu_info;
 

@@ -2,9 +2,7 @@
 -- Negative test for random_forest
 
 SET client_min_messages TO WARNING;
-SET neurondb.gpu_enabled = off;
 
-\echo '=== random_forest Negative Test ==='
 
 -- Invalid table
 DO $$ BEGIN
@@ -20,4 +18,4 @@ DO $$ BEGIN
 EXCEPTION WHEN OTHERS THEN
 END $$;
 
-\echo '✓ random_forest negative test complete'
+\echo 'Test completed successfully'

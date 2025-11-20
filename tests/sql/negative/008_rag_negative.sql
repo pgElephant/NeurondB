@@ -2,9 +2,7 @@
 -- Negative test for rag
 
 SET client_min_messages TO WARNING;
-SET neurondb.gpu_enabled = off;
 
-\echo '=== rag Negative Test ==='
 
 -- Invalid table
 DO $$ BEGIN
@@ -20,4 +18,4 @@ DO $$ BEGIN
 EXCEPTION WHEN OTHERS THEN
 END $$;
 
-\echo '✓ rag negative test complete'
+\echo 'Test completed successfully'

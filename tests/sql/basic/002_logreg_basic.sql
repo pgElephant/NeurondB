@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * 002_logreg.sql
- *    Logistic Regression test with GPU acceleration
+ *    Logistic Regression test
  *
  *    Step-by-step test with clean output and timing
  *
@@ -16,44 +16,11 @@
 /* Step 1: Verify prerequisites */
 \echo 'Step 1: Verifying prerequisites...'
 
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables 
-		WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'test_train_view table does not exist';
-	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables 
-		WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
-		RAISE EXCEPTION 'test_test_view table does not exist';
-	END IF;
-END
-$$;
-
--- Create views with 1000 rows for basic tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
-
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
-
 SELECT 
 	COUNT(*)::bigint AS train_rows,
 	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_rows;
 
-/* Step 2: Configure GPU */
-\echo 'Step 2: Configuring GPU acceleration...'
-
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,lr_train,lr_predict';
-
-SELECT 
-	neurondb_gpu_enable() AS gpu_available,
-	current_setting('neurondb.gpu_enabled') AS gpu_enabled;
-
-/* Step 3: Dataset statistics */
+/* Step 2: Dataset statistics */
 \echo 'Step 3: Dataset statistics...'
 
 SELECT 
@@ -91,14 +58,13 @@ SELECT
 	m.algorithm::text AS algorithm,
 	COALESCE((m.metrics::jsonb->>'n_samples')::bigint, m.num_samples::bigint, 0) AS n_samples,
 	COALESCE((m.metrics::jsonb->>'n_features')::integer, m.num_features, 0) AS n_features,
-	COALESCE(m.metrics::jsonb->>'storage', 'cpu') AS storage,
+	COALESCE(m.metrics::jsonb->>'storage', 'default') AS storage,
 	ROUND(COALESCE((m.metrics::jsonb->>'final_loss')::numeric, 0), 6) AS final_loss,
 	ROUND(COALESCE((m.metrics::jsonb->>'accuracy')::numeric, 0), 6) AS accuracy
 FROM neurondb.ml_models m, gpu_model_temp t
 WHERE m.model_id = t.model_id;
 
 /* Step 6: Test set statistics */
-\echo 'Step 6: Test set statistics...'
 
 SELECT COUNT(*)::bigint AS test_samples
 FROM test_test_view
@@ -131,7 +97,6 @@ WHERE metrics->>'f1_score' IS NOT NULL
 ORDER BY metric;
 
 /* Step 8: Summary */
-\echo 'Step 8: Test summary...'
 
 SELECT 
 	(SELECT model_id FROM gpu_model_temp) AS model_id,

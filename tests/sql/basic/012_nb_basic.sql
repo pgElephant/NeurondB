@@ -7,19 +7,8 @@
 -- Or use the test runner: python run_ml_tests.py
 --
 -- Verify required tables exist
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'test_train_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
-	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
-		RAISE EXCEPTION 'test_test_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
-	END IF;
-END
-$$;
 
 -- Naive Bayes: Use CPU due to CUDA fork-safety issues in PostgreSQL
-SET neurondb.gpu_enabled = off;
 
 \set ON_ERROR_STOP on
 
@@ -87,3 +76,4 @@ FROM gpu_metrics_temp m;
 DROP TABLE IF EXISTS gpu_model_temp;
 DROP TABLE IF EXISTS gpu_metrics_temp;
 
+\echo 'Test completed successfully'

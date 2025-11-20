@@ -10,7 +10,6 @@ SET client_min_messages TO WARNING;
 \pset tuples_only off
 
 \echo '=========================================================================='
-\echo 'catboost: Advanced Test (Algorithm Status Check)'
 \echo '=========================================================================='
 
 \echo ''
@@ -88,5 +87,6 @@ DROP TABLE IF EXISTS catboost_test_data;
 
 \echo ''
 \echo '=========================================================================='
-\echo '✓ CatBoost: Advanced test complete'
 \echo '=========================================================================='
+
+\echo 'Test completed successfully'

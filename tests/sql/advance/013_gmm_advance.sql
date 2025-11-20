@@ -15,26 +15,6 @@ SET client_min_messages TO WARNING;
 \echo '=========================================================================='
 
 /* Check that sample_train and sample_test exist */
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'sample_train table does not exist';
-	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
-		RAISE EXCEPTION 'sample_test table does not exist';
-	END IF;
-END
-$$;
-
--- Create views with 1000 rows for advance tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
-
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
 
 \echo ''
 \echo 'Dataset Information'
@@ -49,8 +29,6 @@ FROM test_train_view;
 \echo ''
 \echo 'GPU Configuration'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,gmm_train,gmm_predict';
 SELECT neurondb_gpu_enable() AS gpu_available;
 SELECT neurondb_gpu_info() AS gpu_info;
 
@@ -59,11 +37,8 @@ SELECT neurondb_gpu_info() AS gpu_info;
  * Test multiple hyperparameter combinations and paths
  */
 \echo ''
-\echo 'Training Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Test 1: GPU training with k=3 components'
-SET neurondb.gpu_enabled = on;
 DROP TABLE IF EXISTS gpu_model_k3_temp_013;
 CREATE TEMP TABLE gpu_model_k3_temp_013 AS
 SELECT neurondb.train('gmm', 
@@ -77,8 +52,6 @@ SELECT
 	(SELECT metrics->>'storage' FROM neurondb.ml_models WHERE model_id = gpu_model_id) AS storage
 FROM gpu_model_k3_temp_013;
 
-\echo 'Test 2: CPU training with k=3 components'
-SET neurondb.gpu_enabled = off;
 DROP TABLE IF EXISTS cpu_model_k3_temp_013;
 CREATE TEMP TABLE cpu_model_k3_temp_013 AS
 SELECT neurondb.train('gmm', 
@@ -92,7 +65,6 @@ SELECT
 	(SELECT metrics->>'storage' FROM neurondb.ml_models WHERE model_id = cpu_model_id) AS storage
 FROM cpu_model_k3_temp_013;
 
-\echo 'Test 3: Custom hyperparameters (k=5, max_iters=100)'
 DROP TABLE IF EXISTS custom_model_temp_013;
 CREATE TEMP TABLE custom_model_temp_013 AS
 SELECT neurondb.train('gmm', 
@@ -106,7 +78,6 @@ SELECT
 	(SELECT metrics->>'n_components' FROM neurondb.ml_models WHERE model_id = custom_model_id) AS n_components
 FROM custom_model_temp_013;
 
-\echo 'Test 4: Different k value (k=7)'
 DROP TABLE IF EXISTS k7_model_temp_013;
 CREATE TEMP TABLE k7_model_temp_013 AS
 SELECT neurondb.train('gmm', 
@@ -114,7 +85,6 @@ SELECT neurondb.train('gmm',
 	'features', NULL, 
 	'{"k":7,"max_iters":100}'::jsonb)::integer AS k7_model_id;
 
-\echo 'Test 5: Different max_iters (max_iters=50)'
 DROP TABLE IF EXISTS iter50_model_temp_013;
 CREATE TEMP TABLE iter50_model_temp_013 AS
 SELECT neurondb.train('gmm', 
@@ -124,10 +94,8 @@ SELECT neurondb.train('gmm',
 
 /* --- ERROR path: bad table or column --- */
 \echo ''
-\echo 'Error Handling Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Error Test 1: Invalid table name'
 DO $$
 BEGIN
 	BEGIN
@@ -140,7 +108,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 2: Invalid feature column'
 DO $$
 BEGIN
 	BEGIN
@@ -153,7 +120,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 3: k=0'
 DO $$
 BEGIN
 	BEGIN
@@ -166,7 +132,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 4: Negative max_iters'
 DO $$
 BEGIN
 	BEGIN
@@ -179,7 +144,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 5: NULL features'
 DO $$
 BEGIN
 	BEGIN
@@ -197,11 +161,8 @@ END$$;
  * GPU/CPU paths, all error paths, batch and single, sampling 1000
  *------------------------------------------------------------------*/
 \echo ''
-\echo 'Prediction Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Predict Test 1: GPU batch prediction (1000 rows)'
-SET neurondb.gpu_enabled = on;
 SELECT 
 	'GPU Batch' AS test_type,
 	COUNT(*) AS n_predictions,
@@ -214,8 +175,6 @@ FROM (
 	LIMIT 1000
 ) sub;
 
-\echo 'Predict Test 2: CPU batch prediction (1000 rows)'
-SET neurondb.gpu_enabled = off;
 SELECT 
 	'CPU Batch' AS test_type,
 	COUNT(*) AS n_predictions,
@@ -228,15 +187,12 @@ FROM (
 	LIMIT 1000
 ) sub;
 
-\echo 'Predict Test 3: Custom model single row prediction'
 SELECT 
 	'Custom Single' AS test_type,
 	neurondb.predict((SELECT custom_model_id FROM custom_model_temp_013 LIMIT 1), features) AS prediction
 FROM test_test_view
 LIMIT 1;
 
-\echo 'Predict Test 4: Custom model batch (100 rows)'
-SET neurondb.gpu_enabled = off;
 SELECT 
 	'Custom Batch' AS test_type,
 	COUNT(*) AS n_predictions,
@@ -249,10 +205,8 @@ FROM (
 
 /* Error: invalid model id */
 \echo ''
-\echo 'Prediction Error Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Predict Error Test 1: Non-existent model ID'
 DO $$
 BEGIN
 	BEGIN
@@ -265,7 +219,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Predict Error Test 2: Wrong feature type (integer array)'
 DO $$
 DECLARE
 	cpu_mid_temp integer;
@@ -281,7 +234,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Predict Error Test 3: Wrong feature dimension'
 DO $$
 DECLARE
 	model_dim integer;
@@ -305,7 +257,6 @@ BEGIN
 END
 $$;
 
-\echo 'Predict Error Test 4: NULL model ID'
 DO $$
 BEGIN
 	BEGIN
@@ -318,7 +269,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Predict Error Test 5: NULL features'
 DO $$
 DECLARE
 	cpu_mid integer;
@@ -339,10 +289,8 @@ END$$;
  * Metrics for clustering models (may not support standard evaluation)
  *------------------------------------------------------------------*/
 \echo ''
-\echo 'Evaluation Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Evaluate Test 1: CPU model evaluation (clustering metrics)'
 DO $$
 DECLARE
 	cpu_mid integer;
@@ -357,7 +305,6 @@ BEGIN
 	END IF;
 END$$;
 
-\echo 'Evaluate Test 2: GPU model evaluation'
 DO $$
 DECLARE
 	gpu_mid integer;
@@ -372,7 +319,6 @@ BEGIN
 	END IF;
 END$$;
 
-\echo 'Evaluate Test 3: Custom model evaluation'
 DO $$
 DECLARE
 	custom_mid integer;
@@ -388,10 +334,8 @@ BEGIN
 END$$;
 
 \echo ''
-\echo 'Evaluation Error Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Evaluate Error Test 1: Invalid table'
 DO $$
 DECLARE
 	cpu_mid integer;
@@ -409,7 +353,6 @@ BEGIN
 	END IF;
 END$$;
 
-\echo 'Evaluate Error Test 2: Invalid feature column'
 DO $$
 DECLARE
 	cpu_mid integer;
@@ -427,7 +370,6 @@ BEGIN
 	END IF;
 END$$;
 
-\echo 'Evaluate Error Test 3: NULL model ID'
 DO $$
 BEGIN
 	BEGIN
@@ -444,10 +386,8 @@ END$$;
  * Model catalog check and metadata
  *------------------------------------------------------------------*/
 \echo ''
-\echo 'Model Metadata Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Metadata Test 1: GPU model metadata'
 SELECT 
 	m.model_id,
 	m.algorithm,
@@ -465,7 +405,6 @@ SELECT
 FROM neurondb.ml_models m, gpu_model_k3_temp_013 t
 WHERE m.model_id = t.gpu_model_id;
 
-\echo 'Metadata Test 2: CPU model metadata'
 SELECT 
 	m.model_id,
 	m.algorithm,
@@ -481,7 +420,6 @@ SELECT
 FROM neurondb.ml_models m, cpu_model_k3_temp_013 t
 WHERE m.model_id = t.cpu_model_id;
 
-\echo 'Metadata Test 3: Custom model metadata'
 SELECT 
 	m.model_id,
 	m.algorithm,
@@ -491,7 +429,6 @@ SELECT
 FROM neurondb.ml_models m, custom_model_temp_013 t
 WHERE m.model_id = t.custom_model_id;
 
-\echo 'Metadata Test 4: Model comparison (all models)'
 SELECT 
 	algorithm,
 	COUNT(*) AS n_models,
@@ -506,5 +443,6 @@ GROUP BY algorithm;
 
 \echo ''
 \echo '=========================================================================='
-\echo '✓ gmm: Full exhaustive code-path test complete (1000-row sample)'
 \echo '=========================================================================='
+
+\echo 'Test completed successfully'

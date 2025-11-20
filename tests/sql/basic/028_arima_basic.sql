@@ -14,7 +14,6 @@
 \pset tuples_only off
 
 /* Step 1: Create time series test data */
-\echo 'Step 1: Creating time series test data...'
 
 DROP TABLE IF EXISTS ts_data;
 CREATE TABLE ts_data (
@@ -46,7 +45,6 @@ SELECT train_arima('ts_data', 'time_idx', 'value', 1, 0, 1) as model_id;
 SELECT * FROM arima_model;
 
 /* Step 3: Test predictions */
-\echo 'Step 3: Testing ARIMA predictions...'
 
 -- Forecast next 5 time steps
 CREATE TEMP TABLE arima_forecast AS
@@ -83,7 +81,6 @@ FROM arima_metrics
 ORDER BY metric;
 
 /* Step 5: Summary */
-\echo 'Step 5: Test summary...'
 
 SELECT
     (SELECT model_id FROM arima_model) as model_id,
@@ -94,5 +91,4 @@ SELECT
 /* Cleanup */
 DROP TABLE IF EXISTS ts_data;
 
-/* Success message */
-\echo 'ARIMA basic test completed successfully'
+\echo 'Test completed successfully'

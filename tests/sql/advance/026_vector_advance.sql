@@ -14,28 +14,11 @@ SET client_min_messages TO WARNING;
 \pset format aligned
 
 \echo '=========================================================================='
-\echo 'Vector Operations: Comprehensive Advanced Test (1000 rows sample)'
 \echo '=========================================================================='
 
 -- Verify required tables exist
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'sample_train table does not exist';
-	END IF;
-END
-$$;
 
--- Create views with 1000 rows for advance tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
 DROP VIEW IF EXISTS test_vectors_view;
-
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
 
 -- Create a temporary table with pre-converted vectors to avoid aggregate issues
 DROP VIEW IF EXISTS test_vectors_view;
@@ -71,19 +54,14 @@ FROM test_vectors_temp;
 \echo ''
 \echo 'GPU Configuration'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
 SELECT neurondb_gpu_enable() AS gpu_available;
 SELECT neurondb_gpu_info() AS gpu_info;
 
 \echo ''
-\echo 'Vector Operations Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Test 1: Vector count (aggregates tested in basic tests)'
 SELECT COUNT(*) AS vector_count FROM test_vectors_temp;
 
-\echo 'Test 2: All distance metrics (L2, Cosine, Inner Product, L1, Hamming, Chebyshev, Minkowski, Squared L2, Jaccard, Dice, Mahalanobis)'
 SELECT
 	vector_l2_distance(v1.v, v2.v) AS l2_dist,
 	vector_cosine_distance(v1.v, v2.v) AS cosine_dist,
@@ -100,7 +78,6 @@ CROSS JOIN test_vectors_view v2
 WHERE v1.v IS NOT NULL AND v2.v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 3: Distance operators (<->, <=>, <#>)'
 SELECT
 	v1.v <-> v2.v AS l2_op,
 	v1.v <=> v2.v AS cosine_op,
@@ -110,7 +87,6 @@ CROSS JOIN test_vectors_view v2
 WHERE v1.v IS NOT NULL AND v2.v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 4: Vector statistics (dims, norm, mean, variance, stddev, min, max, element_sum)'
 SELECT
 	AVG(vector_dims(v)) AS avg_dimensions,
 	MIN(vector_norm(v)) AS min_length,
@@ -125,7 +101,6 @@ SELECT
 FROM test_vectors_view
 WHERE v IS NOT NULL;
 
-\echo 'Test 5: Vector element operations (get, set, slice, append, prepend)'
 SELECT
 	vector_get(v, 0) AS first_element,
 	vector_get(v, vector_dims(v) - 1) AS last_element,
@@ -137,7 +112,6 @@ FROM test_vectors_view
 WHERE v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 6: Vector element-wise operations (abs, square, sqrt, pow)'
 SELECT
 	vector_abs(v) AS abs_vector,
 	vector_square(v) AS square_vector,
@@ -147,7 +121,6 @@ FROM test_vectors_view
 WHERE v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 7: Vector arithmetic operations (add, sub, mul, hadamard, divide)'
 SELECT
 	v1.v + v2.v AS add_result,
 	v1.v - v2.v AS sub_result,
@@ -159,7 +132,6 @@ CROSS JOIN test_vectors_view v2
 WHERE v1.v IS NOT NULL AND v2.v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 8: Vector normalization and concatenation'
 SELECT
 	vector_normalize(v) AS normalized,
 	vector_norm(vector_normalize(v)) AS normalized_norm,
@@ -168,7 +140,6 @@ FROM test_vectors_view
 WHERE v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 9: Vector type conversions (to/from arrays)'
 SELECT
 	vector_to_array_float4(v) AS as_float4_array,
 	vector_to_array_float8(v) AS as_float8_array,
@@ -179,7 +150,6 @@ FROM test_vectors_view
 WHERE v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 10: Vector dimension casting'
 SELECT
 	vector_cast_dimension(v, 128) AS cast_to_128,
 	vector_cast_dimension(v, 64) AS cast_to_64,
@@ -190,7 +160,6 @@ FROM test_vectors_view
 WHERE v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 11: Batch operations (all batch functions)'
 WITH batch_data AS (
 	SELECT ARRAY_AGG(v)::vector[] AS vec_array
 	FROM (SELECT v FROM test_vectors_view LIMIT 10) t
@@ -207,7 +176,6 @@ SELECT
 	vector_avg_batch(batch_data.vec_array) AS batch_avg
 FROM batch_data, query_vec;
 
-\echo 'Test 12: FP16 quantization (quantize, dequantize, distance)'
 SELECT
 	vector_quantize_fp16(v1.v) AS fp16_quantized,
 	vector_dequantize_fp16(vector_quantize_fp16(v1.v)) AS fp16_dequantized,
@@ -218,7 +186,6 @@ CROSS JOIN test_vectors_view v2
 WHERE v1.v IS NOT NULL AND v2.v IS NOT NULL
 LIMIT 3;
 
-\echo 'Test 13: INT8 quantization (with min/max vectors)'
 WITH min_max AS (
 	SELECT 
 		MIN(vector_min(v)) AS min_val,
@@ -243,7 +210,6 @@ FROM test_vectors_view tv, min_vec, max_vec
 WHERE tv.v IS NOT NULL
 LIMIT 3;
 
-\echo 'Test 14: Advanced vector operations (percentile, median, quantile)'
 SELECT
 	vector_percentile(v, 0.0) AS p0,
 	vector_percentile(v, 0.25) AS p25,
@@ -256,7 +222,6 @@ FROM test_vectors_view
 WHERE v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 15: Vector transformations (scale, translate, filter, where)'
 SELECT
 	vector_scale(v, ARRAY[2.0, 2.0, 2.0]::real[]) AS scaled_3d,
 	vector_translate(v, vector '[1,1,1]') AS translated_3d,
@@ -266,7 +231,6 @@ FROM test_vectors_view
 WHERE v IS NOT NULL AND vector_dims(v) = 3
 LIMIT 5;
 
-\echo 'Test 16: Vector cross product (3D only)'
 SELECT
 	vector_cross_product(v1.v, v2.v) AS cross_product
 FROM test_vectors_view v1
@@ -275,7 +239,6 @@ WHERE v1.v IS NOT NULL AND v2.v IS NOT NULL
 	AND vector_dims(v1.v) = 3 AND vector_dims(v2.v) = 3
 LIMIT 5;
 
-\echo 'Test 17: Vector comparison operations (eq, ne)'
 SELECT
 	v1.v = v2.v AS eq_result,
 	v1.v <> v2.v AS ne_result,
@@ -286,7 +249,6 @@ CROSS JOIN test_vectors_view v2
 WHERE v1.v IS NOT NULL AND v2.v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 18: Vector preprocessing (clip, standardize, minmax_normalize)'
 SELECT
 	vector_clip(v, -1.0, 1.0) AS clipped,
 	vector_standardize(v) AS standardized,
@@ -295,7 +257,6 @@ FROM test_vectors_view
 WHERE v IS NOT NULL
 LIMIT 5;
 
-\echo 'Test 19: Vector hash function'
 WITH hash_sample AS (
 	SELECT vector_hash(v) AS hash_value
 	FROM test_vectors_view
@@ -310,7 +271,6 @@ hash_count AS (
 SELECT hash_sample.hash_value, hash_count.unique_hashes
 FROM hash_sample, hash_count;
 
-\echo 'Test 20: Edge cases - empty vectors, NULL handling, dimension mismatches'
 DO $$
 DECLARE
 	v1 vector;
@@ -329,13 +289,11 @@ BEGIN
 END
 $$;
 
-\echo 'Test 21: All array to vector conversions'
 SELECT
 	array_to_vector_float4(ARRAY[1.0::real, 2.0::real, 3.0::real]) AS from_float4,
 	array_to_vector_float8(ARRAY[1.0::double precision, 2.0::double precision, 3.0::double precision]) AS from_float8,
 	array_to_vector_integer(ARRAY[1, 2, 3, 4, 5]) AS from_integer;
 
-\echo 'Test 22: Vector normalization edge cases'
 SELECT
 	vector_normalize(vector '[0,0,0]') AS zero_vector,
 	vector_normalize(vector '[1,0,0]') AS unit_x,
@@ -343,14 +301,12 @@ SELECT
 	vector_normalize(vector '[0,0,1]') AS unit_z,
 	vector_norm(vector_normalize(vector '[3,4,0]')) AS normalized_norm;
 
-\echo 'Test 23: Vector arithmetic edge cases'
 SELECT
 	vector '[1,2,3]' + vector '[4,5,6]' AS add,
 	vector '[5,6,7]' - vector '[1,2,3]' AS sub,
 	vector '[1,2,3]' * 2.0 AS scalar_mul,
 	vector_concat(vector '[1,2]', vector '[3,4]') AS concat;
 
-\echo 'Test 24: Comprehensive distance testing'
 SELECT
 	vector_l2_distance(vector '[1,0,0]', vector '[0,1,0]') AS l2_orthogonal,
 	vector_cosine_distance(vector '[1,0,0]', vector '[0,1,0]') AS cosine_orthogonal,
@@ -358,7 +314,6 @@ SELECT
 	vector_l2_distance(vector '[1,1,1]', vector '[1,1,1]') AS l2_identical,
 	vector_cosine_distance(vector '[1,1,1]', vector '[1,1,1]') AS cosine_identical;
 
-\echo 'Test 25: Vector statistics on real data'
 SELECT
 	COUNT(*) AS total,
 	AVG(vector_dims(v)) AS avg_dims,
@@ -370,4 +325,4 @@ SELECT
 FROM test_vectors_view
 WHERE v IS NOT NULL;
 
-\echo '✓ Vector operations comprehensive advanced test complete'
+\echo 'Test completed successfully'

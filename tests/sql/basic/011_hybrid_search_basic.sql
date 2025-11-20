@@ -5,7 +5,6 @@
 \set ON_ERROR_STOP on
 
 \echo '=========================================================================='
-\echo 'Hybrid Search Test'
 \echo '=========================================================================='
 
 -- Create test table with text and vector columns
@@ -31,7 +30,6 @@ INSERT INTO hybrid_search_test (title, content, embedding, fts_vector) VALUES
 
 -- Test 1: Hybrid Search with Text and Vector
 \echo ''
-\echo 'Test 1: Hybrid Search with Text and Vector'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT 
@@ -54,7 +52,6 @@ LIMIT 5;
 
 -- Test 2: Hybrid Search Fusion
 \echo ''
-\echo 'Test 2: Hybrid Search Fusion'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 WITH vector_results AS (
@@ -85,6 +82,6 @@ ORDER BY COALESCE(v.distance, 0.0) + COALESCE(t.rank, 0.0) DESC
 LIMIT 5;
 
 \echo ''
-\echo 'Hybrid Search Test Complete!'
 \echo '=========================================================================='
 
+\echo 'Test completed successfully'

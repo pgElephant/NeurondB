@@ -9,7 +9,6 @@
 SET client_min_messages TO WARNING;
 
 /* Step 1: Verify prerequisites and create test data */
-\echo 'Step 1: Creating test data...'
 
 DROP TABLE IF EXISTS xgb_data;
 CREATE TABLE xgb_data (
@@ -28,12 +27,8 @@ FROM generate_series(1, 100) AS x;
 SELECT COUNT(*)::bigint AS data_rows FROM xgb_data;
 
 /* Step 2: Configure CPU */
-\echo 'Step 2: Testing XGBoost on CPU...'
-
-SET neurondb.gpu_enabled = off;
 
 \echo '=========================================================================='
-\echo 'XGBoost - Basic Test (CPU)'
 \echo '=========================================================================='
 
 -- Train XGBoost model on CPU
@@ -68,14 +63,10 @@ BEGIN
 END $$;
 
 /* Step 3: Configure GPU */
-\echo 'Step 3: Testing XGBoost on GPU...'
 
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
 SELECT neurondb_gpu_enable() AS gpu_available;
 
 \echo '=========================================================================='
-\echo 'XGBoost - Basic Test (GPU)'
 \echo '=========================================================================='
 
 -- Train XGBoost model on GPU
@@ -111,4 +102,4 @@ END $$;
 
 DROP TABLE IF EXISTS xgb_data;
 
-\echo 'XGBoost basic test completed successfully'
+\echo 'Test completed successfully'

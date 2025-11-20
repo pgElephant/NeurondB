@@ -7,26 +7,13 @@
 -- Or use the test runner: python run_ml_tests.py
 --
 -- Verify required tables exist
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'sample_train table does not exist. Please run: python ml_dataset.py <dataset_name>';
-	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
-		RAISE EXCEPTION 'sample_test table does not exist. Please run: python ml_dataset.py <dataset_name>';
-	END IF;
-END
-$$;
 
-SET neurondb.gpu_enabled = on;
 SET neurondb.automl.use_gpu = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,linreg_train,linreg_predict,lr_train,lr_predict,rf_train,rf_predict,dt_train,dt_predict,ridge_train,ridge_predict,lasso_train,lasso_predict';
 SELECT neurondb_gpu_enable();
 
 \set ON_ERROR_STOP on
 
 \echo '=========================================================================='
-\echo 'AutoML Test: Classification'
 \echo '=========================================================================='
 
 -- Test AutoML for classification
@@ -49,7 +36,6 @@ SELECT result FROM automl_classification_result;
 
 \echo ''
 \echo '=========================================================================='
-\echo 'AutoML Test: Regression'
 \echo '=========================================================================='
 
 -- Test AutoML for regression
@@ -68,7 +54,6 @@ SELECT result FROM automl_regression_result;
 
 \echo ''
 \echo '=========================================================================='
-\echo 'AutoML: Testing with different metrics'
 \echo '=========================================================================='
 
 -- Test classification with F1 score
@@ -120,7 +105,6 @@ LIMIT 10;
 
 \echo ''
 \echo '=========================================================================='
-\echo 'AutoML Test Complete'
 \echo '=========================================================================='
 
 -- Cleanup
@@ -129,3 +113,4 @@ DROP TABLE IF EXISTS automl_regression_result;
 DROP TABLE IF EXISTS automl_f1_result;
 DROP TABLE IF EXISTS automl_mse_result;
 
+\echo 'Test completed successfully'

@@ -2,9 +2,7 @@
 -- Negative test for hybrid_search
 
 SET client_min_messages TO WARNING;
-SET neurondb.gpu_enabled = off;
 
-\echo '=== hybrid_search Negative Test ==='
 
 -- Invalid table
 DO $$ BEGIN
@@ -20,4 +18,4 @@ DO $$ BEGIN
 EXCEPTION WHEN OTHERS THEN
 END $$;
 
-\echo '✓ hybrid_search negative test complete'
+\echo 'Test completed successfully'

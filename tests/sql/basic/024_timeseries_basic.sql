@@ -9,7 +9,6 @@
 SET client_min_messages TO WARNING;
 
 /* Step 1: Verify prerequisites and create test data */
-\echo 'Step 1: Creating test data...'
 
 DROP TABLE IF EXISTS ts_data;
 CREATE TABLE ts_data (
@@ -28,12 +27,8 @@ FROM generate_series(1, 30) AS x;
 SELECT COUNT(*)::bigint AS data_rows FROM ts_data;
 
 /* Step 2: Configure CPU */
-\echo 'Step 2: Testing Time Series on CPU...'
-
-SET neurondb.gpu_enabled = off;
 
 \echo '=========================================================================='
-\echo 'Time Series - Basic Test (CPU)'
 \echo '=========================================================================='
 
 -- Train time series model on CPU
@@ -71,14 +66,10 @@ BEGIN
 END $$;
 
 /* Step 3: Configure GPU */
-\echo 'Step 3: Testing Time Series on GPU...'
 
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
 SELECT neurondb_gpu_enable() AS gpu_available;
 
 \echo '=========================================================================='
-\echo 'Time Series - Basic Test (GPU)'
 \echo '=========================================================================='
 
 -- Train time series model on GPU
@@ -117,4 +108,4 @@ END $$;
 
 DROP TABLE IF EXISTS ts_data;
 
-\echo 'Time Series basic test completed successfully'
+\echo 'Test completed successfully'

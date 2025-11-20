@@ -2,9 +2,7 @@
 -- Negative test for logistic_regression
 
 SET client_min_messages TO WARNING;
-SET neurondb.gpu_enabled = off;
 
-\echo '=== logistic_regression Negative Test ==='
 
 -- Invalid table
 DO $$ BEGIN
@@ -20,4 +18,4 @@ DO $$ BEGIN
 EXCEPTION WHEN OTHERS THEN
 END $$;
 
-\echo '✓ logistic_regression negative test complete'
+\echo 'Test completed successfully'

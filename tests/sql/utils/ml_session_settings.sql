@@ -33,11 +33,6 @@ SET jit = on;
 SET jit_above_cost = 100000;  /* Use JIT for expensive queries */
 SET jit_optimize_above_cost = 500000;  /* Optimize JIT for very expensive queries */
 
-/* NeurondB GPU settings */
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,linreg_train,linreg_predict';
-SELECT neurondb_gpu_enable();
-
 /* Enable timing for performance monitoring */
 \timing on
 
@@ -51,9 +46,5 @@ SELECT
 UNION ALL
 SELECT 
 	'max_parallel_workers_per_gather',
-	current_setting('max_parallel_workers_per_gather')
-UNION ALL
-SELECT 
-	'neurondb.gpu_enabled',
-	current_setting('neurondb.gpu_enabled');
+	current_setting('max_parallel_workers_per_gather');
 

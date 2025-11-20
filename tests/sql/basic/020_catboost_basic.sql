@@ -9,7 +9,6 @@
 SET client_min_messages TO WARNING;
 
 /* Step 1: Verify prerequisites and create test data */
-\echo 'Step 1: Creating test data...'
 
 DROP TABLE IF EXISTS catboost_data;
 CREATE TABLE catboost_data (
@@ -28,12 +27,8 @@ FROM generate_series(1, 100) AS x;
 SELECT COUNT(*)::bigint AS data_rows FROM catboost_data;
 
 /* Step 2: Configure CPU */
-\echo 'Step 2: Testing CatBoost on CPU...'
-
-SET neurondb.gpu_enabled = off;
 
 \echo '=========================================================================='
-\echo 'CatBoost - Basic Test (CPU)'
 \echo '=========================================================================='
 
 -- Train CatBoost model on CPU
@@ -68,14 +63,10 @@ BEGIN
 END $$;
 
 /* Step 3: Configure GPU */
-\echo 'Step 3: Testing CatBoost on GPU...'
 
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
 SELECT neurondb_gpu_enable() AS gpu_available;
 
 \echo '=========================================================================='
-\echo 'CatBoost - Basic Test (GPU)'
 \echo '=========================================================================='
 
 -- Train CatBoost model on GPU
@@ -111,4 +102,4 @@ END $$;
 
 DROP TABLE IF EXISTS catboost_data;
 
-\echo 'CatBoost basic test completed successfully'
+\echo 'Test completed successfully'

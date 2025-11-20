@@ -9,7 +9,6 @@
 SET client_min_messages TO WARNING;
 
 /* Step 1: Verify prerequisites and create test data */
-\echo 'Step 1: Creating test data...'
 
 DROP TABLE IF EXISTS pca_data;
 CREATE TABLE pca_data (
@@ -32,16 +31,12 @@ SELECT COUNT(*)::bigint AS data_rows FROM pca_data;
 /* Step 2: Configure GPU */
 \echo 'Step 2: Configuring GPU acceleration...'
 
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
 SELECT neurondb_gpu_enable() AS gpu_available;
 
 \echo '=========================================================================='
-\echo 'PCA (Principal Component Analysis) - Basic Test'
 \echo '=========================================================================='
 
 /* Step 3: Test PCA transformation */
-\echo 'Step 3: Testing PCA transformation (3D -> 2D)...'
 
 -- Test PCA transformation
 DO $$
@@ -59,4 +54,4 @@ END $$;
 
 DROP TABLE IF EXISTS pca_data;
 
-\echo 'PCA basic test completed successfully'
+\echo 'Test completed successfully'

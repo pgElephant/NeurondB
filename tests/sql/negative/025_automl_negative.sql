@@ -5,11 +5,9 @@
 \set ON_ERROR_STOP off
 
 \echo '=========================================================================='
-\echo 'AutoML - Negative Test Cases (Error Handling)'
 \echo '=========================================================================='
 
 \echo ''
-\echo 'Test 1: NULL Table Name'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -21,7 +19,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 2: NULL Feature Column'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -33,7 +30,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 3: NULL Target Column'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -45,7 +41,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 4: NULL Task Type'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -57,7 +52,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 5: NULL Metric Name'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -69,7 +63,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 6: Non-existent Table'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -81,7 +74,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 7: Non-existent Feature Column'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -93,7 +85,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 8: Non-existent Target Column'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -105,7 +96,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 9: Invalid Task Type'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -117,7 +107,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 10: Invalid Metric Name'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 SELECT auto_train(
@@ -129,7 +118,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 11: Mismatched Task Type and Metric'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 -- Using regression metric for classification task
@@ -142,7 +130,6 @@ SELECT auto_train(
 );
 
 \echo ''
-\echo 'Test 12: Empty Training Table'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 CREATE TEMP TABLE empty_train (
@@ -161,7 +148,6 @@ SELECT auto_train(
 DROP TABLE IF EXISTS empty_train;
 
 \echo ''
-\echo 'Test 13: Insufficient Data for Training'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 CREATE TEMP TABLE tiny_train (
@@ -183,7 +169,6 @@ SELECT auto_train(
 DROP TABLE IF EXISTS tiny_train;
 
 \echo ''
-\echo 'Test 14: Invalid Feature Dimensions'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 CREATE TEMP TABLE invalid_dim_train (
@@ -207,7 +192,6 @@ SELECT auto_train(
 DROP TABLE IF EXISTS invalid_dim_train;
 
 \echo ''
-\echo 'Test 15: All NULL Values in Target Column'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 CREATE TEMP TABLE null_target_train (
@@ -230,6 +214,6 @@ SELECT auto_train(
 DROP TABLE IF EXISTS null_target_train;
 
 \echo ''
-\echo 'Negative AutoML Test Complete!'
 \echo '=========================================================================='
 
+\echo 'Test completed successfully'

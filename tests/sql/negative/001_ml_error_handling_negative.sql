@@ -408,3 +408,5 @@ BEGIN
     RAISE NOTICE '✓ All error conditions properly handled';
     RAISE NOTICE '===============================================';
 END $$;
+
+\echo 'Test completed successfully'

@@ -25,8 +25,7 @@ SELECT
 \echo ''
 \echo 'GPU Configuration'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
+/* GPU configuration via GUC (ALTER SYSTEM) */
 SELECT neurondb_gpu_enable() AS gpu_available;
 SELECT neurondb_gpu_info() AS gpu_info;
 

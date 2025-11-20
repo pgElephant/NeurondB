@@ -5,19 +5,17 @@
 \set ON_ERROR_STOP on
 
 \echo '=========================================================================='
-\echo 'RAG (Retrieval-Augmented Generation) Pipeline Test'
 \echo '=========================================================================='
 \echo ''
 \echo 'NOTE: embed_text() warnings are expected if LLM is not configured.'
 \echo '      To generate real embeddings, configure:'
 \echo '      - neurondb.llm_api_key (Hugging Face API key)'
-\echo '      - Or enable GPU embedding: SET neurondb.gpu_enabled = on;'
+\echo '      - Or enable GPU embedding via GUC (ALTER SYSTEM SET neurondb.gpu_enabled = on)'
 \echo '      Without configuration, embed_text() returns zero vectors (graceful fallback).'
 \echo ''
 
 -- Test 1: Text Chunking
 \echo ''
-\echo 'Test 1: Text Chunking'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 WITH long_text AS (
@@ -31,7 +29,6 @@ SELECT
 
 -- Test 2: Text Embedding
 \echo ''
-\echo 'Test 2: Text Embedding'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 \echo 'NOTE: Warnings about embed_text() failing are expected if LLM is not configured.'
 \echo '      The function gracefully returns zero vectors as fallback.'
@@ -53,7 +50,6 @@ FROM text_samples;
 
 -- Test 3: Document Ranking
 \echo ''
-\echo 'Test 3: Document Ranking'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 -- Note: neurondb_rank_documents needs to be registered
@@ -77,7 +73,6 @@ ORDER BY score DESC;
 
 -- Test 4: Document Ranking with Different Algorithms
 \echo ''
-\echo 'Test 4: Document Ranking - Cosine Similarity'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 -- Using ndb_llm_rerank with different model
@@ -100,7 +95,6 @@ ORDER BY score DESC;
 
 -- Test 5: Data Transformation
 \echo ''
-\echo 'Test 5: Data Transformation'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 WITH raw_data AS (
@@ -136,7 +130,6 @@ FROM raw_data;
 
 -- Test 6: Complete RAG Pipeline
 \echo ''
-\echo 'Test 6: Complete RAG Pipeline'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 WITH source_documents AS (
@@ -180,6 +173,6 @@ SELECT
 FROM ranked_results;
 
 \echo ''
-\echo 'RAG Pipeline Test Complete!'
 \echo '=========================================================================='
 
+\echo 'Test completed successfully'

@@ -11,27 +11,9 @@ SET client_min_messages TO WARNING;
 \pset tuples_only off
 
 \echo '=========================================================================='
-\echo 'PCA: Exhaustive Principal Component Analysis Test (1000 rows sample)'
 \echo '=========================================================================='
 
 /* Check that sample_train exists */
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'sample_train table does not exist';
-	END IF;
-END
-$$;
-
--- Create views with 1000 rows for advance tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
-
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
 
 \echo ''
 \echo 'Dataset Information'
@@ -46,8 +28,6 @@ FROM test_train_view;
 \echo ''
 \echo 'GPU Configuration'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
 SELECT neurondb_gpu_enable() AS gpu_available;
 SELECT neurondb_gpu_info() AS gpu_info;
 
@@ -56,7 +36,6 @@ SELECT neurondb_gpu_info() AS gpu_info;
  * Test PCA with different n_components
  */
 \echo ''
-\echo 'PCA Transformation Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 -- Create test data with multiple dimensions
@@ -69,7 +48,6 @@ SELECT
 FROM test_train_view
 LIMIT 100;
 
-\echo 'Test 1: PCA transformation (5D -> 2D)'
 DO $$
 DECLARE
 	result vector[];
@@ -87,7 +65,6 @@ BEGIN
 	END;
 END $$;
 
-\echo 'Test 2: PCA transformation (10D -> 3D)'
 DO $$
 DECLARE
 	result vector[];
@@ -105,7 +82,6 @@ BEGIN
 	END;
 END $$;
 
-\echo 'Test 3: PCA transformation (full features -> 5D)'
 DO $$
 DECLARE
 	result vector[];
@@ -126,7 +102,6 @@ BEGIN
 	END;
 END $$;
 
-\echo 'Test 4: Verify PCA preserves number of rows'
 DO $$
 DECLARE
 	result vector[];
@@ -145,7 +120,6 @@ BEGIN
 	END;
 END $$;
 
-\echo 'Test 5: Compare different n_components'
 DO $$
 DECLARE
 	result_2d vector[];
@@ -167,10 +141,8 @@ END $$;
 
 /* --- ERROR path: invalid parameters --- */
 \echo ''
-\echo 'Error Handling Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Error Test 1: n_components=0 (should error)'
 DO $$
 DECLARE
 	result vector[];
@@ -185,7 +157,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 2: n_components > original dimensions'
 DO $$
 DECLARE
 	result vector[];
@@ -199,7 +170,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 3: Invalid table name'
 DO $$
 DECLARE
 	result vector[];
@@ -214,7 +184,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 4: Invalid column name'
 DO $$
 DECLARE
 	result vector[];
@@ -229,7 +198,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 5: Empty column array'
 DO $$
 DECLARE
 	result vector[];
@@ -244,7 +212,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 6: NULL n_components'
 DO $$
 DECLARE
 	result vector[];
@@ -264,10 +231,8 @@ END$$;
  * Verify PCA transformations are valid
  *------------------------------------------------------------------*/
 \echo ''
-\echo 'Validation Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Validation Test 1: Row count preservation'
 DO $$
 DECLARE
 	result vector[];
@@ -286,7 +251,6 @@ BEGIN
 	END;
 END $$;
 
-\echo 'Validation Test 2: Dimension reduction verification'
 DO $$
 DECLARE
 	result vector[];
@@ -309,5 +273,6 @@ DROP TABLE IF EXISTS pca_test_data;
 
 \echo ''
 \echo '=========================================================================='
-\echo '✓ PCA: Full exhaustive test complete (1000-row sample)'
 \echo '=========================================================================='
+
+\echo 'Test completed successfully'

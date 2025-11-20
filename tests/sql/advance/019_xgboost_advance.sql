@@ -10,7 +10,6 @@ SET client_min_messages TO WARNING;
 \pset tuples_only off
 
 \echo '=========================================================================='
-\echo 'xgboost: Advanced Test (Algorithm Status Check)'
 \echo '=========================================================================='
 
 \echo ''
@@ -87,5 +86,6 @@ DROP TABLE IF EXISTS xgb_test_data;
 
 \echo ''
 \echo '=========================================================================='
-\echo '✓ XGBoost: Advanced test complete'
 \echo '=========================================================================='
+
+\echo 'Test completed successfully'

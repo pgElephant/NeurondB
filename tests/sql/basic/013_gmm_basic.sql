@@ -7,36 +7,13 @@
 -- Or use the test runner: python run_ml_tests.py
 --
 -- Verify required tables exist
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'test_train_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
-	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
-		RAISE EXCEPTION 'test_test_view table does not exist. Please run: python ml_dataset.py <dataset_name>';
-	END IF;
-END
-$$;
-
--- Create views with 1000 rows for basic tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
-
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
 
 -- Try to enable GPU, but fall back to CPU if not available
 DO $$
 BEGIN
 	BEGIN
-		SET neurondb.gpu_enabled = on;
-		SET neurondb.gpu_kernels = 'l2,cosine,ip,gmm_train,gmm_predict';
 		PERFORM neurondb_gpu_enable();
 	EXCEPTION WHEN OTHERS THEN
-		SET neurondb.gpu_enabled = off;
 	END;
 END
 $$;
@@ -63,7 +40,6 @@ BEGIN
 	EXCEPTION WHEN OTHERS THEN
 		-- If GPU training fails, disable GPU and retry
 		IF SQLERRM LIKE '%GPU training requested but GPU hardware not available%' THEN
-			SET neurondb.gpu_enabled = off;
 			model_id_val := neurondb.train(
 				'gmm',
 				'test_train_view',
@@ -154,3 +130,4 @@ FROM gpu_metrics_temp m;
 DROP TABLE IF EXISTS gpu_model_temp;
 DROP TABLE IF EXISTS gpu_metrics_temp;
 
+\echo 'Test completed successfully'

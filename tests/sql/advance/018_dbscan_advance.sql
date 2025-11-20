@@ -11,27 +11,9 @@ SET client_min_messages TO WARNING;
 \pset tuples_only off
 
 \echo '=========================================================================='
-\echo 'dbscan: Exhaustive Clustering Test (1000 rows sample)'
 \echo '=========================================================================='
 
 /* Check that sample_train exists */
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'sample_train table does not exist';
-	END IF;
-END
-$$;
-
--- Create views with 1000 rows for advance tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
-
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
 
 \echo ''
 \echo 'Dataset Information'
@@ -46,8 +28,6 @@ FROM test_train_view;
 \echo ''
 \echo 'GPU Configuration'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip';
 SELECT neurondb_gpu_enable() AS gpu_available;
 SELECT neurondb_gpu_info() AS gpu_info;
 
@@ -56,10 +36,8 @@ SELECT neurondb_gpu_info() AS gpu_info;
  * Test multiple eps and min_pts values
  */
 \echo ''
-\echo 'Clustering Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Test 1: eps=0.1, min_pts=5'
 WITH eps01_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.1, 5)) AS cluster_id
 )
@@ -72,7 +50,6 @@ SELECT
 	MAX(cluster_id) AS max_cluster
 FROM eps01_clusters;
 
-\echo 'Test 2: eps=0.5, min_pts=5'
 WITH eps05_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
 )
@@ -85,7 +62,6 @@ SELECT
 	MAX(cluster_id) AS max_cluster
 FROM eps05_clusters;
 
-\echo 'Test 3: eps=1.0, min_pts=5'
 WITH eps10_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 1.0, 5)) AS cluster_id
 )
@@ -98,7 +74,6 @@ SELECT
 	MAX(cluster_id) AS max_cluster
 FROM eps10_clusters;
 
-\echo 'Test 4: Different min_pts values (min_pts=3)'
 WITH mp3_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 3)) AS cluster_id
 )
@@ -109,7 +84,6 @@ SELECT
 	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points
 FROM mp3_clusters;
 
-\echo 'Test 5: Different min_pts values (min_pts=10)'
 WITH mp10_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 10)) AS cluster_id
 )
@@ -120,7 +94,6 @@ SELECT
 	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points
 FROM mp10_clusters;
 
-\echo 'Test 6: Cluster and noise distribution (eps=0.5, min_pts=5)'
 WITH clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
 )
@@ -136,7 +109,6 @@ FROM clusters
 GROUP BY cluster_id
 ORDER BY cluster_id;
 
-\echo 'Test 7: Compare eps values (eps=0.1 vs eps=1.0)'
 WITH eps01_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.1, 5)) AS cluster_id
 ),
@@ -159,10 +131,8 @@ FROM eps10_clusters;
 
 /* --- ERROR path: invalid parameters --- */
 \echo ''
-\echo 'Error Handling Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Error Test 1: eps=0 (should error)'
 DO $$
 BEGIN
 	BEGIN
@@ -174,7 +144,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 2: eps < 0 (should error)'
 DO $$
 BEGIN
 	BEGIN
@@ -186,7 +155,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 3: min_pts=0 (should error)'
 DO $$
 BEGIN
 	BEGIN
@@ -198,7 +166,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 4: min_pts < 0 (should error)'
 DO $$
 BEGIN
 	BEGIN
@@ -210,7 +177,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 5: Invalid table name'
 DO $$
 BEGIN
 	BEGIN
@@ -222,7 +188,6 @@ BEGIN
 	END;
 END$$;
 
-\echo 'Error Test 6: Invalid column name'
 DO $$
 BEGIN
 	BEGIN
@@ -239,10 +204,8 @@ END$$;
  * Verify cluster assignments and noise points
  *------------------------------------------------------------------*/
 \echo ''
-\echo 'Validation Tests'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\echo 'Validation Test 1: All points assigned (eps=0.5, min_pts=5)'
 WITH clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
 )
@@ -256,7 +219,6 @@ SELECT
 	END AS assignment_status
 FROM clusters;
 
-\echo 'Validation Test 2: Noise point handling (eps=0.5, min_pts=5)'
 WITH clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
 )
@@ -270,7 +232,6 @@ SELECT
 	END AS noise_status
 FROM clusters;
 
-\echo 'Validation Test 3: Compare min_pts values (min_pts=3 vs min_pts=10)'
 WITH mp3_clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 3)) AS cluster_id
 ),
@@ -289,7 +250,6 @@ SELECT
 	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points
 FROM mp10_clusters;
 
-\echo 'Validation Test 4: Cluster size distribution (eps=0.5, min_pts=5)'
 WITH clusters AS (
 	SELECT unnest(cluster_dbscan('test_train_view', 'features', 0.5, 5)) AS cluster_id
 ),
@@ -308,5 +268,6 @@ FROM cluster_counts;
 
 \echo ''
 \echo '=========================================================================='
-\echo '✓ dbscan: Full exhaustive clustering test complete (1000-row sample)'
 \echo '=========================================================================='
+
+\echo 'Test completed successfully'

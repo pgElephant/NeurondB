@@ -2,37 +2,14 @@
 \pset footer off
 \pset pager off
 SET log_min_messages = DEBUG1;
-SET neurondb.gpu_enabled = off;
 
 -- This test uses test_train_view and test_test_view tables created by ml_dataset.py
 -- Run: python ml_dataset.py <dataset_name> to populate the database first
 -- Or use the test runner: python run_ml_tests.py
 --
 -- Verify required tables exist
-DO $$
-BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'sample_train table does not exist. Please run: python ml_dataset.py <dataset_name>';
-	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
-		RAISE EXCEPTION 'sample_test table does not exist. Please run: python ml_dataset.py <dataset_name>';
-	END IF;
-END
-$$;
-
--- Create views with 1000 rows for basic tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
-
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
 
 -- GPU disabled for testing CPU implementation
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,rf_split,rf_predict,rf_train';
 SELECT neurondb_gpu_enable();
 
 \set ON_ERROR_STOP on
@@ -142,3 +119,5 @@ FROM gpu_metrics_temp m;
 -- Cleanup
 DROP TABLE IF EXISTS gpu_model_temp;
 DROP TABLE IF EXISTS gpu_metrics_temp;
+
+\echo 'Test completed successfully'

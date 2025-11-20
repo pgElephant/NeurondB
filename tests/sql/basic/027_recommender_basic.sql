@@ -14,7 +14,6 @@
 \pset tuples_only off
 
 /* Step 1: Create test data */
-\echo 'Step 1: Creating collaborative filtering test data...'
 
 DROP TABLE IF EXISTS cf_ratings;
 CREATE TABLE cf_ratings (
@@ -55,7 +54,6 @@ SELECT train_collaborative_filter('cf_ratings', 'user_id', 'item_id', 'rating') 
 SELECT * FROM cf_model;
 
 /* Step 3: Test predictions */
-\echo 'Step 3: Testing predictions...'
 
 -- Predict a few ratings
 CREATE TEMP TABLE cf_predictions AS
@@ -93,7 +91,6 @@ FROM cf_metrics
 ORDER BY metric;
 
 /* Step 5: Summary */
-\echo 'Step 5: Test summary...'
 
 SELECT
     (SELECT model_id FROM cf_model) as model_id,
@@ -105,5 +102,4 @@ SELECT
 /* Cleanup */
 DROP TABLE IF EXISTS cf_ratings;
 
-/* Success message */
-\echo 'Collaborative Filtering basic test completed successfully'
+\echo 'Test completed successfully'

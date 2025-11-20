@@ -181,4 +181,4 @@ BEGIN
 	-- FP16 distance
 END $$;
 
-\echo '✓ Vector basic test complete'
+\echo 'Test completed successfully'

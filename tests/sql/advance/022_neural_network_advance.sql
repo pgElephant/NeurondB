@@ -10,7 +10,6 @@ SET client_min_messages TO WARNING;
 \pset tuples_only off
 
 \echo '=========================================================================='
-\echo 'neural_network: Advanced Test (Algorithm Status Check)'
 \echo '=========================================================================='
 
 \echo ''
@@ -32,5 +31,6 @@ END $$;
 
 \echo ''
 \echo '=========================================================================='
-\echo '✓ neural_network: Status check complete (algorithm may not be fully implemented)'
 \echo '=========================================================================='
+
+\echo 'Test completed successfully'
