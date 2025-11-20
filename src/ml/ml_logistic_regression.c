@@ -34,9 +34,8 @@
 #include "neurondb_gpu_backend.h"
 #include "ml_gpu_registry.h"
 #include "ml_gpu_logistic_regression.h"
-#include "neurondb_cuda_lr.h"
-
 #ifdef NDB_GPU_CUDA
+#include "neurondb_cuda_lr.h"
 #include "neurondb_cuda_runtime.h"
 #include <cublas_v2.h>
 extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
@@ -1397,7 +1396,7 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 	double log_loss = 0.0;
 	/* tp, tn, fp, fn not used in GPU path - metrics computed by GPU kernel */
 	double accuracy, precision, recall, f1_score;
-	int i, j;
+	int i;
 	Oid feat_type_oid = InvalidOid;
 	bool feat_is_array = false;
 	MemoryContext oldcontext;

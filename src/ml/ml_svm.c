@@ -739,12 +739,9 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 	char *label_str = NULL;
 	StringInfoData hyperbuf_cpu;
 	StringInfoData metricsbuf;
-	bool hyperbuf_cpu_inited = false;
-	bool metricsbuf_inited = false;
 	MemoryContext oldcontext;
 	int nvec = 0;
 	int dim = 0;
-	int ret;
 	int i;
 	int j;
 	SVMDataset dataset;
@@ -754,7 +751,6 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 	MLGpuTrainResult gpu_result;
 	char *gpu_err = NULL;
 	Jsonb *gpu_hyperparams = NULL;
-	StringInfoData hyperbuf;
 	int32 model_id = 0;
 	SVMModel model;
 	double *alphas = NULL;
@@ -1518,7 +1514,6 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 
 		/* Build hyperparameters JSON */
 		initStringInfo(&hyperbuf_cpu);
-		hyperbuf_cpu_inited = true;
 		appendStringInfo(&hyperbuf_cpu,
 			"{\"C\":%.6f,\"max_iters\":%d}",
 			c_param,
@@ -1553,7 +1548,6 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 
 		/* Build metrics JSON */
 		initStringInfo(&metricsbuf);
-		metricsbuf_inited = true;
 		appendStringInfo(&metricsbuf,
 			"{\"algorithm\":\"svm\","
 			"\"n_samples\":%d,"

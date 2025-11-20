@@ -17,10 +17,50 @@ ts() { date "+%Y-%m-%d %H:%M:%S"; }
 VERBOSE=0
 # Ensure GPU_MODE has a safe default even under 'set -u'
 GPU_MODE="${GPU_MODE:-none}"
-if [[ "${1:-}" == "-v" || "${1:-}" == "--verbose" ]]; then
-	VERBOSE=1
-	shift || true
-fi
+GPU_TYPES=""  # Comma-separated list: cuda,metal,rocm
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-v|--verbose)
+			VERBOSE=1
+			shift
+			;;
+		--gpu)
+			GPU_TYPES="$2"
+			shift 2
+			;;
+		--gpu=*)
+			GPU_TYPES="${1#*=}"
+			shift
+			;;
+		-h|--help)
+			cat <<EOF
+Usage: $0 [OPTIONS]
+
+Options:
+  -v, --verbose          Verbose output
+  --gpu=TYPES            Enable GPU support (cuda,metal,rocm or comma-separated)
+                         Examples: --gpu=metal --gpu=cuda,rocm --gpu=all
+  -h, --help             Show this help message
+
+Examples:
+  $0                     # Auto-detect GPU
+  $0 --gpu=metal         # Build with Metal GPU (macOS)
+  $0 --gpu=cuda          # Build with CUDA GPU
+  $0 --gpu=rocm          # Build with ROCm GPU
+  $0 --gpu=cuda,rocm     # Build with both CUDA and ROCm
+  $0 --gpu=all           # Build with all available GPUs
+EOF
+			exit 0
+			;;
+		*)
+			err "Unknown option: $1"
+			err "Use --help for usage information"
+			exit 1
+			;;
+	esac
+done
 
 run_step() {
 	# usage: run_step "message" cmd...
@@ -221,30 +261,95 @@ select_pg_config() {
 }
 
 detect_gpu_paths() {
-	# Set CUDA_PATH and GPU_MODE based on system detection
+	# If GPU_TYPES is specified, use it; otherwise auto-detect
+	local requested_gpus=""
+	if [[ -n "$GPU_TYPES" ]]; then
+		# Normalize: "all" -> "cuda,metal,rocm", handle comma-separated
+		if [[ "$GPU_TYPES" == "all" ]]; then
+			requested_gpus="cuda metal rocm"
+		else
+			# Convert comma-separated to space-separated
+			requested_gpus=$(echo "$GPU_TYPES" | tr ',' ' ')
+		fi
+	fi
+	
+	# Detect CUDA
+	local cuda_available=false
 	if command -v nvcc >/dev/null 2>&1; then
 		local nvcc_path cuda_home
 		nvcc_path="$(command -v nvcc)"
 		cuda_home="$(dirname "$(dirname "$nvcc_path")")"
 		if [[ -f "$cuda_home/include/cuda_runtime.h" ]]; then
 			CUDA_PATH="$cuda_home"
+			cuda_available=true
+		fi
+	fi
+	
+	# Detect ROCm
+	local rocm_available=false
+	local hipcc_path rocm_home
+	hipcc_path="$(command -v hipcc || true)"
+	if [[ -n "$hipcc_path" ]]; then
+		rocm_home="$(dirname "$(dirname "$hipcc_path")")"
+		if [[ -f "$rocm_home/include/hip/hip_runtime.h" ]]; then
+			ROCM_PATH="$rocm_home"
+			rocm_available=true
+		fi
+	fi
+	
+	# Detect Metal (macOS)
+	local metal_available=false
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		if xcode-select -p >/dev/null 2>&1; then
+			metal_available=true
+		fi
+	fi
+	
+	# Determine GPU_MODE based on requested or available GPUs
+	if [[ -n "$requested_gpus" ]]; then
+		# User specified GPU types
+		local selected=""
+		for gpu in $requested_gpus; do
+			case "$gpu" in
+				cuda)
+					if [[ "$cuda_available" == "true" ]]; then
+						selected="cuda"
+						break
+					fi
+					;;
+				rocm)
+					if [[ "$rocm_available" == "true" ]]; then
+						selected="rocm"
+						break
+					fi
+					;;
+				metal)
+					if [[ "$metal_available" == "true" ]]; then
+						selected="metal"
+						break
+					fi
+					;;
+			esac
+		done
+		if [[ -n "$selected" ]]; then
+			GPU_MODE="$selected"
+		else
+			err "Requested GPU type(s) not available: $GPU_TYPES"
+			err "Available: CUDA=$cuda_available ROCm=$rocm_available Metal=$metal_available"
+			GPU_MODE="none"
+		fi
+	else
+		# Auto-detect: prefer CUDA > ROCm > Metal
+		if [[ "$cuda_available" == "true" ]]; then
 			GPU_MODE="cuda"
+		elif [[ "$rocm_available" == "true" ]]; then
+			GPU_MODE="rocm"
+		elif [[ "$metal_available" == "true" ]]; then
+			GPU_MODE="metal"
+		else
+			GPU_MODE="none"
 		fi
 	fi
-	# ROCm
-	if [[ -z "${GPU_MODE:-}" || "$GPU_MODE" == "none" ]]; then
-		local hipcc_path rocm_home
-		hipcc_path="$(command -v hipcc || true)"
-		if [[ -n "$hipcc_path" ]]; then
-			rocm_home="$(dirname "$(dirname "$hipcc_path")")"
-			if [[ -f "$rocm_home/include/hip/hip_runtime.h" ]]; then
-				ROCM_PATH="$rocm_home"
-				GPU_MODE="rocm"
-			fi
-		fi
-	fi
-	# Default when nothing found
-	GPU_MODE="${GPU_MODE:-none}"
 }
 
 run_step_stream() {
@@ -287,19 +392,23 @@ detect_platform() {
 install_prereqs_deb() {
 	msg "Installing prerequisites for Debian/Ubuntu (requires sudo)..."
 	local pgdev_pkg="postgresql-server-dev-${PG_MAJOR_SELECTED:-18}"
-	echo "Packages: build-essential git curl ca-certificates pkg-config libxml2-dev libssl-dev libcurl4-openssl-dev $pgdev_pkg"
+	local packages="build-essential git curl ca-certificates pkg-config libxml2-dev libssl-dev libcurl4-openssl-dev $pgdev_pkg"
+	
+	# Add GPU-specific packages
+	if [[ "$GPU_MODE" == "cuda" ]]; then
+		packages="$packages nvidia-cuda-toolkit"
+		msg "Including CUDA toolkit for GPU support"
+	elif [[ "$GPU_MODE" == "rocm" ]]; then
+		msg "ROCm should be installed separately from AMD"
+	fi
+	
+	echo "Packages: $packages"
 	if [[ $VERBOSE -eq 1 ]]; then
 		sudo apt-get update -y
-		sudo apt-get install -y --no-install-recommends \
-			build-essential git curl ca-certificates pkg-config \
-			libxml2-dev libssl-dev libcurl4-openssl-dev \
-			"$pgdev_pkg"
+		sudo apt-get install -y --no-install-recommends $packages
 	else
 		sudo apt-get update -y >/dev/null
-		sudo apt-get install -y --no-install-recommends \
-			build-essential git curl ca-certificates pkg-config \
-			libxml2-dev libssl-dev libcurl4-openssl-dev \
-			"$pgdev_pkg" >/dev/null
+		sudo apt-get install -y --no-install-recommends $packages >/dev/null
 	fi
 }
 
@@ -311,15 +420,21 @@ install_prereqs_rocky() {
 		PKG=yum
 	fi
 	local pgdev_pkg="postgresql${PG_MAJOR_SELECTED:-18}-devel"
-	echo "Packages: gcc gcc-c++ make git curl ca-certificates pkgconfig libxml2-devel openssl-devel libcurl-devel [$pgdev_pkg if available]"
+	local packages="gcc gcc-c++ make git curl ca-certificates pkgconfig libxml2-devel openssl-devel libcurl-devel"
+	
+	# Add GPU-specific packages
+	if [[ "$GPU_MODE" == "cuda" ]]; then
+		packages="$packages cuda-toolkit"
+		msg "Including CUDA toolkit for GPU support"
+	elif [[ "$GPU_MODE" == "rocm" ]]; then
+		msg "ROCm should be installed separately from AMD"
+	fi
+	
+	echo "Packages: $packages [$pgdev_pkg if available]"
 	if [[ $VERBOSE -eq 1 ]]; then
-		sudo $PKG install -y \
-			gcc gcc-c++ make git curl ca-certificates pkgconfig \
-			libxml2-devel openssl-devel libcurl-devel
+		sudo $PKG install -y $packages
 	else
-		sudo $PKG install -y \
-			gcc gcc-c++ make git curl ca-certificates pkgconfig \
-			libxml2-devel openssl-devel libcurl-devel >/dev/null
+		sudo $PKG install -y $packages >/dev/null
 	fi
 	# PostgreSQL devel (tries common module streams; adjust if needed)
 	if ! command -v pg_config >/dev/null 2>&1; then
@@ -339,7 +454,19 @@ install_prereqs_osx() {
 		exit 1
 	fi
 	local pg_formula="postgresql@${PG_MAJOR_SELECTED:-18}"
-	echo "Packages: llvm make git curl pkg-config libxml2 openssl@3 $pg_formula"
+	local packages="llvm make git curl pkg-config libxml2 openssl@3"
+	
+	# Metal is built into macOS, no additional packages needed
+	if [[ "$GPU_MODE" == "metal" ]]; then
+		msg "Metal GPU support available (built into macOS)"
+		# Ensure Xcode Command Line Tools are installed
+		if ! xcode-select -p >/dev/null 2>&1; then
+			msg "Installing Xcode Command Line Tools (required for Metal)..."
+			xcode-select --install || true
+		fi
+	fi
+	
+	echo "Packages: $packages $pg_formula"
 	if [[ $VERBOSE -eq 1 ]]; then
 		brew update
 		# Install PostgreSQL versioned formula if not already present
@@ -347,15 +474,13 @@ install_prereqs_osx() {
 			brew install "$pg_formula" || true
 		fi
 		# Core tools
-		brew install \
-			llvm make git curl pkg-config libxml2 openssl@3
+		brew install $packages
 	else
 		brew update >/dev/null
 		if ! brew list --versions "$pg_formula" >/dev/null 2>&1; then
 			brew install "$pg_formula" >/dev/null || true
 		fi
-		brew install \
-			llvm make git curl pkg-config libxml2 openssl@3 >/dev/null
+		brew install $packages >/dev/null
 	fi
 	# Ensure pg_config is on PATH
 	if ! command -v pg_config >/dev/null 2>&1; then
@@ -395,12 +520,14 @@ write_makefile_local() {
 	local pgc="${SELECTED_PG_CONFIG:-$(command -v pg_config || true)}"
 	local gm="${GPU_MODE:-none}"
 	local cp="${CUDA_PATH:-${CUDA_HOME:-}}"
+	local rp="${ROCM_PATH:-${ROCM_HOME:-}}"
 	cat > Makefile.local <<EOF
 # Autogenerated by build.sh - do not edit manually
 PG_MAJOR ?= ${PG_MAJOR_SELECTED}
 PG_CONFIG ?= ${pgc}
 GPU_MODE ?= ${gm}
 CUDA_PATH ?= ${cp}
+ROCM_PATH ?= ${rp}
 QUIET_ONNX ?= 1
 V ?= 1
 # Avoid LTO crashes with PGXS/llvm-lto on some toolchains

@@ -3410,7 +3410,6 @@ predict_random_forest(PG_FUNCTION_ARGS)
 	double best_vote_fraction = 0.0;
 	double second_vote_value = 0.0;
 	double second_vote_fraction = 0.0;
-	int vote_count = 0;
 	double vote_total_weight = 0.0;
 	int i;
 	double *vote_histogram = NULL;
@@ -3600,8 +3599,6 @@ predict_random_forest(PG_FUNCTION_ARGS)
 					mean_limit = model->feature_limit;
 				}
 			}
-
-			vote_count++;
 		}
 	} else
 	{
@@ -3611,7 +3608,6 @@ predict_random_forest(PG_FUNCTION_ARGS)
 			&left_mean_dist,
 			&right_mean_dist,
 			NULL);
-		vote_count = 1;
 		if (vote_histogram != NULL)
 		{
 			int cls = (int)rint(result);

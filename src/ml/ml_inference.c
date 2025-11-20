@@ -111,7 +111,6 @@ find_model(const char *name)
 {
 	ModelEntry *cur;
 	volatile ModelEntry *volatile_cur;
-	int iter_count = 0;
 
 
 	if (name == NULL)
@@ -137,7 +136,6 @@ find_model(const char *name)
 
 		while (cur != NULL && iter < max_iter)
 		{
-			iter_count++;
 
 			/* Defensive: Validate pointer alignment and reasonable address */
 			if ((uintptr_t)cur < 0x1000 || (uintptr_t)cur % sizeof(void *) != 0)

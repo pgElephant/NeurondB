@@ -29,9 +29,9 @@
 #include "neurondb_cuda_knn.h"
 #include "vector/vector_types.h"
 #include "ml_gpu_registry.h"
+#include "neurondb_gpu.h"
 #ifdef NDB_GPU_CUDA
 #include "neurondb_gpu_model.h"
-#include "neurondb_gpu.h"
 #endif
 
 #ifdef NDB_GPU_CUDA
@@ -1966,8 +1966,9 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 				errmsg("neurondb: evaluate_knn_by_model_id: SPI_connect failed")));
 	}
 
-	/* Save SPI context for later cleanup */
+	/* Save SPI context for later cleanup (used in GPU path) */
 	callcontext = CurrentMemoryContext;
+	(void) callcontext;  /* Suppress unused warning in CPU-only paths */
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)

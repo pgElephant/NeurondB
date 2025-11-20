@@ -2,11 +2,8 @@
 \pset footer off
 \pset pager off
 
--- This test uses sample_train and sample_test tables created by ml_dataset.py
--- Run: python ml_dataset.py <dataset_name> to populate the database first
--- Or use the test runner: python run_ml_tests.py
---
--- Verify required tables exist
+-- This test uses test_train_view and test_test_view created by the test runner
+-- The views are created from higgs.test_train and higgs.test_test tables
 
 SET neurondb.automl.use_gpu = on;
 SELECT neurondb_gpu_enable();
@@ -20,7 +17,7 @@ SELECT neurondb_gpu_enable();
 DROP TABLE IF EXISTS automl_classification_result;
 CREATE TEMP TABLE automl_classification_result AS
 SELECT auto_train(
-	'sample_train',
+	'test_train_view',
 	'features',
 	'label',
 	'classification',
@@ -42,7 +39,7 @@ SELECT result FROM automl_classification_result;
 DROP TABLE IF EXISTS automl_regression_result;
 CREATE TEMP TABLE automl_regression_result AS
 SELECT auto_train(
-	'sample_train',
+	'test_train_view',
 	'features',
 	'label',
 	'regression',
@@ -60,7 +57,7 @@ SELECT result FROM automl_regression_result;
 DROP TABLE IF EXISTS automl_f1_result;
 CREATE TEMP TABLE automl_f1_result AS
 SELECT auto_train(
-	'sample_train',
+	'test_train_view',
 	'features',
 	'label',
 	'classification',
@@ -73,7 +70,7 @@ SELECT 'F1 Score Results:' AS test_type, result FROM automl_f1_result;
 DROP TABLE IF EXISTS automl_mse_result;
 CREATE TEMP TABLE automl_mse_result AS
 SELECT auto_train(
-	'sample_train',
+	'test_train_view',
 	'features',
 	'label',
 	'regression',

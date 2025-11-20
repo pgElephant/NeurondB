@@ -145,24 +145,11 @@ typedef struct LassoStreamAccum
 /* Forward declarations for Lasso Regression */
 static void lasso_dataset_init(LassoDataset *dataset);
 static void lasso_dataset_free(LassoDataset *dataset);
-static void lasso_dataset_load(const char *quoted_tbl,
-	const char *quoted_feat,
-	const char *quoted_target,
-	LassoDataset *dataset);
 static void lasso_dataset_load_limited(const char *quoted_tbl,
 	const char *quoted_feat,
 	const char *quoted_target,
 	LassoDataset *dataset,
 	int max_rows);
-static void lasso_stream_accum_init(LassoStreamAccum *accum, int dim, int n_samples);
-static void lasso_stream_accum_free(LassoStreamAccum *accum);
-static void lasso_stream_process_chunk(const char *quoted_tbl,
-	const char *quoted_feat,
-	const char *quoted_target,
-	LassoStreamAccum *accum,
-	int chunk_size,
-	int offset,
-	int *rows_processed);
 static bytea *lasso_model_serialize(const LassoModel *model);
 static LassoModel *lasso_model_deserialize(const bytea *data);
 static bool lasso_metadata_is_gpu(Jsonb *metadata);
@@ -1236,22 +1223,6 @@ lasso_dataset_free(LassoDataset *dataset)
 	if (dataset->targets != NULL)
 		pfree(dataset->targets);
 	lasso_dataset_init(dataset);
-}
-
-/*
- * lasso_dataset_load
- * Reuses ridge_dataset_load since they have the same structure
- */
-static void
-lasso_dataset_load(const char *quoted_tbl,
-	const char *quoted_feat,
-	const char *quoted_target,
-	LassoDataset *dataset)
-{
-	ridge_dataset_load(quoted_tbl,
-		quoted_feat,
-		quoted_target,
-		(RidgeDataset *)dataset);
 }
 
 /*
@@ -3038,8 +3009,6 @@ evaluate_ridge_regression_by_model_id(PG_FUNCTION_ARGS)
 	int ret;
 	int nvec = 0;
 	int i;
-
-	int j;
 	Oid feat_type_oid = InvalidOid;
 	bool feat_is_array = false;
 	double mse = 0.0;
@@ -3639,7 +3608,6 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 	int ret;
 	int nvec = 0;
 	int i;
-	int j;
 	Oid feat_type_oid = InvalidOid;
 	bool feat_is_array = false;
 	double mse = 0.0;

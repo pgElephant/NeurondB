@@ -24,6 +24,13 @@ import time
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 
+# Import GPUDetector from tools/gpu.py
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'tools'))
+try:
+	from gpu import GPUDetector
+except ImportError:
+	GPUDetector = None
+
 
 TESTS_SQL_DIR = os.path.join(os.path.dirname(__file__), "sql")
 DEFAULT_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
@@ -332,81 +339,76 @@ def get_os_info() -> Dict[str, str]:
 
 
 def get_gpu_info(dbname: str, psql_path: str, host: Optional[str] = None, port: Optional[int] = None) -> Dict[str, str]:
-	"""Gather GPU information from PostgreSQL."""
+	"""Gather GPU information using Python-based system detection."""
 	info = {}
 	
+	# Use Python-based GPU detection
+	if GPUDetector is None:
+		info['available'] = "Unknown"
+		info['device_name'] = "Unknown"
+		info['device_id'] = "Unknown"
+		return info
+	
+	try:
+		# Detect all GPUs using Python system detection
+		gpus = GPUDetector.detect_all()
+		
+		if gpus and len(gpus) > 0:
+			gpu = gpus[0]  # Use first GPU
+			info['available'] = "Yes"
+			info['device_id'] = str(gpu.get('id', 0))
+			info['device_name'] = gpu.get('name', 'Unknown')
+			info['backend'] = gpu.get('backend', 'Unknown')
+			info['type'] = gpu.get('type', 'Unknown')
+			
+			# Memory information
+			if 'memory_mb' in gpu and gpu['memory_mb'] > 0:
+				info['memory_total'] = f"{gpu['memory_mb']} MB"
+			
+			# Compute capability
+			if 'compute_cap' in gpu and gpu['compute_cap']:
+				info['compute_capability'] = gpu['compute_cap']
+			
+			# Platform information
+			if 'platform' in gpu:
+				info['platform'] = gpu['platform']
+			
+			# Chip information for Apple Silicon
+			if 'chip' in gpu:
+				info['chip'] = gpu['chip']
+		else:
+			info['available'] = "No"
+			info['device_name'] = "None detected"
+			info['device_id'] = "N/A"
+	except Exception as e:
+		info['available'] = "Unknown"
+		info['device_name'] = f"Detection error: {str(e)}"
+		info['device_id'] = "Unknown"
+	
+	# Try to get GPU settings from PostgreSQL GUC (optional, for enabled status)
 	env = os.environ.copy()
 	if host:
 		env["PGHOST"] = host
 	if port:
 		env["PGPORT"] = str(port)
 	
-	# Check GPU availability
-	try:
-		cmd = [psql_path, "-d", dbname, "-t", "-A", "-w", "-c", "SELECT neurondb_gpu_enable();"]
-		proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=5)
-		out, err = proc.communicate()
-		if proc.returncode == 0 and out.strip():
-			info['available'] = "Yes" if out.strip().lower() in ('t', 'true', '1') else "No"
-		else:
-			info['available'] = "No"
-	except (subprocess.TimeoutExpired, Exception):
-		info['available'] = "Unknown"
-	
-	# Get GPU info details (neurondb_gpu_info returns: device_id, name, total_memory_mb, free_memory_mb, compute_major, compute_minor, is_available)
 	try:
 		cmd = [psql_path, "-d", dbname, "-t", "-A", "-w", "-c", 
-		       "SELECT device_id, name, total_memory_mb, free_memory_mb, compute_major, compute_minor, is_available FROM neurondb_gpu_info() LIMIT 1;"]
-		proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=5)
-		out, err = proc.communicate()
-		if proc.returncode == 0 and out.strip():
-			parts = out.strip().split('|')
-			if len(parts) >= 7:
-				info['device_id'] = parts[0].strip() if parts[0].strip() else 'Unknown'
-				info['device_name'] = parts[1].strip() if parts[1].strip() else 'Unknown'
-				total_mb = parts[2].strip() if parts[2].strip() else '0'
-				free_mb = parts[3].strip() if parts[3].strip() else '0'
-				compute_major = parts[4].strip() if parts[4].strip() else '0'
-				compute_minor = parts[5].strip() if parts[5].strip() else '0'
-				is_avail = parts[6].strip().lower() if parts[6].strip() else 'f'
-				
-				try:
-					total_mb_int = int(total_mb)
-					if total_mb_int > 0:
-						info['memory_total'] = f"{total_mb_int} MB"
-						try:
-							free_mb_int = int(free_mb)
-							if free_mb_int >= 0:
-								info['memory_free'] = f"{free_mb_int} MB"
-						except ValueError:
-							pass
-				except ValueError:
-					pass
-				
-				if compute_major != '0' or compute_minor != '0':
-					info['compute_capability'] = f"{compute_major}.{compute_minor}"
-				
-				if is_avail in ('t', 'true', '1'):
-					info['is_available'] = "Yes"
-					if 'available' not in info:
-						info['available'] = "Yes"
-	except (subprocess.TimeoutExpired, Exception):
-		pass
-	
-	# Get GPU settings from GUC
-	try:
-		cmd = [psql_path, "-d", dbname, "-t", "-A", "-w", "-c", 
-		       "SELECT current_setting('neurondb.gpu_enabled'), current_setting('neurondb.gpu_device'), current_setting('neurondb.gpu_kernels');"]
+		       "SELECT current_setting('neurondb.gpu_enabled', true), current_setting('neurondb.gpu_device', true), current_setting('neurondb.gpu_kernels', true);"]
 		proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=5)
 		out, err = proc.communicate()
 		if proc.returncode == 0 and out.strip():
 			parts = out.strip().split('|')
 			if len(parts) >= 3:
-				info['enabled'] = parts[0].strip() if parts[0].strip() else 'Unknown'
-				if not info.get('device_id') or info.get('device_id') == 'Unknown':
-					info['device_id'] = parts[1].strip() if parts[1].strip() else 'Unknown'
-				info['kernels'] = parts[2].strip() if parts[2].strip() else 'Unknown'
+				if parts[0].strip() and parts[0].strip() != '':
+					info['enabled'] = parts[0].strip()
+				if parts[1].strip() and parts[1].strip() != '':
+					if not info.get('device_id') or info.get('device_id') == 'Unknown':
+						info['device_id'] = parts[1].strip()
+				if parts[2].strip() and parts[2].strip() != '':
+					info['kernels'] = parts[2].strip()
 	except (subprocess.TimeoutExpired, Exception):
+		# If PostgreSQL query fails, that's okay - we have system detection
 		pass
 	
 	return info
@@ -559,46 +561,61 @@ def create_test_views(dbname: str, psql_path: str, num_rows: int, host: Optional
 	if port:
 		env["PGPORT"] = str(port)
 	
-	# Check which source table exists (sample_train/sample_test or test_train/test_test)
+	# Check which source table exists (higgs.test_train/test_test, sample_train/sample_test, or test_train/test_test)
 	try:
-		# Check for sample_train first, then test_train
+		# Check for higgs.test_train first (preferred), then sample_train, then test_train
 		check_train_cmd = [
 			psql_path, "-d", dbname, "-t", "-A", "-w",
-			"-c", "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('sample_train', 'test_train') LIMIT 1;"
+			"-c", "SELECT table_schema || '.' || table_name FROM information_schema.tables WHERE (table_schema = 'higgs' AND table_name = 'test_train') OR (table_schema = 'public' AND table_name IN ('sample_train', 'test_train')) ORDER BY CASE WHEN table_schema = 'higgs' THEN 0 WHEN table_name = 'sample_train' THEN 1 ELSE 2 END LIMIT 1;"
 		]
 		
-		train_proc = subprocess.Popen(check_train_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=5)
+		train_proc = subprocess.Popen(check_train_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
 		train_out, train_err = train_proc.communicate()
 		
 		if train_proc.returncode == 0 and train_out.strip():
-			train_table = train_out.strip()
+			train_table_full = train_out.strip()
 			
 			# Determine corresponding test table
-			if train_table == "sample_train":
-				test_table = "sample_test"
+			if train_table_full.startswith('higgs.'):
+				test_table_full = "higgs.test_test"
+			elif 'sample_train' in train_table_full:
+				test_table_full = "sample_test"
 			else:
-				test_table = "test_test"
+				test_table_full = "test_test"
 			
 			# Verify test table exists
-			check_test_cmd = [
-				psql_path, "-d", dbname, "-t", "-A", "-w",
-				"-c", f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '{test_table}';"
-			]
+			if '.' in test_table_full:
+				schema, table = test_table_full.split('.')
+				check_test_cmd = [
+					psql_path, "-d", dbname, "-t", "-A", "-w",
+					"-c", f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '{schema}' AND table_name = '{table}';"
+				]
+			else:
+				check_test_cmd = [
+					psql_path, "-d", dbname, "-t", "-A", "-w",
+					"-c", f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '{test_table_full}';"
+				]
 			
-			test_proc = subprocess.Popen(check_test_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=5)
+			test_proc = subprocess.Popen(check_test_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
 			test_out, test_err = test_proc.communicate()
 			
 			if test_proc.returncode == 0 and test_out.strip() and int(test_out.strip()) > 0:
 				# Create views with LIMIT num_rows
+				# Convert REAL[] to vector if needed (when neurondb extension is available)
+				# Try to cast to vector, fallback to original type if extension not available
 				create_sql = f"""
 DROP VIEW IF EXISTS test_train_view CASCADE;
 DROP VIEW IF EXISTS test_test_view CASCADE;
 
 CREATE VIEW test_train_view AS
-SELECT features, label FROM {train_table} LIMIT {num_rows};
+SELECT features::vector(28) as features, label 
+FROM {train_table_full} 
+LIMIT {num_rows};
 
 CREATE VIEW test_test_view AS
-SELECT features, label FROM {test_table} LIMIT {num_rows};
+SELECT features::vector(28) as features, label 
+FROM {test_table_full} 
+LIMIT {num_rows};
 """
 				
 				create_proc = subprocess.Popen(
@@ -606,8 +623,7 @@ SELECT features, label FROM {test_table} LIMIT {num_rows};
 					stdout=subprocess.PIPE,
 					stderr=subprocess.PIPE,
 					text=True,
-					env=env,
-					timeout=10
+					env=env
 				)
 				create_out, create_err = create_proc.communicate()
 				
@@ -618,7 +634,7 @@ SELECT features, label FROM {test_table} LIMIT {num_rows};
 						"-c", "SELECT COALESCE((SELECT COUNT(*) FROM test_train_view), 0);"
 					]
 					
-					count_proc = subprocess.Popen(count_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, timeout=5)
+					count_proc = subprocess.Popen(count_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
 					count_out, count_err = count_proc.communicate()
 					
 					if count_proc.returncode == 0 and count_out.strip():
@@ -878,7 +894,7 @@ def main() -> int:
 		
 		# Run the test (continue on failure)
 		try:
-			ok, elapsed, out_text, err_text = run_psql_file(args.db, path, args.psql, verbose=getattr(args, "verbose", False))
+			ok, elapsed, out_text, err_text = run_psql_file(args.db, path, args.psql, verbose=args.verbose)
 		except Exception as e:
 			# If test execution throws an exception, mark as failed but continue
 			ok = False
@@ -902,7 +918,8 @@ def main() -> int:
 		# Overwrite the starting line with final result (colored: green ✓ or red ✗)
 		print(format_test_line(ok, when, idx, total, name, elapsed))
 		
-		if not ok:
+		# Only show error details in verbose mode
+		if not ok and args.verbose:
 			err_tail = "\n".join((err_text or "").strip().splitlines()[-5:])
 			if err_tail:
 				print(f"    {err_tail}")
