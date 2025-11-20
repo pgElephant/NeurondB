@@ -1076,10 +1076,11 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		for (i = 0; i < nvec; i++)
 		{
 			/* Skip if no other clusters (b_scores is 0 and a_scores might be 0) */
+			double max_ab;
 			if (b_scores[i] <= 0.0 && a_scores[i] <= 0.0)
 				continue;
-			
-			double max_ab = (a_scores[i] > b_scores[i]) ? a_scores[i] : b_scores[i];
+
+			max_ab = (a_scores[i] > b_scores[i]) ? a_scores[i] : b_scores[i];
 			if (max_ab > 0.0)
 			{
 				double s = (b_scores[i] - a_scores[i]) / max_ab;

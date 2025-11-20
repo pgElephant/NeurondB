@@ -245,6 +245,7 @@ dt_dataset_load(const char *quoted_tbl,
 		{
 			ArrayType *arr = DatumGetArrayTypeP(feat_datum);
 			int arr_dim = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+			float8 *data;
 			if (arr_dim != feature_dim)
 			{
 				SPI_finish();
@@ -252,7 +253,7 @@ dt_dataset_load(const char *quoted_tbl,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("neurondb: dt_dataset_load: inconsistent array dimensions")));
 			}
-			float8 *data = (float8 *)ARR_DATA_PTR(arr);
+			data = (float8 *)ARR_DATA_PTR(arr);
 			for (int j = 0; j < feature_dim; j++)
 				row[j] = (float)data[j];
 		}
@@ -260,6 +261,7 @@ dt_dataset_load(const char *quoted_tbl,
 		{
 			ArrayType *arr = DatumGetArrayTypeP(feat_datum);
 			int arr_dim = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+			float4 *data;
 			if (arr_dim != feature_dim)
 			{
 				SPI_finish();
@@ -267,7 +269,7 @@ dt_dataset_load(const char *quoted_tbl,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						errmsg("neurondb: dt_dataset_load: inconsistent array dimensions")));
 			}
-			float4 *data = (float4 *)ARR_DATA_PTR(arr);
+			data = (float4 *)ARR_DATA_PTR(arr);
 			memcpy(row, data, sizeof(float) * feature_dim);
 		}
 		else

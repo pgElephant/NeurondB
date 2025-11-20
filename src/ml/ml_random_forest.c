@@ -4801,41 +4801,21 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 					if (h_features != NULL && !h_features_freed)
 					{
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: freeing h_features, ptr=%p", (void *)h_features);
-						PG_TRY();
+						if (h_features != NULL)
 						{
-							if (h_features != NULL)
-							{
-								pfree(h_features);
-								h_features = NULL;
-							}
-						}
-						PG_CATCH();
-						{
-							elog(WARNING, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: failed to free h_features, ignoring");
-							FlushErrorState();
+							pfree(h_features);
 							h_features = NULL;
 						}
-						PG_END_TRY();
 						h_features_freed = true;
 					}
 					if (h_labels != NULL && !h_labels_freed)
 					{
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: freeing h_labels, ptr=%p", (void *)h_labels);
-						PG_TRY();
+						if (h_labels != NULL)
 						{
-							if (h_labels != NULL)
-							{
-								pfree(h_labels);
-								h_labels = NULL;
-							}
-						}
-						PG_CATCH();
-						{
-							elog(WARNING, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: failed to free h_labels, ignoring");
-							FlushErrorState();
+							pfree(h_labels);
 							h_labels = NULL;
 						}
-						PG_END_TRY();
 						h_labels_freed = true;
 					}
 					/* BULLETPROOF: Never free gpu_errstr in exception handler - it's allocated by GPU function
@@ -5678,30 +5658,8 @@ rf_model_deserialize(const bytea *data)
 					int saved_cursor_pos = buf.cursor;
 					elog(DEBUG1, "rf_model_deserialize: reading feature_importance, cursor=%d/%d, n_features=%d", buf.cursor, buf.len, model->n_features);
 					
-					/* Wrap in PG_TRY to catch errors from rf_read_double_array */
-					PG_TRY();
-					{
-						model->feature_importance = rf_read_double_array(&buf, model->n_features);
-					}
-					PG_CATCH();
-					{
-						/* rf_read_double_array threw an error - check if cursor was advanced */
-						int cursor_after_error = buf.cursor;
-						elog(ERROR, "rf_model_deserialize: exception reading feature_importance (cursor advanced from %d to %d, buffer len=%d)",
-							saved_cursor_pos, cursor_after_error, buf.len);
-						/* Cleanup and re-throw */
-						if (model->class_counts)
-							pfree(model->class_counts);
-						if (model->feature_means)
-							pfree(model->feature_means);
-						if (model->feature_variances)
-							pfree(model->feature_variances);
-						pfree(model);
-						model = NULL;
-						FlushErrorState();
-						PG_RE_THROW();
-					}
-					PG_END_TRY();
+					/* Read feature_importance array */
+					model->feature_importance = rf_read_double_array(&buf, model->n_features);
 					
 					elog(DEBUG1, "rf_model_deserialize: after reading feature_importance, cursor=%d/%d, result=%p, saved_cursor_pos=%d", buf.cursor, buf.len, (void *)model->feature_importance, saved_cursor_pos);
 					
@@ -5770,28 +5728,7 @@ rf_model_deserialize(const bytea *data)
 					{
 						/* Continue with deserialization */
 					elog(DEBUG1, "rf_model_deserialize: reading left_branch_means, cursor=%d/%d, feature_limit=%d", buf.cursor, buf.len, model->feature_limit);
-					PG_TRY();
-					{
-						model->left_branch_means = rf_read_double_array(&buf, model->feature_limit);
-					}
-					PG_CATCH();
-					{
-						elog(ERROR, "rf_model_deserialize: exception reading left_branch_means (cursor=%d/%d, feature_limit=%d)",
-							buf.cursor, buf.len, model->feature_limit);
-						if (model->class_counts)
-							pfree(model->class_counts);
-						if (model->feature_means)
-							pfree(model->feature_means);
-						if (model->feature_variances)
-							pfree(model->feature_variances);
-						if (model->feature_importance)
-							pfree(model->feature_importance);
-						pfree(model);
-						model = NULL;
-						FlushErrorState();
-						PG_RE_THROW();
-					}
-					PG_END_TRY();
+					model->left_branch_means = rf_read_double_array(&buf, model->feature_limit);
 						
 						if (model != NULL && model->left_branch_means == NULL && model->feature_limit > 0)
 						{
@@ -5811,30 +5748,7 @@ rf_model_deserialize(const bytea *data)
 						else if (model != NULL)
 						{
 						elog(DEBUG1, "rf_model_deserialize: reading right_branch_means, cursor=%d/%d, feature_limit=%d", buf.cursor, buf.len, model->feature_limit);
-						PG_TRY();
-						{
-							model->right_branch_means = rf_read_double_array(&buf, model->feature_limit);
-						}
-						PG_CATCH();
-						{
-							elog(ERROR, "rf_model_deserialize: exception reading right_branch_means (cursor=%d/%d, feature_limit=%d)",
-								buf.cursor, buf.len, model->feature_limit);
-							if (model->class_counts)
-								pfree(model->class_counts);
-							if (model->feature_means)
-								pfree(model->feature_means);
-							if (model->feature_variances)
-								pfree(model->feature_variances);
-							if (model->feature_importance)
-								pfree(model->feature_importance);
-							if (model->left_branch_means)
-								pfree(model->left_branch_means);
-							pfree(model);
-							model = NULL;
-							FlushErrorState();
-							PG_RE_THROW();
-						}
-						PG_END_TRY();
+						model->right_branch_means = rf_read_double_array(&buf, model->feature_limit);
 							
 							if (model != NULL && model->right_branch_means == NULL && model->feature_limit > 0)
 							{

@@ -2042,25 +2042,7 @@ cpu_evaluation_path:
 		f1_score = (precision + recall > 0) ? 2.0 * precision * recall / (precision + recall) : 0.0;
 		log_loss = (total_predictions > 0) ? log_loss / total_predictions : 0.0;
 
-		/* Build result JSON */
-		oldcontext = CurrentMemoryContext;
-		initStringInfo(&jsonbuf);
-		appendStringInfo(&jsonbuf,
-			"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"log_loss\":%.6f,\"n_samples\":%d,\"tp\":%d,\"tn\":%d,\"fp\":%d,\"fn\":%d}",
-			accuracy, precision, recall, f1_score, log_loss, total_predictions, tp, tn, fp, fn);
-
-		{
-			Jsonb *temp_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-			
-			/* BULLETPROOF: Copy JSONB to caller's context before SPI_finish */
-			MemoryContextSwitchTo(oldcontext);
-			result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
-			if (temp_jsonb != (Jsonb *) DatumGetPointer((Datum) temp_jsonb))
-				pfree(temp_jsonb);
-		}
-		pfree(jsonbuf.data);
-
-		/* Cleanup */
+		/* Cleanup before creating JSONB */
 		if (model->weights)
 			pfree(model->weights);
 		pfree(model);
@@ -2072,6 +2054,15 @@ cpu_evaluation_path:
 		pfree(feat_str);
 		pfree(targ_str);
 		SPI_finish();
+
+		/* Build result JSON AFTER SPI_finish in parent context */
+		initStringInfo(&jsonbuf);
+		appendStringInfo(&jsonbuf,
+			"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"log_loss\":%.6f,\"n_samples\":%d,\"tp\":%d,\"tn\":%d,\"fp\":%d,\"fn\":%d}",
+			accuracy, precision, recall, f1_score, log_loss, total_predictions, tp, tn, fp, fn);
+
+		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
+		pfree(jsonbuf.data);
 
 		PG_RETURN_JSONB_P(result_jsonb);
 	}

@@ -26,6 +26,7 @@
 #include "utils/elog.h"
 #include "utils/lsyscache.h"
 #include "neurondb_pgcompat.h"
+#include "ml_catalog.h"
 
 #include <math.h>
 #include <string.h>
@@ -258,37 +259,55 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 
 	MemoryContextSwitchTo(oldcontext);
 
-	/* Model id as current timestamp in ms */
+	/* Register model in catalog */
 	{
-		int64 model_id;
-		struct timeval tv;
-		gettimeofday(&tv, NULL);
-		model_id = (((int64)tv.tv_sec) * 1000 + tv.tv_usec / 1000);
+		int32 model_id;
+		MLCatalogModelSpec spec;
+		memset(&spec, 0, sizeof(spec));
+		spec.algorithm = "custom";  /* collaborative_filtering not in enum, use custom */
+		spec.model_type = "regression";
+		spec.training_table = table_name_str;
+		spec.training_column = NULL;
+		spec.project_name = NULL;
+		spec.model_name = NULL;
+		spec.parameters = NULL;
+		spec.metrics = NULL;
+		spec.model_data = NULL;
+		spec.training_time_ms = -1;
+		spec.num_samples = n_ratings;
+		spec.num_features = n_factors;
+
+		model_id = ml_catalog_register_model(&spec);
+		elog(NOTICE, "DEBUG: ml_catalog returned model_id=%d (as int32)", model_id);
+		if (model_id <= 0)
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("Failed to register collaborative filter model in catalog")));
 
 		resetStringInfo(&sql);
 		appendStringInfo(&sql,
 			"CREATE TABLE IF NOT EXISTS neurondb_cf_user_factors "
-			"(model_id bigint, user_id int, factors float4[])");
+			"(model_id integer, user_id int, factors float4[])");
 		SPI_execute(sql.data, false, 0);
 		resetStringInfo(&sql);
 		appendStringInfo(&sql,
 			"CREATE TABLE IF NOT EXISTS neurondb_cf_item_factors "
-			"(model_id bigint, item_id int, factors float4[])");
+			"(model_id integer, item_id int, factors float4[])");
 		SPI_execute(sql.data, false, 0);
 
 		resetStringInfo(&sql);
 		appendStringInfo(&sql,
-			"DELETE FROM neurondb_cf_user_factors WHERE model_id = %ld",
-			(long)model_id);
+			"DELETE FROM neurondb_cf_user_factors WHERE model_id = %d",
+			model_id);
 		SPI_execute(sql.data, false, 0);
 		resetStringInfo(&sql);
 		appendStringInfo(&sql,
-			"DELETE FROM neurondb_cf_item_factors WHERE model_id = %ld",
-			(long)model_id);
+			"DELETE FROM neurondb_cf_item_factors WHERE model_id = %d",
+			model_id);
 		SPI_execute(sql.data, false, 0);
 
 		{
-			Oid arg_types[3] = { INT8OID, INT4OID, 1021 };
+			Oid arg_types[3] = { INT4OID, INT4OID, 1021 };
 			Datum values[3];
 			char nulls[3] = { false, false, false };
 			ArrayType *array = NULL;
@@ -321,21 +340,21 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 					sizeof(float4),
 					true,
 					TYPALIGN_INT);
-				values[0] = Int64GetDatum(model_id);
+				values[0] = Int32GetDatum(model_id);
 				values[1] = Int32GetDatum(i);
 				values[2] = PointerGetDatum(array);
 				ret = SPI_execute_plan(
 					plan, values, nulls, false, 1);
 				if (ret != SPI_OK_INSERT)
 					elog(ERROR,
-						"Failed to insert user_factors for user %d (model_id %ld)",
+						"Failed to insert user_factors for user %d (model_id %d)",
 						i,
-						(long)model_id);
+						model_id);
 			}
 		}
 
 		{
-			Oid arg_types[3] = { INT8OID, INT4OID, 1021 };
+			Oid arg_types[3] = { INT4OID, INT4OID, 1021 };
 			Datum values[3];
 			char nulls[3] = { false, false, false };
 			ArrayType *array = NULL;
@@ -369,16 +388,16 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 					sizeof(float4),
 					true,
 					TYPALIGN_INT);
-				values[0] = Int64GetDatum(model_id);
+				values[0] = Int32GetDatum(model_id);
 				values[1] = Int32GetDatum(i);
 				values[2] = PointerGetDatum(array);
 				ret = SPI_execute_plan(
 					plan, values, nulls, false, 1);
 				if (ret != SPI_OK_INSERT)
 					elog(ERROR,
-						"Failed to insert item_factors for item %d (model_id %ld)",
+						"Failed to insert item_factors for item %d (model_id %d)",
 						i,
-						(long)model_id);
+						model_id);
 			}
 		}
 
@@ -403,14 +422,14 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 			MemoryContextDelete(model_mcxt);
 		
 		SPI_finish();
-		elog(INFO, "Collaborative filter model created, model_id=%ld", (long)model_id);
-		PG_RETURN_INT64(model_id);
+		elog(INFO, "Collaborative filter model created, model_id=%d", model_id);
+		PG_RETURN_INT32(model_id);
 	}
 }
 
 /* Helper functions for loading factors from database */
 static bool
-als_load_user_factors(int64 model_id, int32 user_id, float **factors, int *n_factors)
+als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_factors)
 {
 	StringInfoData query;
 	int ret;
@@ -418,8 +437,8 @@ als_load_user_factors(int64 model_id, int32 user_id, float **factors, int *n_fac
 
 	initStringInfo(&query);
 	appendStringInfo(&query,
-		"SELECT factors FROM neurondb_cf_user_factors WHERE model_id = %ld AND user_id = %d",
-		(long)model_id, user_id);
+		"SELECT factors FROM neurondb_cf_user_factors WHERE model_id = %d AND user_id = %d",
+		model_id, user_id);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 		return false;
@@ -476,14 +495,15 @@ als_load_user_factors(int64 model_id, int32 user_id, float **factors, int *n_fac
 		deconstruct_array(factors_array, elmtype, typlen, typbyval, typalign,
 						 &elems, &nulls, &n_elems);
 
-		*factors = palloc(sizeof(float) * n_elems);
+		/* Allocate in parent context before SPI_finish() */
 		*n_factors = n_elems;
-
+		SPI_finish();
+		
+		*factors = palloc(sizeof(float) * n_elems);
 		for (i = 0; i < n_elems; i++)
 			(*factors)[i] = DatumGetFloat4(elems[i]);
 	}
 
-	SPI_finish();
 	return true;
 }
 
@@ -554,16 +574,18 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 		deconstruct_array(factors_array, elmtype, typlen, typbyval, typalign,
 						 &elems, &nulls, &n_elems);
 
-		*factors = palloc(sizeof(float *) * 1); /* Only one item */
-		(*factors)[0] = palloc(sizeof(float) * n_elems);
+		/* Allocate in parent context before SPI_finish() */
 		*n_items_total = 1;
 		*n_factors = n_elems;
+		SPI_finish();
+		
+		*factors = palloc(sizeof(float *) * 1); /* Only one item */
+		(*factors)[0] = palloc(sizeof(float) * n_elems);
 
 		for (i = 0; i < n_elems; i++)
 			(*factors)[0][i] = DatumGetFloat4(elems[i]);
 	}
 
-	SPI_finish();
 	return true;
 }
 
@@ -576,7 +598,7 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 Datum
 predict_collaborative_filter(PG_FUNCTION_ARGS)
 {
-	int64 model_id = PG_GETARG_INT64(0);
+	int32 model_id = PG_GETARG_INT32(0);
 	int32 user_id = PG_GETARG_INT32(1);
 	int32 item_id = PG_GETARG_INT32(2);
 
@@ -631,7 +653,7 @@ predict_collaborative_filter(PG_FUNCTION_ARGS)
 Datum
 evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 {
-	int64 model_id;
+	int32 model_id;
 	text *table_name;
 	text *user_col;
 	text *item_col;
@@ -662,7 +684,7 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				errmsg("neurondb: evaluate_collaborative_filter_by_model_id: model_id is required")));
 
-	model_id = PG_GETARG_INT64(0);
+	model_id = PG_GETARG_INT32(0);
 
 	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3) || PG_ARGISNULL(4))
 		ereport(ERROR,
