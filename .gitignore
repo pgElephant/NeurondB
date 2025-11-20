@@ -131,7 +131,70 @@ compile_metal_final.sh
 test_metal_direct
 test_metal_direct.c
 
-# Unnecessary documentation
+# Markdown files - ignore by default, only track explicitly added ones
+# New .md files will be ignored unless explicitly added with 'git add -f'
+*.md
+# Explicitly allow important root-level documentation files
+!README.md
+!CONTRIBUTING.md
+!SECURITY.md
+!INSTALL.md
+# Allow docs directory (main documentation)
+!docs/
+!docs/**/*.md
+# Allow demo README files
+!demo/models/README.md
+!demo/workers/README.md
+!docker/README.md
+!tools/README.md
+# Allow MCP server README
+!bin/mcp/README.md
+# Note: node_modules .md files are already ignored by node_modules/ pattern
+
+# Platform-specific SQL build artifacts
+neurondb--1.0.sql.linux
+neurondb--1.0.sql.macos
+
+# Temporary/accidental files
+/a
+/commit_message_amend.txt
+
+# Build artifacts that might be missed
+*.air
+*.metallib
+*.bc
+
+# Python virtual environments (already covered but explicit)
+**/venv/
+**/env/
+**/__pycache__/
+
+# Node.js
+node_modules/
+bin/mcp/node_modules/
+
+# Editor and IDE files
+.cursor/
+.idea/
+.vscode/
+*.sublime-*
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Temporary test files
+test_*.sql
+*_test.sql
+*_demo.sql
+extreme_*.sql
+final_*.sql
+
+# Unnecessary documentation (legacy)
 ML_FINAL_STATUS.md
 ML_ALGORITHMS_STATUS.md
 ML_IMPLEMENTATION_SUMMARY.md
@@ -140,4 +203,3 @@ VERSION_COMPATIBILITY.md
 REORGANIZATION_PLAN.md
 src/DIRECTORY_STRUCTURE.md
 src/gpu/GPU_STATUS.md
-dataset/README.md
