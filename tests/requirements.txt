@@ -1,0 +1,16 @@
+# Requirements for Python scripts in tests/
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# Or for development:
+#   pip install -r requirements.txt --user
+
+# PostgreSQL adapter for Python
+# Required by: load_higgs_data.py
+psycopg2-binary>=2.9.0
+
+# Note: run_test.py and higgs_uci_to_sql.py use only standard library modules
+# tools/gpu.py has optional dependencies (numpy, cupy, torch) for stress testing
+# but these are not required for basic functionality
+
