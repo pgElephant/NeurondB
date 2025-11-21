@@ -15,14 +15,33 @@ Categories:
 """
 
 import argparse
+import csv
+import gzip
 import os
 import platform
+import random
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+import zipfile
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
+from urllib.request import urlopen
+
+try:
+	import psycopg2
+	from psycopg2.extras import execute_batch
+except ImportError:
+	psycopg2 = None
+	execute_batch = None
+
+try:
+	import numpy as np
+	HAS_NUMPY = True
+except ImportError:
+	HAS_NUMPY = False
 
 # Import GPUDetector from tools/gpu.py
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'tools'))
@@ -118,6 +137,65 @@ def list_sql_files(category: str) -> List[str]:
 		return [os.path.join(TESTS_SQL_DIR, f) for f in all_files]
 	else:
 		raise ValueError("category must be one of: basic, advance, negative, all")
+
+
+def verify_gpu_usage(dbname: str, psql_path: str, mode: str, test_name: str = "", host: Optional[str] = None, port: Optional[int] = None) -> Tuple[bool, str]:
+	"""
+	Verify that GPU-trained models actually used GPU.
+	Only checks the most recent model to avoid false positives from previous tests.
+	Returns (success, error_message).
+	"""
+	if mode != "gpu":
+		return True, ""  # Skip verification for CPU mode
+	
+	env = os.environ.copy()
+	if host:
+		env["PGHOST"] = host
+	if port:
+		env["PGPORT"] = str(port)
+	
+	# Check only the most recent model to avoid false positives from previous test runs
+	check_sql = """
+		SELECT 
+			m.model_id,
+			m.algorithm,
+			COALESCE(m.metrics::jsonb->>'storage', 'cpu') AS storage
+		FROM neurondb.ml_models m
+		ORDER BY m.model_id DESC
+		LIMIT 1;
+	"""
+	
+	cmd = [
+		psql_path,
+		"-d", dbname,
+		"-t", "-A",
+		"-w",
+		"-c", check_sql
+	]
+	
+	try:
+		proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+		out, err = proc.communicate(timeout=5)
+		
+		if proc.returncode != 0:
+			return True, ""  # If query fails, don't fail the test
+		
+		if out.strip():
+			lines = [line.strip() for line in out.strip().split('\n') if line.strip()]
+			for line in lines:
+				parts = line.split('|')
+				if len(parts) >= 3:
+					model_id = parts[0].strip()
+					algorithm = parts[1].strip()
+					storage = parts[2].strip()
+					# Only check ML algorithms that should use GPU
+					ml_algorithms = ['linear_regression', 'logistic_regression', 'random_forest', 'svm', 'ridge', 'lasso', 'decision_tree', 'naive_bayes']
+					if storage != 'gpu' and algorithm in ml_algorithms:
+						return False, f"GPU mode enabled but model_id={model_id} (algorithm={algorithm}) was trained on CPU (storage={storage})"
+		
+		return True, ""
+	except Exception:
+		return True, ""  # Don't fail tests if verification fails
 
 
 def run_psql_file(dbname: str, sql_file: str, psql_path: str, verbose: bool = False) -> Tuple[bool, float, str, str]:
@@ -561,12 +639,12 @@ def create_test_views(dbname: str, psql_path: str, num_rows: int, host: Optional
 	if port:
 		env["PGPORT"] = str(port)
 	
-	# Check which source table exists (higgs.test_train/test_test, sample_train/sample_test, or test_train/test_test)
+	# Check which source table exists (dataset.test_train/test_test, sample_train/sample_test, or test_train/test_test)
 	try:
-		# Check for higgs.test_train first (preferred), then sample_train, then test_train
+		# Check for dataset.test_train first (preferred), then sample_train, then test_train
 		check_train_cmd = [
 			psql_path, "-d", dbname, "-t", "-A", "-w",
-			"-c", "SELECT table_schema || '.' || table_name FROM information_schema.tables WHERE (table_schema = 'higgs' AND table_name = 'test_train') OR (table_schema = 'public' AND table_name IN ('sample_train', 'test_train')) ORDER BY CASE WHEN table_schema = 'higgs' THEN 0 WHEN table_name = 'sample_train' THEN 1 ELSE 2 END LIMIT 1;"
+			"-c", "SELECT table_schema || '.' || table_name FROM information_schema.tables WHERE (table_schema = 'dataset' AND table_name = 'test_train') OR (table_schema = 'public' AND table_name IN ('sample_train', 'test_train')) ORDER BY CASE WHEN table_schema = 'dataset' THEN 0 WHEN table_name = 'sample_train' THEN 1 ELSE 2 END LIMIT 1;"
 		]
 		
 		train_proc = subprocess.Popen(check_train_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -576,8 +654,8 @@ def create_test_views(dbname: str, psql_path: str, num_rows: int, host: Optional
 			train_table_full = train_out.strip()
 			
 			# Determine corresponding test table
-			if train_table_full.startswith('higgs.'):
-				test_table_full = "higgs.test_test"
+			if train_table_full.startswith('dataset.'):
+				test_table_full = "dataset.test_test"
 			elif 'sample_train' in train_table_full:
 				test_table_full = "sample_test"
 			else:
@@ -600,22 +678,36 @@ def create_test_views(dbname: str, psql_path: str, num_rows: int, host: Optional
 			test_out, test_err = test_proc.communicate()
 			
 			if test_proc.returncode == 0 and test_out.strip() and int(test_out.strip()) > 0:
+				# Check if vector extension is available
+				check_vector_cmd = [
+					psql_path, "-d", dbname, "-t", "-A", "-w",
+					"-c", "SELECT EXISTS(SELECT 1 FROM pg_type WHERE typname = 'vector');"
+				]
+				vector_check = subprocess.Popen(check_vector_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+				vector_out, vector_err = vector_check.communicate()
+				has_vector = vector_check.returncode == 0 and vector_out.strip() == "t"
+				
 				# Create views with LIMIT num_rows
-				# Convert REAL[] to vector if needed (when neurondb extension is available)
-				# Try to cast to vector, fallback to original type if extension not available
-				create_sql = f"""
+				# Try to convert REAL[] to vector if vector extension is available, otherwise use REAL[]
+				# Use DO block to handle potential cast failures gracefully
+				if has_vector:
+					# Try vector cast, fallback to REAL[] if it fails
+					create_sql = f"""
 DROP VIEW IF EXISTS test_train_view CASCADE;
 DROP VIEW IF EXISTS test_test_view CASCADE;
 
-CREATE VIEW test_train_view AS
-SELECT features::vector(28) as features, label 
-FROM {train_table_full} 
-LIMIT {num_rows};
-
-CREATE VIEW test_test_view AS
-SELECT features::vector(28) as features, label 
-FROM {test_table_full} 
-LIMIT {num_rows};
+DO $$
+BEGIN
+	-- Try to create views with vector cast
+	BEGIN
+		EXECUTE format('CREATE VIEW test_train_view AS SELECT features::vector(28) as features, label FROM %s LIMIT %s', '{train_table_full}', {num_rows});
+		EXECUTE format('CREATE VIEW test_test_view AS SELECT features::vector(28) as features, label FROM %s LIMIT %s', '{test_table_full}', {num_rows});
+	EXCEPTION WHEN OTHERS THEN
+		-- Fallback to REAL[] if vector cast fails
+		EXECUTE format('CREATE VIEW test_train_view AS SELECT features as features, label FROM %s LIMIT %s', '{train_table_full}', {num_rows});
+		EXECUTE format('CREATE VIEW test_test_view AS SELECT features as features, label FROM %s LIMIT %s', '{test_table_full}', {num_rows});
+	END;
+END $$;
 
 -- Create or truncate test settings table for test runner configuration
 CREATE TABLE IF NOT EXISTS test_settings (
@@ -623,6 +715,55 @@ CREATE TABLE IF NOT EXISTS test_settings (
 	setting_value TEXT,
 	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Create or truncate test metrics table for storing test results
+CREATE TABLE IF NOT EXISTS test_metrics (
+	test_name TEXT PRIMARY KEY,
+	algorithm TEXT,
+	model_id INTEGER,
+	train_samples BIGINT,
+	test_samples BIGINT,
+	-- Regression metrics
+	mse NUMERIC,
+	rmse NUMERIC,
+	mae NUMERIC,
+	r_squared NUMERIC,
+	-- Classification metrics
+	accuracy NUMERIC,
+	precision NUMERIC,
+	recall NUMERIC,
+	f1_score NUMERIC,
+	-- Clustering metrics
+	silhouette_score NUMERIC,
+	inertia NUMERIC,
+	n_clusters INTEGER,
+	-- Time series metrics
+	mape NUMERIC,
+	-- Predictions (stored as JSONB for flexibility)
+	predictions JSONB,
+	-- Additional metadata
+	metadata JSONB,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+TRUNCATE TABLE test_metrics;
+"""
+				else:
+					# No vector extension, use REAL[] directly
+					create_sql = f"""
+DROP VIEW IF EXISTS test_train_view CASCADE;
+DROP VIEW IF EXISTS test_test_view CASCADE;
+
+CREATE VIEW test_train_view AS
+SELECT features as features, label 
+FROM {train_table_full} 
+LIMIT {num_rows};
+
+CREATE VIEW test_test_view AS
+SELECT features as features, label 
+FROM {test_table_full} 
+LIMIT {num_rows};
 
 -- Create or truncate test settings table for test runner configuration
 CREATE TABLE IF NOT EXISTS test_settings (
@@ -686,7 +827,17 @@ TRUNCATE TABLE test_metrics;
 					
 					if count_proc.returncode == 0 and count_out.strip():
 						row_count = int(count_out.strip())
-						return True, row_count
+						if row_count > 0:
+							return True, row_count
+					# If row count is 0, something went wrong
+					if count_err:
+						print(f"Warning: View created but has 0 rows. Error: {count_err}", file=sys.stderr)
+				else:
+					# View creation failed - log error for debugging
+					if create_err:
+						# Only show error if it's not about vector type (we handle that gracefully)
+						if "type \"vector\" does not exist" not in create_err.lower():
+							print(f"Warning: View creation failed: {create_err}", file=sys.stderr)
 		
 		return False, 0
 	except (subprocess.TimeoutExpired, Exception):
@@ -742,8 +893,18 @@ def switch_gpu_mode(dbname: str, mode: str, psql_path: str, gpu_kernels: str = N
 		print(f"Failed to set GPU enabled: {err1}", file=sys.stderr)
 		return False
 
-	# Optionally set GPU kernels if provided
-	if gpu_kernels:
+	# Set GPU kernels - include all ML algorithm kernels for GPU mode
+	if mode == "gpu":
+		# Default kernels plus all ML training/prediction kernels
+		default_kernels = "l2,cosine,ip,rf_split,rf_predict"
+		ml_kernels = "linreg_train,linreg_predict,lr_train,lr_predict,rf_train,svm_train,svm_predict,ridge_train,ridge_predict,lasso_train,lasso_predict,dt_train,dt_predict,nb_train,nb_predict"
+		full_kernels = f"{default_kernels},{ml_kernels}"
+		cmd_kernels = f"ALTER SYSTEM SET neurondb.gpu_kernels = '{full_kernels}';"
+		success_k, out_k, err_k = run_psql_command(dbname, cmd_kernels, psql_path, verbose)
+		if not success_k:
+			print(f"Warning: Failed to set GPU kernels: {err_k}", file=sys.stderr)
+	elif gpu_kernels:
+		# Use provided kernels if specified
 		cmd_kernels = f"ALTER SYSTEM SET neurondb.gpu_kernels = '{gpu_kernels}';"
 		success_k, out_k, err_k = run_psql_command(dbname, cmd_kernels, psql_path, verbose)
 		if not success_k:
@@ -756,9 +917,619 @@ def switch_gpu_mode(dbname: str, mode: str, psql_path: str, gpu_kernels: str = N
 		print(f"Failed to reload configuration: {err2}", file=sys.stderr)
 		return False
 
+	# Initialize GPU if GPU mode is enabled
+	if mode == "gpu":
+		cmd3 = "SELECT neurondb_gpu_enable();"
+		success3, out3, err3 = run_psql_command(dbname, cmd3, psql_path, verbose)
+		if not success3:
+			print(f"Warning: Failed to enable GPU: {err3}", file=sys.stderr)
+			# Don't fail, GPU might not be available but we still want to test
+		
+		# Force GPU initialization by querying GPU info
+		cmd4 = "SELECT * FROM neurondb_gpu_info() LIMIT 1;"
+		success4, out4, err4 = run_psql_command(dbname, cmd4, psql_path, verbose)
+		if not success4:
+			if verbose:
+				print(f"Warning: GPU info query failed (GPU may not be available): {err4}", file=sys.stderr)
+
 	if verbose:
 		print(f"Switched to {mode.upper()} mode successfully.")
 	return True
+
+
+# HIGGS dataset constants
+UCI_ZIP_URL = "https://archive.ics.uci.edu/static/public/280/higgs.zip"
+HIGGS_CSV_BASENAME = "HIGGS.csv"
+EXPECTED_NUM_COLUMNS = 29
+MB = 1024 * 1024
+
+
+def find_local_higgs_csv() -> Optional[str]:
+	"""Try to locate an existing HIGGS.csv in common locations."""
+	candidates = [
+		os.path.join(os.getcwd(), HIGGS_CSV_BASENAME),  # Current directory first
+		os.path.join(os.path.dirname(__file__), "datasets", HIGGS_CSV_BASENAME),
+		os.path.join(os.path.dirname(__file__), HIGGS_CSV_BASENAME),
+		os.path.join(os.path.dirname(os.path.dirname(__file__)), "datasets", HIGGS_CSV_BASENAME),
+		HIGGS_CSV_BASENAME,
+	]
+	for path in candidates:
+		if os.path.isfile(path):
+			return path
+	return None
+
+
+def find_local_higgs_zip() -> Optional[str]:
+	"""Try to locate a local higgs.zip - checks current directory first."""
+	candidates = [
+		os.path.join(os.getcwd(), "higgs.zip"),  # Current directory first
+		os.path.join(os.path.dirname(__file__), "datasets", "higgs.zip"),
+		os.path.join(os.path.dirname(__file__), "higgs.zip"),
+		os.path.join(os.path.dirname(os.path.dirname(__file__)), "datasets", "higgs.zip"),
+		"higgs.zip",
+	]
+	for path in candidates:
+		if os.path.isfile(path):
+			return path
+	return None
+
+
+def download_higgs_zip(dest_path: str) -> None:
+	"""Download HIGGS dataset zip file."""
+	print(f"Downloading HIGGS dataset from {UCI_ZIP_URL}...")
+	print("This may take several minutes (file is ~2.8GB)...")
+	
+	with urlopen(UCI_ZIP_URL) as resp, open(dest_path, "wb") as out:
+		chunk_size = 1 * MB
+		total = 0
+		total_size = 0
+		try:
+			hdr_len = resp.getheader("Content-Length")
+			total_size = int(hdr_len) if hdr_len else 0
+		except Exception:
+			total_size = 0
+		
+		start_ts = last_ts = time.time()
+		last_reported_percent = -1
+		while True:
+			chunk = resp.read(chunk_size)
+			if not chunk:
+				break
+			out.write(chunk)
+			total += len(chunk)
+			now = time.time()
+			
+			if total_size > 0:
+				percent = int((total * 100) / total_size)
+			else:
+				percent = -1
+			
+			if percent != last_reported_percent or (now - last_ts) >= 0.5:
+				elapsed = max(0.001, now - start_ts)
+				speed = total / elapsed
+				mb_done = total / MB
+				if total_size > 0:
+					mb_total = total_size / MB
+					sys.stderr.write(
+						f"\r[DOWNLOAD] {percent:3d}% "
+						f"({mb_done:.1f}/{mb_total:.1f} MB) "
+						f"@ {speed/MB:.2f} MB/s"
+					)
+				else:
+					sys.stderr.write(
+						f"\r[DOWNLOAD] {mb_done:.1f} MB "
+						f"@ {speed/MB:.2f} MB/s"
+					)
+				sys.stderr.flush()
+				last_ts = now
+				last_reported_percent = percent
+		sys.stderr.write("\n")
+		sys.stderr.flush()
+	print(f"Download complete: {dest_path}")
+
+
+def extract_higgs_csv(zip_path: str, output_dir: str) -> str:
+	"""Extract HIGGS.csv from zip file."""
+	print(f"Extracting HIGGS.csv from {zip_path}...")
+	with zipfile.ZipFile(zip_path, "r") as zf:
+		names = zf.namelist()
+		csv_name = None
+		for n in names:
+			lower = n.lower()
+			if lower.endswith(".csv") and "higgs" in lower:
+				csv_name = n
+				break
+		
+		if csv_name is None:
+			raise FileNotFoundError("No HIGGS CSV file found in zip.")
+		
+		os.makedirs(output_dir, exist_ok=True)
+		target_path = os.path.join(output_dir, HIGGS_CSV_BASENAME)
+		with zf.open(csv_name, "r") as src, open(target_path, "wb") as dst:
+			while True:
+				chunk = src.read(1 * MB)
+				if not chunk:
+					break
+				dst.write(chunk)
+		
+		print(f"Extracted to: {target_path}")
+		return target_path
+
+
+def get_higgs_csv_path(csv_path: Optional[str] = None) -> str:
+	"""
+	Get path to HIGGS.csv from local sources only.
+	Checks current directory first, then extracts from zip if found.
+	Does NOT download - quits if not found.
+	"""
+	if csv_path and os.path.isfile(csv_path):
+		return csv_path
+	
+	# Try to find local CSV
+	local_csv = find_local_higgs_csv()
+	if local_csv:
+		return local_csv
+	
+	# Try to find local ZIP (current directory first)
+	local_zip = find_local_higgs_zip()
+	if local_zip:
+		try:
+			# Extract to current directory or datasets subdirectory
+			output_dir = os.getcwd()
+			datasets_dir = os.path.join(os.path.dirname(__file__), "datasets")
+			# Prefer extracting to datasets if it exists, otherwise current dir
+			if os.path.isdir(datasets_dir):
+				output_dir = datasets_dir
+			return extract_higgs_csv(local_zip, output_dir)
+		except (zipfile.BadZipFile, zipfile.LargeZipFile) as e:
+			# Invalid zip file
+			raise FileNotFoundError(
+				f"\n{'='*80}\n"
+				f"ERROR: Invalid or corrupted zip file: {local_zip}\n"
+				f"{'='*80}\n"
+				f"\n"
+				f"Please download the HIGGS dataset from:\n"
+				f"  {UCI_ZIP_URL}\n"
+				f"\n"
+				f"Then place 'higgs.zip' in this directory:\n"
+				f"  {os.getcwd()}\n"
+				f"\n"
+				f"The file should be approximately 2.8GB in size.\n"
+				f"{'='*80}\n"
+			) from e
+		except Exception as e:
+			# Other extraction errors
+			raise FileNotFoundError(
+				f"\n{'='*80}\n"
+				f"ERROR: Failed to extract HIGGS.csv from zip file: {e}\n"
+				f"{'='*80}\n"
+				f"\n"
+				f"Please ensure 'higgs.zip' is a valid zip file.\n"
+				f"Download from: {UCI_ZIP_URL}\n"
+				f"Place it in: {os.getcwd()}\n"
+				f"{'='*80}\n"
+			) from e
+	
+	# Not found - raise error with clear instructions
+	current_dir = os.getcwd()
+	raise FileNotFoundError(
+		f"\n{'='*80}\n"
+		f"ERROR: HIGGS dataset not found\n"
+		f"{'='*80}\n"
+		f"\n"
+		f"Please download the HIGGS dataset from:\n"
+		f"  {UCI_ZIP_URL}\n"
+		f"\n"
+		f"Then place 'higgs.zip' in this directory:\n"
+		f"  {current_dir}\n"
+		f"\n"
+		f"The file should be approximately 2.8GB in size.\n"
+		f"\n"
+		f"Alternatively, you can use --dataset=synthetic to generate synthetic data instead.\n"
+		f"{'='*80}\n"
+	)
+
+
+def generate_synthetic_higgs_data(
+	num_rows: int,
+	seed: Optional[int] = None
+) -> Tuple[List[Tuple], List[Tuple]]:
+	"""
+	Generate synthetic HIGGS-style dataset.
+	Returns (train_data, test_data) where each is a list of (features, label) tuples.
+	
+	HIGGS format:
+	- 29 columns: label (0 or 1) + 28 features
+	- Features are real-valued
+	- 21 low-level features + 7 high-level features
+	
+	The synthetic data mimics HIGGS characteristics:
+	- Binary classification (signal=1, background=0)
+	- 28 real-valued features
+	- Some correlation between features and labels for realistic ML testing
+	"""
+	if seed is not None:
+		random.seed(seed)
+		if HAS_NUMPY:
+			np.random.seed(seed)
+	
+	train_data = []
+	test_data = []
+	
+	# Generate data with some correlation between features and labels
+	# to make it somewhat realistic for ML testing
+	for i in range(num_rows):
+		# Generate label (0 or 1) - balanced dataset
+		label = 1 if random.random() < 0.5 else 0
+		
+		# Generate 28 features
+		# First 21: low-level features (more variation, independent)
+		# Last 7: high-level features (derived-like, more correlated)
+		features = []
+		
+		# Low-level features (0-20): more independent, wider range
+		# These simulate raw measurements (lepton pT, jet properties, etc.)
+		for j in range(21):
+			if label == 1:
+				# Signal: slightly higher values on average
+				base = random.gauss(0.5, 1.5)
+			else:
+				# Background: slightly lower values
+				base = random.gauss(0.0, 1.5)
+			# Clamp to reasonable range
+			features.append(max(-10.0, min(10.0, base)))
+		
+		# High-level features (21-27): more correlated, derived-like
+		# These simulate derived quantities (m_jj, m_jjj, m_lv, etc.)
+		# Make them functions of low-level features to simulate derived features
+		for j in range(7):
+			# Use some combination of previous features
+			idx1 = random.randint(0, 20)
+			idx2 = random.randint(0, 20)
+			# Derived feature as combination of two low-level features
+			derived = (features[idx1] + features[idx2]) / 2.0 + random.gauss(0, 0.5)
+			if label == 1:
+				derived += 0.3  # Slight bias for signal
+			# Clamp to reasonable range
+			features.append(max(-10.0, min(10.0, derived)))
+		
+		# Split 80/20 train/test (consistent with HIGGS loading)
+		if i % 10 < 8:
+			train_data.append((features, label))
+		else:
+			test_data.append((features, label))
+	
+	return train_data, test_data
+
+
+def load_synthetic_dataset(
+	dbname: str,
+	num_rows: int = 100000,
+	seed: Optional[int] = None,
+	host: Optional[str] = None,
+	port: Optional[int] = None
+) -> bool:
+	"""
+	Generate and load synthetic HIGGS-style dataset into dataset.test_train and dataset.test_test tables.
+	Returns True on success, False on failure.
+	"""
+	if psycopg2 is None:
+		print("ERROR: psycopg2 is required for dataset loading. Install with: pip install psycopg2-binary", file=sys.stderr)
+		return False
+	
+	# Get database connection
+	env = os.environ.copy()
+	if host:
+		env["PGHOST"] = host
+	if port:
+		env["PGPORT"] = str(port)
+	
+	user = env.get("PGUSER") or env.get("USER")
+	password = env.get("PGPASSWORD")
+	
+	try:
+		conn = psycopg2.connect(
+			dbname=dbname,
+			user=user,
+			password=password,
+			host=host or env.get("PGHOST", "localhost"),
+			port=port or int(env.get("PGPORT", "5432"))
+		)
+		cur = conn.cursor()
+	except Exception as e:
+		print(f"ERROR: Failed to connect to database: {e}", file=sys.stderr)
+		return False
+	
+	try:
+		# Create dataset schema
+		print("Creating dataset schema...")
+		cur.execute("CREATE SCHEMA IF NOT EXISTS dataset")
+		conn.commit()
+		
+		# Create tables
+		print("Creating tables in dataset schema...")
+		cur.execute("""
+			DROP TABLE IF EXISTS dataset.test_train CASCADE;
+			DROP TABLE IF EXISTS dataset.test_test CASCADE;
+			
+			CREATE TABLE dataset.test_train (
+				features REAL[],
+				label integer
+			);
+			
+			CREATE TABLE dataset.test_test (
+				features REAL[],
+				label integer
+			);
+		""")
+		conn.commit()
+		
+		# Generate synthetic data
+		print(f"Generating {num_rows:,} synthetic HIGGS-style rows...")
+		start_time = time.time()
+		train_data, test_data = generate_synthetic_higgs_data(num_rows, seed)
+		gen_elapsed = time.time() - start_time
+		
+		print(f"Generated {len(train_data):,} train rows and {len(test_data):,} test rows in {gen_elapsed:.1f}s")
+		
+		# Insert train data
+		print("\nInserting into dataset.test_train...")
+		start_time = time.time()
+		batch_size = 1000
+		
+		for i in range(0, len(train_data), batch_size):
+			batch = train_data[i:i+batch_size]
+			values = [(features, label) for features, label in batch]
+			
+			execute_batch(
+				cur,
+				"INSERT INTO dataset.test_train (features, label) VALUES (%s::REAL[], %s)",
+				values
+			)
+			conn.commit()
+			
+			if (i // batch_size) % 10 == 0:
+				elapsed = time.time() - start_time
+				print(f"  Inserted {i + len(batch):,} / {len(train_data):,} train rows ({elapsed:.1f}s)")
+		
+		train_elapsed = time.time() - start_time
+		print(f"✓ Loaded {len(train_data):,} rows into dataset.test_train in {train_elapsed:.1f}s")
+		
+		# Insert test data
+		print("\nInserting into dataset.test_test...")
+		start_time = time.time()
+		
+		for i in range(0, len(test_data), batch_size):
+			batch = test_data[i:i+batch_size]
+			values = [(features, label) for features, label in batch]
+			
+			execute_batch(
+				cur,
+				"INSERT INTO dataset.test_test (features, label) VALUES (%s::REAL[], %s)",
+				values
+			)
+			conn.commit()
+			
+			if (i // batch_size) % 10 == 0:
+				elapsed = time.time() - start_time
+				print(f"  Inserted {i + len(batch):,} / {len(test_data):,} test rows ({elapsed:.1f}s)")
+		
+		test_elapsed = time.time() - start_time
+		print(f"✓ Loaded {len(test_data):,} rows into dataset.test_test in {test_elapsed:.1f}s")
+		
+		# Verify
+		cur.execute("SELECT COUNT(*) FROM dataset.test_train")
+		train_count = cur.fetchone()[0]
+		cur.execute("SELECT COUNT(*) FROM dataset.test_test")
+		test_count = cur.fetchone()[0]
+		
+		print(f"\nFinal counts:")
+		print(f"  dataset.test_train: {train_count:,} rows")
+		print(f"  dataset.test_test: {test_count:,} rows")
+		
+		cur.close()
+		conn.close()
+		return True
+		
+	except Exception as e:
+		print(f"ERROR: Failed to load synthetic dataset: {e}", file=sys.stderr)
+		import traceback
+		traceback.print_exc()
+		if cur:
+			cur.close()
+		if conn:
+			conn.close()
+		return False
+
+
+def load_higgs_dataset(
+	dbname: str,
+	csv_path: Optional[str] = None,
+	limit: Optional[int] = None,
+	host: Optional[str] = None,
+	port: Optional[int] = None,
+	train_split: float = 0.8
+) -> bool:
+	"""
+	Load HIGGS dataset into dataset.test_train and dataset.test_test tables.
+	Returns True on success, False on failure.
+	"""
+	if psycopg2 is None:
+		print("ERROR: psycopg2 is required for dataset loading. Install with: pip install psycopg2-binary", file=sys.stderr)
+		return False
+	
+	# Get CSV path
+	try:
+		csv_file = get_higgs_csv_path(csv_path)
+	except FileNotFoundError as e:
+		# Print the detailed error message
+		print(str(e), file=sys.stderr)
+		return False
+	except Exception as e:
+		print(f"\n{'='*80}\n", file=sys.stderr)
+		print(f"ERROR: Failed to get HIGGS CSV: {e}\n", file=sys.stderr)
+		print(f"Please download higgs.zip from: {UCI_ZIP_URL}\n", file=sys.stderr)
+		print(f"Place it in: {os.getcwd()}\n", file=sys.stderr)
+		print(f"{'='*80}\n", file=sys.stderr)
+		return False
+	
+	# Get database connection
+	env = os.environ.copy()
+	if host:
+		env["PGHOST"] = host
+	if port:
+		env["PGPORT"] = str(port)
+	
+	user = env.get("PGUSER") or env.get("USER")
+	password = env.get("PGPASSWORD")
+	
+	try:
+		conn = psycopg2.connect(
+			dbname=dbname,
+			user=user,
+			password=password,
+			host=host or env.get("PGHOST", "localhost"),
+			port=port or int(env.get("PGPORT", "5432"))
+		)
+		cur = conn.cursor()
+	except Exception as e:
+		print(f"ERROR: Failed to connect to database: {e}", file=sys.stderr)
+		return False
+	
+	try:
+		# Create dataset schema
+		print("Creating dataset schema...")
+		cur.execute("CREATE SCHEMA IF NOT EXISTS dataset")
+		conn.commit()
+		
+		# Create tables
+		print("Creating tables in dataset schema...")
+		cur.execute("""
+			DROP TABLE IF EXISTS dataset.test_train CASCADE;
+			DROP TABLE IF EXISTS dataset.test_test CASCADE;
+			
+			CREATE TABLE dataset.test_train (
+				features REAL[],
+				label integer
+			);
+			
+			CREATE TABLE dataset.test_test (
+				features REAL[],
+				label integer
+			);
+		""")
+		conn.commit()
+		
+		# Read and split data
+		train_data = []
+		test_data = []
+		
+		print(f"Reading {csv_file}...")
+		start_time = time.time()
+		row_count = 0
+		
+		# Open file (handle both .gz and regular files)
+		if csv_file.endswith('.gz'):
+			f = gzip.open(csv_file, 'rt')
+		else:
+			f = open(csv_file, 'r')
+		
+		try:
+			reader = csv.reader(f)
+			for row in reader:
+				if limit and row_count >= limit:
+					break
+				
+				if len(row) != EXPECTED_NUM_COLUMNS:
+					continue
+				
+				label = int(float(row[0].strip()))
+				features = [float(x.strip()) for x in row[1:29]]
+				
+				# Split into train/test (80/20)
+				if row_count % 10 < int(train_split * 10):
+					train_data.append((features, label))
+				else:
+					test_data.append((features, label))
+				
+				row_count += 1
+				
+				if row_count % 100000 == 0:
+					elapsed = time.time() - start_time
+					print(f"  Processed {row_count:,} rows ({elapsed:.1f}s)")
+		finally:
+			f.close()
+		
+		print(f"\nTotal rows processed: {row_count:,}")
+		print(f"Train rows: {len(train_data):,}")
+		print(f"Test rows: {len(test_data):,}")
+		
+		# Insert train data
+		print("\nInserting into dataset.test_train...")
+		start_time = time.time()
+		batch_size = 1000
+		
+		for i in range(0, len(train_data), batch_size):
+			batch = train_data[i:i+batch_size]
+			values = [(features, label) for features, label in batch]
+			
+			execute_batch(
+				cur,
+				"INSERT INTO dataset.test_train (features, label) VALUES (%s::REAL[], %s)",
+				values
+			)
+			conn.commit()
+			
+			if (i // batch_size) % 10 == 0:
+				elapsed = time.time() - start_time
+				print(f"  Inserted {i + len(batch):,} / {len(train_data):,} train rows ({elapsed:.1f}s)")
+		
+		train_elapsed = time.time() - start_time
+		print(f"✓ Loaded {len(train_data):,} rows into dataset.test_train in {train_elapsed:.1f}s")
+		
+		# Insert test data
+		print("\nInserting into dataset.test_test...")
+		start_time = time.time()
+		
+		for i in range(0, len(test_data), batch_size):
+			batch = test_data[i:i+batch_size]
+			values = [(features, label) for features, label in batch]
+			
+			execute_batch(
+				cur,
+				"INSERT INTO dataset.test_test (features, label) VALUES (%s::REAL[], %s)",
+				values
+			)
+			conn.commit()
+			
+			if (i // batch_size) % 10 == 0:
+				elapsed = time.time() - start_time
+				print(f"  Inserted {i + len(batch):,} / {len(test_data):,} test rows ({elapsed:.1f}s)")
+		
+		test_elapsed = time.time() - start_time
+		print(f"✓ Loaded {len(test_data):,} rows into dataset.test_test in {test_elapsed:.1f}s")
+		
+		# Verify
+		cur.execute("SELECT COUNT(*) FROM dataset.test_train")
+		train_count = cur.fetchone()[0]
+		cur.execute("SELECT COUNT(*) FROM dataset.test_test")
+		test_count = cur.fetchone()[0]
+		
+		print(f"\nFinal counts:")
+		print(f"  dataset.test_train: {train_count:,} rows")
+		print(f"  dataset.test_test: {test_count:,} rows")
+		
+		cur.close()
+		conn.close()
+		return True
+		
+	except Exception as e:
+		print(f"ERROR: Failed to load dataset: {e}", file=sys.stderr)
+		if cur:
+			cur.close()
+		if conn:
+			conn.close()
+		return False
 
 
 def parse_args() -> argparse.Namespace:
@@ -824,6 +1595,29 @@ def parse_args() -> argparse.Namespace:
 		action="store_true",
 		help="Verbose mode: print psql stdout/stderr for each test.",
 	)
+	parser.add_argument(
+		"--dataset",
+		choices=["higgs", "synthetic"],
+		default=None,
+		help="Dataset to load before running tests. Options: higgs (downloads real HIGGS dataset), synthetic (generates HIGGS-style synthetic data)",
+	)
+	parser.add_argument(
+		"--dataset-path",
+		default=None,
+		help="Path to dataset CSV file. If not provided, will download or search for HIGGS.csv",
+	)
+	parser.add_argument(
+		"--dataset-limit",
+		type=int,
+		default=None,
+		help="Limit number of rows to load from dataset (for testing with smaller datasets). For synthetic dataset, this is the total number of rows to generate.",
+	)
+	parser.add_argument(
+		"--dataset-seed",
+		type=int,
+		default=None,
+		help="Random seed for synthetic dataset generation (for reproducibility).",
+	)
 	return parser.parse_args()
 
 
@@ -881,6 +1675,39 @@ def main() -> int:
 	
 	# Print header information
 	print_header_info(SCRIPT_NAME, SCRIPT_VERSION, args.db, args.psql, args.host, args.port, args.mode)
+	
+	# Load dataset if requested
+	if args.dataset == "higgs":
+		when = datetime.now()
+		load_start = time.perf_counter()
+		load_ok = load_higgs_dataset(
+			args.db,
+			csv_path=args.dataset_path,
+			limit=args.dataset_limit,
+			host=args.host,
+			port=args.port
+		)
+		load_elapsed = time.perf_counter() - load_start
+		print(format_status_line(load_ok, when, "Loading HIGGS dataset...", load_elapsed))
+		if not load_ok:
+			print("Failed to load HIGGS dataset. Aborting.", file=sys.stderr)
+			return 1
+	elif args.dataset == "synthetic":
+		when = datetime.now()
+		load_start = time.perf_counter()
+		num_rows = args.dataset_limit or 100000  # Default 100k rows for synthetic
+		load_ok = load_synthetic_dataset(
+			args.db,
+			num_rows=num_rows,
+			seed=args.dataset_seed,
+			host=args.host,
+			port=args.port
+		)
+		load_elapsed = time.perf_counter() - load_start
+		print(format_status_line(load_ok, when, f"Generating synthetic dataset ({num_rows:,} rows)...", load_elapsed))
+		if not load_ok:
+			print("Failed to generate synthetic dataset. Aborting.", file=sys.stderr)
+			return 1
 	
 	# Pre-test checks with status lines
 	# 1. Check PostgreSQL connection
@@ -996,6 +1823,13 @@ def main() -> int:
 		
 		# Overwrite the starting line with final result (colored: green ✓ or red ✗)
 		print(format_test_line(ok, when, idx, total, name, elapsed))
+		
+		# Verify GPU usage for ML training tests in GPU mode
+		if ok and args.mode == "gpu" and ("train" in name.lower() or "linreg" in name.lower() or "logreg" in name.lower() or "rf" in name.lower() or "svm" in name.lower() or "ridge" in name.lower() or "lasso" in name.lower() or "dt" in name.lower() or "nb" in name.lower()):
+			gpu_ok, gpu_err = verify_gpu_usage(args.db, args.psql, args.mode, name, args.host, args.port)
+			if not gpu_ok:
+				print(f"    {RED_BOLD}⚠ GPU Verification Failed: {gpu_err}{RESET}")
+				# Don't mark test as failed, just warn
 		
 		# Only show error details in verbose mode
 		if not ok and args.verbose:
