@@ -4,7 +4,7 @@
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/pgElephant/NeurondB)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%2C17%2C18-blue.svg)](https://www.postgresql.org/)
-[![License](https://img.shields.io/badge/License-PostgreSQL-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Code Quality](https://img.shields.io/badge/code-quality-100%25%20PostgreSQL%20C%20standards-success.svg)]()
 [![Production Ready](https://img.shields.io/badge/production-ready-success.svg)]()
 
@@ -195,37 +195,6 @@ NeuronDB follows PostgreSQL's C coding standards and architectural patterns:
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Design Principles:**
-- **100% PostgreSQL C coding standards** - Tabs, 80-column lines, C-style comments
-- **Pure C implementation** - 144 source files, zero external dependencies for core
-- **PostgreSQL PGXS build system** - Standard extension build process
-- **Shared memory for caching** - High-performance in-memory operations
-- **WAL integration** - Full durability and crash recovery
-- **SPI for safe database operations** - Secure query execution
-- **Background worker framework** - Async processing and maintenance
-- **Defensive programming** - Comprehensive NULL checks, error handling, memory safety
-
-## Performance Benchmarks
-
-Tested on AWS r6i.2xlarge (8 vCPU, 64GB RAM), 10M vectors, 768 dimensions:
-
-| Operation | Throughput | Latency (p95) | Notes |
-|-----------|------------|---------------|-------|
-| Vector Insert | 50K/sec | 2ms | With SIMD optimization |
-| HNSW Search (k=10) | 10K QPS | 5ms | ef_search=64 |
-| Embedding Generation | 1K/sec | 10ms | Cached |
-| Hybrid Search | 5K QPS | 8ms | 70% vector, 30% FTS |
-| Reranking (Cross-encoder) | 2K/sec | 15ms | CPU |
-| Random Forest Training | 100K samples | 2.5s | 100 trees, SIMD |
-| K-Means Clustering | 1M vectors | 2.5s | 100 clusters, SIMD |
-| PCA (768→128 dims) | 100K vectors | 1.2s | SIMD optimized |
-| GPU Distance (batch) | 500K/sec | - | CUDA/ROCm/Metal |
-
-**SIMD Acceleration:**
-- **x86_64**: AVX2/AVX512 with FMA instructions
-- **ARM64**: NEON with dotprod extension  
-- **Compiler flags**: `-O3 -march=native -funroll-loops`
-
 ## Configuration
 
 ```sql
@@ -303,23 +272,6 @@ All tests pass on PostgreSQL 16, 17, 18 across Ubuntu, Debian, Rocky Linux, and 
 
 > **Note**: NeuronDB supports only PostgreSQL 16, 17, and 18. The extension validates the PostgreSQL version at creation time and will fail fast with a clear error message if an unsupported version is detected.
 
-## Code Quality
-
-NeuronDB maintains the highest code quality standards:
-
-- **100% PostgreSQL C coding standards compliance**
-  - Tabs for indentation (8-space visual width)
-  - 80-column line limit (with exceptions for error messages)
-  - C-style block comments only (`/* */`)
-  - Variables declared at function start (C89/C99 compliance)
-  - Exactly one blank line between function definitions
-  - Typedefs and structs before first function definition
-
-- **Zero compiler warnings** - All code compiles cleanly with `-Wall -Wextra`
-- **Comprehensive error handling** - All error paths properly clean up resources
-- **Memory safety** - All allocations checked for integer overflow with `MaxAllocSize`
-- **Defensive programming** - NULL pointer checks, validation, and explicit error paths
-
 ## Documentation
 
 - **[Full Documentation](https://pgelephant.com/neurondb)** - Comprehensive guides and API reference
@@ -327,74 +279,6 @@ NeuronDB maintains the highest code quality standards:
 - **[Installation Guide](INSTALL.md)** - Detailed installation instructions
 - **[Contributing Guide](CONTRIBUTING.md)** - Development workflow and code standards
 - **[Security Policy](SECURITY.md)** - Security best practices and vulnerability reporting
-
-## Project Structure
-
-```
-neurondb/
-├── src/
-│   ├── core/         # Core vector types and operations
-│   ├── ml/           # 52 ML algorithm implementations
-│   │   ├── ml_random_forest.c      # Random Forest (100% PostgreSQL C standards)
-│   │   ├── ml_xgboost.c            # XGBoost integration
-│   │   ├── ml_lightgbm.c          # LightGBM integration
-│   │   ├── ml_catboost.c          # CatBoost integration
-│   │   ├── ml_kmeans.c            # K-Means clustering
-│   │   ├── ml_dbscan.c            # DBSCAN clustering
-│   │   ├── ml_gmm.c               # Gaussian Mixture Models
-│   │   ├── ml_pca_whitening.c     # PCA and whitening
-│   │   ├── ml_linear_regression.c # Linear regression
-│   │   ├── ml_logistic_regression.c # Logistic regression
-│   │   ├── ml_svm.c               # Support Vector Machines
-│   │   ├── ml_naive_bayes.c       # Naive Bayes
-│   │   ├── ml_neural_network.c    # Neural networks
-│   │   ├── ml_deeplearning.c      # Deep learning models
-│   │   ├── ml_decision_tree.c     # Decision trees
-│   │   ├── ml_hierarchical.c      # Hierarchical clustering
-│   │   ├── ml_minibatch_kmeans.c  # Mini-batch K-means
-│   │   ├── ml_product_quantization.c # Product Quantization
-│   │   ├── ml_opq.c               # Optimized Product Quantization
-│   │   ├── ml_outlier_detection.c # Outlier detection
-│   │   ├── ml_drift_detection.c   # Drift detection
-│   │   ├── ml_topic_discovery.c   # Topic modeling
-│   │   ├── ml_timeseries.c        # Time series analysis
-│   │   ├── ml_recommender.c       # Recommendation systems
-│   │   ├── ml_automl.c            # AutoML
-│   │   ├── ml_hyperparameter_tuning.c # Hyperparameter tuning
-│   │   ├── embeddings.c           # Embedding generation
-│   │   ├── ml_inference.c         # Model inference
-│   │   ├── reranking.c            # Reranking algorithms
-│   │   └── ...                    # Additional ML algorithms
-│   ├── gpu/          # GPU acceleration (CUDA/ROCm/Metal)
-│   │   ├── cuda/     # CUDA implementation
-│   │   ├── rocm/     # ROCm implementation
-│   │   └── metal/    # Metal implementation
-│   ├── worker/       # 5 background workers
-│   ├── index/        # HNSW & IVF index access methods
-│   ├── scan/         # Custom scan nodes
-│   ├── llm/          # LLM integration (Hugging Face, etc.)
-│   ├── search/       # Hybrid and temporal search
-│   ├── metrics/      # Prometheus metrics
-│   ├── storage/      # Buffer management and WAL
-│   ├── planner/      # Query optimization
-│   ├── tenant/       # Multi-tenancy support
-│   ├── types/        # Quantization and aggregates
-│   └── util/         # Configuration, security, hooks
-├── include/          # Header files (63 header files)
-├── sql/              # Regression test SQL (14 test suites)
-├── expected/         # Expected test outputs
-├── t/                # TAP test suite (Perl tests)
-├── docs/             # MkDocs documentation source
-├── config/           # Configuration examples
-└── neurondb--1.0.sql # Extension SQL (6,641 lines, perfectly organized)
-```
-
-**Code Statistics:**
-- **144 C source files** - All following 100% PostgreSQL C coding standards
-- **63 header files** - Comprehensive API definitions
-- **52 ML algorithm implementations** - Production-ready implementations
-- **473 SQL functions/types/operators** - Complete feature coverage
-- **6,641 lines of SQL** - Well-organized extension definitions
 
 ## Support & Community
 
@@ -419,7 +303,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 ## License
 
-NeuronDB is released under the PostgreSQL License. See [LICENSE](LICENSE) for details.
+NeuronDB is released under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## Authors
 
