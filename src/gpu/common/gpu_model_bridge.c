@@ -100,7 +100,15 @@ ndb_gpu_try_train_model(const char *algorithm,
 
 	ops = ndb_gpu_lookup_model_ops(algorithm);
 	if (ops == NULL || ops->train == NULL || ops->serialize == NULL)
+	{
+		ereport(DEBUG1,
+			(errmsg("%s: GPU model ops not found or incomplete (ops=%p, train=%p, serialize=%p)",
+				algorithm ? algorithm : "unknown",
+				(void*)ops,
+				ops ? (void*)ops->train : NULL,
+				ops ? (void*)ops->serialize : NULL)));
 		return false;
+	}
 
 	memset(&ctx, 0, sizeof(MLGpuContext));
 	ctx.backend = ndb_gpu_get_active_backend();
@@ -157,6 +165,20 @@ ndb_gpu_try_train_model(const char *algorithm,
 				ops_serialized = true;
 				trained = true;
 			}
+			else
+			{
+				ereport(DEBUG1,
+					(errmsg("%s: GPU serialize failed: %s",
+						algorithm ? algorithm : "unknown",
+						(errstr && *errstr) ? *errstr : "no error message")));
+			}
+		}
+		else
+		{
+			ereport(DEBUG1,
+				(errmsg("%s: GPU train failed: %s",
+					algorithm ? algorithm : "unknown",
+					(errstr && *errstr) ? *errstr : "no error message")));
 		}
 
 		train_end = GetCurrentTimestamp();

@@ -302,6 +302,19 @@ typedef struct ndb_gpu_backend
 		float **vec_out,
 		int *dim_out,
 		char **errstr);
+	int (*hf_image_embed)(const char *model_name,
+		const unsigned char *image_data,
+		size_t image_size,
+		float **vec_out,
+		int *dim_out,
+		char **errstr);
+	int (*hf_multimodal_embed)(const char *model_name,
+		const char *text,
+		const unsigned char *image_data,
+		size_t image_size,
+		float **vec_out,
+		int *dim_out,
+		char **errstr);
 	int (*hf_complete)(const char *model_name,
 		const char *prompt,
 		const char *params_json,

@@ -42,6 +42,10 @@
 #include "ml_decision_tree_internal.h"
 #include "ml_ridge_regression_internal.h"
 #include "ml_lasso_regression_internal.h"
+#ifdef HAVE_ONNX_RUNTIME
+#include "neurondb_onnx.h"
+#include "neurondb_llm.h"
+#endif
 
 #ifdef NDB_GPU_METAL
 
@@ -115,6 +119,9 @@ static int ndb_metal_gmm_pack(const struct GMMModel *model, bytea **model_data, 
 static int ndb_metal_knn_train(const float *features, const double *labels, int n_samples, int feature_dim, int k, int task_type, const Jsonb *hyperparams, bytea **model_data, Jsonb **metrics, char **errstr);
 static int ndb_metal_knn_predict(const bytea *model_data, const float *input, int feature_dim, double *prediction_out, char **errstr);
 static int ndb_metal_knn_pack(const struct KNNModel *model, bytea **model_data, Jsonb **metrics, char **errstr);
+static int ndb_metal_hf_embed(const char *model_name, const char *text, float **vec_out, int *dim_out, char **errstr);
+static int ndb_metal_hf_complete(const char *model_name, const char *prompt, const char *params_json, char **text_out, char **errstr);
+static int ndb_metal_hf_rerank(const char *model_name, const char *query, const char **docs, int ndocs, float **scores_out, char **errstr);
 static int ndb_metal_stream_create(ndb_stream_t *stream);
 static int ndb_metal_stream_destroy(ndb_stream_t stream);
 static int ndb_metal_stream_synchronize(ndb_stream_t stream);
@@ -5827,6 +5834,228 @@ ndb_metal_knn_predict(const bytea *model_data,
 	return 0;
 }
 
+/*
+ * ndb_metal_hf_embed
+ *	  Generate text embeddings using Metal-accelerated ONNX Runtime with CoreML provider.
+ *
+ * This implementation uses ONNX Runtime with CoreML execution provider for GPU acceleration
+ * on Apple Silicon devices.
+ */
+static int
+ndb_metal_hf_embed(const char *model_name,
+	const char *text,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
+{
+#ifdef HAVE_ONNX_RUNTIME
+	ONNXModelSession *session = NULL;
+	int32 *token_ids = NULL;
+	int32 token_length = 0;
+	ONNXTensor *input_tensor = NULL;
+	ONNXTensor *output_tensor = NULL;
+	float *input_data = NULL;
+	float *embedding = NULL;
+	int64 input_shape[2];
+	int embed_dim = 0;
+	int i;
+	int j;
+	float sum;
+	int rc = -1;
+
+	if (errstr)
+		*errstr = NULL;
+
+	/* Validate input parameters */
+	if (model_name == NULL || text == NULL || vec_out == NULL
+		|| dim_out == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Invalid parameters for Metal HF embed");
+		return -1;
+	}
+
+	/* Check ONNX Runtime availability */
+	if (!neurondb_onnx_available())
+	{
+		if (errstr)
+			*errstr = pstrdup("ONNX Runtime not available for Metal embeddings");
+		return -1;
+	}
+
+	/* Initialize outputs */
+	*vec_out = NULL;
+	*dim_out = 0;
+
+	PG_TRY();
+	{
+		/* Load or get cached model (will use CoreML provider on Metal) */
+		session = neurondb_onnx_get_or_load_model(
+			model_name, ONNX_MODEL_EMBEDDING);
+		if (session == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("Failed to load ONNX model for Metal embedding");
+			rc = -1;
+			goto cleanup;
+		}
+
+		/* Tokenize input text */
+		token_ids = neurondb_tokenize_with_model(
+			text, 128, &token_length, model_name);
+		if (token_ids == NULL || token_length <= 0)
+		{
+			if (errstr)
+				*errstr = pstrdup("Tokenization failed for Metal embedding");
+			rc = -1;
+			goto cleanup;
+		}
+
+		/* Convert token IDs to float array for ONNX */
+		input_data = (float *)palloc(token_length * sizeof(float));
+		for (i = 0; i < token_length; i++)
+			input_data[i] = (float)token_ids[i];
+
+		/* Create input tensor */
+		input_shape[0] = 1;
+		input_shape[1] = token_length;
+		input_tensor = neurondb_onnx_create_tensor(input_data, input_shape, 2);
+		if (input_tensor == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("Failed to create input tensor for Metal embedding");
+			rc = -1;
+			goto cleanup;
+		}
+
+		/* Run inference (uses CoreML provider on Metal) */
+		output_tensor = neurondb_onnx_run_inference(session, input_tensor);
+		if (output_tensor == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("ONNX inference failed for Metal embedding");
+			rc = -1;
+			goto cleanup;
+		}
+
+		/* Calculate embedding dimension */
+		embed_dim = output_tensor->size / token_length;
+		if (embed_dim <= 0)
+		{
+			if (errstr)
+				*errstr = pstrdup("Invalid embedding dimension from Metal inference");
+			rc = -1;
+			goto cleanup;
+		}
+
+		/* Allocate output embedding */
+		embedding = (float *)palloc(embed_dim * sizeof(float));
+
+		/* Pool embeddings (mean pooling across sequence dimension) */
+		for (i = 0; i < embed_dim; i++)
+		{
+			sum = 0.0f;
+			for (j = 0; j < token_length; j++)
+				sum += output_tensor->data[j * embed_dim + i];
+			embedding[i] = sum / token_length;
+		}
+
+		/* Cleanup */
+		neurondb_onnx_free_tensor(input_tensor);
+		neurondb_onnx_free_tensor(output_tensor);
+		pfree(input_data);
+		pfree(token_ids);
+
+		/* Set outputs */
+		*vec_out = embedding;
+		*dim_out = embed_dim;
+		rc = 0;
+	}
+	PG_CATCH();
+	{
+		/* Cleanup on error */
+		FlushErrorState();
+		if (errstr && *errstr == NULL)
+			*errstr = pstrdup("Exception during Metal embedding inference");
+		rc = -1;
+	}
+	PG_END_TRY();
+
+cleanup:
+	if (rc != 0)
+	{
+		if (input_tensor)
+			neurondb_onnx_free_tensor(input_tensor);
+		if (output_tensor)
+			neurondb_onnx_free_tensor(output_tensor);
+		if (input_data)
+			pfree(input_data);
+		if (token_ids)
+			pfree(token_ids);
+		if (embedding)
+			pfree(embedding);
+	}
+
+	return rc;
+#else
+	/* ONNX Runtime not available */
+	if (errstr)
+		*errstr = pstrdup("ONNX Runtime not compiled in - Metal embeddings require ONNX Runtime");
+	return -1;
+#endif
+}
+
+/*
+ * ndb_metal_hf_complete
+ *	  Generate text completion using Metal-accelerated ONNX Runtime with CoreML provider.
+ *
+ * This implementation uses ONNX Runtime with CoreML execution provider for GPU acceleration
+ * on Apple Silicon devices.
+ */
+static int
+ndb_metal_hf_complete(const char *model_name,
+	const char *prompt,
+	const char *params_json,
+	char **text_out,
+	char **errstr)
+{
+#ifdef HAVE_ONNX_RUNTIME
+	/* Use ONNX Runtime with CoreML provider (automatically uses Metal on Apple Silicon) */
+	return ndb_onnx_hf_complete(model_name, prompt, params_json, text_out, errstr);
+#else
+	/* ONNX Runtime not available */
+	if (errstr)
+		*errstr = pstrdup("ONNX Runtime not compiled in - Metal completion requires ONNX Runtime");
+	return -1;
+#endif
+}
+
+/*
+ * ndb_metal_hf_rerank
+ *	  Rerank documents using Metal-accelerated ONNX Runtime with CoreML provider.
+ *
+ * This implementation uses ONNX Runtime with CoreML execution provider for GPU acceleration
+ * on Apple Silicon devices.
+ */
+static int
+ndb_metal_hf_rerank(const char *model_name,
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out,
+	char **errstr)
+{
+#ifdef HAVE_ONNX_RUNTIME
+	/* Use ONNX Runtime with CoreML provider (automatically uses Metal on Apple Silicon) */
+	return ndb_onnx_hf_rerank(model_name, query, docs, ndocs, scores_out, errstr);
+#else
+	/* ONNX Runtime not available */
+	if (errstr)
+		*errstr = pstrdup("ONNX Runtime not compiled in - Metal reranking requires ONNX Runtime");
+	return -1;
+#endif
+}
+
 /* Backend Interface Definition */
 
 static const ndb_gpu_backend ndb_metal_backend = {
@@ -5898,9 +6127,16 @@ static const ndb_gpu_backend ndb_metal_backend = {
 	.knn_predict = ndb_metal_knn_predict,
 	.knn_pack = ndb_metal_knn_pack,
 
-	.hf_embed = NULL,
-	.hf_complete = NULL,
-	.hf_rerank = NULL,
+	.hf_embed = ndb_metal_hf_embed,
+#ifdef HAVE_ONNX_RUNTIME
+	.hf_image_embed = ndb_onnx_hf_image_embed, /* Use ONNX Runtime with CoreML provider */
+	.hf_multimodal_embed = ndb_onnx_hf_multimodal_embed, /* Use ONNX Runtime with CoreML provider */
+#else
+	.hf_image_embed = NULL,
+	.hf_multimodal_embed = NULL,
+#endif
+	.hf_complete = ndb_metal_hf_complete,
+	.hf_rerank = ndb_metal_hf_rerank,
 
 	.stream_create = ndb_metal_stream_create,
 	.stream_destroy = ndb_metal_stream_destroy,

@@ -65,7 +65,64 @@ int ndb_hf_embed(const NdbLLMConfig *cfg,
 	float **vec_out,
 	int *dim_out);
 
+int ndb_hf_embed_batch(const NdbLLMConfig *cfg,
+	const char **texts,
+	int num_texts,
+	float ***vecs_out,
+	int **dims_out,
+	int *num_success_out);
+
+int ndb_hf_image_embed(const NdbLLMConfig *cfg,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out);
+
+int ndb_hf_multimodal_embed(const NdbLLMConfig *cfg,
+	const char *text,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out);
+
 int ndb_hf_rerank(const NdbLLMConfig *cfg,
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out);
+
+/* OpenAI provider calls */
+int ndb_openai_complete(const NdbLLMConfig *cfg,
+	const char *prompt,
+	const char *params_json,
+	NdbLLMResp *out);
+
+int ndb_openai_embed(const NdbLLMConfig *cfg,
+	const char *text,
+	float **vec_out,
+	int *dim_out);
+
+int ndb_openai_embed_batch(const NdbLLMConfig *cfg,
+	const char **texts,
+	int num_texts,
+	float ***vecs_out,
+	int **dims_out,
+	int *num_success_out);
+
+int ndb_openai_image_embed(const NdbLLMConfig *cfg,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out);
+
+int ndb_openai_multimodal_embed(const NdbLLMConfig *cfg,
+	const char *text,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out);
+
+int ndb_openai_rerank(const NdbLLMConfig *cfg,
 	const char *query,
 	const char **docs,
 	int ndocs,
@@ -92,6 +149,29 @@ int ndb_llm_route_complete(const NdbLLMConfig *cfg,
 int ndb_llm_route_embed(const NdbLLMConfig *cfg,
 	const NdbLLMCallOptions *opts,
 	const char *text,
+	float **vec_out,
+	int *dim_out);
+
+int ndb_llm_route_embed_batch(const NdbLLMConfig *cfg,
+	const NdbLLMCallOptions *opts,
+	const char **texts,
+	int num_texts,
+	float ***vecs_out,
+	int **dims_out,
+	int *num_success_out);
+
+int ndb_llm_route_image_embed(const NdbLLMConfig *cfg,
+	const NdbLLMCallOptions *opts,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out);
+
+int ndb_llm_route_multimodal_embed(const NdbLLMConfig *cfg,
+	const NdbLLMCallOptions *opts,
+	const char *text,
+	const unsigned char *image_data,
+	size_t image_size,
 	float **vec_out,
 	int *dim_out);
 

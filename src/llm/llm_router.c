@@ -7,6 +7,7 @@
 
 #include "neurondb_llm.h"
 #include "neurondb_gpu.h"
+#include "neurondb_gpu_backend.h"
 
 #ifdef NDB_GPU_CUDA
 #include "neurondb_cuda_hf.h"
@@ -178,6 +179,9 @@ ndb_llm_route_complete(const NdbLLMConfig *cfg,
 {
 	if (cfg == NULL || prompt == NULL || out == NULL)
 		return NDB_LLM_ROUTE_ERROR;
+
+	if (provider_is(cfg->provider, "openai") || provider_is(cfg->provider, "chatgpt"))
+		return ndb_openai_complete(cfg, prompt, params_json, out);
 
 	if (cfg->provider == NULL || provider_is(cfg->provider, "huggingface")
 		|| provider_is(cfg->provider, "hf-http"))
@@ -598,6 +602,9 @@ ndb_llm_route_embed(const NdbLLMConfig *cfg,
 	if (cfg == NULL || text == NULL || vec_out == NULL || dim_out == NULL)
 		return NDB_LLM_ROUTE_ERROR;
 
+	if (provider_is(cfg->provider, "openai") || provider_is(cfg->provider, "chatgpt"))
+		return ndb_openai_embed(cfg, text, vec_out, dim_out);
+
 	if (cfg->provider == NULL || provider_is(cfg->provider, "huggingface")
 		|| provider_is(cfg->provider, "hf-http"))
 	{
@@ -929,6 +936,12 @@ ndb_llm_route_rerank(const NdbLLMConfig *cfg,
 	if (cfg == NULL || query == NULL || docs == NULL || scores_out == NULL)
 		return NDB_LLM_ROUTE_ERROR;
 
+	if (provider_is(cfg->provider, "openai") || provider_is(cfg->provider, "chatgpt"))
+	{
+		int rc = ndb_openai_rerank(cfg, query, docs, ndocs, scores_out);
+		return (rc == 0) ? NDB_LLM_ROUTE_SUCCESS : NDB_LLM_ROUTE_ERROR;
+	}
+
 	if (cfg->provider == NULL || provider_is(cfg->provider, "huggingface")
 		|| provider_is(cfg->provider, "hf-http"))
 	{
@@ -991,14 +1004,54 @@ ndb_llm_route_rerank(const NdbLLMConfig *cfg,
 				docs,
 				ndocs,
 				scores_out);
-		/* ONNX reranking not yet implemented - fall back to HTTP */
-		return fallback_rerank(cfg,
-			opts,
-			"ONNX reranking not yet implemented - use HTTP or GPU",
-			query,
-			docs,
-			ndocs,
-			scores_out);
+		/* Try ONNX reranking */
+		{
+			float *onnx_scores = NULL;
+			char *onnx_err = NULL;
+			int rc;
+
+			rc = ndb_onnx_hf_rerank(cfg->model,
+				query,
+				docs,
+				ndocs,
+				&onnx_scores,
+				&onnx_err);
+			if (rc == 0 && onnx_scores != NULL)
+			{
+				*scores_out = onnx_scores;
+				if (onnx_err)
+					pfree(onnx_err);
+				return NDB_LLM_ROUTE_SUCCESS;
+			}
+			if (opts != NULL && opts->require_gpu)
+			{
+				if (onnx_err)
+					ereport(ERROR,
+						(errmsg("neurondb: ONNX HF "
+							"reranking failed: %s",
+							onnx_err)));
+				ereport(ERROR,
+					(errmsg("neurondb: ONNX HF reranking "
+						"failed")));
+				if (onnx_scores)
+					pfree(onnx_scores);
+				if (onnx_err)
+					pfree(onnx_err);
+				return NDB_LLM_ROUTE_ERROR;
+			}
+			if (onnx_scores)
+				pfree(onnx_scores);
+			if (onnx_err)
+				pfree(onnx_err);
+			/* Fall back to HTTP */
+			return fallback_rerank(cfg,
+				opts,
+				"ONNX reranking failed, falling back to HTTP",
+				query,
+				docs,
+				ndocs,
+				scores_out);
+		}
 #else
 		return fallback_rerank(cfg,
 			opts,
@@ -1261,4 +1314,369 @@ ndb_llm_route_rerank_batch(const NdbLLMConfig *cfg,
 	}
 
 	return (num_success > 0) ? NDB_LLM_ROUTE_SUCCESS : NDB_LLM_ROUTE_ERROR;
+}
+
+/*
+ * ndb_llm_route_embed_batch
+ *	  Route batch embedding requests to appropriate backend (GPU, HTTP)
+ */
+int
+ndb_llm_route_embed_batch(const NdbLLMConfig *cfg,
+	const NdbLLMCallOptions *opts,
+	const char **texts,
+	int num_texts,
+	float ***vecs_out,
+	int **dims_out,
+	int *num_success_out)
+{
+	int i;
+	int num_success = 0;
+	float **vecs = NULL;
+	int *dims = NULL;
+
+	if (cfg == NULL || texts == NULL || vecs_out == NULL
+		|| dims_out == NULL || num_success_out == NULL || num_texts <= 0)
+		return NDB_LLM_ROUTE_ERROR;
+
+	if (provider_is(cfg->provider, "openai") || provider_is(cfg->provider, "chatgpt"))
+	{
+		int rc = ndb_openai_embed_batch(cfg, texts, num_texts, vecs_out, dims_out, num_success_out);
+		return (rc == 0) ? NDB_LLM_ROUTE_SUCCESS : NDB_LLM_ROUTE_ERROR;
+	}
+
+	/* Initialize output */
+	vecs = (float **)palloc0(num_texts * sizeof(float *));
+	dims = (int *)palloc0(num_texts * sizeof(int));
+
+	if (cfg->provider == NULL || provider_is(cfg->provider, "huggingface")
+		|| provider_is(cfg->provider, "hf-http"))
+	{
+		/* Try GPU-accelerated batch if GPU is available and preferred */
+		if (neurondb_gpu_is_available()
+			&& (opts == NULL || opts->prefer_gpu || opts->require_gpu))
+		{
+			/* For GPU, process sequentially but efficiently */
+			for (i = 0; i < num_texts; i++)
+			{
+				float *gpu_vec = NULL;
+				int gpu_dim = 0;
+				char *gpu_err = NULL;
+				int rc;
+
+				if (texts[i] == NULL)
+				{
+					vecs[i] = NULL;
+					dims[i] = 0;
+					continue;
+				}
+
+				rc = neurondb_gpu_hf_embed(
+					cfg->model, texts[i], &gpu_vec, &gpu_dim, &gpu_err);
+				if (rc == 0 && gpu_vec != NULL && gpu_dim > 0)
+				{
+					vecs[i] = gpu_vec;
+					dims[i] = gpu_dim;
+					num_success++;
+					if (gpu_err)
+						pfree(gpu_err);
+				} else
+				{
+					vecs[i] = NULL;
+					dims[i] = 0;
+					if (gpu_vec)
+						pfree(gpu_vec);
+					if (gpu_err)
+						pfree(gpu_err);
+					/* If GPU required, fail entire batch */
+					if (opts != NULL && opts->require_gpu)
+					{
+						/* Clean up and return error */
+						for (i = 0; i < num_texts; i++)
+						{
+							if (vecs[i])
+								pfree(vecs[i]);
+						}
+						pfree(vecs);
+						pfree(dims);
+						return NDB_LLM_ROUTE_ERROR;
+					}
+				}
+			}
+
+			/* If all succeeded or some succeeded and GPU not required, use results */
+			if (num_success > 0 || (opts != NULL && !opts->require_gpu))
+			{
+				/* Fall back to HTTP for failed items if GPU not required */
+				if (num_success < num_texts && (opts == NULL || !opts->require_gpu))
+				{
+					for (i = 0; i < num_texts; i++)
+					{
+						if (vecs[i] == NULL && texts[i] != NULL)
+						{
+							float *http_vec = NULL;
+							int http_dim = 0;
+							if (ndb_hf_embed(cfg, texts[i], &http_vec, &http_dim) == 0)
+							{
+								vecs[i] = http_vec;
+								dims[i] = http_dim;
+								num_success++;
+							}
+						}
+					}
+				}
+			} else
+			{
+				/* GPU failed entirely, fall through to HTTP */
+				for (i = 0; i < num_texts; i++)
+				{
+					if (vecs[i])
+						pfree(vecs[i]);
+				}
+				pfree(vecs);
+				pfree(dims);
+				vecs = NULL;
+				dims = NULL;
+				num_success = 0;
+			}
+		}
+
+		/* Use HTTP batch API if GPU not used or failed */
+		if (vecs == NULL || num_success < num_texts)
+		{
+			float **http_vecs = NULL;
+			int *http_dims = NULL;
+			int http_num_success = 0;
+			int rc;
+
+			/* Free any partial GPU results if switching to HTTP */
+			if (vecs != NULL)
+			{
+				for (i = 0; i < num_texts; i++)
+				{
+					if (vecs[i])
+						pfree(vecs[i]);
+				}
+				pfree(vecs);
+				pfree(dims);
+			}
+
+			rc = ndb_hf_embed_batch(cfg, texts, num_texts,
+				&http_vecs, &http_dims, &http_num_success);
+			if (rc == 0 && http_vecs != NULL)
+			{
+				vecs = http_vecs;
+				dims = http_dims;
+				num_success = http_num_success;
+			} else
+			{
+				/* HTTP batch failed, allocate empty results */
+				vecs = (float **)palloc0(num_texts * sizeof(float *));
+				dims = (int *)palloc0(num_texts * sizeof(int));
+				num_success = 0;
+			}
+		}
+	} else
+	{
+		/* Unknown provider */
+		pfree(vecs);
+		pfree(dims);
+		return NDB_LLM_ROUTE_ERROR;
+	}
+
+	*vecs_out = vecs;
+	*dims_out = dims;
+	*num_success_out = num_success;
+	return (num_success > 0) ? NDB_LLM_ROUTE_SUCCESS : NDB_LLM_ROUTE_ERROR;
+}
+
+/*
+ * ndb_llm_route_image_embed
+ *	  Route image embedding requests to appropriate backend (GPU, HTTP)
+ */
+int
+ndb_llm_route_image_embed(const NdbLLMConfig *cfg,
+	const NdbLLMCallOptions *opts,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out)
+{
+	if (cfg == NULL || image_data == NULL || image_size == 0
+		|| vec_out == NULL || dim_out == NULL)
+		return NDB_LLM_ROUTE_ERROR;
+
+	if (provider_is(cfg->provider, "openai") || provider_is(cfg->provider, "chatgpt"))
+	{
+		int rc = ndb_openai_image_embed(cfg, image_data, image_size, vec_out, dim_out);
+		return (rc == 0) ? NDB_LLM_ROUTE_SUCCESS : NDB_LLM_ROUTE_ERROR;
+	}
+
+	if (cfg->provider == NULL || provider_is(cfg->provider, "huggingface")
+		|| provider_is(cfg->provider, "hf-http"))
+	{
+		/* Try GPU-accelerated inference first if GPU is available and preferred */
+		if (neurondb_gpu_is_available()
+			&& (opts == NULL || opts->prefer_gpu || opts->require_gpu))
+		{
+			const ndb_gpu_backend *backend;
+			float *gpu_vec = NULL;
+			int gpu_dim = 0;
+			char *gpu_err = NULL;
+			int rc;
+
+			/* Try direct GPU backend implementation first */
+			backend = ndb_gpu_get_active_backend();
+			if (backend != NULL && backend->hf_image_embed != NULL)
+			{
+				int gpu_rc;
+				gpu_rc = backend->hf_image_embed(
+					cfg->model, image_data, image_size,
+					&gpu_vec, &gpu_dim, &gpu_err);
+				if (gpu_rc == 0 && gpu_vec != NULL && gpu_dim > 0)
+				{
+					*vec_out = gpu_vec;
+					*dim_out = gpu_dim;
+					if (gpu_err)
+						pfree(gpu_err);
+					return NDB_LLM_ROUTE_SUCCESS;
+				}
+				if (gpu_vec)
+					pfree(gpu_vec);
+				if (gpu_err)
+					pfree(gpu_err);
+				if (opts != NULL && opts->require_gpu)
+				{
+					return NDB_LLM_ROUTE_ERROR;
+				}
+			}
+
+#ifdef HAVE_ONNX_RUNTIME
+			/* Try ONNX CLIP image embedding (uses GPU provider if available) */
+			if (neurondb_onnx_available())
+			{
+				char *onnx_err = NULL;
+				int onnx_rc;
+
+				onnx_rc = ndb_onnx_hf_image_embed(
+					cfg->model, image_data, image_size,
+					vec_out, dim_out, &onnx_err);
+				if (rc == 0 && *vec_out != NULL && *dim_out > 0)
+				{
+					if (onnx_err)
+						pfree(onnx_err);
+					return NDB_LLM_ROUTE_SUCCESS;
+				}
+				/* ONNX failed, fall through to HTTP */
+				if (onnx_err)
+					pfree(onnx_err);
+				if (opts != NULL && opts->require_gpu)
+				{
+					/* GPU required but failed */
+					return NDB_LLM_ROUTE_ERROR;
+				}
+			}
+#endif
+		}
+		/* Fall back to HTTP API */
+		return ndb_hf_image_embed(cfg, image_data, image_size, vec_out, dim_out);
+	}
+
+	/* Unknown provider */
+	return NDB_LLM_ROUTE_ERROR;
+}
+
+/*
+ * ndb_llm_route_multimodal_embed
+ *	  Route multimodal (text+image) embedding requests to appropriate backend (GPU, HTTP)
+ */
+int
+ndb_llm_route_multimodal_embed(const NdbLLMConfig *cfg,
+	const NdbLLMCallOptions *opts,
+	const char *text,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out)
+{
+	if (cfg == NULL || text == NULL || image_data == NULL || image_size == 0
+		|| vec_out == NULL || dim_out == NULL)
+		return NDB_LLM_ROUTE_ERROR;
+
+	if (provider_is(cfg->provider, "openai") || provider_is(cfg->provider, "chatgpt"))
+	{
+		int rc = ndb_openai_multimodal_embed(cfg, text, image_data, image_size, vec_out, dim_out);
+		return (rc == 0) ? NDB_LLM_ROUTE_SUCCESS : NDB_LLM_ROUTE_ERROR;
+	}
+
+	if (cfg->provider == NULL || provider_is(cfg->provider, "huggingface")
+		|| provider_is(cfg->provider, "hf-http"))
+	{
+		/* Try GPU-accelerated inference first if GPU is available and preferred */
+		if (neurondb_gpu_is_available()
+			&& (opts == NULL || opts->prefer_gpu || opts->require_gpu))
+		{
+			const ndb_gpu_backend *backend;
+			float *gpu_vec = NULL;
+			int gpu_dim = 0;
+			char *gpu_err = NULL;
+			int gpu_rc;
+
+			/* Try direct GPU backend implementation first */
+			backend = ndb_gpu_get_active_backend();
+			if (backend != NULL && backend->hf_multimodal_embed != NULL)
+			{
+				gpu_rc = backend->hf_multimodal_embed(
+					cfg->model, text, image_data, image_size,
+					&gpu_vec, &gpu_dim, &gpu_err);
+				if (gpu_rc == 0 && gpu_vec != NULL && gpu_dim > 0)
+				{
+					*vec_out = gpu_vec;
+					*dim_out = gpu_dim;
+					if (gpu_err)
+						pfree(gpu_err);
+					return NDB_LLM_ROUTE_SUCCESS;
+				}
+				if (gpu_vec)
+					pfree(gpu_vec);
+				if (gpu_err)
+					pfree(gpu_err);
+				if (opts != NULL && opts->require_gpu)
+				{
+					return NDB_LLM_ROUTE_ERROR;
+				}
+			}
+
+#ifdef HAVE_ONNX_RUNTIME
+			/* Try ONNX CLIP multimodal embedding (uses GPU provider if available) */
+			if (neurondb_onnx_available())
+			{
+				char *onnx_err = NULL;
+				int onnx_rc;
+
+				onnx_rc = ndb_onnx_hf_multimodal_embed(
+					cfg->model, text, image_data, image_size,
+					vec_out, dim_out, &onnx_err);
+				if (onnx_rc == 0 && *vec_out != NULL && *dim_out > 0)
+				{
+					if (onnx_err)
+						pfree(onnx_err);
+					return NDB_LLM_ROUTE_SUCCESS;
+				}
+				/* ONNX failed, fall through to HTTP */
+				if (onnx_err)
+					pfree(onnx_err);
+				if (opts != NULL && opts->require_gpu)
+				{
+					/* GPU required but failed */
+					return NDB_LLM_ROUTE_ERROR;
+				}
+			}
+#endif
+		}
+		/* Fall back to HTTP API */
+		return ndb_hf_multimodal_embed(cfg, text, image_data, image_size, vec_out, dim_out);
+	}
+
+	/* Unknown provider */
+	return NDB_LLM_ROUTE_ERROR;
 }

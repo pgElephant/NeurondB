@@ -30,6 +30,9 @@
 #include "neurondb_cuda_gmm.h"
 #include "neurondb_cuda_knn.h"
 #include "neurondb_cuda_hf.h"
+#ifdef HAVE_ONNX_RUNTIME
+#include "neurondb_onnx.h"
+#endif
 
 #include <stdint.h>
 #include <unistd.h>		/* for getpid() */
@@ -718,6 +721,13 @@ static const ndb_gpu_backend ndb_cuda_backend = {
 	.knn_pack = ndb_cuda_knn_pack,
 
 	.hf_embed = ndb_cuda_hf_embed,
+#ifdef HAVE_ONNX_RUNTIME
+	.hf_image_embed = ndb_onnx_hf_image_embed, /* Use ONNX Runtime with CUDA provider */
+	.hf_multimodal_embed = ndb_onnx_hf_multimodal_embed, /* Use ONNX Runtime with CUDA provider */
+#else
+	.hf_image_embed = NULL,
+	.hf_multimodal_embed = NULL,
+#endif
 	.hf_complete = ndb_cuda_hf_complete,
 	.hf_rerank = ndb_cuda_hf_rerank,
 

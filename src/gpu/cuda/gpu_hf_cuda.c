@@ -1379,9 +1379,13 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 							PG_END_TRY();
 #else
 							/* ONNX runtime not available, use word count fallback */
-							const char *ptr = value;
-							int word_count = 0;
-							int in_word = 0;
+							const char *ptr;
+							int word_count;
+							int in_word;
+
+							ptr = value;
+							word_count = 0;
+							in_word = 0;
 
 							while (*ptr)
 							{
@@ -1589,9 +1593,13 @@ ndb_cuda_hf_parse_gen_params(const char *params_json,
 					PG_END_TRY();
 #else
 					/* ONNX runtime not available, use word count fallback */
-					const char *ptr = value;
-					int word_count = 0;
-					int in_word = 0;
+					const char *ptr;
+					int word_count;
+					int in_word;
+
+					ptr = value;
+					word_count = 0;
+					in_word = 0;
 
 					while (*ptr)
 					{
@@ -2779,12 +2787,17 @@ ndb_cuda_hf_generate_batch(const char *model_name,
 				/* Count tokens from generated text */
 				PG_TRY();
 				{
+#ifdef HAVE_ONNX_RUNTIME
 					token_ids =
 						neurondb_tokenize_with_model(
 							text_out,
 							2048,
 							&token_length,
 							model_name);
+#else
+					token_ids = NULL;
+					token_length = 0;
+#endif
 					if (token_ids && token_length > 0)
 					{
 						results[i].num_tokens =

@@ -513,12 +513,24 @@ fill_cfg(NdbLLMConfig *cfg)
 {
 	cfg->provider =
 		neurondb_llm_provider ? neurondb_llm_provider : "huggingface";
-	cfg->endpoint = neurondb_llm_endpoint
-		? neurondb_llm_endpoint
-		: "https://api-inference.huggingface.co";
-	cfg->model = neurondb_llm_model
-		? neurondb_llm_model
-		: "sentence-transformers/all-MiniLM-L6-v2";
+	if (cfg->provider && (pg_strcasecmp(cfg->provider, "openai") == 0
+		|| pg_strcasecmp(cfg->provider, "chatgpt") == 0))
+	{
+		cfg->endpoint = neurondb_llm_endpoint
+			? neurondb_llm_endpoint
+			: "https://api.openai.com";
+		cfg->model = neurondb_llm_model
+			? neurondb_llm_model
+			: "gpt-3.5-turbo";
+	} else
+	{
+		cfg->endpoint = neurondb_llm_endpoint
+			? neurondb_llm_endpoint
+			: "https://api-inference.huggingface.co";
+		cfg->model = neurondb_llm_model
+			? neurondb_llm_model
+			: "sentence-transformers/all-MiniLM-L6-v2";
+	}
 	cfg->api_key = neurondb_llm_api_key;
 	cfg->timeout_ms = neurondb_llm_timeout_ms;
 	cfg->prefer_gpu = neurondb_gpu_enabled;

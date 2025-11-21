@@ -1,10 +1,103 @@
 #include "postgres.h"
+#include "fmgr.h"
 #include "lib/stringinfo.h"
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
+#include "parser/parse_type.h"
+#include "parser/parse_func.h"
+#include "utils/lsyscache.h"
+#include "catalog/pg_proc.h"
+#include "nodes/makefuncs.h"
 #include <curl/curl.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include "neurondb_llm.h"
+
+/* Helper: Quote a C string for JSON (returns JSON string with quotes and escaping) */
+static char *
+ndb_quote_json_cstr(const char *str)
+{
+	StringInfoData buf;
+	const char *p;
+	char *result;
+
+	if (str == NULL)
+		return pstrdup("null");
+
+	initStringInfo(&buf);
+	appendStringInfoChar(&buf, '"');
+
+	for (p = str; *p; p++)
+	{
+		switch (*p)
+		{
+			case '"':
+				appendStringInfoString(&buf, "\\\"");
+				break;
+			case '\\':
+				appendStringInfoString(&buf, "\\\\");
+				break;
+			case '\b':
+				appendStringInfoString(&buf, "\\b");
+				break;
+			case '\f':
+				appendStringInfoString(&buf, "\\f");
+				break;
+			case '\n':
+				appendStringInfoString(&buf, "\\n");
+				break;
+			case '\r':
+				appendStringInfoString(&buf, "\\r");
+				break;
+			case '\t':
+				appendStringInfoString(&buf, "\\t");
+				break;
+			default:
+				if ((unsigned char) *p < 0x20)
+				{
+					appendStringInfo(&buf, "\\u%04x", (unsigned char) *p);
+				} else
+				{
+					appendStringInfoChar(&buf, *p);
+				}
+				break;
+		}
+	}
+
+	appendStringInfoChar(&buf, '"');
+	result = pstrdup(buf.data);
+	pfree(buf.data);
+	return result;
+}
+
+/* Helper: Look up and call PostgreSQL's encode() function for base64 encoding */
+static text *
+ndb_encode_base64(bytea *data)
+{
+	List *funcname;
+	Oid argtypes[2];
+	Oid encode_oid;
+	FmgrInfo flinfo;
+	Datum result;
+
+	/* Look up encode(bytea, text) function */
+	funcname = list_make1(makeString("encode"));
+	argtypes[0] = BYTEAOID;
+	argtypes[1] = TEXTOID;
+	encode_oid = LookupFuncName(funcname, 2, argtypes, false);
+
+	if (!OidIsValid(encode_oid))
+		ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_FUNCTION),
+				errmsg("encode function not found")));
+
+	fmgr_info(encode_oid, &flinfo);
+	result = FunctionCall2(&flinfo,
+		PointerGetDatum(data),
+		CStringGetDatum("base64"));
+
+	return DatumGetTextP(result);
+}
 
 /* Helper for dynamic memory buffer for curl writes */
 typedef struct
@@ -134,7 +227,7 @@ ndb_hf_complete(const NdbLLMConfig *cfg,
 	appendStringInfo(&url, "%s/models/%s", cfg->endpoint, cfg->model);
 	appendStringInfo(&body,
 		"{\"inputs\":%s,\"parameters\":%s}",
-		quote_literal_cstr(prompt),
+		ndb_quote_json_cstr(prompt),
 		params_json ? params_json : "{}");
 
 	out->http_status = http_post_json(
@@ -243,7 +336,7 @@ ndb_hf_embed(const NdbLLMConfig *cfg,
 		cfg->model);
 	appendStringInfo(&body,
 		"{\"inputs\":%s,\"truncate\":true}",
-		quote_literal_cstr(text));
+		ndb_quote_json_cstr(text));
 	code = http_post_json(
 		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
 	if (code < 200 || code >= 300 || !resp)
@@ -254,6 +347,366 @@ ndb_hf_embed(const NdbLLMConfig *cfg,
 	}
 	ok = parse_hf_emb_vector(resp, vec_out, dim_out);
 	pfree(resp);
+	if (!ok)
+		return -1;
+	return 0;
+}
+
+/* Parse batch embedding response: [[emb1...], [emb2...], ...] */
+static bool
+parse_hf_emb_batch(const char *json,
+	float ***vecs_out,
+	int **dims_out,
+	int *num_vecs_out)
+{
+	const char *p;
+	float **vecs = NULL;
+	int *dims = NULL;
+	int num_vecs = 0;
+	int cap = 16;
+	char *endptr;
+	double v;
+	float *vec = NULL;
+	int vec_dim = 0;
+	int vec_cap = 32;
+
+	if (!json)
+		return false;
+
+	p = json;
+	/* Skip to first '[' (outer array) */
+	while (*p && *p != '[')
+		p++;
+	if (!*p)
+		return false;
+	p++;
+	/* Skip whitespace */
+	while (*p && isspace(*p))
+		p++;
+
+	vecs = (float **)palloc(sizeof(float *) * cap);
+	dims = (int *)palloc(sizeof(int) * cap);
+
+	/* Parse array of arrays */
+	while (*p && *p != ']')
+	{
+		/* Skip whitespace and commas */
+		while (*p && (isspace(*p) || *p == ','))
+			p++;
+		if (*p == ']')
+			break;
+
+		/* Expect '[' for start of inner array (vector) */
+		if (*p != '[')
+			break;
+		p++;
+
+		/* Parse vector elements */
+		vec = (float *)palloc(sizeof(float) * vec_cap);
+		vec_dim = 0;
+		while (*p && *p != ']')
+		{
+			/* Skip whitespace and commas */
+			while (*p && (isspace(*p) || *p == ','))
+				p++;
+			if (*p == ']')
+				break;
+
+			/* Parse float value */
+			endptr = NULL;
+			v = strtod(p, &endptr);
+			if (endptr == p)
+				break;
+			if (vec_dim == vec_cap)
+			{
+				vec_cap *= 2;
+				vec = repalloc(vec, sizeof(float) * vec_cap);
+			}
+			vec[vec_dim++] = (float)v;
+			p = endptr;
+		}
+
+		/* Skip closing ']' of inner array */
+		if (*p == ']')
+			p++;
+
+		/* Store vector if valid */
+		if (vec_dim > 0)
+		{
+			if (num_vecs == cap)
+			{
+				cap *= 2;
+				vecs = repalloc(vecs, sizeof(float *) * cap);
+				dims = repalloc(dims, sizeof(int) * cap);
+			}
+			vecs[num_vecs] = vec;
+			dims[num_vecs] = vec_dim;
+			num_vecs++;
+			vec = NULL;
+			vec_dim = 0;
+			vec_cap = 32;
+		} else if (vec)
+		{
+			pfree(vec);
+			vec = NULL;
+		}
+	}
+
+	if (num_vecs > 0)
+	{
+		*vecs_out = vecs;
+		*dims_out = dims;
+		*num_vecs_out = num_vecs;
+		return true;
+	} else
+	{
+		if (vecs)
+			pfree(vecs);
+		if (dims)
+			pfree(dims);
+		return false;
+	}
+}
+
+int
+ndb_hf_embed_batch(const NdbLLMConfig *cfg,
+	const char **texts,
+	int num_texts,
+	float ***vecs_out,
+	int **dims_out,
+	int *num_success_out)
+{
+	StringInfoData url, body, inputs_json;
+	char *resp = NULL;
+	int code;
+	bool ok;
+	int i;
+	float **vecs = NULL;
+	int *dims = NULL;
+	int num_vecs = 0;
+
+	initStringInfo(&url);
+	initStringInfo(&body);
+	initStringInfo(&inputs_json);
+
+	if (texts == NULL || num_texts <= 0)
+	{
+		pfree(url.data);
+		pfree(body.data);
+		pfree(inputs_json.data);
+		return -1;
+	}
+
+	/* Build JSON array of input texts */
+	appendStringInfoChar(&inputs_json, '[');
+	for (i = 0; i < num_texts; i++)
+	{
+		if (i > 0)
+			appendStringInfoChar(&inputs_json, ',');
+		if (texts[i] != NULL)
+		{
+			char *quoted = ndb_quote_json_cstr(texts[i]);
+			appendStringInfoString(&inputs_json, quoted);
+			pfree(quoted);
+		} else
+		{
+			appendStringInfoString(&inputs_json, "null");
+		}
+	}
+	appendStringInfoChar(&inputs_json, ']');
+
+	appendStringInfo(&url,
+		"%s/pipeline/feature-extraction/%s",
+		cfg->endpoint,
+		cfg->model);
+	appendStringInfo(&body,
+		"{\"inputs\":%s,\"truncate\":true}",
+		inputs_json.data);
+
+	code = http_post_json(
+		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+
+	pfree(url.data);
+	pfree(body.data);
+	pfree(inputs_json.data);
+
+	if (code < 200 || code >= 300 || !resp)
+	{
+		if (resp)
+			pfree(resp);
+		return -1;
+	}
+
+	ok = parse_hf_emb_batch(resp, &vecs, &dims, &num_vecs);
+	pfree(resp);
+
+	if (!ok)
+	{
+		if (vecs)
+		{
+			for (i = 0; i < num_vecs; i++)
+			{
+				if (vecs[i])
+					pfree(vecs[i]);
+			}
+			pfree(vecs);
+		}
+		if (dims)
+			pfree(dims);
+		return -1;
+	}
+
+	*vecs_out = vecs;
+	*dims_out = dims;
+	*num_success_out = num_vecs;
+	return 0;
+}
+
+int
+ndb_hf_image_embed(const NdbLLMConfig *cfg,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out)
+{
+	StringInfoData url, body;
+	char *resp = NULL;
+	int code;
+	bool ok;
+	char *base64_data = NULL;
+	text *encoded_text = NULL;
+
+	initStringInfo(&url);
+	initStringInfo(&body);
+
+	if (image_data == NULL || image_size == 0)
+	{
+		pfree(url.data);
+		pfree(body.data);
+		return -1;
+	}
+
+	/* Convert image data to bytea, then base64 encode using PostgreSQL's encode() */
+	{
+		bytea *image_bytea = NULL;
+		image_bytea = (bytea *)palloc(VARHDRSZ + image_size);
+		SET_VARSIZE(image_bytea, VARHDRSZ + image_size);
+		memcpy(VARDATA(image_bytea), image_data, image_size);
+
+		/* Use PostgreSQL's encode() function for base64 */
+		encoded_text = ndb_encode_base64(image_bytea);
+		base64_data = text_to_cstring(encoded_text);
+
+		pfree(image_bytea);
+		pfree(encoded_text);
+	}
+
+	/* Build URL and JSON body for HuggingFace CLIP API */
+	appendStringInfo(&url,
+		"%s/pipeline/feature-extraction/%s",
+		cfg->endpoint,
+		cfg->model);
+
+	/* HuggingFace expects image in data URI format */
+	appendStringInfo(&body,
+		"{\"inputs\":{\"image\":\"data:image/jpeg;base64,%s\"}}",
+		base64_data);
+
+	code = http_post_json(
+		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+
+	pfree(url.data);
+	pfree(body.data);
+	pfree(base64_data);
+
+	if (code < 200 || code >= 300 || !resp)
+	{
+		if (resp)
+			pfree(resp);
+		return -1;
+	}
+
+	ok = parse_hf_emb_vector(resp, vec_out, dim_out);
+	pfree(resp);
+
+	if (!ok)
+		return -1;
+	return 0;
+}
+
+int
+ndb_hf_multimodal_embed(const NdbLLMConfig *cfg,
+	const char *text_input,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out)
+{
+	StringInfoData url, body;
+	char *resp = NULL;
+	int code;
+	bool ok;
+	char *base64_data = NULL;
+	text *encoded_text = NULL;
+	char *quoted_text = NULL;
+
+	initStringInfo(&url);
+	initStringInfo(&body);
+
+	if (text_input == NULL || image_data == NULL || image_size == 0)
+	{
+		pfree(url.data);
+		pfree(body.data);
+		return -1;
+	}
+
+	/* Base64 encode image */
+	{
+		bytea *image_bytea = NULL;
+		image_bytea = (bytea *)palloc(VARHDRSZ + image_size);
+		SET_VARSIZE(image_bytea, VARHDRSZ + image_size);
+		memcpy(VARDATA(image_bytea), image_data, image_size);
+
+		encoded_text = ndb_encode_base64(image_bytea);
+		base64_data = text_to_cstring(encoded_text);
+
+		pfree(image_bytea);
+		pfree(encoded_text);
+	}
+
+	/* Quote text for JSON */
+	quoted_text = ndb_quote_json_cstr(text_input);
+
+	/* Build URL and JSON body for HuggingFace CLIP multimodal API */
+	appendStringInfo(&url,
+		"%s/pipeline/feature-extraction/%s",
+		cfg->endpoint,
+		cfg->model);
+
+	/* HuggingFace CLIP expects both text and image in inputs */
+	appendStringInfo(&body,
+		"{\"inputs\":{\"text\":%s,\"image\":\"data:image/jpeg;base64,%s\"}}",
+		quoted_text,
+		base64_data);
+
+	code = http_post_json(
+		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+
+	pfree(url.data);
+	pfree(body.data);
+	pfree(base64_data);
+	pfree(quoted_text);
+
+	if (code < 200 || code >= 300 || !resp)
+	{
+		if (resp)
+			pfree(resp);
+		return -1;
+	}
+
+	ok = parse_hf_emb_vector(resp, vec_out, dim_out);
+	pfree(resp);
+
 	if (!ok)
 		return -1;
 	return 0;
@@ -335,7 +788,7 @@ ndb_hf_rerank(const NdbLLMConfig *cfg,
 		if (i > 0)
 			appendStringInfoChar(&docs_json, ',');
 		if (docs[i] != NULL)
-			appendStringInfoString(&docs_json, quote_literal_cstr(docs[i]));
+			appendStringInfoString(&docs_json, ndb_quote_json_cstr(docs[i]));
 		else
 			appendStringInfoString(&docs_json, "null");
 	}
@@ -349,7 +802,7 @@ ndb_hf_rerank(const NdbLLMConfig *cfg,
 	/* Use models endpoint if above fails for reranking */
 	appendStringInfo(&body,
 		"{\"inputs\":{\"query\":%s,\"documents\":%s}}",
-		quote_literal_cstr(query),
+		ndb_quote_json_cstr(query),
 		docs_json.data);
 
 	code = http_post_json(
