@@ -524,7 +524,13 @@ neurondb_train(PG_FUNCTION_ARGS)
 	/* Determine backend based on GPU availability and GUC settings */
 	{
 		bool gpu_enabled_guc = neurondb_gpu_enabled;
-		bool gpu_available = neurondb_gpu_is_available();
+		bool gpu_available;
+		
+		/* Trigger lazy GPU initialization if needed */
+		ndb_gpu_init_if_needed();
+		
+		/* Now check if GPU is actually available after initialization */
+		gpu_available = neurondb_gpu_is_available();
 
 		elog(DEBUG1,
 			"neurondb_train: GPU enabled=%d, available=%d",
@@ -1787,7 +1793,6 @@ neurondb_train(PG_FUNCTION_ARGS)
 		strcmp(algorithm, "knn") != 0 &&
 		strcmp(algorithm, "knn_classifier") != 0 &&
 		strcmp(algorithm, "knn_regressor") != 0 &&
-		strcmp(algorithm, "random_forest") != 0 &&
 		strcmp(algorithm, "rag") != 0 &&
 		strcmp(algorithm, "hybrid_search") != 0)
 	{
@@ -1798,6 +1803,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 		strcmp(algorithm, "linear_regression") == 0 ||
 		strcmp(algorithm, "decision_tree") == 0 ||
 		strcmp(algorithm, "svm") == 0 ||
+		strcmp(algorithm, "random_forest") == 0 ||
 		strcmp(algorithm, "knn_regressor") == 0 ||
 		strcmp(algorithm, "ridge") == 0 ||
 		strcmp(algorithm, "lasso") == 0 ||
@@ -2603,10 +2609,45 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 				 errmsg("neurondb.evaluate: requires 4 arguments, got %d", PG_NARGS()),
 				 errhint("Usage: neurondb.evaluate(model_id, table_name, feature_col, label_col)")));
 
+	/* NULL input validation - prevent crashes */
+	if (PG_ARGISNULL(0))
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("neurondb.evaluate: model_id cannot be NULL")));
+	
+	if (PG_ARGISNULL(1))
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("neurondb.evaluate: table_name cannot be NULL")));
+	
+	if (PG_ARGISNULL(2))
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("neurondb.evaluate: feature_col cannot be NULL")));
+	
+	/* label_col can be NULL for unsupervised algorithms (e.g., kmeans, gmm) */
+	
 	model_id = PG_GETARG_INT32(0);
 	table_name_text = PG_GETARG_TEXT_PP(1);
 	feature_col_text = PG_GETARG_TEXT_PP(2);
-	label_col_text = PG_GETARG_TEXT_PP(3);
+	label_col_text = PG_ARGISNULL(3) ? NULL : PG_GETARG_TEXT_PP(3);
+	
+	/* Additional validation after getting arguments */
+	if (model_id <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb.evaluate: model_id must be positive, got %d", model_id)));
+	
+	/* Validate text pointers are not NULL after conversion */
+	if (table_name_text == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("neurondb.evaluate: table_name is NULL after conversion")));
+	
+	if (feature_col_text == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("neurondb.evaluate: feature_col is NULL after conversion")));
 
 	callcontext = AllocSetContextCreate(CurrentMemoryContext,
 									   "neurondb_evaluate context",
@@ -2739,50 +2780,177 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 	}
 
 	elog(DEBUG1, "neurondb_evaluate: executing query: %s", sql.data);
-	ret = SPI_execute(sql.data, true, 0);
-	if (ret != SPI_OK_SELECT || SPI_processed == 0)
+	
+	/* Wrap entire evaluation in error handler to prevent crashes */
+	PG_TRY();
 	{
-		neurondb_cleanup(oldcontext, callcontext, true);
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb.evaluate: evaluation query failed for algorithm '%s'", algorithm)));
-	}
-
-	{
-		Datum result_datum;
-		bool result_isnull;
-		Jsonb *temp_jsonb;
-		
-		/* Get JSONB from SPI result */
-		result_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &result_isnull);
-		if (result_isnull)
+		ret = SPI_execute(sql.data, true, 0);
+		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		{
-			neurondb_cleanup(oldcontext, callcontext, true);
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb.evaluate: evaluation returned NULL (algorithm evaluation not implemented)")));
+			/* Evaluation query failed - return error JSONB instead of crashing */
+			MemoryContextSwitchTo(oldcontext);
+			result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
+				CStringGetDatum("{\"error\": \"evaluation query failed\"}")));
+			SPI_finish();
+			MemoryContextDelete(callcontext);
+			PG_RETURN_JSONB_P(result);
 		}
-		
-		/* Get JSONB pointer from datum (still in SPI context) */
-		temp_jsonb = DatumGetJsonbP(result_datum);
-		
-		/* BULLETPROOF: Copy JSONB to caller's context before SPI_finish() */
-		/* This ensures the JSONB is valid after SPI context is cleaned up */
-		PG_TRY();
+
 		{
+			Datum result_datum;
+			bool result_isnull;
+			Jsonb *temp_jsonb;
+			
+			/* Get JSONB from SPI result */
+			result_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &result_isnull);
+			if (result_isnull)
+			{
+				/* Evaluation returned NULL - return error JSONB instead of crashing */
+				MemoryContextSwitchTo(oldcontext);
+				result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
+					CStringGetDatum("{\"error\": \"evaluation returned NULL\"}")));
+				SPI_finish();
+				MemoryContextDelete(callcontext);
+				PG_RETURN_JSONB_P(result);
+			}
+			
+			/* Get JSONB pointer from datum (still in SPI context) */
+			/* Validate pointer is not NULL before dereferencing */
+			if (DatumGetPointer(result_datum) == NULL)
+			{
+				MemoryContextSwitchTo(oldcontext);
+				result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
+					CStringGetDatum("{\"error\": \"invalid JSONB pointer\"}")));
+				SPI_finish();
+				MemoryContextDelete(callcontext);
+				PG_RETURN_JSONB_P(result);
+			}
+			
+			temp_jsonb = DatumGetJsonbP(result_datum);
+			
+			/* Validate JSONB structure before using it */
+			if (temp_jsonb == NULL || VARSIZE(temp_jsonb) < sizeof(Jsonb))
+			{
+				MemoryContextSwitchTo(oldcontext);
+				result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
+					CStringGetDatum("{\"error\": \"invalid JSONB structure\"}")));
+				SPI_finish();
+				MemoryContextDelete(callcontext);
+				PG_RETURN_JSONB_P(result);
+			}
+			
+			/* BULLETPROOF: Copy JSONB to caller's context before SPI_finish() */
+			/* This ensures the JSONB is valid after SPI context is cleaned up */
 			MemoryContextSwitchTo(oldcontext);
 			result = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
+			
+			/* Validate copied JSONB structure */
+			if (result == NULL || VARSIZE(result) < sizeof(Jsonb))
+			{
+				/* Copy failed or invalid - return error JSONB */
+				if (result != NULL)
+					pfree(result);
+				result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
+					CStringGetDatum("{\"error\": \"JSONB copy validation failed\"}")));
+			}
+		}
+	}
+	PG_CATCH();
+	{
+		/* Catch any errors from algorithm-specific evaluate functions */
+		/* Return safe error JSONB instead of crashing */
+		ErrorData *edata = NULL;
+		char *error_msg;
+		
+		/* CRITICAL: Switch out of ErrorContext before CopyErrorData() */
+		/* CopyErrorData() must NOT be called in ErrorContext */
+		MemoryContextSwitchTo(oldcontext);
+		
+		/* Try to copy error data - may fail if still in ErrorContext */
+		/* If CopyErrorData() fails, we'll use a generic error message */
+		PG_TRY();
+		{
+			if (CurrentMemoryContext != ErrorContext)
+			{
+				edata = CopyErrorData();
+				FlushErrorState();
+			}
+			else
+			{
+				/* Already in ErrorContext - just flush without copying */
+				FlushErrorState();
+			}
 		}
 		PG_CATCH();
 		{
-			/* If anything goes wrong, return empty object instead of crashing */
+			/* CopyErrorData() failed - just flush and use generic message */
 			FlushErrorState();
-			elog(WARNING, "neurondb.evaluate: error copying JSONB, returning empty object");
-			MemoryContextSwitchTo(oldcontext);
-			result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum("{}")));
 		}
 		PG_END_TRY();
+		
+		/* Create safe error message (escape quotes) */
+		if (edata != NULL && edata->message != NULL)
+			error_msg = pstrdup(edata->message);
+		else
+			error_msg = pstrdup("evaluation failed (GPU may be unavailable or model data missing)");
+		
+		/* Escape JSON special characters */
+		{
+			char *escaped = palloc(strlen(error_msg) * 2 + 1);
+			char *p = escaped;
+			const char *s = error_msg;
+			while (*s)
+			{
+				if (*s == '"' || *s == '\\' || *s == '\n' || *s == '\r')
+				{
+					*p++ = '\\';
+					if (*s == '\n')
+						*p++ = 'n';
+					else if (*s == '\r')
+						*p++ = 'r';
+					else
+						*p++ = *s;
+				}
+				else
+					*p++ = *s;
+				s++;
+			}
+			*p = '\0';
+			pfree(error_msg);
+			error_msg = escaped;
+		}
+		
+		/* Return error JSONB */
+		{
+			StringInfoData error_json;
+			initStringInfo(&error_json);
+			appendStringInfo(&error_json, "{\"error\": \"%s\"}", error_msg);
+			result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
+				CStringGetDatum(error_json.data)));
+			pfree(error_json.data);
+			pfree(error_msg);
+		}
+		
+		/* Free error data if we copied it */
+		if (edata != NULL)
+			FreeErrorData(edata);
+		
+		/* Clean up SPI - safe to call even if not connected */
+		SPI_finish();
+		
+		/* Clean up memory context */
+		/* CRITICAL: Switch to oldcontext before deleting callcontext */
+		/* SPI_finish() or error handling may have changed CurrentMemoryContext */
+		if (callcontext)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(callcontext);
+		}
+		
+		/* Return error JSONB immediately - don't fall through to cleanup code */
+		PG_RETURN_JSONB_P(result);
 	}
+	PG_END_TRY();
 
 	/* Now safe to clean up SPI and delete callcontext */
 	SPI_finish();
