@@ -3,22 +3,34 @@
 \pset pager off
 
 -- This test uses test_train_view and test_test_view created by the test runner
--- The views are created from higgs.test_train and higgs.test_test tables
+-- The views are created from dataset.test_train and dataset.test_test tables
 
 \set ON_ERROR_STOP on
 
-/* Step 0: Read settings from test_settings table and apply them */
+/* Step 0: Read settings from test_settings table and verify GPU configuration */
 DO $$
 DECLARE
 	gpu_mode TEXT;
+	current_gpu_enabled TEXT;
+	current_automl_gpu TEXT;
 BEGIN
+	-- Read GPU mode setting from test_settings
 	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	
+	-- Verify GPU configuration matches test_settings (set by test runner)
+	SELECT current_setting('neurondb.gpu_enabled', true) INTO current_gpu_enabled;
+	SELECT current_setting('neurondb.automl.use_gpu', true) INTO current_automl_gpu;
+	
 	IF gpu_mode = 'gpu' THEN
-		PERFORM neurondb_gpu_enable();
-		PERFORM set_config('neurondb.automl.use_gpu', 'on', false);
+		-- Verify GPU is enabled (should be set by test runner)
+		IF current_gpu_enabled != 'on' THEN
+			RAISE WARNING 'GPU mode expected but neurondb.gpu_enabled = % (expected: on)', current_gpu_enabled;
+		END IF;
 	ELSE
-		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
-		PERFORM set_config('neurondb.automl.use_gpu', 'off', false);
+		-- Verify GPU is disabled (should be set by test runner)
+		IF current_gpu_enabled != 'off' THEN
+			RAISE WARNING 'CPU mode expected but neurondb.gpu_enabled = % (expected: off)', current_gpu_enabled;
+		END IF;
 	END IF;
 END $$;
 

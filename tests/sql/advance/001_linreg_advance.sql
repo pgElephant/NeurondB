@@ -10,22 +10,32 @@ SET client_min_messages TO WARNING;
 \pset pager off
 \pset tuples_only off
 
-/* Step 0: Read settings from test_settings table and apply them */
+/* Step 0: Read settings from test_settings table and verify GPU configuration */
 DO $$
 DECLARE
 	gpu_mode TEXT;
+	current_gpu_enabled TEXT;
+	current_gpu_kernels TEXT;
 	gpu_kernels_val TEXT;
 BEGIN
+	-- Read GPU mode setting from test_settings
 	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
 	SELECT setting_value INTO gpu_kernels_val FROM test_settings WHERE setting_key = 'gpu_kernels';
 	
+	-- Verify GPU configuration matches test_settings (set by test runner)
+	SELECT current_setting('neurondb.gpu_enabled', true) INTO current_gpu_enabled;
+	SELECT current_setting('neurondb.gpu_kernels', true) INTO current_gpu_kernels;
+	
 	IF gpu_mode = 'gpu' THEN
-		PERFORM neurondb_gpu_enable();
-		IF gpu_kernels_val IS NOT NULL THEN
-			PERFORM set_config('neurondb.gpu_kernels', gpu_kernels_val, false);
+		-- Verify GPU is enabled (should be set by test runner)
+		IF current_gpu_enabled != 'on' THEN
+			RAISE WARNING 'GPU mode expected but neurondb.gpu_enabled = % (expected: on)', current_gpu_enabled;
 		END IF;
 	ELSE
-		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+		-- Verify GPU is disabled (should be set by test runner)
+		IF current_gpu_enabled != 'off' THEN
+			RAISE WARNING 'CPU mode expected but neurondb.gpu_enabled = % (expected: off)', current_gpu_enabled;
+		END IF;
 	END IF;
 END $$;
 
@@ -33,27 +43,27 @@ END $$;
 \echo 'linear_regression: Exhaustive GPU/CPU + Error Coverage (1000 rows sample)'
 \echo '=========================================================================='
 
-/* Check that source tables exist (higgs schema or public schema) */
+/* Check that source tables exist (dataset schema or public schema) */
 DO $$
 DECLARE
 	train_table TEXT;
 	test_table TEXT;
 BEGIN
-	-- Check for higgs schema tables first, then public schema
+	-- Check for dataset schema tables first, then public schema
 	SELECT table_schema || '.' || table_name INTO train_table
 	FROM information_schema.tables 
-	WHERE (table_schema = 'higgs' AND table_name = 'test_train')
+	WHERE (table_schema = 'dataset' AND table_name = 'test_train')
 	   OR (table_schema = 'public' AND table_name IN ('sample_train', 'test_train'))
-	ORDER BY CASE WHEN table_schema = 'higgs' THEN 0 ELSE 1 END
+	ORDER BY CASE WHEN table_schema = 'dataset' THEN 0 ELSE 1 END
 	LIMIT 1;
 	
 	IF train_table IS NULL THEN
-		RAISE EXCEPTION 'No training table found in higgs or public schema';
+		RAISE EXCEPTION 'No training table found in dataset or public schema';
 	END IF;
 	
 	-- Determine corresponding test table
-	IF train_table LIKE 'higgs.%' THEN
-		test_table := 'higgs.test_test';
+	IF train_table LIKE 'dataset.%' THEN
+		test_table := 'dataset.test_test';
 	ELSIF train_table LIKE '%sample_train%' THEN
 		test_table := 'sample_test';
 	ELSE
@@ -81,13 +91,13 @@ BEGIN
 	-- Find source tables
 	SELECT table_schema || '.' || table_name INTO train_source
 	FROM information_schema.tables 
-	WHERE (table_schema = 'higgs' AND table_name = 'test_train')
+	WHERE (table_schema = 'dataset' AND table_name = 'test_train')
 	   OR (table_schema = 'public' AND table_name IN ('sample_train', 'test_train'))
-	ORDER BY CASE WHEN table_schema = 'higgs' THEN 0 ELSE 1 END
+	ORDER BY CASE WHEN table_schema = 'dataset' THEN 0 ELSE 1 END
 	LIMIT 1;
 	
-	IF train_source LIKE 'higgs.%' THEN
-		test_source := 'higgs.test_test';
+	IF train_source LIKE 'dataset.%' THEN
+		test_source := 'dataset.test_test';
 	ELSIF train_source LIKE '%sample_train%' THEN
 		test_source := 'sample_test';
 	ELSE

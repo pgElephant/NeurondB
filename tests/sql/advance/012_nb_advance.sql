@@ -20,12 +20,12 @@ DECLARE
 	train_source TEXT;
 	test_source TEXT;
 BEGIN
-	-- Find source tables (prefer higgs schema, fallback to public)
+	-- Find source tables (prefer dataset schema, fallback to public)
 	SELECT table_schema || '.' || table_name INTO train_source
 	FROM information_schema.tables 
-	WHERE (table_schema = 'higgs' AND table_name = 'test_train')
+	WHERE (table_schema = 'dataset' AND table_name = 'test_train')
 	   OR (table_schema = 'public' AND table_name IN ('sample_train', 'test_train'))
-	ORDER BY CASE WHEN table_schema = 'higgs' THEN 0 ELSE 1 END
+	ORDER BY CASE WHEN table_schema = 'dataset' THEN 0 ELSE 1 END
 	LIMIT 1;
 	
 	IF train_source IS NULL THEN
@@ -37,8 +37,8 @@ BEGIN
 	END IF;
 	
 	-- Determine corresponding test table
-	IF train_source LIKE 'higgs.%' THEN
-		test_source := 'higgs.test_test';
+	IF train_source LIKE 'dataset.%' THEN
+		test_source := 'dataset.test_test';
 	ELSIF train_source LIKE '%sample_train%' THEN
 		test_source := 'sample_test';
 	ELSE

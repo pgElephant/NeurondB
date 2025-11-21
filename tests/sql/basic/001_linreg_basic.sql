@@ -13,16 +13,28 @@
 \pset pager off
 \pset tuples_only off
 
-/* Step 0: Read settings from test_settings table and apply them */
+/* Step 0: Read settings from test_settings table and verify GPU configuration */
 DO $$
 DECLARE
 	gpu_mode TEXT;
+	current_gpu_enabled TEXT;
 BEGIN
+	-- Read GPU mode setting from test_settings
 	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	
+	-- Verify GPU configuration matches test_settings (set by test runner)
+	SELECT current_setting('neurondb.gpu_enabled', true) INTO current_gpu_enabled;
+	
 	IF gpu_mode = 'gpu' THEN
-		PERFORM neurondb_gpu_enable();
+		-- Verify GPU is enabled (should be set by test runner)
+		IF current_gpu_enabled != 'on' THEN
+			RAISE WARNING 'GPU mode expected but neurondb.gpu_enabled = % (expected: on)', current_gpu_enabled;
+		END IF;
 	ELSE
-		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+		-- Verify GPU is disabled (should be set by test runner)
+		IF current_gpu_enabled != 'off' THEN
+			RAISE WARNING 'CPU mode expected but neurondb.gpu_enabled = % (expected: off)', current_gpu_enabled;
+		END IF;
 	END IF;
 END $$;
 
@@ -67,6 +79,26 @@ SELECT
 	ROUND(COALESCE((m.metrics::jsonb->>'r_squared')::numeric, 0), 6) AS r_squared
 FROM neurondb.ml_models m, gpu_model_temp t
 WHERE m.model_id = t.model_id;
+
+/* Verify GPU was used for training when GPU mode is enabled */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+	storage_val TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	SELECT COALESCE(m.metrics::jsonb->>'storage', 'cpu') INTO storage_val
+	FROM neurondb.ml_models m, gpu_model_temp t
+	WHERE m.model_id = t.model_id;
+	
+	IF gpu_mode = 'gpu' AND storage_val != 'gpu' THEN
+		RAISE EXCEPTION 'GPU mode enabled but model was trained on CPU (storage=%)', storage_val;
+	END IF;
+	
+	IF gpu_mode = 'cpu' AND storage_val = 'gpu' THEN
+		RAISE WARNING 'CPU mode enabled but model was trained on GPU (storage=gpu)';
+	END IF;
+END $$;
 
 /* Step 6: Test set statistics */
 

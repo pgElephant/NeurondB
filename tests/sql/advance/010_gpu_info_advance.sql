@@ -9,22 +9,32 @@ SET client_min_messages TO WARNING;
 \pset pager off
 \pset tuples_only off
 
-/* Step 0: Read settings from test_settings table and apply them */
+/* Step 0: Read settings from test_settings table and verify GPU configuration */
 DO $$
 DECLARE
 	gpu_mode TEXT;
+	current_gpu_enabled TEXT;
+	current_gpu_kernels TEXT;
 	gpu_kernels_val TEXT;
 BEGIN
+	-- Read GPU mode setting from test_settings
 	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
 	SELECT setting_value INTO gpu_kernels_val FROM test_settings WHERE setting_key = 'gpu_kernels';
 	
+	-- Verify GPU configuration matches test_settings (set by test runner)
+	SELECT current_setting('neurondb.gpu_enabled', true) INTO current_gpu_enabled;
+	SELECT current_setting('neurondb.gpu_kernels', true) INTO current_gpu_kernels;
+	
 	IF gpu_mode = 'gpu' THEN
-		PERFORM neurondb_gpu_enable();
-		IF gpu_kernels_val IS NOT NULL THEN
-			PERFORM set_config('neurondb.gpu_kernels', gpu_kernels_val, false);
+		-- Verify GPU is enabled (should be set by test runner)
+		IF current_gpu_enabled != 'on' THEN
+			RAISE WARNING 'GPU mode expected but neurondb.gpu_enabled = % (expected: on)', current_gpu_enabled;
 		END IF;
 	ELSE
-		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+		-- Verify GPU is disabled (should be set by test runner)
+		IF current_gpu_enabled != 'off' THEN
+			RAISE WARNING 'CPU mode expected but neurondb.gpu_enabled = % (expected: off)', current_gpu_enabled;
+		END IF;
 	END IF;
 END $$;
 
