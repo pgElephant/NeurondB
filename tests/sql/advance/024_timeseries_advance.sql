@@ -23,8 +23,8 @@ BEGIN
 	ELSE
 	END IF;
 	
-	-- Check if timeseries is in ml_models
-	IF EXISTS (SELECT 1 FROM neurondb.ml_models WHERE algorithm = 'timeseries' LIMIT 1) THEN
+	-- Check if timeseries is in ml_models (cast to text for comparison)
+	IF EXISTS (SELECT 1 FROM neurondb.ml_models WHERE algorithm::text = 'timeseries') THEN
 	ELSE
 	END IF;
 END $$;

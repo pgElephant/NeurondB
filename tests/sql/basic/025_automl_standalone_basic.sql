@@ -5,10 +5,22 @@
 -- This test uses test_train_view and test_test_view created by the test runner
 -- The views are created from higgs.test_train and higgs.test_test tables
 
-SET neurondb.automl.use_gpu = on;
-SELECT neurondb_gpu_enable();
-
 \set ON_ERROR_STOP on
+
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+		PERFORM set_config('neurondb.automl.use_gpu', 'on', false);
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+		PERFORM set_config('neurondb.automl.use_gpu', 'off', false);
+	END IF;
+END $$;
 
 \echo '=========================================================================='
 \echo '=========================================================================='

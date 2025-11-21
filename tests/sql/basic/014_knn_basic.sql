@@ -11,14 +11,30 @@
 
 \set ON_ERROR_STOP on
 
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	-- Read GPU mode setting and enable/disable GPU accordingly
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+	ELSE
+		-- GPU disabled or CPU mode - ensure GPU is off
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
+
 -- Train model once and store in temp table to reuse
 DROP TABLE IF EXISTS gpu_model_temp;
 CREATE TEMP TABLE gpu_model_temp AS
 SELECT neurondb.train(
+	'default',
 	'knn',
 	'test_train_view',
-	'features',
 	'label',
+	ARRAY['features'],
 	'{"k": 5}'::jsonb
 )::integer AS model_id;
 

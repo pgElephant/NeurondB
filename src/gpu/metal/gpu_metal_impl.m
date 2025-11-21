@@ -55,43 +55,77 @@ extern void metal_backend_get_capabilities(char *caps, size_t caps_len);
 bool
 metal_backend_init(void)
 {
-	@autoreleasepool {
-		if (metal_initialized)
-			return true;
+	id<MTLDevice> temp_device = nil;
+	id<MTLCommandQueue> temp_queue = nil;
+	
+	if (metal_initialized)
+		return true;
 
+	@autoreleasepool {
 		/* Get Apple GPU device */
-		metal_device = MTLCreateSystemDefaultDevice();
-		if (!metal_device)
+		temp_device = MTLCreateSystemDefaultDevice();
+		if (!temp_device)
 		{
 			fprintf(stderr, "[Metal] ERROR: No GPU device available\n");
+			fprintf(stderr, "[Metal] DEBUG: MTLCreateSystemDefaultDevice() returned nil\n");
+			fflush(stderr);
 			return false;
 		}
 
-		fprintf(stdout, "[Metal] ✅ GPU Detected: %s\n", [[metal_device name] UTF8String]);
+		fprintf(stdout, "[Metal] ✅ GPU Detected: %s\n", [[temp_device name] UTF8String]);
 		fprintf(stdout, "[Metal] ✅ Max threads: %lu\n",
-				(unsigned long)[metal_device maxThreadsPerThreadgroup].width);
+				(unsigned long)[temp_device maxThreadsPerThreadgroup].width);
 		fprintf(stdout, "[Metal] ✅ GPU Memory: %.2f GB\n",
-				[metal_device recommendedMaxWorkingSetSize] / (1024.0 * 1024.0 * 1024.0));
+				[temp_device recommendedMaxWorkingSetSize] / (1024.0 * 1024.0 * 1024.0));
+		fflush(stdout);
 
-		/* Create command queue */
-		metal_command_queue = [metal_device newCommandQueue];
-		if (!metal_command_queue)
-		{
-			fprintf(stderr, "[Metal] ERROR: Failed to create command queue\n");
-			metal_device = nil;
+		/* Create command queue with explicit error handling */
+		@try {
+			temp_queue = [temp_device newCommandQueue];
+			fprintf(stdout, "[Metal] DEBUG: newCommandQueue() returned %p\n", (void*)temp_queue);
+			fflush(stdout);
+		} @catch (NSException *exception) {
+			fprintf(stderr, "[Metal] ERROR: Exception creating command queue: %s\n",
+					[[exception reason] UTF8String]);
+			fflush(stderr);
 			return false;
 		}
-
-		fprintf(stdout, "[Metal] ✅ Command queue created\n");
-		fprintf(stdout, "[Metal] ✅ Using Accelerate Framework (GPU-optimized vDSP)\n");
-		fprintf(stdout, "[Metal] ✅ GPU READY - Direct GPU buffer access!\n");
-		fprintf(stdout, "[Metal] ✅ Apple Silicon GPU acceleration ACTIVE\n");
-
-		metal_initialized = true;
-		total_gpu_ops = 0;
-
-		return true;
+		
+		if (!temp_queue)
+		{
+			fprintf(stderr, "[Metal] ERROR: Failed to create command queue (returned nil)\n");
+			fprintf(stderr, "[Metal] DEBUG: Device name: %s\n", [[temp_device name] UTF8String]);
+			fflush(stderr);
+			return false;
+		}
+		
+		/* Retain both device and queue BEFORE autoreleasepool ends */
+		metal_device = [temp_device retain];
+		metal_command_queue = [temp_queue retain];
 	}
+	
+	/* Now we're outside the autoreleasepool, but device/queue are retained */
+	if (!metal_device || !metal_command_queue)
+	{
+		if (metal_device)
+			[metal_device release];
+		if (metal_command_queue)
+			[metal_command_queue release];
+		metal_device = nil;
+		metal_command_queue = nil;
+		return false;
+	}
+
+	fprintf(stdout, "[Metal] ✅ Command queue created\n");
+	fprintf(stdout, "[Metal] ✅ Using Accelerate Framework (GPU-optimized vDSP)\n");
+	fprintf(stdout, "[Metal] ✅ GPU READY - Direct GPU buffer access!\n");
+	fprintf(stdout, "[Metal] ✅ Apple Silicon GPU acceleration ACTIVE\n");
+	fflush(stdout);
+
+	metal_initialized = true;
+	total_gpu_ops = 0;
+
+	return true;
 }
 
 /*
@@ -102,9 +136,15 @@ metal_backend_cleanup(void)
 {
 	@autoreleasepool {
 		if (metal_command_queue)
+		{
+			[metal_command_queue release];
 			metal_command_queue = nil;
+		}
 		if (metal_device)
+		{
+			[metal_device release];
 			metal_device = nil;
+		}
 
 		metal_initialized = false;
 
@@ -114,12 +154,24 @@ metal_backend_cleanup(void)
 }
 
 /*
- * Check if Metal is available
+ * Check if Metal is available (without requiring initialization)
  */
 bool
 metal_backend_is_available(void)
 {
-	return metal_initialized && (metal_device != nil);
+	/* If already initialized, return true */
+	if (metal_initialized && (metal_device != nil))
+		return true;
+	
+	/* Otherwise, check if we can create a device (without initializing) */
+	@autoreleasepool {
+		id<MTLDevice> test_device = MTLCreateSystemDefaultDevice();
+		if (test_device != nil)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 /*

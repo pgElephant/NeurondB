@@ -479,19 +479,120 @@ train_arima(PG_FUNCTION_ARGS)
 
 	model = fit_arima(values, n_samples, p, d, q);
 
-	SPI_finish();
-
-	if (values)
-		pfree(values);
-	if (table_name_str)
-		pfree(table_name_str);
-	if (time_col_str)
-		pfree(time_col_str);
-	if (value_col_str)
-		pfree(value_col_str);
-
-	if (model)
+	if (!model)
 	{
+		SPI_finish();
+		if (values)
+			pfree(values);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (time_col_str)
+			pfree(time_col_str);
+		if (value_col_str)
+			pfree(value_col_str);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("ARIMA model fitting failed")));
+	}
+
+	/* Save model to database */
+	{
+		int32 model_id;
+		StringInfoData insert_sql;
+		int ret;
+		Datum *ar_datums = NULL;
+		Datum *ma_datums = NULL;
+		ArrayType *ar_array = NULL;
+		ArrayType *ma_array = NULL;
+		int i;
+
+		initStringInfo(&insert_sql);
+
+		/* Build AR coefficients array */
+		if (model->ar_coeffs && p > 0)
+		{
+			ar_datums = (Datum *)palloc(sizeof(Datum) * p);
+			for (i = 0; i < p; i++)
+				ar_datums[i] = Float4GetDatum(model->ar_coeffs[i]);
+			ar_array = construct_array(ar_datums, p, FLOAT4OID, sizeof(float4), true, 'i');
+		}
+
+		/* Build MA coefficients array */
+		if (model->ma_coeffs && q > 0)
+		{
+			ma_datums = (Datum *)palloc(sizeof(Datum) * q);
+			for (i = 0; i < q; i++)
+				ma_datums[i] = Float4GetDatum(model->ma_coeffs[i]);
+			ma_array = construct_array(ma_datums, q, FLOAT4OID, sizeof(float4), true, 'i');
+		}
+
+		/* Insert model */
+		appendStringInfo(&insert_sql,
+			"INSERT INTO neurondb.neurondb_arima_models (p, d, q, intercept, ar_coeffs, ma_coeffs) "
+			"VALUES (%d, %d, %d, %.10f, %s, %s) RETURNING model_id",
+			p, d, q, (double)model->intercept,
+			ar_array ? DatumGetCString(DirectFunctionCall1(array_out, PointerGetDatum(ar_array))) : "NULL",
+			ma_array ? DatumGetCString(DirectFunctionCall1(array_out, PointerGetDatum(ma_array))) : "NULL");
+
+		ret = SPI_execute(insert_sql.data, true, 1);
+		if (ret != SPI_OK_INSERT || SPI_processed != 1)
+		{
+			SPI_finish();
+			if (values)
+				pfree(values);
+			if (table_name_str)
+				pfree(table_name_str);
+			if (time_col_str)
+				pfree(time_col_str);
+			if (value_col_str)
+				pfree(value_col_str);
+			if (model->ar_coeffs)
+				pfree(model->ar_coeffs);
+			if (model->ma_coeffs)
+				pfree(model->ma_coeffs);
+			if (model->residuals)
+				pfree(model->residuals);
+			pfree(model);
+			if (ar_datums)
+				pfree(ar_datums);
+			if (ma_datums)
+				pfree(ma_datums);
+			pfree(insert_sql.data);
+			ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("failed to save ARIMA model")));
+		}
+
+		model_id = DatumGetInt32(SPI_getbinval(
+			SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, NULL));
+
+		/* Save history */
+		for (i = 0; i < n_samples; i++)
+		{
+			pfree(insert_sql.data);
+			initStringInfo(&insert_sql);
+			appendStringInfo(&insert_sql,
+				"INSERT INTO neurondb.neurondb_arima_history (model_id, observed) VALUES (%d, %.10f)",
+				model_id, (double)values[i]);
+			SPI_execute(insert_sql.data, true, 0);
+		}
+
+		pfree(insert_sql.data);
+		if (ar_datums)
+			pfree(ar_datums);
+		if (ma_datums)
+			pfree(ma_datums);
+
+		SPI_finish();
+
+		if (values)
+			pfree(values);
+		if (table_name_str)
+			pfree(table_name_str);
+		if (time_col_str)
+			pfree(time_col_str);
+		if (value_col_str)
+			pfree(value_col_str);
 		if (model->ar_coeffs)
 			pfree(model->ar_coeffs);
 		if (model->ma_coeffs)
@@ -499,9 +600,9 @@ train_arima(PG_FUNCTION_ARGS)
 		if (model->residuals)
 			pfree(model->residuals);
 		pfree(model);
-	}
 
-	PG_RETURN_TEXT_P(cstring_to_text("ARIMA model trained successfully"));
+		PG_RETURN_INT32(model_id);
+	}
 }
 
 PG_FUNCTION_INFO_V1(forecast_arima);
@@ -539,7 +640,7 @@ forecast_arima(PG_FUNCTION_ARGS)
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT p, d, q, intercept, ar_coeffs, ma_coeffs FROM neurondb_arima_models WHERE model_id = %d",
+		"SELECT p, d, q, intercept, ar_coeffs, ma_coeffs FROM neurondb.neurondb_arima_models WHERE model_id = %d",
 		model_id);
 
 	ret = SPI_execute(sql.data, true, 1);
@@ -616,7 +717,7 @@ forecast_arima(PG_FUNCTION_ARGS)
 
 	resetStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT observed FROM neurondb_arima_history WHERE model_id = %d ORDER BY observed_id DESC LIMIT 1",
+		"SELECT observed FROM neurondb.neurondb_arima_history WHERE model_id = %d ORDER BY observed_id DESC LIMIT 1",
 		model_id);
 
 	ret = SPI_execute(sql.data, true, 1);

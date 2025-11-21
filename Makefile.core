@@ -299,16 +299,20 @@ endif
 # Default: Metal disabled
 METAL_OBJS :=
 
-# Check for Metal (Apple Silicon)
+# Check for Metal (macOS: Apple Silicon or Intel)
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
+# Allow disabling explicitly: DISABLE_METAL=1 make ...
 ifeq ($(UNAME_S),Darwin)
-	ifeq ($(UNAME_M),arm64)
+ifneq ($(DISABLE_METAL),1)
+	# Enable for both arm64 and x86_64 (Rosetta builds will still report x86_64 and get Metal)
+	ifneq ($(filter $(UNAME_M),arm64 x86_64),)
 		HAVE_METAL := yes
 		PG_CPPFLAGS += -DNDB_GPU_METAL
 		SHLIB_LINK += -framework Metal -framework MetalPerformanceShaders -framework Accelerate -framework Foundation
 		METAL_OBJS = src/gpu/metal/gpu_metal.o src/gpu/metal/gpu_metal_impl.o src/gpu/metal/gpu_backend_metal.o
 	endif
+endif
 endif
 
 # Add Metal objects if available

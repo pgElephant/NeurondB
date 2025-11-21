@@ -8,9 +8,20 @@
 --
 -- Verify required tables exist
 
-SELECT neurondb_gpu_enable();
-
 \set ON_ERROR_STOP on
+
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
 
 \echo '=========================================================================='
 \echo '=========================================================================='

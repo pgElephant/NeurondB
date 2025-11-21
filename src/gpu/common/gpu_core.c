@@ -340,9 +340,9 @@ ndb_gpu_init_if_needed(void)
 					errmsg("neurondb: GPU initialization "
 					       "failed")));
 		}
-		ereport(ERROR,
-			(errmsg("neurondb: GPU init failed. Using CPU "
-				"fallback")));
+		elog(WARNING,
+			"neurondb: GPU init failed. Using CPU "
+			"fallback");
 		return;
 	}
 
@@ -574,6 +574,9 @@ neurondb_gpu_info(PG_FUNCTION_ARGS)
 
 	/* Initialize tuple store */
 	InitMaterializedSRF(fcinfo, 0);
+
+	/* Trigger GPU initialization if needed */
+	ndb_gpu_init_if_needed();
 
 	/* Return basic GPU info - simplified for now */
 	info = neurondb_gpu_get_device_info(active_device_id);

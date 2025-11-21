@@ -84,6 +84,7 @@ neurondb_load_training_data(const char *table_name,
 	int n_samples = 0;
 	int feature_dim = 0;
 	int class_count = 0;
+	int valid_samples = 0; /* Track valid samples after skipping NULLs */
 	float *feature_matrix = NULL;
 	double *label_vector = NULL;
 	TupleDesc tupdesc;
@@ -113,88 +114,8 @@ neurondb_load_training_data(const char *table_name,
 		char *feature_where_clause = NULL;
 		initStringInfo(&sql);
 		
-		/* Build WHERE clause for features - handle comma-separated lists */
-		if (strchr(feature_list_str, ',') != NULL)
-		{
-			/* Multiple columns: build (col1 IS NOT NULL AND col2 IS NOT NULL ...) */
-			StringInfoData where_buf;
-			char *feature_list_copy = pstrdup(feature_list_str);
-			char *start = feature_list_copy;
-			char *comma;
-			bool first = true;
-			
-			initStringInfo(&where_buf);
-			appendStringInfoString(&where_buf, "(");
-			
-			/* Parse comma-separated list without modifying original */
-			while ((comma = strchr(start, ',')) != NULL)
-			{
-				size_t len = comma - start;
-				char *col = (char *)palloc(len + 1);
-				char *trimmed_start = col;
-				char *trimmed_end;
-				
-				memcpy(col, start, len);
-				col[len] = '\0';
-				
-				/* Trim leading whitespace */
-				while (*trimmed_start == ' ' || *trimmed_start == '\t')
-					trimmed_start++;
-				
-				/* Trim trailing whitespace */
-				trimmed_end = col + strlen(trimmed_start);
-				while (trimmed_end > trimmed_start && 
-					   (trimmed_end[-1] == ' ' || trimmed_end[-1] == '\t'))
-					trimmed_end--;
-				*trimmed_end = '\0';
-				
-				if (*trimmed_start != '\0')
-				{
-					if (!first)
-						appendStringInfoString(&where_buf, " AND ");
-					appendStringInfo(&where_buf, "%s IS NOT NULL", trimmed_start);
-					first = false;
-				}
-				pfree(col);
-				start = comma + 1;
-			}
-			
-			/* Handle last column */
-			if (*start != '\0')
-			{
-				char *col = pstrdup(start);
-				char *trimmed_start = col;
-				char *trimmed_end;
-				
-				/* Trim leading whitespace */
-				while (*trimmed_start == ' ' || *trimmed_start == '\t')
-					trimmed_start++;
-				
-				/* Trim trailing whitespace */
-				trimmed_end = col + strlen(trimmed_start);
-				while (trimmed_end > trimmed_start && 
-					   (trimmed_end[-1] == ' ' || trimmed_end[-1] == '\t'))
-					trimmed_end--;
-				*trimmed_end = '\0';
-				
-				if (*trimmed_start != '\0')
-				{
-					if (!first)
-						appendStringInfoString(&where_buf, " AND ");
-					appendStringInfo(&where_buf, "%s IS NOT NULL", trimmed_start);
-				}
-				pfree(col);
-			}
-			
-			appendStringInfoString(&where_buf, ")");
-			feature_where_clause = where_buf.data;
-			pfree(feature_list_copy);
-		}
-		else
-		{
-			/* Single column: simple IS NOT NULL */
-			feature_where_clause = psprintf("%s IS NOT NULL", feature_list_str);
-		}
+		/* Skip WHERE clause filtering - we'll skip NULL features during processing */
+		feature_where_clause = NULL;
 		
 		if (target_column)
 		{
@@ -202,19 +123,22 @@ neurondb_load_training_data(const char *table_name,
 			char *target_copy = pstrdup(target_column);
 			const char *target_quoted_const = quote_identifier(target_copy);
 			char *target_quoted = (char *)target_quoted_const;
-			appendStringInfo(&sql, "SELECT %s, %s FROM %s WHERE %s AND %s IS NOT NULL LIMIT %d", 
-				feature_list_str, target_quoted, table_name, feature_where_clause, target_quoted, max_samples_limit);
+			/* Remove WHERE clause filtering - we'll skip NULLs in processing */
+			appendStringInfo(&sql, "SELECT %s, %s FROM %s LIMIT %d", 
+				feature_list_str, target_quoted, table_name, max_samples_limit);
 			pfree(target_quoted);
 			pfree(target_copy);
 		}
 		else
 		{
-			appendStringInfo(&sql, "SELECT %s FROM %s WHERE %s LIMIT %d", 
-				feature_list_str, table_name, feature_where_clause, max_samples_limit);
+			/* Remove WHERE clause filtering - we'll skip NULLs in processing */
+			appendStringInfo(&sql, "SELECT %s FROM %s LIMIT %d", 
+				feature_list_str, table_name, max_samples_limit);
 		}
 		
-		/* Free the WHERE clause */
-		pfree(feature_where_clause);
+		/* Free the WHERE clause if it was allocated */
+		if (feature_where_clause != NULL)
+			pfree(feature_where_clause);
 	}
 
 
@@ -305,7 +229,8 @@ neurondb_load_training_data(const char *table_name,
 	if (target_column)
 		label_vector = (double *)palloc(sizeof(double) * (size_t)n_samples);
 
-	/* Extract all data */
+	/* Extract all data - skip NULL features and continue */
+	valid_samples = 0;
 	for (i = 0; i < n_samples; i++)
 	{
 		HeapTuple current_tuple = SPI_tuptable->vals[i];
@@ -316,11 +241,8 @@ neurondb_load_training_data(const char *table_name,
 		featval = SPI_getbinval(current_tuple, tupdesc, 1, &isnull_feat);
 		if (isnull_feat)
 		{
-			pfree(feature_matrix);
-			if (label_vector)
-				pfree(label_vector);
-			pfree(sql.data);
-			return false;
+			/* Skip NULL features and continue processing */
+			continue;
 		}
 
 		if (feat_arr)
@@ -337,18 +259,18 @@ neurondb_load_training_data(const char *table_name,
 					pfree(sql.data);
 					return false;
 				}
-				if (feature_type == FLOAT8ARRAYOID)
-				{
-					float8 *fdat = (float8 *)ARR_DATA_PTR(curr_arr);
-					for (j = 0; j < feature_dim; j++)
-						feature_matrix[i * feature_dim + j] = (float)fdat[j];
-				}
-				else
-				{
-					float4 *fdat = (float4 *)ARR_DATA_PTR(curr_arr);
-					for (j = 0; j < feature_dim; j++)
-						feature_matrix[i * feature_dim + j] = fdat[j];
-				}
+			if (feature_type == FLOAT8ARRAYOID)
+			{
+				float8 *fdat = (float8 *)ARR_DATA_PTR(curr_arr);
+				for (j = 0; j < feature_dim; j++)
+					feature_matrix[valid_samples * feature_dim + j] = (float)fdat[j];
+			}
+			else
+			{
+				float4 *fdat = (float4 *)ARR_DATA_PTR(curr_arr);
+				for (j = 0; j < feature_dim; j++)
+					feature_matrix[valid_samples * feature_dim + j] = fdat[j];
+			}
 			}
 			else
 			{
@@ -363,9 +285,9 @@ neurondb_load_training_data(const char *table_name,
 		{
 			/* Scalar feature */
 			if (feature_type == FLOAT8OID)
-				feature_matrix[i * feature_dim] = (float)DatumGetFloat8(featval);
+				feature_matrix[valid_samples * feature_dim] = (float)DatumGetFloat8(featval);
 			else
-				feature_matrix[i * feature_dim] = DatumGetFloat4(featval);
+				feature_matrix[valid_samples * feature_dim] = DatumGetFloat4(featval);
 		}
 		else
 		{
@@ -374,15 +296,12 @@ neurondb_load_training_data(const char *table_name,
 			if (vec != NULL && vec->dim == feature_dim)
 			{
 				for (j = 0; j < feature_dim; j++)
-					feature_matrix[i * feature_dim + j] = vec->data[j];
+					feature_matrix[valid_samples * feature_dim + j] = vec->data[j];
 			}
 			else
 			{
-				pfree(feature_matrix);
-				if (label_vector)
-					pfree(label_vector);
-				pfree(sql.data);
-				return false;
+				/* Skip invalid vector and continue */
+				continue;
 			}
 		}
 
@@ -394,30 +313,32 @@ neurondb_load_training_data(const char *table_name,
 			labelval = SPI_getbinval(current_tuple, tupdesc, 2, &isnull_label);
 			if (isnull_label)
 			{
-				pfree(feature_matrix);
-				pfree(label_vector);
-				pfree(sql.data);
-				return false;
+				/* Skip NULL labels and continue */
+				continue;
 			}
 
 			label_type = SPI_gettypeid(tupdesc, 2);
 			if (label_type == INT4OID)
-				label_vector[i] = (double)DatumGetInt32(labelval);
+				label_vector[valid_samples] = (double)DatumGetInt32(labelval);
 			else if (label_type == INT8OID)
-				label_vector[i] = (double)DatumGetInt64(labelval);
+				label_vector[valid_samples] = (double)DatumGetInt64(labelval);
 			else if (label_type == FLOAT4OID)
-				label_vector[i] = (double)DatumGetFloat4(labelval);
+				label_vector[valid_samples] = (double)DatumGetFloat4(labelval);
 			else if (label_type == FLOAT8OID)
-				label_vector[i] = DatumGetFloat8(labelval);
+				label_vector[valid_samples] = DatumGetFloat8(labelval);
 			else
 			{
-				pfree(feature_matrix);
-				pfree(label_vector);
-				pfree(sql.data);
-				return false;
+				/* Skip invalid label type and continue */
+				continue;
 			}
 		}
+		
+		/* Increment valid sample count only after successfully processing both features and label */
+		valid_samples++;
 	}
+	
+	/* Update n_samples to reflect actual valid samples */
+	n_samples = valid_samples;
 
 	/* Count unique classes for classification algorithms */
 	if (target_column && label_vector)

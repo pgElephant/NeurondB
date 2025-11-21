@@ -13,6 +13,19 @@
 \pset pager off
 \pset tuples_only off
 
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
+
 /* Step 1: Verify prerequisites */
 \echo 'Step 1: Verifying prerequisites...'
 
@@ -42,10 +55,11 @@ DROP TABLE IF EXISTS gpu_model_temp;
 CREATE TEMP TABLE gpu_model_temp AS
 SELECT 
 	neurondb.train(
+		'default',
 		'logistic_regression',
 		'test_train_view',
-		'features',
 		'label',
+		ARRAY['features'],
 		'{"max_iters": 1000, "learning_rate": 0.01, "lambda": 0.001}'::jsonb
 	)::integer AS model_id;
 
@@ -103,6 +117,34 @@ SELECT
 	(SELECT COUNT(*)::bigint FROM test_train_view) AS train_samples,
 	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_samples,
 	(SELECT ROUND((metrics->>'accuracy')::numeric, 6) FROM gpu_metrics_temp) AS final_accuracy;
+
+-- Store results in test_metrics table
+INSERT INTO test_metrics (
+	test_name, algorithm, model_id, train_samples, test_samples,
+	accuracy, precision, recall, f1_score, updated_at
+)
+SELECT 
+	'002_logreg_basic',
+	'logistic_regression',
+	(SELECT model_id FROM gpu_model_temp),
+	(SELECT COUNT(*)::bigint FROM test_train_view),
+	(SELECT COUNT(*)::bigint FROM test_test_view),
+	ROUND((metrics->>'accuracy')::numeric, 6),
+	ROUND((metrics->>'precision')::numeric, 6),
+	ROUND((metrics->>'recall')::numeric, 6),
+	ROUND((metrics->>'f1_score')::numeric, 6),
+	CURRENT_TIMESTAMP
+FROM gpu_metrics_temp
+ON CONFLICT (test_name) DO UPDATE SET
+	algorithm = EXCLUDED.algorithm,
+	model_id = EXCLUDED.model_id,
+	train_samples = EXCLUDED.train_samples,
+	test_samples = EXCLUDED.test_samples,
+	accuracy = EXCLUDED.accuracy,
+	precision = EXCLUDED.precision,
+	recall = EXCLUDED.recall,
+	f1_score = EXCLUDED.f1_score,
+	updated_at = CURRENT_TIMESTAMP;
 
 /* Cleanup */
 DROP TABLE IF EXISTS gpu_model_temp;

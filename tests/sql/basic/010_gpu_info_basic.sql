@@ -37,7 +37,7 @@ SELECT * FROM neurondb_llm_gpu_info();
 \echo ''
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-SELECT neurondb_gpu_enable();
+-- GPU already enabled via test_settings above
 
 SELECT 
 	vector_l2_distance_gpu('[1,2,3]'::vector, '[4,5,6]'::vector) AS gpu_l2_distance,

@@ -37,7 +37,7 @@ DECLARE
 	model_id int;
 BEGIN
 	BEGIN
-		SELECT neurondb.train('catboost', 'catboost_data', 'features', 'label', '{}'::jsonb) INTO model_id;
+		SELECT neurondb.train('default', 'catboost', 'catboost_data', 'label', ARRAY['features'], '{}'::jsonb) INTO model_id;
 		IF model_id IS NULL THEN
 			RETURN;
 		END IF;
@@ -63,8 +63,18 @@ BEGIN
 END $$;
 
 /* Step 3: Configure GPU */
-
-SELECT neurondb_gpu_enable() AS gpu_available;
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
 
 \echo '=========================================================================='
 \echo '=========================================================================='
@@ -75,7 +85,7 @@ DECLARE
 	model_id int;
 BEGIN
 	BEGIN
-		SELECT neurondb.train('catboost', 'catboost_data', 'features', 'label', '{}'::jsonb) INTO model_id;
+		SELECT neurondb.train('default', 'catboost', 'catboost_data', 'label', ARRAY['features'], '{}'::jsonb) INTO model_id;
 		IF model_id IS NULL THEN
 			RETURN;
 		END IF;

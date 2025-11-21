@@ -9,6 +9,25 @@ SET client_min_messages TO WARNING;
 \pset pager off
 \pset tuples_only off
 
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+	gpu_kernels_val TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	SELECT setting_value INTO gpu_kernels_val FROM test_settings WHERE setting_key = 'gpu_kernels';
+	
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+		IF gpu_kernels_val IS NOT NULL THEN
+			PERFORM set_config('neurondb.gpu_kernels', gpu_kernels_val, false);
+		END IF;
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
+
 \echo '=========================================================================='
 \echo 'GPU Information: Exhaustive Advanced Test'
 \echo '=========================================================================='
@@ -16,9 +35,8 @@ SET client_min_messages TO WARNING;
 \echo ''
 \echo 'GPU Configuration'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,linreg_train,linreg_predict';
-SELECT neurondb_gpu_enable() AS gpu_available;
+-- GPU already configured via test_settings above
+SELECT current_setting('neurondb.gpu_enabled', true) AS gpu_available;
 
 /*
  * ---- GPU INFORMATION TESTS ----

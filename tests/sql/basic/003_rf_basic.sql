@@ -9,10 +9,20 @@ SET log_min_messages = DEBUG1;
 --
 -- Verify required tables exist
 
--- GPU disabled for testing CPU implementation
-SELECT neurondb_gpu_enable();
-
 \set ON_ERROR_STOP on
+
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
 
 -- Train model once and store in temp table to reuse
 -- Use the view with 1000 rows for basic tests
@@ -23,10 +33,11 @@ SELECT features, label FROM test_train_view;
 DROP TABLE IF EXISTS gpu_model_temp;
 CREATE TEMP TABLE gpu_model_temp AS
 SELECT neurondb.train(
+	'default',
 	'random_forest',
 	'sample_train_subset',
-	'features',
 	'label',
+	ARRAY['features'],
 	'{"n_trees": 3}'::jsonb
 )::integer AS model_id;
 
@@ -115,6 +126,34 @@ SELECT
 		THEN ROUND((m.metrics::jsonb ->> 'f1_score')::numeric, 4)
 		ELSE NULL END
 FROM gpu_metrics_temp m;
+
+-- Store results in test_metrics table
+INSERT INTO test_metrics (
+	test_name, algorithm, model_id, train_samples, test_samples,
+	accuracy, precision, recall, f1_score, updated_at
+)
+SELECT 
+	'003_rf_basic',
+	'random_forest',
+	(SELECT model_id FROM gpu_model_temp),
+	(SELECT COUNT(*)::bigint FROM test_train_view),
+	(SELECT COUNT(*)::bigint FROM test_test_view),
+	CASE WHEN (m.metrics::jsonb ? 'accuracy') THEN ROUND((m.metrics::jsonb->>'accuracy')::numeric, 6) ELSE NULL END,
+	CASE WHEN (m.metrics::jsonb ? 'precision') THEN ROUND((m.metrics::jsonb->>'precision')::numeric, 6) ELSE NULL END,
+	CASE WHEN (m.metrics::jsonb ? 'recall') THEN ROUND((m.metrics::jsonb->>'recall')::numeric, 6) ELSE NULL END,
+	CASE WHEN (m.metrics::jsonb ? 'f1_score') THEN ROUND((m.metrics::jsonb->>'f1_score')::numeric, 6) ELSE NULL END,
+	CURRENT_TIMESTAMP
+FROM gpu_metrics_temp m
+ON CONFLICT (test_name) DO UPDATE SET
+	algorithm = EXCLUDED.algorithm,
+	model_id = EXCLUDED.model_id,
+	train_samples = EXCLUDED.train_samples,
+	test_samples = EXCLUDED.test_samples,
+	accuracy = EXCLUDED.accuracy,
+	precision = EXCLUDED.precision,
+	recall = EXCLUDED.recall,
+	f1_score = EXCLUDED.f1_score,
+	updated_at = CURRENT_TIMESTAMP;
 
 -- Cleanup
 DROP TABLE IF EXISTS gpu_model_temp;

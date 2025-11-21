@@ -16,10 +16,11 @@
 DROP TABLE IF EXISTS gpu_model_temp;
 CREATE TEMP TABLE gpu_model_temp AS
 SELECT neurondb.train(
+	'default',
 	'naive_bayes',
 	'test_train_view',
-	'features',
 	'label',
+	ARRAY['features'],
 	'{}'::jsonb
 )::integer AS model_id;
 

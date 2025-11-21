@@ -13,6 +13,9 @@
 #include "utils/jsonb.h"
 #include "utils/builtins.h"
 #include "utils/elog.h"
+#include "funcapi.h"
+#include "access/htup_details.h"
+#include "catalog/pg_type.h"
 
 #include "neurondb_gpu_backend.h"
 #include "ml_gpu_random_forest.h"
@@ -157,11 +160,13 @@ ndb_gpu_set_active_backend(const ndb_gpu_backend *backend)
 
 	if (backend && backend->init)
 	{
+		elog(LOG, "neurondb: Initializing GPU backend '%s'",
+			 backend->name ? backend->name : "unknown");
 		int rc = backend->init();
 
 		if (rc != 0)
 		{
-			elog(DEBUG1,
+			elog(WARNING,
 				"neurondb: failed to initialise GPU backend "
 				"'%s' (rc=%d)",
 				backend->name ? backend->name : "unknown",
@@ -173,6 +178,8 @@ ndb_gpu_set_active_backend(const ndb_gpu_backend *backend)
 			active_backend = NULL;
 			return rc;
 		}
+		elog(LOG, "neurondb: GPU backend '%s' initialized successfully",
+			 backend->name ? backend->name : "unknown");
 	}
 
 	return 0;
@@ -699,4 +706,98 @@ ndb_gpu_list_backends(void)
 			provider,
 			available ? "available" : "unavailable");
 	}
+}
+
+/* -------------------------------------------------------------------------
+ * SQL-visible listing of registered GPU backends
+ * Returns one row per backend with name, provider, availability, priority, kind
+ * ------------------------------------------------------------------------- */
+PG_FUNCTION_INFO_V1(neurondb_gpu_backends);
+Datum
+neurondb_gpu_backends(PG_FUNCTION_ARGS)
+{
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
+	TupleDesc tupdesc;
+	int i;
+
+	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
+		ereport(ERROR,
+			(errmsg("neurondb_gpu_backends: invalid resultinfo")));
+
+	if (rsinfo->expectedDesc != NULL)
+		tupdesc = rsinfo->expectedDesc;
+	else
+	{
+		tupdesc = CreateTemplateTupleDesc(5);
+		TupleDescInitEntry(tupdesc, (AttrNumber)1, "name", TEXTOID, -1, 0);
+		TupleDescInitEntry(tupdesc,
+			(AttrNumber)2,
+			"provider",
+			TEXTOID,
+			-1,
+			0);
+		TupleDescInitEntry(tupdesc,
+			(AttrNumber)3,
+			"available",
+			BOOLOID,
+			-1,
+			0);
+		TupleDescInitEntry(tupdesc,
+			(AttrNumber)4,
+			"priority",
+			INT4OID,
+			-1,
+			0);
+		TupleDescInitEntry(tupdesc, (AttrNumber)5, "kind", TEXTOID, -1, 0);
+		BlessTupleDesc(tupdesc);
+	}
+
+	InitMaterializedSRF(fcinfo, 0);
+
+	for (i = 0; i < registry.count; i++)
+	{
+		const ndb_gpu_backend *backend = registry.backends[i];
+		Datum values[5];
+		bool nulls[5] = {false, false, false, false, false};
+		const char *name =
+			backend && backend->name ? backend->name : "unknown";
+		const char *provider = backend && backend->provider
+			? backend->provider
+			: "unknown";
+		bool available =
+			backend ? (ndb_backend_is_available(backend) != 0) : false;
+		int32 priority = backend ? ndb_backend_priority(backend->kind) : 0;
+		const char *kind_str = "unknown";
+		if (backend)
+		{
+			switch (backend->kind)
+			{
+			case NDB_GPU_BACKEND_METAL:
+				kind_str = "metal";
+				break;
+			case NDB_GPU_BACKEND_CUDA:
+				kind_str = "cuda";
+				break;
+			case NDB_GPU_BACKEND_ROCM:
+				kind_str = "rocm";
+				break;
+			default:
+				kind_str = "none";
+				break;
+			}
+		}
+
+		values[0] = CStringGetTextDatum(name);
+		values[1] = CStringGetTextDatum(provider);
+		values[2] = BoolGetDatum(available);
+		values[3] = Int32GetDatum(priority);
+		values[4] = CStringGetTextDatum(kind_str);
+
+		tuplestore_putvalues(rsinfo->setResult,
+			rsinfo->setDesc ? rsinfo->setDesc : tupdesc,
+			values,
+			nulls);
+	}
+
+	return (Datum)0;
 }

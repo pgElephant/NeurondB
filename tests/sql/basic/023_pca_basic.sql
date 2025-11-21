@@ -31,7 +31,18 @@ SELECT COUNT(*)::bigint AS data_rows FROM pca_data;
 /* Step 2: Configure GPU */
 \echo 'Step 2: Configuring GPU acceleration...'
 
-SELECT neurondb_gpu_enable() AS gpu_available;
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
 
 \echo '=========================================================================='
 \echo '=========================================================================='

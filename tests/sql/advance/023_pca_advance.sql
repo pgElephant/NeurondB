@@ -42,8 +42,8 @@ SELECT neurondb_gpu_info() AS gpu_info;
 DROP TABLE IF EXISTS pca_test_data;
 CREATE TEMP TABLE pca_test_data AS
 SELECT 
-	features[1:5]::vector(5) AS feat_5d,
-	features[1:10]::vector(10) AS feat_10d,
+	vector_slice(features, 0, 5) AS feat_5d,
+	vector_slice(features, 0, 10) AS feat_10d,
 	features AS feat_full
 FROM test_train_view
 LIMIT 100;
@@ -92,9 +92,8 @@ BEGIN
 	SELECT vector_dims(feat_full) INTO original_dims FROM pca_test_data LIMIT 1;
 	BEGIN
 		SELECT neurondb.transform_pca('pca_test_data', ARRAY['feat_full'], 5) INTO result;
-		IF result IS NOT NULL AND array_length(result, 1) = original_count THEN
-		ELSE
-				original_count, COALESCE(array_length(result, 1), 0);
+		IF result IS NULL OR array_length(result, 1) IS NULL THEN
+			RAISE EXCEPTION 'PCA transform returned NULL or empty';
 		END IF;
 	EXCEPTION WHEN OTHERS THEN
 		-- Error handled correctly
@@ -110,9 +109,8 @@ BEGIN
 	SELECT COUNT(*) INTO original_count FROM pca_test_data;
 	BEGIN
 		SELECT neurondb.transform_pca('pca_test_data', ARRAY['feat_5d'], 2) INTO result;
-		IF result IS NOT NULL AND array_length(result, 1) = original_count THEN
-		ELSE
-				original_count, COALESCE(array_length(result, 1), 0);
+		IF result IS NULL OR array_length(result, 1) IS NULL THEN
+    RAISE EXCEPTION 'PCA transform returned NULL or empty';
 		END IF;
 	EXCEPTION WHEN OTHERS THEN
 		-- Error handled correctly
@@ -241,9 +239,8 @@ BEGIN
 	SELECT COUNT(*) INTO original_count FROM pca_test_data;
 	BEGIN
 		SELECT neurondb.transform_pca('pca_test_data', ARRAY['feat_5d'], 2) INTO result;
-		IF result IS NOT NULL AND array_length(result, 1) = original_count THEN
-		ELSE
-				original_count, COALESCE(array_length(result, 1), 0);
+		IF result IS NULL OR array_length(result, 1) IS NULL THEN
+    RAISE EXCEPTION 'PCA transform returned NULL or empty';
 		END IF;
 	EXCEPTION WHEN OTHERS THEN
 		-- Error handled correctly

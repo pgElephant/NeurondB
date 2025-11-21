@@ -323,7 +323,6 @@ BEGIN
 	IF cpu_mid IS NOT NULL THEN
 		BEGIN
 			result := neurondb.evaluate(cpu_mid, 'test_test_view', 'features', 'label');
-				result->>'tp', result->>'fp', result->>'tn', result->>'fn';
 		EXCEPTION WHEN OTHERS THEN
 		END;
 	END IF;
@@ -338,7 +337,6 @@ BEGIN
 	IF gpu_mid IS NOT NULL THEN
 		BEGIN
 			result := neurondb.evaluate(gpu_mid, 'test_test_view', 'features', 'label');
-				result->>'tp', result->>'fp', result->>'tn', result->>'fn';
 		EXCEPTION WHEN OTHERS THEN
 		END;
 	END IF;

@@ -616,6 +616,53 @@ CREATE VIEW test_test_view AS
 SELECT features::vector(28) as features, label 
 FROM {test_table_full} 
 LIMIT {num_rows};
+
+-- Create or truncate test settings table for test runner configuration
+CREATE TABLE IF NOT EXISTS test_settings (
+	setting_key TEXT PRIMARY KEY,
+	setting_value TEXT,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create or truncate test settings table for test runner configuration
+CREATE TABLE IF NOT EXISTS test_settings (
+	setting_key TEXT PRIMARY KEY,
+	setting_value TEXT,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create or truncate test metrics table for storing test results
+CREATE TABLE IF NOT EXISTS test_metrics (
+	test_name TEXT PRIMARY KEY,
+	algorithm TEXT,
+	model_id INTEGER,
+	train_samples BIGINT,
+	test_samples BIGINT,
+	-- Regression metrics
+	mse NUMERIC,
+	rmse NUMERIC,
+	mae NUMERIC,
+	r_squared NUMERIC,
+	-- Classification metrics
+	accuracy NUMERIC,
+	precision NUMERIC,
+	recall NUMERIC,
+	f1_score NUMERIC,
+	-- Clustering metrics
+	silhouette_score NUMERIC,
+	inertia NUMERIC,
+	n_clusters INTEGER,
+	-- Time series metrics
+	mape NUMERIC,
+	-- Predictions (stored as JSONB for flexibility)
+	predictions JSONB,
+	-- Additional metadata
+	metadata JSONB,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+TRUNCATE TABLE test_metrics;
 """
 				
 				create_proc = subprocess.Popen(
@@ -854,7 +901,7 @@ def main() -> int:
 		print(f"Failed to switch to {args.mode.upper()} mode. Aborting.", file=sys.stderr)
 		return 1
 	
-	# 3. Create test views
+	# 3. Create test views (this also creates test_settings table)
 	when = datetime.now()
 	views_start = time.perf_counter()
 	views_ok, row_count = create_test_views(args.db, args.psql, args.num_rows, args.host, args.port)
@@ -863,6 +910,38 @@ def main() -> int:
 	if not views_ok:
 		print(f"Warning: Failed to create test views. Some tests may fail.", file=sys.stderr)
 		# Continue anyway - some tests might not need the views
+	
+	# 3.5. Store all test settings in test_settings table for tests to read
+	when = datetime.now()
+	settings_start = time.perf_counter()
+	settings_sql = f"""
+	-- Store GPU mode setting
+	INSERT INTO test_settings (setting_key, setting_value, updated_at)
+	VALUES ('gpu_mode', '{args.mode}', CURRENT_TIMESTAMP)
+	ON CONFLICT (setting_key) DO UPDATE SET
+		setting_value = EXCLUDED.setting_value,
+		updated_at = CURRENT_TIMESTAMP;
+	
+	-- Store number of rows used for test views
+	INSERT INTO test_settings (setting_key, setting_value, updated_at)
+	VALUES ('num_rows', '{args.num_rows}', CURRENT_TIMESTAMP)
+	ON CONFLICT (setting_key) DO UPDATE SET
+		setting_value = EXCLUDED.setting_value,
+		updated_at = CURRENT_TIMESTAMP;
+	"""
+	if args.gpu_kernels:
+		settings_sql += f"""
+	-- Store GPU kernels if provided
+	INSERT INTO test_settings (setting_key, setting_value, updated_at)
+	VALUES ('gpu_kernels', '{args.gpu_kernels}', CURRENT_TIMESTAMP)
+	ON CONFLICT (setting_key) DO UPDATE SET
+		setting_value = EXCLUDED.setting_value,
+		updated_at = CURRENT_TIMESTAMP;
+	"""
+	settings_ok, settings_out, settings_err = run_psql_command(args.db, settings_sql, args.psql, args.verbose)
+	settings_elapsed = time.perf_counter() - settings_start
+	if not settings_ok:
+		print(f"Warning: Failed to set test settings: {settings_err}", file=sys.stderr)
 	
 	sql_files = list_sql_files(args.category)
 	if not sql_files:

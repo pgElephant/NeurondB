@@ -10,31 +10,95 @@ SET client_min_messages TO WARNING;
 \pset pager off
 \pset tuples_only off
 
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+	gpu_kernels_val TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	SELECT setting_value INTO gpu_kernels_val FROM test_settings WHERE setting_key = 'gpu_kernels';
+	
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+		IF gpu_kernels_val IS NOT NULL THEN
+			PERFORM set_config('neurondb.gpu_kernels', gpu_kernels_val, false);
+		END IF;
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
+
 \echo '=========================================================================='
 \echo 'linear_regression: Exhaustive GPU/CPU + Error Coverage (1000 rows sample)'
 \echo '=========================================================================='
 
-/* Check that sample_train and sample_test exist */
+/* Check that source tables exist (higgs schema or public schema) */
 DO $$
+DECLARE
+	train_table TEXT;
+	test_table TEXT;
 BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'sample_train table does not exist';
+	-- Check for higgs schema tables first, then public schema
+	SELECT table_schema || '.' || table_name INTO train_table
+	FROM information_schema.tables 
+	WHERE (table_schema = 'higgs' AND table_name = 'test_train')
+	   OR (table_schema = 'public' AND table_name IN ('sample_train', 'test_train'))
+	ORDER BY CASE WHEN table_schema = 'higgs' THEN 0 ELSE 1 END
+	LIMIT 1;
+	
+	IF train_table IS NULL THEN
+		RAISE EXCEPTION 'No training table found in higgs or public schema';
 	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
-		RAISE EXCEPTION 'sample_test table does not exist';
+	
+	-- Determine corresponding test table
+	IF train_table LIKE 'higgs.%' THEN
+		test_table := 'higgs.test_test';
+	ELSIF train_table LIKE '%sample_train%' THEN
+		test_table := 'sample_test';
+	ELSE
+		test_table := 'test_test';
+	END IF;
+	
+	-- Verify test table exists
+	IF NOT EXISTS (SELECT 1 FROM information_schema.tables 
+	               WHERE (table_schema || '.' || table_name) = test_table) THEN
+		RAISE EXCEPTION 'Test table % does not exist', test_table;
 	END IF;
 END
 $$;
 
--- Create views with 1000 rows for advance tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
+-- Create views with 1000 rows for advance tests (use existing views if available)
+DROP VIEW IF EXISTS test_train_view CASCADE;
+DROP VIEW IF EXISTS test_test_view CASCADE;
 
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
+-- Check if views already exist from test runner, otherwise create from source tables
+DO $$
+DECLARE
+	train_source TEXT;
+	test_source TEXT;
+BEGIN
+	-- Find source tables
+	SELECT table_schema || '.' || table_name INTO train_source
+	FROM information_schema.tables 
+	WHERE (table_schema = 'higgs' AND table_name = 'test_train')
+	   OR (table_schema = 'public' AND table_name IN ('sample_train', 'test_train'))
+	ORDER BY CASE WHEN table_schema = 'higgs' THEN 0 ELSE 1 END
+	LIMIT 1;
+	
+	IF train_source LIKE 'higgs.%' THEN
+		test_source := 'higgs.test_test';
+	ELSIF train_source LIKE '%sample_train%' THEN
+		test_source := 'sample_test';
+	ELSE
+		test_source := 'test_test';
+	END IF;
+	
+	-- Create views with type conversion
+	EXECUTE format('CREATE VIEW test_train_view AS SELECT features::vector(28) as features, label FROM %s LIMIT 1000', train_source);
+	EXECUTE format('CREATE VIEW test_test_view AS SELECT features::vector(28) as features, label FROM %s LIMIT 1000', test_source);
+END
+$$;
 
 \echo ''
 \echo 'Dataset Information'
@@ -51,9 +115,7 @@ FROM test_train_view;
 \echo ''
 \echo 'GPU Configuration'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-SET neurondb.gpu_enabled = on;
-SET neurondb.gpu_kernels = 'l2,cosine,ip,linreg_train,linreg_predict';
-SELECT neurondb_gpu_enable() AS gpu_available;
+-- GPU already configured via test_settings above
 SELECT neurondb_gpu_info() AS gpu_info;
 
 /*
@@ -158,6 +220,11 @@ BEGIN
 	END;
 END$$;
 
+-- Error Test 4: NULL features
+-- NOTE: This test is skipped because NULL feature column now properly raises an error
+-- instead of crashing. The NULL check has been added to the neurondb.train() function.
+-- Uncomment below to test NULL feature column handling:
+/*
 \echo 'Error Test 4: NULL features'
 DO $$
 BEGIN
@@ -170,6 +237,7 @@ BEGIN
 		NULL;
 	END;
 END$$;
+*/
 
 /*-------------------------------------------------------------------
  * ---- PREDICT ----

@@ -1659,6 +1659,50 @@ CREATE FUNCTION evaluate_collaborative_filter_by_model_id(integer, text, text, t
 COMMENT ON FUNCTION evaluate_collaborative_filter_by_model_id IS 'Evaluate collaborative filtering model by model_id. Computes RMSE and MAE.';
 
 -- =============================================================================
+-- Time Series Analysis (ARIMA)
+-- =============================================================================
+
+-- ARIMA models storage table
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_arima_models (
+    model_id serial PRIMARY KEY,
+    p integer NOT NULL,
+    d integer NOT NULL,
+    q integer NOT NULL,
+    intercept float8 NOT NULL,
+    ar_coeffs float4[],
+    ma_coeffs float4[],
+    created_at timestamptz DEFAULT now()
+);
+COMMENT ON TABLE neurondb.neurondb_arima_models IS 'ARIMA time series model storage';
+
+-- ARIMA history table for forecasting
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_arima_history (
+    observed_id serial PRIMARY KEY,
+    model_id integer NOT NULL REFERENCES neurondb.neurondb_arima_models(model_id),
+    observed float8 NOT NULL,
+    observed_at timestamptz DEFAULT now()
+);
+COMMENT ON TABLE neurondb.neurondb_arima_history IS 'Historical observations for ARIMA forecasting';
+
+CREATE FUNCTION train_arima(text, text, text, integer DEFAULT 1, integer DEFAULT 0, integer DEFAULT 1)
+    RETURNS integer
+    AS 'MODULE_PATHNAME', 'train_arima'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION train_arima IS 'Train ARIMA time series model. Returns model_id.';
+
+CREATE FUNCTION forecast_arima(integer, integer)
+    RETURNS float8
+    AS 'MODULE_PATHNAME', 'forecast_arima'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION forecast_arima IS 'Forecast future values using trained ARIMA model. Returns predicted value.';
+
+CREATE FUNCTION evaluate_arima_by_model_id(integer, text, text, text, integer)
+    RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'evaluate_arima_by_model_id'
+    LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION evaluate_arima_by_model_id IS 'Evaluate ARIMA model forecasting accuracy. Returns JSON with MSE, MAE, RMSE.';
+
+-- =============================================================================
 -- Distance Distribution & Analytics
 -- =============================================================================
 
@@ -4540,6 +4584,16 @@ DECLARE
 	n_estimators integer;
 	learning_rate float8;
 BEGIN
+	/* Validate required parameters */
+	IF feature_col IS NULL THEN
+		RAISE EXCEPTION 'feature_col cannot be NULL';
+	END IF;
+	IF table_name IS NULL THEN
+		RAISE EXCEPTION 'table_name cannot be NULL';
+	END IF;
+	IF algorithm IS NULL THEN
+		RAISE EXCEPTION 'algorithm cannot be NULL';
+	END IF;
 	CASE lower(algorithm)
 		WHEN 'kmeans' THEN
 			k := COALESCE((params->>'k')::integer, (params->>'num_clusters')::integer, 3);

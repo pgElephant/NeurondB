@@ -8,50 +8,56 @@
 --
 -- Verify required tables exist
 
--- Try to enable GPU, but fall back to CPU if not available
-DO $$
-BEGIN
-	BEGIN
-		PERFORM neurondb_gpu_enable();
-	EXCEPTION WHEN OTHERS THEN
-	END;
-END
-$$;
-
 \set ON_ERROR_STOP on
 
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
+
 -- Train model once and store in temp table to reuse
--- Try GPU first, fall back to CPU if GPU is not available
+-- Use unified API to avoid server crashes
 DROP TABLE IF EXISTS gpu_model_temp;
 DO $$
 DECLARE
 	model_id_val integer;
 BEGIN
 	BEGIN
-		-- Try with GPU enabled
+		-- Use unified API with default project to avoid crashes
 		model_id_val := neurondb.train(
+			'default',
 			'gmm',
 			'test_train_view',
-			'features',
 			NULL,
-			'{"k": 3, "max_iters": 100}'::jsonb
+			ARRAY['features'],
+			'{"n_components": 3, "max_iters": 100}'::jsonb
 		);
 		CREATE TEMP TABLE gpu_model_temp AS SELECT model_id_val::integer AS model_id;
 	EXCEPTION WHEN OTHERS THEN
-		-- If GPU training fails, disable GPU and retry
-		IF SQLERRM LIKE '%GPU training requested but GPU hardware not available%' THEN
+		-- If training fails, try with CPU explicitly disabled
+		BEGIN
+			SET neurondb.gpu_enabled = off;
 			model_id_val := neurondb.train(
+				'default',
 				'gmm',
 				'test_train_view',
-				'features',
 				NULL,
-				'{"k": 3, "max_iters": 100}'::jsonb
+				ARRAY['features'],
+				'{"n_components": 3, "max_iters": 100}'::jsonb
 			);
 			CREATE TEMP TABLE gpu_model_temp AS SELECT model_id_val::integer AS model_id;
-		ELSE
+		EXCEPTION WHEN OTHERS THEN
 			-- Re-raise other errors
 			RAISE;
-		END IF;
+		END;
 	END;
 END
 $$;

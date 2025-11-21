@@ -23,8 +23,8 @@ BEGIN
 	ELSE
 	END IF;
 	
-	-- Check if lightgbm is in ml_models
-	IF EXISTS (SELECT 1 FROM neurondb.ml_models WHERE algorithm = 'lightgbm' LIMIT 1) THEN
+	-- Check if lightgbm is in ml_models (cast to text for comparison, no LIMIT in EXISTS)
+	IF EXISTS (SELECT 1 FROM neurondb.ml_models WHERE algorithm::text = 'lightgbm') THEN
 	ELSE
 	END IF;
 END $$;

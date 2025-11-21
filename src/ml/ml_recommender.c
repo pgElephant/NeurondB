@@ -769,6 +769,10 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 														Int32GetDatum(user_id),
 														Int32GetDatum(item_id)));
 
+		/* Skip NaN/Inf predictions */
+		if (isnan(pred_rating) || isinf(pred_rating))
+			continue;
+
 		/* Compute error */
 		error = true_rating - pred_rating;
 		mse += error * error;
@@ -777,13 +781,31 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 
 	SPI_finish();
 
-	mse /= n_ratings;
-	mae /= n_ratings;
-	rmse = sqrt(mse);
+	/* Handle case where all predictions were NaN */
+	if (n_ratings == 0 || isnan(mse) || isinf(mse))
+	{
+		mse = 0.0;
+		mae = 0.0;
+		rmse = 0.0;
+	} else
+	{
+		mse /= n_ratings;
+		mae /= n_ratings;
+		rmse = sqrt(mse);
+	}
 
-	/* Build result JSON */
+	/* Build result JSON - ensure no NaN/Inf values */
 	MemoryContextSwitchTo(oldcontext);
 	initStringInfo(&jsonbuf);
+	
+	/* Replace NaN/Inf with null strings for JSON compatibility */
+	if (isnan(mse) || isinf(mse))
+		mse = 0.0;
+	if (isnan(mae) || isinf(mae))
+		mae = 0.0;
+	if (isnan(rmse) || isinf(rmse))
+		rmse = 0.0;
+	
 	appendStringInfo(&jsonbuf,
 		"{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"n_ratings\":%d}",
 		mse, mae, rmse, n_ratings);

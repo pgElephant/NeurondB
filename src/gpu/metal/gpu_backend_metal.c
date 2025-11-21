@@ -24,6 +24,8 @@
 #include "fmgr.h"
 #include "utils/numeric.h"
 #include "lib/stringinfo.h"
+#include "utils/memutils.h"
+#include "miscadmin.h"
 #include "neurondb_gpu_backend.h"
 #include "neurondb_gpu_types.h"
 #include "neurondb_gpu.h"
@@ -32,7 +34,9 @@
 #include "ml_gpu_linear_regression.h"
 #include "ml_gpu_svm.h"
 #include "ml_random_forest_internal.h"
+#include "ml_random_forest_shared.h"
 #include "ml_logistic_regression_internal.h"
+#include "common/pg_prng.h"
 #include "ml_linear_regression_internal.h"
 #include "ml_svm_internal.h"
 #include "ml_decision_tree_internal.h"
@@ -131,20 +135,69 @@ static bool
 metal_backend_init_impl(void)
 {
 	bool ok;
+	const char *device_name;
 
+	/* Expanded diagnostics for initialization path */
+	const char *arch = NULL;
+	const char *deploy = NULL;
+	arch =
+	#if defined(__aarch64__)
+		"arm64";
+	#elif defined(__x86_64__)
+		"x86_64";
+	#else
+		"unknown";
+	#endif
+	deploy = getenv("MACOSX_DEPLOYMENT_TARGET");
+	if (!deploy)
+		deploy = "(unset)";
+	elog(LOG,
+		"neurondb: Attempting Metal backend initialization (arch=%s, DEPLOYMENT_TARGET=%s)",
+		arch,
+		deploy);
+	elog(DEBUG1, "neurondb: Metal pre-check available=%s name='%s'", metal_backend_is_available() ? "YES" : "NO", metal_backend_device_name());
+	
+	/* Try to initialize Metal */
 	ok = metal_backend_init();
 	if (!ok)
 	{
-		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: Metal backend initialization failed. "
-					"Check Metal device support and driver installation on "
-					"this system.")));
+		elog(DEBUG1, "neurondb: metal_backend_init() returned false; re-checking availability");
+		/* Initialization failed - try to get diagnostic info */
+		device_name = metal_backend_device_name();
+		elog(DEBUG1,
+			"neurondb: Metal device_name after failure='%s' available=%s", device_name ? device_name : "(null)", metal_backend_is_available() ? "YES" : "NO");
+		
+		/* Check if Metal is at least detectable (is_available checks this) */
+		if (metal_backend_is_available())
+		{
+			elog(WARNING,
+				"neurondb: Metal backend initialization failed "
+				"but device is detectable. "
+				"This may indicate a Metal framework issue in PostgreSQL context "
+				"(device creation or command queue creation failed). "
+				"Falling back to CPU.");
+		} else
+		{
+			elog(WARNING,
+				"neurondb: Metal backend initialization failed "
+				"(MTLCreateSystemDefaultDevice() returned nil). "
+				"Metal is not available in this process context. "
+				"Falling back to CPU.");
+		}
 		return false;
+	}
+	
+	device_name = metal_backend_device_name();
+	elog(DEBUG1, "neurondb: Metal init succeeded device_name='%s'", device_name ? device_name : "(null)");
+	{
+		char caps[512];
+		metal_backend_get_capabilities(caps, sizeof(caps));
+		elog(DEBUG1, "neurondb: Metal capabilities: %s", caps);
 	}
 	elog(LOG,
 		"neurondb: Metal GPU backend initialized successfully "
-		"(MTLDevice acquired, command queues/pipelines ready)");
+		"(device: %s, MTLDevice acquired, command queues/pipelines ready)",
+		device_name ? device_name : "unknown");
 	return true;
 }
 
@@ -1014,6 +1067,115 @@ ndb_metal_launch_pq_encode(const float *vectors,
 
 /* Metal ML Training Functions (CPU fallback using existing implementations) */
 
+/* Metal RF model structures (matches CUDA format) - defined early for use in training */
+typedef struct NdbCudaRfNode
+{
+	int feature_idx;
+	float threshold;
+	int left_child;
+	int right_child;
+	float value;
+} NdbCudaRfNode;
+
+typedef struct NdbCudaRfModelHeader
+{
+	int tree_count;
+	int feature_dim;
+	int class_count;
+	int sample_count;
+	int majority_class;
+	double majority_fraction;
+} NdbCudaRfModelHeader;
+
+typedef struct NdbCudaRfTreeHeader
+{
+	int node_count;
+	int nodes_start;
+	int root_index;
+	int max_feature_index;
+} NdbCudaRfTreeHeader;
+
+/* Metal LR model header (matches CUDA format) */
+typedef struct NdbCudaLrModelHeader
+{
+	int feature_dim;
+	int n_samples;
+	int max_iters;
+	double learning_rate;
+	double lambda;
+	double bias;
+} NdbCudaLrModelHeader;
+
+/* Helper: Fill a single-node tree (leaf) */
+static void
+rf_fill_single_node_tree_metal(NdbCudaRfNode *node, int majority_class)
+{
+	node->feature_idx = -1;
+	node->threshold = 0.0f;
+	node->left_child = -1;
+	node->right_child = -1;
+	node->value = (float)majority_class;
+}
+
+/* Helper: Compute feature statistics (mean, variance) */
+static void
+rf_compute_feature_stats_metal(const float *features,
+	int n_samples,
+	int feature_dim,
+	int feature_idx,
+	double *sum_out,
+	double *sumsq_out)
+{
+	double sum = 0.0;
+	double sumsq = 0.0;
+	int i;
+
+	for (i = 0; i < n_samples; i++)
+	{
+		float val = features[i * feature_dim + feature_idx];
+		if (isfinite(val))
+		{
+			sum += (double)val;
+			sumsq += (double)val * (double)val;
+		}
+	}
+
+	*sum_out = sum;
+	*sumsq_out = sumsq;
+}
+
+/* Helper: Compute split counts for left/right branches */
+static void
+rf_compute_split_counts_metal(const float *features,
+	const int *labels,
+	int n_samples,
+	int feature_dim,
+	int feature_idx,
+	float threshold,
+	int class_count,
+	int *left_counts,
+	int *right_counts)
+{
+	int i;
+
+	memset(left_counts, 0, sizeof(int) * class_count);
+	memset(right_counts, 0, sizeof(int) * class_count);
+
+	for (i = 0; i < n_samples; i++)
+	{
+		float val = features[i * feature_dim + feature_idx];
+		int label = labels[i];
+
+		if (label < 0 || label >= class_count)
+			continue;
+
+		if (isfinite(val) && (double)val <= (double)threshold)
+			left_counts[label]++;
+		else
+			right_counts[label]++;
+	}
+}
+
 static int
 ndb_metal_rf_train(const float *features,
 		   const double *labels,
@@ -1025,11 +1187,280 @@ ndb_metal_rf_train(const float *features,
 		   Jsonb **metrics,
 		   char **errstr)
 {
-	/* Metal backend: RF training uses CPU fallback */
-	/* Return -1 to trigger CPU fallback in gpu_model_bridge.c */
+	const int default_n_trees = 32;
+	int n_trees = default_n_trees;
+	int *label_ints = NULL;
+	int *class_counts = NULL;
+	int *best_left_counts = NULL;
+	int *best_right_counts = NULL;
+	int *tmp_left_counts = NULL;
+	int *tmp_right_counts = NULL;
+	bytea *payload = NULL;
+	Jsonb *metrics_json = NULL;
+	pg_prng_state rng;
+	bool seeded = false;
+	double gini_accumulator = 0.0;
+	size_t class_bytes;
+	int i;
+	int j;
+	int rc = -1;
+	NdbCudaRfModelHeader model_hdr;
+	NdbCudaRfTreeHeader *tree_hdrs;
+	NdbCudaRfNode *nodes;
+	int total_nodes;
+	size_t header_bytes;
+	size_t payload_bytes;
+	char *base;
+	int majority_class = 0;
+	int best_count = 0;
+	double majority_fraction = 0.0;
+
 	if (errstr)
-		*errstr = pstrdup("Metal RF training not implemented, using CPU fallback");
-	return -1;
+		*errstr = NULL;
+	if (model_data == NULL || labels == NULL || n_samples <= 0
+		|| feature_dim <= 0 || class_count <= 0)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid input parameters for Metal RF train");
+		return -1;
+	}
+
+	(void)hyperparams;
+	if (n_trees <= 0)
+		n_trees = default_n_trees;
+	if (class_count > 4096)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal RF training: class_count exceeds maximum of 4096");
+		return -1;
+	}
+
+	class_bytes = sizeof(int) * (size_t)class_count;
+	if (class_bytes > MaxAllocSize)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal RF train: allocation size exceeds MaxAllocSize");
+		return -1;
+	}
+
+	label_ints = (int *)palloc(sizeof(int) * (size_t)n_samples);
+	class_counts = (int *)palloc0(class_bytes);
+	tmp_left_counts = (int *)palloc(class_bytes);
+	tmp_right_counts = (int *)palloc(class_bytes);
+	best_left_counts = (int *)palloc(class_bytes);
+	best_right_counts = (int *)palloc(class_bytes);
+
+	if (label_ints == NULL || class_counts == NULL ||
+		tmp_left_counts == NULL || tmp_right_counts == NULL ||
+		best_left_counts == NULL || best_right_counts == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal RF train: palloc failed");
+		goto cleanup;
+	}
+
+	for (i = 0; i < n_samples; i++)
+	{
+		double val = labels[i];
+		label_ints[i] = (int)rint(val);
+		if (label_ints[i] < 0 || label_ints[i] >= class_count)
+			label_ints[i] = 0;
+	}
+
+	for (i = 0; i < n_samples; i++)
+		class_counts[label_ints[i]]++;
+
+	if (!seeded)
+	{
+		if (!pg_prng_strong_seed(&rng))
+			pg_prng_seed(&rng, (uint64)n_samples ^ (uint64)feature_dim);
+		seeded = true;
+	}
+
+	for (i = 1; i < class_count; i++)
+	{
+		if (class_counts[i] > best_count)
+		{
+			best_count = class_counts[i];
+			majority_class = i;
+		}
+	}
+	majority_fraction = (n_samples > 0)
+		? ((double)best_count / (double)n_samples)
+		: 0.0;
+
+	total_nodes = n_trees * 3;
+	header_bytes = sizeof(NdbCudaRfModelHeader)
+		+ sizeof(NdbCudaRfTreeHeader) * n_trees;
+	payload_bytes = header_bytes + sizeof(NdbCudaRfNode) * total_nodes;
+
+	if (payload_bytes > MaxAllocSize || VARHDRSZ + payload_bytes > MaxAllocSize)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal RF train: payload size exceeds MaxAllocSize");
+		goto cleanup;
+	}
+
+	payload = (bytea *)palloc(VARHDRSZ + payload_bytes);
+	if (payload == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal RF train: palloc failed for payload");
+		goto cleanup;
+	}
+	SET_VARSIZE(payload, VARHDRSZ + payload_bytes);
+	base = VARDATA(payload);
+
+	model_hdr.tree_count = n_trees;
+	model_hdr.feature_dim = feature_dim;
+	model_hdr.class_count = class_count;
+	model_hdr.sample_count = n_samples;
+	model_hdr.majority_class = majority_class;
+	model_hdr.majority_fraction = majority_fraction;
+
+	memcpy(base, &model_hdr, sizeof(model_hdr));
+	tree_hdrs = (NdbCudaRfTreeHeader *)(base + sizeof(model_hdr));
+	nodes = (NdbCudaRfNode *)(base + header_bytes);
+
+	for (i = 0; i < n_trees; i++)
+	{
+		double best_gini = DBL_MAX;
+		float best_threshold = 0.0f;
+		int best_feature = -1;
+		int left_majority = majority_class;
+		int right_majority = majority_class;
+		int left_total = 0;
+		int right_total = 0;
+		int node_offset = i * 3;
+		double noise = pg_prng_double(&rng) - 0.5;
+
+		memset(best_left_counts, 0, class_bytes);
+		memset(best_right_counts, 0, class_bytes);
+
+		for (j = 0; j < feature_dim; j++)
+		{
+			double sum_host = 0.0;
+			double sumsq_host = 0.0;
+			double variance;
+			float threshold;
+
+			rf_compute_feature_stats_metal(features, n_samples,
+				feature_dim, j, &sum_host, &sumsq_host);
+
+			if (sum_host == 0.0 && sumsq_host == 0.0)
+				continue;
+
+			threshold = (float)(sum_host / (double)n_samples);
+			variance = (sumsq_host / (double)n_samples)
+				- ((double)threshold * (double)threshold);
+			if (variance < 0.0)
+				variance = 0.0;
+			if (variance > 0.0)
+				threshold += (float)(noise * sqrt(variance) * 0.25);
+
+			rf_compute_split_counts_metal(features, label_ints,
+				n_samples, feature_dim, j, threshold,
+				class_count, tmp_left_counts, tmp_right_counts);
+
+			{
+				double gini = rf_split_gini(tmp_left_counts,
+					tmp_right_counts, class_count,
+					&left_total, &right_total, NULL, NULL);
+
+				if (gini < best_gini && gini >= 0.0)
+				{
+					best_gini = gini;
+					best_feature = j;
+					best_threshold = threshold;
+					memcpy(best_left_counts, tmp_left_counts, class_bytes);
+					memcpy(best_right_counts, tmp_right_counts, class_bytes);
+				}
+			}
+		}
+
+		if (best_feature < 0)
+		{
+			tree_hdrs[i].node_count = 1;
+			tree_hdrs[i].nodes_start = node_offset;
+			tree_hdrs[i].root_index = 0;
+			tree_hdrs[i].max_feature_index = -1;
+			rf_fill_single_node_tree_metal(&nodes[node_offset], majority_class);
+			continue;
+		}
+
+		left_total = 0;
+		right_total = 0;
+		for (j = 0; j < class_count; j++)
+		{
+			if (best_left_counts[j] > left_total)
+			{
+				left_total = best_left_counts[j];
+				left_majority = j;
+			}
+			if (best_right_counts[j] > right_total)
+			{
+				right_total = best_right_counts[j];
+				right_majority = j;
+			}
+		}
+
+		tree_hdrs[i].node_count = 3;
+		tree_hdrs[i].nodes_start = node_offset;
+		tree_hdrs[i].root_index = 0;
+		tree_hdrs[i].max_feature_index = best_feature;
+
+		nodes[node_offset].feature_idx = best_feature;
+		nodes[node_offset].threshold = best_threshold;
+		nodes[node_offset].left_child = 1;
+		nodes[node_offset].right_child = 2;
+		nodes[node_offset].value = (float)majority_class;
+
+		rf_fill_single_node_tree_metal(&nodes[node_offset + 1], left_majority);
+		rf_fill_single_node_tree_metal(&nodes[node_offset + 2], right_majority);
+
+		if (best_gini > 0.0 && best_gini < DBL_MAX / 4.0)
+			gini_accumulator += best_gini;
+	}
+
+	{
+		RFMetricsSpec spec;
+
+		memset(&spec, 0, sizeof(spec));
+		spec.storage = "metal";
+		spec.algorithm = "random_forest";
+		spec.tree_count = n_trees;
+		spec.majority_class = majority_class;
+		spec.majority_fraction = majority_fraction;
+		spec.gini = (gini_accumulator > 0.0)
+			? (gini_accumulator / (double)n_trees)
+			: 0.0;
+		spec.oob_accuracy = 0.0;
+		metrics_json = rf_build_metrics_json(&spec);
+	}
+
+	*model_data = payload;
+	if (metrics != NULL)
+	{
+		*metrics = metrics_json;
+		metrics_json = NULL;
+	}
+	rc = 0;
+
+cleanup:
+	if (label_ints != NULL)
+		pfree(label_ints);
+	if (class_counts != NULL)
+		pfree(class_counts);
+	if (tmp_left_counts != NULL)
+		pfree(tmp_left_counts);
+	if (tmp_right_counts != NULL)
+		pfree(tmp_right_counts);
+	if (best_left_counts != NULL)
+		pfree(best_left_counts);
+	if (best_right_counts != NULL)
+		pfree(best_right_counts);
+
+	return rc;
 }
 
 static int
@@ -1070,17 +1501,183 @@ ndb_metal_rf_predict(const bytea *model_data,
 	return ok ? 0 : -1;
 }
 
+/* Helper: Copy tree nodes from GTree to flat Metal format */
+static void
+rf_copy_tree_nodes_metal(const GTree *tree, NdbCudaRfNode *dest,
+	int *node_offset, int *max_feat_idx)
+{
+	const GTreeNode *src_nodes;
+	int count;
+	int i;
+	int max_idx = -1;
+
+	if (tree == NULL || dest == NULL || node_offset == NULL)
+		return;
+
+	src_nodes = gtree_nodes(tree);
+	count = tree->count;
+	for (i = 0; i < count; i++)
+	{
+		const GTreeNode *src = &src_nodes[i];
+		NdbCudaRfNode *dst = &dest[*node_offset + i];
+
+		dst->feature_idx = src->feature_idx;
+		dst->threshold = (float)src->threshold;
+		if (src->is_leaf)
+		{
+			dst->left_child = -1;
+			dst->right_child = -1;
+		}
+		else
+		{
+			dst->left_child = src->left;
+			dst->right_child = src->right;
+		}
+		dst->value = (float)src->value;
+
+		if (src->feature_idx >= 0 && src->feature_idx > max_idx)
+			max_idx = src->feature_idx;
+	}
+	*node_offset += count;
+	if (max_feat_idx != NULL)
+		*max_feat_idx = max_idx;
+}
+
 static int
 ndb_metal_rf_pack(const struct RFModel *model,
 		  bytea **model_data,
 		  Jsonb **metrics,
 		  char **errstr)
 {
-	/* Metal backend: RF packing not yet implemented, use CPU fallback */
-	/* For now, return error to trigger CPU fallback */
+	int tree_count = 0;
+	int total_nodes = 0;
+	int i;
+	size_t header_bytes;
+	size_t nodes_bytes;
+	size_t payload_bytes;
+	bytea *blob;
+	char *base;
+	NdbCudaRfModelHeader *model_hdr;
+	NdbCudaRfTreeHeader *tree_hdrs;
+	NdbCudaRfNode *nodes;
+	int node_cursor = 0;
+	RFMetricsSpec spec;
+
 	if (errstr)
-		*errstr = pstrdup("Metal RF packing not implemented, using CPU fallback");
-	return -1;
+		*errstr = NULL;
+	if (model == NULL || model_data == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid RF model for Metal pack");
+		return -1;
+	}
+
+	if (model->tree_count > 0 && model->trees != NULL)
+	{
+		tree_count = model->tree_count;
+		for (i = 0; i < model->tree_count; i++)
+		{
+			const GTree *tree = model->trees[i];
+
+			if (tree != NULL)
+				total_nodes += tree->count;
+		}
+	}
+	else if (model->tree != NULL)
+	{
+		tree_count = 1;
+		total_nodes = model->tree->count;
+	}
+	else
+	{
+		if (errstr)
+			*errstr = pstrdup("random_forest model has no trees");
+		return -1;
+	}
+
+	if (tree_count <= 0 || total_nodes <= 0)
+	{
+		if (errstr)
+			*errstr = pstrdup("random_forest model empty");
+		return -1;
+	}
+
+	header_bytes = sizeof(NdbCudaRfModelHeader)
+		+ (sizeof(NdbCudaRfTreeHeader) * tree_count);
+	nodes_bytes = sizeof(NdbCudaRfNode) * total_nodes;
+	payload_bytes = header_bytes + nodes_bytes;
+
+	if (payload_bytes > MaxAllocSize || header_bytes > MaxAllocSize ||
+		nodes_bytes > MaxAllocSize)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal RF pack: payload size exceeds MaxAllocSize");
+		return -1;
+	}
+	if (VARHDRSZ + payload_bytes > MaxAllocSize)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal RF pack: total size exceeds MaxAllocSize");
+		return -1;
+	}
+
+	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
+	if (blob == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal RF pack: palloc failed");
+		return -1;
+	}
+	SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
+	base = VARDATA(blob);
+
+	model_hdr = (NdbCudaRfModelHeader *)base;
+	model_hdr->tree_count = tree_count;
+	model_hdr->feature_dim = model->n_features;
+	model_hdr->class_count = model->n_classes;
+	model_hdr->sample_count = model->n_samples;
+	model_hdr->majority_class = (int)rint(model->majority_value);
+	model_hdr->majority_fraction = model->majority_fraction;
+
+	tree_hdrs =
+		(NdbCudaRfTreeHeader *)(base + sizeof(NdbCudaRfModelHeader));
+	nodes = (NdbCudaRfNode *)(base + header_bytes);
+
+	node_cursor = 0;
+	for (i = 0; i < tree_count; i++)
+	{
+		const GTree *tree =
+			(model->tree_count > 0 && model->trees != NULL)
+			? model->trees[i]
+			: model->tree;
+		int node_count = tree ? tree->count : 0;
+
+		tree_hdrs[i].node_count = node_count;
+		tree_hdrs[i].nodes_start = node_cursor;
+		tree_hdrs[i].root_index = tree ? tree->root : 0;
+		tree_hdrs[i].max_feature_index = -1;
+
+		if (node_count > 0)
+			rf_copy_tree_nodes_metal(tree, nodes, &node_cursor,
+				&tree_hdrs[i].max_feature_index);
+	}
+
+	*model_data = blob;
+
+	if (metrics != NULL)
+	{
+		memset(&spec, 0, sizeof(spec));
+		spec.storage = "metal";
+		spec.algorithm = "random_forest";
+		spec.tree_count = tree_count;
+		spec.majority_class = model_hdr->majority_class;
+		spec.majority_fraction = model_hdr->majority_fraction;
+		spec.gini = model->gini_impurity;
+		spec.oob_accuracy = model->oob_accuracy;
+		*metrics = rf_build_metrics_json(&spec);
+	}
+
+	return 0;
 }
 
 static int
@@ -1093,10 +1690,214 @@ ndb_metal_lr_train(const float *features,
 		   Jsonb **metrics,
 		   char **errstr)
 {
-	/* Metal backend: LR training uses CPU fallback */
+	const int default_max_iters = 1000;
+	const double default_learning_rate = 0.01;
+	const double default_lambda = 0.001;
+	int max_iters = default_max_iters;
+	double learning_rate = default_learning_rate;
+	double lambda = default_lambda;
+	double *weights = NULL;
+	double *grad_weights = NULL;
+	double *predictions = NULL;
+	double bias = 0.0;
+	double grad_bias = 0.0;
+	Jsonb *metrics_json = NULL;
+	size_t weight_bytes;
+	size_t pred_bytes;
+	int iter;
+	int i;
+	int j;
+	int rc = -1;
+	double final_loss = 0.0;
+	int correct = 0;
+	double accuracy = 0.0;
+
 	if (errstr)
-		*errstr = pstrdup("Metal LR training not implemented, using CPU fallback");
-	return -1;
+		*errstr = NULL;
+
+	if (model_data == NULL || features == NULL || labels == NULL ||
+		n_samples <= 0 || feature_dim <= 0)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid input parameters for Metal LR train");
+		return -1;
+	}
+
+	(void)hyperparams;
+
+	weight_bytes = sizeof(double) * (size_t)feature_dim;
+	pred_bytes = sizeof(double) * (size_t)n_samples;
+
+	if (weight_bytes > MaxAllocSize || pred_bytes > MaxAllocSize)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal LR train: allocation size exceeds MaxAllocSize");
+		return -1;
+	}
+
+	weights = (double *)palloc0(weight_bytes);
+	grad_weights = (double *)palloc(weight_bytes);
+	predictions = (double *)palloc(pred_bytes);
+
+	if (weights == NULL || grad_weights == NULL || predictions == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal LR train: palloc failed");
+		goto cleanup;
+	}
+
+	for (iter = 0; iter < max_iters; iter++)
+	{
+		double loss = 0.0;
+
+		for (i = 0; i < n_samples; i++)
+		{
+			double z = bias;
+			const float *feat = features + (i * feature_dim);
+
+			for (j = 0; j < feature_dim; j++)
+				z += weights[j] * feat[j];
+
+			predictions[i] = 1.0 / (1.0 + exp(-z));
+		}
+
+		grad_bias = 0.0;
+		for (i = 0; i < feature_dim; i++)
+			grad_weights[i] = 0.0;
+
+		for (i = 0; i < n_samples; i++)
+		{
+			double error = predictions[i] - labels[i];
+			const float *feat = features + (i * feature_dim);
+
+			grad_bias += error;
+			for (j = 0; j < feature_dim; j++)
+				grad_weights[j] += error * feat[j];
+
+			if (labels[i] > 0.5)
+				loss -= log(fmax(1e-15, predictions[i]));
+			else
+				loss -= log(fmax(1e-15, 1.0 - predictions[i]));
+		}
+
+		grad_bias /= (double)n_samples;
+		for (i = 0; i < feature_dim; i++)
+		{
+			double avg_grad = grad_weights[i] / (double)n_samples;
+			double reg_term = lambda * weights[i];
+			grad_weights[i] = avg_grad + reg_term;
+		}
+
+		bias -= learning_rate * grad_bias;
+		for (i = 0; i < feature_dim; i++)
+			weights[i] -= learning_rate * grad_weights[i];
+
+		final_loss = loss / (double)n_samples;
+	}
+
+	for (i = 0; i < n_samples; i++)
+	{
+		if ((predictions[i] >= 0.5 && labels[i] > 0.5) ||
+			(predictions[i] < 0.5 && labels[i] <= 0.5))
+			correct++;
+	}
+	accuracy = (double)correct / (double)n_samples;
+
+	{
+		LRModel model;
+		size_t payload_bytes;
+		bytea *blob;
+		char *base;
+		NdbCudaLrModelHeader *hdr;
+		float *weights_dest;
+
+		memset(&model, 0, sizeof(model));
+		model.n_features = feature_dim;
+		model.n_samples = n_samples;
+		model.max_iters = max_iters;
+		model.learning_rate = learning_rate;
+		model.lambda = lambda;
+		model.bias = bias;
+		model.weights = weights;
+		model.final_loss = final_loss;
+		model.accuracy = accuracy;
+
+		payload_bytes = sizeof(NdbCudaLrModelHeader) +
+			sizeof(float) * (size_t)feature_dim;
+
+		if (VARHDRSZ + payload_bytes > MaxAllocSize)
+		{
+			if (errstr)
+				*errstr = pstrdup("Metal LR train: model size exceeds MaxAllocSize");
+			goto cleanup;
+		}
+
+		blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
+		if (blob == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("Metal LR train: palloc failed for model");
+			goto cleanup;
+		}
+		SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
+		base = VARDATA(blob);
+
+		hdr = (NdbCudaLrModelHeader *)base;
+		hdr->feature_dim = feature_dim;
+		hdr->n_samples = n_samples;
+		hdr->max_iters = max_iters;
+		hdr->learning_rate = learning_rate;
+		hdr->lambda = lambda;
+		hdr->bias = bias;
+
+		weights_dest = (float *)(base + sizeof(NdbCudaLrModelHeader));
+		for (i = 0; i < feature_dim; i++)
+			weights_dest[i] = (float)weights[i];
+
+		*model_data = blob;
+
+		if (metrics != NULL)
+		{
+			StringInfoData buf;
+
+			initStringInfo(&buf);
+			appendStringInfo(&buf,
+				"{\"algorithm\":\"logistic_regression\","
+				"\"storage\":\"metal\","
+				"\"n_features\":%d,"
+				"\"n_samples\":%d,"
+				"\"max_iters\":%d,"
+				"\"learning_rate\":%.6f,"
+				"\"lambda\":%.6f,"
+				"\"final_loss\":%.6f,"
+				"\"accuracy\":%.6f}",
+				feature_dim,
+				n_samples,
+				max_iters,
+				learning_rate,
+				lambda,
+				final_loss,
+				accuracy);
+
+			metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+				jsonb_in,
+				CStringGetDatum(buf.data)));
+			pfree(buf.data);
+			*metrics = metrics_json;
+		}
+
+		rc = 0;
+	}
+
+cleanup:
+	if (weights != NULL)
+		pfree(weights);
+	if (grad_weights != NULL)
+		pfree(grad_weights);
+	if (predictions != NULL)
+		pfree(predictions);
+
+	return rc;
 }
 
 static int
@@ -1106,10 +1907,55 @@ ndb_metal_lr_predict(const bytea *model_data,
 		    double *probability_out,
 		    char **errstr)
 {
-	/* Metal backend: LR prediction uses CPU fallback */
+	const NdbCudaLrModelHeader *hdr;
+	const float *weights;
+	const bytea *detoasted;
+	double z;
+	int i;
+
 	if (errstr)
-		*errstr = pstrdup("Metal LR prediction not implemented, using CPU fallback");
-	return -1;
+		*errstr = NULL;
+	if (model_data == NULL || input == NULL || probability_out == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid parameters for Metal LR predict");
+		return -1;
+	}
+
+	detoasted = (const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+
+	{
+		size_t expected_size = sizeof(NdbCudaLrModelHeader) +
+			sizeof(float) * (size_t)feature_dim;
+		size_t actual_size = VARSIZE(detoasted) - VARHDRSZ;
+
+		if (actual_size < expected_size)
+		{
+			if (errstr)
+				*errstr = psprintf("model data too small: expected %zu bytes, got %zu",
+					expected_size, actual_size);
+			return -1;
+		}
+	}
+
+	hdr = (const NdbCudaLrModelHeader *)VARDATA(detoasted);
+	if (hdr->feature_dim != feature_dim)
+	{
+		if (errstr)
+			*errstr = psprintf("feature dimension mismatch: model has %d, input has %d",
+				hdr->feature_dim, feature_dim);
+		return -1;
+	}
+
+	weights = (const float *)((const char *)hdr +
+		sizeof(NdbCudaLrModelHeader));
+
+	z = hdr->bias;
+	for (i = 0; i < feature_dim; i++)
+		z += weights[i] * input[i];
+
+	*probability_out = 1.0 / (1.0 + exp(-z));
+	return 0;
 }
 
 static int
@@ -1118,10 +1964,94 @@ ndb_metal_lr_pack(const struct LRModel *model,
 		  Jsonb **metrics,
 		  char **errstr)
 {
-	/* Metal backend: LR packing not yet implemented, use CPU fallback */
+	size_t payload_bytes;
+	bytea *blob;
+	char *base;
+	NdbCudaLrModelHeader *hdr;
+	float *weights_dest;
+	int i;
+
 	if (errstr)
-		*errstr = pstrdup("Metal LR packing not implemented, using CPU fallback");
-	return -1;
+		*errstr = NULL;
+	if (model == NULL || model_data == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid LR model for Metal pack");
+		return -1;
+	}
+
+	payload_bytes = sizeof(NdbCudaLrModelHeader) +
+		sizeof(float) * (size_t)model->n_features;
+
+	if (VARHDRSZ + payload_bytes > MaxAllocSize)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal LR pack: total size exceeds MaxAllocSize");
+		return -1;
+	}
+
+	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
+	if (blob == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Metal LR pack: palloc failed");
+		return -1;
+	}
+	SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
+	base = VARDATA(blob);
+
+	hdr = (NdbCudaLrModelHeader *)base;
+	hdr->feature_dim = model->n_features;
+	hdr->n_samples = model->n_samples;
+	hdr->max_iters = model->max_iters;
+	hdr->learning_rate = model->learning_rate;
+	hdr->lambda = model->lambda;
+	hdr->bias = model->bias;
+
+	weights_dest = (float *)(base + sizeof(NdbCudaLrModelHeader));
+	if (model->weights != NULL)
+	{
+		for (i = 0; i < model->n_features; i++)
+			weights_dest[i] = (float)model->weights[i];
+	}
+	else
+	{
+		memset(weights_dest, 0, sizeof(float) * model->n_features);
+	}
+
+	if (metrics != NULL)
+	{
+		StringInfoData buf;
+		Jsonb *metrics_json;
+
+		initStringInfo(&buf);
+		appendStringInfo(&buf,
+			"{\"algorithm\":\"logistic_regression\","
+			"\"storage\":\"metal\","
+			"\"n_features\":%d,"
+			"\"n_samples\":%d,"
+			"\"max_iters\":%d,"
+			"\"learning_rate\":%.6f,"
+			"\"lambda\":%.6f,"
+			"\"final_loss\":%.6f,"
+			"\"accuracy\":%.6f}",
+			model->n_features,
+			model->n_samples,
+			model->max_iters,
+			model->learning_rate,
+			model->lambda,
+			model->final_loss,
+			model->accuracy);
+
+		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+			jsonb_in,
+			CStringGetDatum(buf.data)));
+		pfree(buf.data);
+		*metrics = metrics_json;
+	}
+
+	*model_data = blob;
+	return 0;
 }
 
 /* Metal Linear Regression model header (matches CUDA) */
@@ -5173,8 +6103,29 @@ ndb_metal_device_info(int device_id, NDBGpuDeviceInfo *info)
 	if (device_id != 0)
 		return -1;
 
+	/* Check if Metal is available - this will try to create a device if not initialized */
 	if (!metal_backend_is_available())
+	{
+		/* If Metal can't be initialized, return error */
 		return -1;
+	}
+	
+	/* Try to initialize Metal if device name is "None" (not initialized yet) */
+	const char *device_name_check = metal_backend_device_name();
+	if (device_name_check && strcmp(device_name_check, "None") == 0)
+	{
+		/* Metal is available but not initialized - try to initialize now */
+		if (!metal_backend_init())
+		{
+			/* Initialization failed - return partial info */
+			memset(info, 0, sizeof(NDBGpuDeviceInfo));
+			info->device_id = 0;
+			strncpy(info->name, "Apple GPU (init failed)", sizeof(info->name) - 1);
+			info->name[sizeof(info->name) - 1] = '\0';
+			info->is_available = false;
+			return 0;
+		}
+	}
 
 	memset(info, 0, sizeof(NDBGpuDeviceInfo));
 

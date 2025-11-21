@@ -13,6 +13,19 @@
 \pset pager off
 \pset tuples_only off
 
+/* Step 0: Read settings from test_settings table and apply them */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	IF gpu_mode = 'gpu' THEN
+		PERFORM neurondb_gpu_enable();
+	ELSE
+		PERFORM set_config('neurondb.gpu_enabled', 'off', false);
+	END IF;
+END $$;
+
 DROP TABLE IF EXISTS gpu_model_temp;
 
 SELECT 
@@ -34,10 +47,11 @@ FROM test_test_view;
 CREATE TEMP TABLE gpu_model_temp AS
 SELECT 
 	neurondb.train(
+		'default',
 		'linear_regression',
 		'test_train_view',
-		'features',
 		'label',
+		ARRAY['features'],
 		'{}'::jsonb
 	)::integer AS model_id;
 
@@ -91,6 +105,34 @@ SELECT
 	(SELECT COUNT(*)::bigint FROM test_train_view) AS train_samples,
 	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_samples,
 	(SELECT ROUND((metrics->>'mse')::numeric, 6) FROM gpu_metrics_temp) AS final_mse;
+
+-- Store results in test_metrics table
+INSERT INTO test_metrics (
+	test_name, algorithm, model_id, train_samples, test_samples,
+	mse, rmse, mae, r_squared, updated_at
+)
+SELECT 
+	'001_linreg_basic',
+	'linear_regression',
+	(SELECT model_id FROM gpu_model_temp),
+	(SELECT COUNT(*)::bigint FROM test_train_view),
+	(SELECT COUNT(*)::bigint FROM test_test_view),
+	ROUND((metrics->>'mse')::numeric, 6),
+	ROUND((metrics->>'rmse')::numeric, 6),
+	ROUND((metrics->>'mae')::numeric, 6),
+	ROUND((metrics->>'r_squared')::numeric, 6),
+	CURRENT_TIMESTAMP
+FROM gpu_metrics_temp
+ON CONFLICT (test_name) DO UPDATE SET
+	algorithm = EXCLUDED.algorithm,
+	model_id = EXCLUDED.model_id,
+	train_samples = EXCLUDED.train_samples,
+	test_samples = EXCLUDED.test_samples,
+	mse = EXCLUDED.mse,
+	rmse = EXCLUDED.rmse,
+	mae = EXCLUDED.mae,
+	r_squared = EXCLUDED.r_squared,
+	updated_at = CURRENT_TIMESTAMP;
 
 DROP TABLE IF EXISTS gpu_model_temp;
 

@@ -32,8 +32,8 @@ CREATE TEMP TABLE test_vectors_temp (
 -- Insert converted vectors
 INSERT INTO test_vectors_temp (v, arr, label)
 SELECT 
-	array_to_vector_float8(features)::vector AS v,
-	features AS arr,
+	features AS v,
+	vector_to_array(features) AS arr,
 	label
 FROM test_train_view
 WHERE features IS NOT NULL;

@@ -14,27 +14,46 @@ SET client_min_messages TO WARNING;
 \echo 'random_forest: Exhaustive GPU/CPU + Error Coverage (1000 rows sample)'
 \echo '=========================================================================='
 
-/* Check that sample_train and sample_test exist */
+/* Use views created by test runner or create from available source tables */
 DO $$
+DECLARE
+	train_source TEXT;
+	test_source TEXT;
 BEGIN
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_train') THEN
-		RAISE EXCEPTION 'sample_train table does not exist';
+	-- Find source tables (prefer higgs schema, fallback to public)
+	SELECT table_schema || '.' || table_name INTO train_source
+	FROM information_schema.tables 
+	WHERE (table_schema = 'higgs' AND table_name = 'test_train')
+	   OR (table_schema = 'public' AND table_name IN ('sample_train', 'test_train'))
+	ORDER BY CASE WHEN table_schema = 'higgs' THEN 0 ELSE 1 END
+	LIMIT 1;
+	
+	IF train_source IS NULL THEN
+		-- Views may already exist from test runner
+		IF EXISTS (SELECT 1 FROM information_schema.views WHERE table_name = 'test_train_view') THEN
+			RETURN;
+		END IF;
+		RAISE EXCEPTION 'No training table found';
 	END IF;
-	IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sample_test') THEN
-		RAISE EXCEPTION 'sample_test table does not exist';
+	
+	-- Determine corresponding test table
+	IF train_source LIKE 'higgs.%' THEN
+		test_source := 'higgs.test_test';
+	ELSIF train_source LIKE '%sample_train%' THEN
+		test_source := 'sample_test';
+	ELSE
+		test_source := 'test_test';
+	END IF;
+	
+	-- Create views with type conversion if needed
+	IF NOT EXISTS (SELECT 1 FROM information_schema.views WHERE table_name = 'test_train_view') THEN
+		EXECUTE format('CREATE VIEW test_train_view AS SELECT features::vector(28) as features, label FROM %s LIMIT 1000', train_source);
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM information_schema.views WHERE table_name = 'test_test_view') THEN
+		EXECUTE format('CREATE VIEW test_test_view AS SELECT features::vector(28) as features, label FROM %s LIMIT 1000', test_source);
 	END IF;
 END
 $$;
-
--- Create views with 1000 rows for advance tests
-DROP VIEW IF EXISTS test_train_view;
-DROP VIEW IF EXISTS test_test_view;
-
-CREATE VIEW test_train_view AS
-SELECT features, label FROM sample_train LIMIT 1000;
-
-CREATE VIEW test_test_view AS
-SELECT features, label FROM sample_test LIMIT 1000;
 
 \echo ''
 \echo 'Dataset Information'
@@ -397,7 +416,6 @@ BEGIN
 	IF cpu_mid IS NOT NULL THEN
 		BEGIN
 			result := neurondb.evaluate(cpu_mid, 'test_test_view', 'features', 'label');
-				result->>'tp', result->>'fp', result->>'tn', result->>'fn';
 		EXCEPTION WHEN OTHERS THEN
 		END;
 	END IF;
@@ -413,7 +431,6 @@ BEGIN
 	IF gpu_mid IS NOT NULL THEN
 		BEGIN
 			result := neurondb.evaluate(gpu_mid, 'test_test_view', 'features', 'label');
-				result->>'tp', result->>'fp', result->>'tn', result->>'fn';
 		EXCEPTION WHEN OTHERS THEN
 		END;
 	END IF;

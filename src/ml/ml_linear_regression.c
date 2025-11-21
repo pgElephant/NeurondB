@@ -257,13 +257,12 @@ linreg_dataset_load(const char *quoted_tbl,
 	elog(DEBUG1,
 		"linreg_dataset_load: building query for table %s, features %s, target %s",
 		quoted_tbl, quoted_feat, quoted_target);
+	/* Remove WHERE clause - we'll skip NULL features during processing */
 	appendStringInfo(&query,
-		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
+		"SELECT %s, %s FROM %s",
 		quoted_feat,
 		quoted_target,
-		quoted_tbl,
-		quoted_feat,
-		quoted_target);
+		quoted_tbl);
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -834,16 +833,14 @@ linreg_stream_process_chunk(const char *quoted_tbl,
 	/* Note: For views, we can't use ctid, so we use LIMIT/OFFSET without ORDER BY */
 	/* This is non-deterministic but efficient for large datasets */
 	initStringInfo(&query);
-	appendStringInfo(&query,
-		"SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL "
-		"LIMIT %d OFFSET %d",
-		quoted_feat,
-		quoted_target,
-		quoted_tbl,
-		quoted_feat,
-		quoted_target,
-		chunk_size,
-		offset);
+		/* Remove WHERE clause - we'll skip NULL features during processing */
+		appendStringInfo(&query,
+			"SELECT %s, %s FROM %s LIMIT %d OFFSET %d",
+			quoted_feat,
+			quoted_target,
+			quoted_tbl,
+			chunk_size,
+			offset);
 
 	ret = SPI_execute(query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
