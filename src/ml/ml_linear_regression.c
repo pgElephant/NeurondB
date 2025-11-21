@@ -2351,14 +2351,274 @@ evaluate_linear_regression_by_model_id(PG_FUNCTION_ARGS)
 	PG_RETURN_JSONB_P(result);
 }
 
+/* GPU Model State */
+typedef struct LinRegGpuModelState
+{
+	bytea *model_blob;
+	Jsonb *metrics;
+	int feature_dim;
+	int n_samples;
+} LinRegGpuModelState;
+
+static void
+linreg_gpu_release_state(LinRegGpuModelState *state)
+{
+	if (state == NULL)
+		return;
+	if (state->model_blob != NULL)
+		pfree(state->model_blob);
+	if (state->metrics != NULL)
+		pfree(state->metrics);
+	pfree(state);
+}
+
+static bool
+linreg_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
+{
+	LinRegGpuModelState *state;
+	bytea *payload;
+	Jsonb *metrics;
+	int rc;
+
+	if (errstr != NULL)
+		*errstr = NULL;
+	if (model == NULL || spec == NULL)
+		return false;
+	if (!neurondb_gpu_is_available())
+		return false;
+	if (spec->feature_matrix == NULL || spec->label_vector == NULL)
+		return false;
+	if (spec->sample_count <= 0 || spec->feature_dim <= 0)
+		return false;
+
+	payload = NULL;
+	metrics = NULL;
+
+	rc = ndb_gpu_linreg_train(spec->feature_matrix,
+		spec->label_vector,
+		spec->sample_count,
+		spec->feature_dim,
+		spec->hyperparameters,
+		&payload,
+		&metrics,
+		errstr);
+	if (rc != 0 || payload == NULL)
+	{
+		if (payload != NULL)
+			pfree(payload);
+		if (metrics != NULL)
+			pfree(metrics);
+		return false;
+	}
+
+	if (model->backend_state != NULL)
+	{
+		linreg_gpu_release_state((LinRegGpuModelState *)model->backend_state);
+		model->backend_state = NULL;
+	}
+
+	state = (LinRegGpuModelState *)palloc0(sizeof(LinRegGpuModelState));
+	state->model_blob = payload;
+	state->feature_dim = spec->feature_dim;
+	state->n_samples = spec->sample_count;
+
+	if (metrics != NULL)
+	{
+		state->metrics = (Jsonb *)PG_DETOAST_DATUM_COPY(
+			PointerGetDatum(metrics));
+	}
+	else
+	{
+		state->metrics = NULL;
+	}
+
+	model->backend_state = state;
+	model->gpu_ready = true;
+	model->is_gpu_resident = true;
+
+	return true;
+}
+
+static bool
+linreg_gpu_predict(const MLGpuModel *model,
+	const float *input,
+	int input_dim,
+	float *output,
+	int output_dim,
+	char **errstr)
+{
+	const LinRegGpuModelState *state;
+	double prediction;
+	int rc;
+
+	if (errstr != NULL)
+		*errstr = NULL;
+	if (output != NULL && output_dim > 0)
+		output[0] = 0.0f;
+	if (model == NULL || input == NULL || output == NULL)
+		return false;
+	if (output_dim <= 0)
+		return false;
+	if (!model->gpu_ready || model->backend_state == NULL)
+		return false;
+
+	state = (const LinRegGpuModelState *)model->backend_state;
+	if (state->model_blob == NULL)
+		return false;
+
+	rc = ndb_gpu_linreg_predict(state->model_blob,
+		input,
+		state->feature_dim > 0 ? state->feature_dim : input_dim,
+		&prediction,
+		errstr);
+	if (rc != 0)
+		return false;
+
+	output[0] = (float)prediction;
+
+	return true;
+}
+
+static bool
+linreg_gpu_evaluate(const MLGpuModel *model,
+	const MLGpuEvalSpec *spec,
+	MLGpuMetrics *out,
+	char **errstr)
+{
+	const LinRegGpuModelState *state;
+	Jsonb *metrics_json;
+
+	if (errstr != NULL)
+		*errstr = NULL;
+	if (model == NULL || out == NULL)
+		return false;
+	if (model->backend_state == NULL)
+		return false;
+
+	state = (const LinRegGpuModelState *)model->backend_state;
+
+	{
+		StringInfoData buf;
+
+		initStringInfo(&buf);
+		appendStringInfo(&buf,
+			"{\"algorithm\":\"linear_regression\","
+			"\"storage\":\"gpu\","
+			"\"n_features\":%d,"
+			"\"n_samples\":%d}",
+			state->feature_dim > 0 ? state->feature_dim : 0,
+			state->n_samples > 0 ? state->n_samples : 0);
+
+		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
+			jsonb_in, CStringGetDatum(buf.data)));
+		pfree(buf.data);
+	}
+
+	if (out != NULL)
+		out->payload = metrics_json;
+
+	return true;
+}
+
+static bool
+linreg_gpu_serialize(const MLGpuModel *model,
+	bytea **payload_out,
+	Jsonb **metadata_out,
+	char **errstr)
+{
+	const LinRegGpuModelState *state;
+	bytea *payload_copy;
+	int payload_size;
+
+	if (errstr != NULL)
+		*errstr = NULL;
+	if (payload_out != NULL)
+		*payload_out = NULL;
+	if (metadata_out != NULL)
+		*metadata_out = NULL;
+	if (model == NULL || model->backend_state == NULL)
+		return false;
+
+	state = (const LinRegGpuModelState *)model->backend_state;
+	if (state->model_blob == NULL)
+		return false;
+
+	payload_size = VARSIZE(state->model_blob);
+	payload_copy = (bytea *)palloc(payload_size);
+	memcpy(payload_copy, state->model_blob, payload_size);
+
+	if (payload_out != NULL)
+		*payload_out = payload_copy;
+	else
+		pfree(payload_copy);
+
+	if (metadata_out != NULL && state->metrics != NULL)
+	{
+		*metadata_out = (Jsonb *)PG_DETOAST_DATUM_COPY(
+			PointerGetDatum(state->metrics));
+	}
+	else if (metadata_out != NULL)
+	{
+		*metadata_out = NULL;
+	}
+
+	return true;
+}
+
+static bool
+linreg_gpu_deserialize(MLGpuModel *model,
+	const bytea *payload,
+	const Jsonb *metadata,
+	char **errstr)
+{
+	LinRegGpuModelState *state;
+	bytea *payload_copy;
+	int payload_size;
+
+	if (errstr != NULL)
+		*errstr = NULL;
+	if (model == NULL || payload == NULL)
+		return false;
+
+	payload_size = VARSIZE(payload);
+	payload_copy = (bytea *)palloc(payload_size);
+	memcpy(payload_copy, payload, payload_size);
+
+	state = (LinRegGpuModelState *)palloc0(sizeof(LinRegGpuModelState));
+	state->model_blob = payload_copy;
+	state->feature_dim = -1;
+	state->n_samples = -1;
+
+	if (model->backend_state != NULL)
+		linreg_gpu_release_state((LinRegGpuModelState *)model->backend_state);
+
+	model->backend_state = state;
+	model->gpu_ready = true;
+	model->is_gpu_resident = true;
+
+	return true;
+}
+
+static void
+linreg_gpu_destroy(MLGpuModel *model)
+{
+	if (model == NULL)
+		return;
+	if (model->backend_state != NULL)
+		linreg_gpu_release_state((LinRegGpuModelState *)model->backend_state);
+	model->backend_state = NULL;
+	model->gpu_ready = false;
+	model->is_gpu_resident = false;
+}
+
 static const MLGpuModelOps linreg_gpu_model_ops = {
 	.algorithm = "linear_regression",
-	.train = NULL,
-	.predict = NULL,
-	.evaluate = NULL,
-	.serialize = NULL,
-	.deserialize = NULL,
-	.destroy = NULL,
+	.train = linreg_gpu_train,
+	.predict = linreg_gpu_predict,
+	.evaluate = linreg_gpu_evaluate,
+	.serialize = linreg_gpu_serialize,
+	.deserialize = linreg_gpu_deserialize,
+	.destroy = linreg_gpu_destroy,
 };
 
 void

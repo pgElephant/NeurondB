@@ -1649,6 +1649,7 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 				{
 					/* Optimized: bulk conversion with loop unrolling hint */
 					float8 *data = (float8 *)ARR_DATA_PTR(arr);
+					int j;
 					int j_remain = feat_dim % 4;
 					int j_end = feat_dim - j_remain;
 					

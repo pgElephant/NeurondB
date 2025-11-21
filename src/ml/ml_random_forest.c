@@ -4288,6 +4288,18 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 			/* Try to fetch model payload - could be GPU or CPU */
 			if (ml_catalog_fetch_model_payload(model_id, &gpu_payload, NULL, &gpu_metrics))
 			{
+				/* Model was found in catalog but model_data is NULL */
+				if (gpu_payload == NULL)
+				{
+					if (gpu_metrics)
+						pfree(gpu_metrics);
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							errmsg("neurondb: evaluate_random_forest_by_model_id: model %d has no model_data (model may not have been trained or stored correctly)",
+								model_id),
+							errhint("The model exists in the catalog but has no training data. Please retrain the model.")));
+				}
+				
 				/* Check if GPU model - but don't fail if metadata check fails */
 				is_gpu_model = (gpu_metrics != NULL) ? rf_metadata_is_gpu(gpu_metrics) : false;
 				if (!is_gpu_model && gpu_payload != NULL)

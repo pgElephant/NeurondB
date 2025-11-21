@@ -2287,7 +2287,10 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 
 				if (rc == 0)
 				{
-					/* Success - build result and return */
+					Jsonb *result_copy;
+					MemoryContext spi_context;
+					
+					/* Success - build result BEFORE freeing resources */
 					initStringInfo(&jsonbuf);
 					appendStringInfo(&jsonbuf,
 						"{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
@@ -2297,10 +2300,16 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 						f1_score,
 						valid_rows);
 
+					/* Create JSONB in SPI memory context */
 					result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 						CStringGetDatum(jsonbuf.data)));
 
-					pfree(jsonbuf.data);
+					/* Switch to parent context and copy JSONB before SPI_finish() */
+					spi_context = CurrentMemoryContext;
+					oldcontext = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
+					result_copy = (Jsonb *) PG_DETOAST_DATUM_COPY(PointerGetDatum(result_jsonb));
+					MemoryContextSwitchTo(spi_context);
+
 					elog(DEBUG1, "evaluate_svm_by_model_id: about to free h_features=%p", (void*)h_features);
 					pfree(h_features);
 					elog(DEBUG1, "evaluate_svm_by_model_id: about to free h_labels=%p", (void*)h_labels);
@@ -2319,8 +2328,7 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 					pfree(feat_str);
 					pfree(targ_str);
 					SPI_finish();
-					MemoryContextSwitchTo(oldcontext);
-					PG_RETURN_JSONB_P(result_jsonb);
+					PG_RETURN_JSONB_P(result_copy);
 				}
 				else
 				{
