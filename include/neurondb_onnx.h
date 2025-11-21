@@ -146,6 +146,21 @@ extern int ndb_onnx_hf_rerank(const char *model_name,
 	float **scores_out,
 	char **errstr);
 
+extern int ndb_onnx_hf_image_embed(const char *model_name,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out,
+	char **errstr);
+
+extern int ndb_onnx_hf_multimodal_embed(const char *model_name,
+	const char *text,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out,
+	char **errstr);
+
 /* SQL-callable functions */
 extern Datum neurondb_hf_embedding(PG_FUNCTION_ARGS);
 extern Datum neurondb_hf_classify(PG_FUNCTION_ARGS);

@@ -31,6 +31,7 @@
 #include "utils/lsyscache.h"
 #include "executor/spi.h"
 #include "pgtime.h"
+#include "ml_catalog.h"
 #include <stdint.h>
 
 #include <sys/stat.h>
@@ -905,6 +906,435 @@ export_model(PG_FUNCTION_ARGS)
 		fmt_str,
 		(unsigned long)sz,
 		m->model_handle->version);
+
+	PG_RETURN_BOOL(true);
+}
+
+/* EXPORT MODEL TO ONNX: Export NeuronDB model to ONNX format */
+PG_FUNCTION_INFO_V1(export_model_to_onnx);
+
+Datum
+export_model_to_onnx(PG_FUNCTION_ARGS)
+{
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *output_path_text = PG_GETARG_TEXT_PP(1);
+	char	   *output_path = NULL;
+	char	   *algorithm = NULL;
+	char	   *python_script = NULL;
+	bytea	   *model_data = NULL;
+	Jsonb	   *parameters = NULL;
+	Jsonb	   *metrics = NULL;
+	StringInfoData sql;
+	int			ret;
+	bool		found = false;
+	FILE	   *temp_file = NULL;
+	char	   *temp_path = NULL;
+	char	   *command = NULL;
+	int			cmd_ret;
+	char		cmd_buf[4096];
+	char	   *script_dir = NULL;
+	char	   *full_script_path = NULL;
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: export_model_to_onnx: SPI_connect failed")));
+
+	/* Fetch model from catalog */
+	output_path = text_to_cstring(output_path_text);
+
+	/* Query model from catalog */
+	initStringInfo(&sql);
+	appendStringInfo(&sql,
+					 "SELECT model_data, algorithm, parameters, metrics "
+					 "FROM neurondb.ml_models WHERE model_id = %d",
+					 model_id);
+
+	ret = SPI_execute(sql.data, true, 1);
+	if (ret != SPI_OK_SELECT)
+	{
+		pfree(sql.data);
+		SPI_finish();
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: export_model_to_onnx: failed to query model")));
+	}
+
+	if (SPI_processed == 0)
+	{
+		pfree(sql.data);
+		SPI_finish();
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("neurondb: Model with id %d not found", model_id)));
+	}
+
+	/* Extract model data and algorithm */
+	{
+		Datum		datum;
+		bool		isnull;
+		char	   *algorithm_text;
+
+		/* Get model_data */
+		datum = SPI_getbinval(SPI_tuptable->vals[0],
+							  SPI_tuptable->tupdesc, 1, &isnull);
+		if (isnull)
+		{
+			pfree(sql.data);
+			SPI_finish();
+			ereport(ERROR,
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("neurondb: Model %d has no model_data", model_id)));
+		}
+		model_data = DatumGetByteaP(datum);
+		model_data = (bytea *) PG_DETOAST_DATUM_COPY((Datum) model_data);
+
+		/* Get algorithm */
+		datum = SPI_getbinval(SPI_tuptable->vals[0],
+							  SPI_tuptable->tupdesc, 2, &isnull);
+		if (isnull)
+		{
+			pfree(model_data);
+			pfree(sql.data);
+			SPI_finish();
+			ereport(ERROR,
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("neurondb: Model %d has no algorithm", model_id)));
+		}
+		algorithm_text = DatumGetCString(datum);
+		algorithm = pstrdup(algorithm_text);
+	}
+
+	pfree(sql.data);
+	SPI_finish();
+
+	/* Create temporary file for model data */
+	temp_path = psprintf("/tmp/neurondb_export_%d_%ld.bin",
+						 model_id, (long) time(NULL));
+	temp_file = fopen(temp_path, "wb");
+	if (temp_file == NULL)
+	{
+		int			saved_errno = errno;
+
+		pfree(model_data);
+		pfree(algorithm);
+		pfree(temp_path);
+		ereport(ERROR,
+				(errcode(ERRCODE_IO_ERROR),
+				 errmsg("neurondb: Failed to create temp file '%s' (%s)",
+						temp_path, strerror(saved_errno))));
+	}
+
+	/* Write model data to temp file */
+	fwrite(VARDATA(model_data), 1, VARSIZE(model_data) - VARHDRSZ, temp_file);
+	fclose(temp_file);
+	temp_file = NULL;
+
+	/* Find Python script path */
+	/* Try to find script relative to installation */
+	script_dir = getenv("NEURONDB_TOOLS_DIR");
+	if (script_dir == NULL)
+	{
+		/* Default to tools directory relative to share/neurondb */
+		char	   *share_path = getenv("NEURONDB_SHARE_DIR");
+		if (share_path != NULL)
+		{
+			script_dir = psprintf("%s/../tools", share_path);
+		}
+		else
+		{
+			/* Last resort: assume script is in tools/ directory */
+			script_dir = pstrdup("tools");
+		}
+	}
+	else
+	{
+		script_dir = pstrdup(script_dir);
+	}
+
+	full_script_path = psprintf("%s/neurondb_onex.py", script_dir);
+
+	/* Check if script exists */
+	if (access(full_script_path, R_OK | X_OK) != 0)
+	{
+		int			saved_errno = errno;
+
+		unlink(temp_path);
+		pfree(model_data);
+		pfree(algorithm);
+		pfree(temp_path);
+		pfree(script_dir);
+		pfree(full_script_path);
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_FILE),
+				 errmsg("neurondb: Python script not found or not executable: %s (%s)",
+						full_script_path, strerror(saved_errno)),
+				 errhint("Set NEURONDB_TOOLS_DIR environment variable or ensure script is in tools/ directory")));
+	}
+
+	/* Build command to call Python script */
+	snprintf(cmd_buf, sizeof(cmd_buf),
+			 "python3 %s --export %s %s %s",
+			 full_script_path, temp_path, algorithm, output_path);
+
+	elog(DEBUG1, "neurondb: export_model_to_onnx: executing: %s", cmd_buf);
+
+	/* Execute Python script */
+	cmd_ret = system(cmd_buf);
+	if (cmd_ret != 0)
+	{
+		unlink(temp_path);
+		pfree(model_data);
+		pfree(algorithm);
+		pfree(temp_path);
+		pfree(script_dir);
+		pfree(full_script_path);
+		ereport(ERROR,
+				(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+				 errmsg("neurondb: Failed to convert model to ONNX (exit code %d)",
+						cmd_ret),
+				 errhint("Check that Python and onnx library are installed")));
+	}
+
+	/* Clean up temp file */
+	unlink(temp_path);
+
+	elog(DEBUG1,
+		 "neurondb: export_model_to_onnx: Model %d (algorithm=%s) exported to %s",
+		 model_id, algorithm, output_path);
+
+	pfree(model_data);
+	pfree(algorithm);
+	pfree(temp_path);
+	pfree(script_dir);
+	pfree(full_script_path);
+
+	PG_RETURN_BOOL(true);
+}
+
+/* IMPORT MODEL FROM ONNX: Import ONNX model to NeuronDB format */
+PG_FUNCTION_INFO_V1(import_model_from_onnx);
+
+Datum
+import_model_from_onnx(PG_FUNCTION_ARGS)
+{
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *onnx_path_text = PG_GETARG_TEXT_PP(1);
+	text	   *algorithm_text = PG_GETARG_TEXT_PP(2);
+	char	   *onnx_path = NULL;
+	char	   *algorithm = NULL;
+	char	   *temp_path = NULL;
+	char	   *command = NULL;
+	int			cmd_ret;
+	char		cmd_buf[4096];
+	char	   *script_dir = NULL;
+	char	   *full_script_path = NULL;
+	FILE	   *output_file = NULL;
+	bytea	   *model_data = NULL;
+	size_t		file_size = 0;
+	char	   *file_data = NULL;
+	StringInfoData sql;
+	int			ret;
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: import_model_from_onnx: SPI_connect failed")));
+
+	onnx_path = text_to_cstring(onnx_path_text);
+	algorithm = text_to_cstring(algorithm_text);
+
+	/* Validate ONNX file exists */
+	if (access(onnx_path, R_OK) != 0)
+	{
+		int			saved_errno = errno;
+
+		SPI_finish();
+		pfree(onnx_path);
+		pfree(algorithm);
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_FILE),
+				 errmsg("neurondb: ONNX file not found or not readable: %s (%s)",
+						onnx_path, strerror(saved_errno))));
+	}
+
+	/* Find Python script path */
+	script_dir = getenv("NEURONDB_TOOLS_DIR");
+	if (script_dir == NULL)
+	{
+		char	   *share_path = getenv("NEURONDB_SHARE_DIR");
+
+		if (share_path != NULL)
+		{
+			script_dir = psprintf("%s/../tools", share_path);
+		}
+		else
+		{
+			script_dir = pstrdup("tools");
+		}
+	}
+	else
+	{
+		script_dir = pstrdup(script_dir);
+	}
+
+	full_script_path = psprintf("%s/neurondb_onex.py", script_dir);
+
+	/* Check if script exists */
+	if (access(full_script_path, R_OK | X_OK) != 0)
+	{
+		int			saved_errno = errno;
+
+		SPI_finish();
+		pfree(onnx_path);
+		pfree(algorithm);
+		pfree(script_dir);
+		pfree(full_script_path);
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_FILE),
+				 errmsg("neurondb: Python script not found or not executable: %s (%s)",
+						full_script_path, strerror(saved_errno)),
+				 errhint("Set NEURONDB_TOOLS_DIR environment variable or ensure script is in tools/ directory")));
+	}
+
+	/* Create temporary file for output */
+	temp_path = psprintf("/tmp/neurondb_import_%d_%ld.bin",
+						 model_id, (long) time(NULL));
+
+	/* Build command to call Python script */
+	snprintf(cmd_buf, sizeof(cmd_buf),
+			 "python3 %s --import %s %s %s",
+			 full_script_path, onnx_path, algorithm, temp_path);
+
+	elog(DEBUG1, "neurondb: import_model_from_onnx: executing: %s", cmd_buf);
+
+	/* Execute Python script */
+	cmd_ret = system(cmd_buf);
+	if (cmd_ret != 0)
+	{
+		unlink(temp_path);
+		SPI_finish();
+		pfree(onnx_path);
+		pfree(algorithm);
+		pfree(temp_path);
+		pfree(script_dir);
+		pfree(full_script_path);
+		ereport(ERROR,
+				(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+				 errmsg("neurondb: Failed to import ONNX model (exit code %d)",
+						cmd_ret),
+				 errhint("Check that Python and onnx library are installed")));
+	}
+
+	/* Read converted model data from temp file */
+	output_file = fopen(temp_path, "rb");
+	if (output_file == NULL)
+	{
+		int			saved_errno = errno;
+
+		unlink(temp_path);
+		SPI_finish();
+		pfree(onnx_path);
+		pfree(algorithm);
+		pfree(temp_path);
+		pfree(script_dir);
+		pfree(full_script_path);
+		ereport(ERROR,
+				(errcode(ERRCODE_IO_ERROR),
+				 errmsg("neurondb: Failed to read converted model file '%s' (%s)",
+						temp_path, strerror(saved_errno))));
+	}
+
+	/* Get file size */
+	fseek(output_file, 0, SEEK_END);
+	file_size = ftell(output_file);
+	fseek(output_file, 0, SEEK_SET);
+
+	/* Read file data */
+	file_data = (char *) palloc(file_size);
+	if (fread(file_data, 1, file_size, output_file) != file_size)
+	{
+		int			saved_errno = errno;
+
+		fclose(output_file);
+		unlink(temp_path);
+		pfree(file_data);
+		SPI_finish();
+		pfree(onnx_path);
+		pfree(algorithm);
+		pfree(temp_path);
+		pfree(script_dir);
+		pfree(full_script_path);
+		ereport(ERROR,
+				(errcode(ERRCODE_IO_ERROR),
+				 errmsg("neurondb: Failed to read model data from '%s' (%s)",
+						temp_path, strerror(saved_errno))));
+	}
+
+	fclose(output_file);
+	unlink(temp_path);
+
+	/* Create bytea from file data */
+	model_data = (bytea *) palloc(VARHDRSZ + file_size);
+	SET_VARSIZE(model_data, VARHDRSZ + file_size);
+	memcpy(VARDATA(model_data), file_data, file_size);
+	pfree(file_data);
+
+	/* Update model in catalog */
+	{
+		Oid			argtypes[2];
+		Datum		values[2];
+		char		nulls[2];
+		StringInfoData update_sql;
+
+		initStringInfo(&update_sql);
+		appendStringInfo(&update_sql,
+						 "UPDATE neurondb.ml_models SET model_data = $1 WHERE model_id = $2");
+
+		argtypes[0] = BYTEAOID;
+		argtypes[1] = INT4OID;
+		values[0] = PointerGetDatum(model_data);
+		values[1] = Int32GetDatum(model_id);
+		nulls[0] = ' ';
+		nulls[1] = ' ';
+
+		ret = SPI_execute_with_args(
+			update_sql.data,
+			2,
+			argtypes,
+			values,
+			nulls,
+			false,
+			0);
+
+		pfree(update_sql.data);
+	}
+
+	if (ret != SPI_OK_UPDATE || SPI_processed == 0)
+	{
+		pfree(model_data);
+		pfree(sql.data);
+		SPI_finish();
+		pfree(onnx_path);
+		pfree(algorithm);
+		pfree(script_dir);
+		pfree(full_script_path);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: Failed to update model %d with imported data",
+						model_id)));
+	}
+
+	elog(DEBUG1,
+		 "neurondb: import_model_from_onnx: Model %d (algorithm=%s) imported from %s",
+		 model_id, algorithm, onnx_path);
+
+	pfree(model_data);
+	SPI_finish();
+	pfree(onnx_path);
+	pfree(algorithm);
+	pfree(script_dir);
+	pfree(full_script_path);
 
 	PG_RETURN_BOOL(true);
 }

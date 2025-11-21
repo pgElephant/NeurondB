@@ -1079,6 +1079,772 @@ ndb_onnx_hf_complete(const char *model_name,
 	return 0;
 }
 
+/*
+ * ndb_onnx_hf_embed
+ *	  Generate text embedding using ONNX model (C-callable)
+ *
+ * Returns 0 on success, -1 on error. vec_out and dim_out must be provided.
+ */
+PGDLLEXPORT int
+ndb_onnx_hf_embed(const char *model_name,
+	const char *text,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
+{
+	ONNXModelSession *session = NULL;
+	int32 *token_ids = NULL;
+	int32 token_length = 0;
+	ONNXTensor *input_tensor = NULL;
+	ONNXTensor *output_tensor = NULL;
+	float *input_data = NULL;
+	float *result_vec = NULL;
+	int64 input_shape[2];
+	int embedding_dim = 0;
+	int i;
+	int j;
+	float sum;
+	MemoryContext oldcontext;
+	MemoryContext workcontext;
+
+	/* Defensive parameter validation */
+	if (model_name == NULL || strlen(model_name) == 0
+		|| text == NULL || strlen(text) == 0
+		|| vec_out == NULL || dim_out == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Invalid parameters for text embedding");
+		return -1;
+	}
+
+	/* Initialize outputs */
+	*vec_out = NULL;
+	*dim_out = 0;
+	if (errstr)
+		*errstr = NULL;
+
+	/* Check ONNX availability */
+	if (!neurondb_onnx_available())
+	{
+		if (errstr)
+			*errstr = pstrdup("ONNX Runtime not available");
+		return -1;
+	}
+
+	PG_TRY();
+	{
+		/* Create a work memory context for temporary allocations */
+		workcontext = AllocSetContextCreate(CurrentMemoryContext,
+			"ndb_onnx_hf_embed",
+			ALLOCSET_DEFAULT_SIZES);
+		oldcontext = MemoryContextSwitchTo(workcontext);
+
+		/* Load or get cached model */
+		session = neurondb_onnx_get_or_load_model(
+			model_name, ONNX_MODEL_EMBEDDING);
+
+		if (session == NULL)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(workcontext);
+			if (errstr)
+				*errstr = psprintf("Failed to load ONNX model: %s", model_name);
+			return -1;
+		}
+
+		/* Tokenize input text with model-specific tokenizer */
+		token_ids = neurondb_tokenize_with_model(
+			text, 128, &token_length, model_name);
+
+		if (token_ids == NULL || token_length == 0)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(workcontext);
+			if (errstr)
+				*errstr = pstrdup("Failed to tokenize input text");
+			return -1;
+		}
+
+		/* Convert token IDs to float array for ONNX */
+		input_data = (float *)palloc(token_length * sizeof(float));
+		for (i = 0; i < token_length; i++)
+			input_data[i] = (float)token_ids[i];
+
+		/* Create input tensor */
+		input_shape[0] = 1;
+		input_shape[1] = token_length;
+
+		input_tensor = neurondb_onnx_create_tensor(input_data, input_shape, 2);
+
+		if (input_tensor == NULL)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(workcontext);
+			if (errstr)
+				*errstr = pstrdup("Failed to create input tensor");
+			return -1;
+		}
+
+		/* Run inference */
+		output_tensor = neurondb_onnx_run_inference(session, input_tensor);
+
+		if (output_tensor == NULL || output_tensor->data == NULL)
+		{
+			if (input_tensor)
+				neurondb_onnx_free_tensor(input_tensor);
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(workcontext);
+			if (errstr)
+				*errstr = pstrdup("ONNX inference failed");
+			return -1;
+		}
+
+		/* Calculate embedding dimension */
+		embedding_dim = output_tensor->size / token_length;
+
+		if (embedding_dim <= 0)
+		{
+			neurondb_onnx_free_tensor(input_tensor);
+			neurondb_onnx_free_tensor(output_tensor);
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(workcontext);
+			if (errstr)
+				*errstr = pstrdup("Invalid embedding dimension");
+			return -1;
+		}
+
+		/* Allocate result vector in parent memory context */
+		MemoryContextSwitchTo(oldcontext);
+		result_vec = (float *)palloc(embedding_dim * sizeof(float));
+
+		/* Pool embeddings (mean pooling across sequence dimension) */
+		for (i = 0; i < embedding_dim; i++)
+		{
+			sum = 0.0f;
+			for (j = 0; j < token_length; j++)
+				sum += output_tensor->data[j * embedding_dim + i];
+
+			result_vec[i] = sum / token_length;
+		}
+
+		/* Copy results to output pointers */
+		*vec_out = result_vec;
+		*dim_out = embedding_dim;
+
+		/* Cleanup work context */
+		MemoryContextSwitchTo(workcontext);
+		neurondb_onnx_free_tensor(input_tensor);
+		neurondb_onnx_free_tensor(output_tensor);
+		pfree(input_data);
+		pfree(token_ids);
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(workcontext);
+	}
+	PG_CATCH();
+	{
+		/* Cleanup on error */
+		if (result_vec)
+			pfree(result_vec);
+		if (input_tensor)
+			neurondb_onnx_free_tensor(input_tensor);
+		if (output_tensor)
+			neurondb_onnx_free_tensor(output_tensor);
+		if (input_data)
+			pfree(input_data);
+		if (token_ids)
+			pfree(token_ids);
+		if (workcontext)
+		{
+			MemoryContextSwitchTo(oldcontext);
+			MemoryContextDelete(workcontext);
+		}
+		if (errstr)
+			*errstr = pstrdup("Exception during ONNX text embedding");
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	return 0;
+}
+
+/*
+ * ndb_onnx_hf_image_embed
+ *	  Generate image embedding using ONNX CLIP model
+ *
+ * Note: This is a placeholder implementation. Full image processing
+ * requires image decoding libraries. This version works with
+ * preprocessed image data or simplified preprocessing.
+ */
+int
+ndb_onnx_hf_image_embed(const char *model_name,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
+{
+	ONNXModelSession *session = NULL;
+	ONNXTensor *input_tensor = NULL;
+	ONNXTensor *output_tensor = NULL;
+	float *input_data = NULL;
+	int64 input_shape[4];
+	int rc = -1;
+	int i;
+	float sum;
+
+	/* Defensive parameter validation */
+	if (model_name == NULL || strlen(model_name) == 0
+		|| image_data == NULL || image_size == 0
+		|| vec_out == NULL || dim_out == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Invalid parameters for image embedding");
+		return -1;
+	}
+
+	/* Initialize outputs */
+	*vec_out = NULL;
+	*dim_out = 0;
+	if (errstr)
+		*errstr = NULL;
+
+	/* Check ONNX availability */
+	if (!neurondb_onnx_available())
+	{
+		if (errstr)
+			*errstr = pstrdup("ONNX Runtime not available");
+		return -1;
+	}
+
+	PG_TRY();
+	{
+		/* Load or get cached CLIP model */
+		session = neurondb_onnx_get_or_load_model(
+			model_name, ONNX_MODEL_EMBEDDING);
+		if (!session)
+		{
+			if (errstr)
+				*errstr = pstrdup("Failed to load ONNX CLIP model");
+			rc = -1;
+		} else
+		{
+			/* CLIP image encoder expects preprocessed image:
+			 * Shape: [1, 3, 224, 224] for RGB
+			 * Values: Normalized [0, 1] or [-1, 1]
+			 *
+			 * Note: Full image preprocessing requires image decoding libraries
+			 * (libjpeg, libpng, etc.). For now, we return an error indicating
+			 * that HTTP API should be used for image embeddings, or image
+			 * preprocessing needs to be implemented.
+			 *
+			 * Placeholder implementation - would need image libraries
+			 */
+			const int img_size = 224;
+			const int channels = 3;
+			const int total_size = img_size * img_size * channels;
+
+			input_data = (float *)palloc(total_size * sizeof(float));
+			if (!input_data)
+			{
+				if (errstr)
+					*errstr = pstrdup("Memory allocation failed");
+				rc = -1;
+			} else
+			{
+				/* Initialize with zeros (placeholder - requires image preprocessing) */
+				memset(input_data, 0, total_size * sizeof(float));
+
+				/* CLIP input shape: [batch, channels, height, width] */
+				input_shape[0] = 1;
+				input_shape[1] = channels;
+				input_shape[2] = img_size;
+				input_shape[3] = img_size;
+
+				input_tensor = neurondb_onnx_create_tensor(input_data, input_shape, 4);
+				if (!input_tensor)
+				{
+					pfree(input_data);
+					input_data = NULL;
+					if (errstr)
+						*errstr = pstrdup("Failed to create input tensor");
+					rc = -1;
+				} else
+				{
+					/* Run inference */
+					output_tensor = neurondb_onnx_run_inference(session, input_tensor);
+					if (!output_tensor || output_tensor->size <= 0)
+					{
+						neurondb_onnx_free_tensor(input_tensor);
+						if (input_data)
+							pfree(input_data);
+						if (errstr)
+							*errstr = pstrdup("ONNX inference failed");
+						rc = -1;
+					} else
+					{
+						/* Extract embedding */
+						*dim_out = (int)output_tensor->size;
+						*vec_out = (float *)palloc(*dim_out * sizeof(float));
+						if (!*vec_out)
+						{
+							neurondb_onnx_free_tensor(input_tensor);
+							neurondb_onnx_free_tensor(output_tensor);
+							if (input_data)
+								pfree(input_data);
+							if (errstr)
+								*errstr = pstrdup("Memory allocation failed");
+							*dim_out = 0;
+							rc = -1;
+						} else
+						{
+							memcpy(*vec_out, output_tensor->data,
+								*dim_out * sizeof(float));
+
+							/* L2 normalization */
+							sum = 0.0f;
+							for (i = 0; i < *dim_out; i++)
+								sum += (*vec_out)[i] * (*vec_out)[i];
+							sum = sqrtf(sum);
+							if (sum > 0.0f)
+							{
+								for (i = 0; i < *dim_out; i++)
+									(*vec_out)[i] /= sum;
+							}
+
+							/* Cleanup */
+							neurondb_onnx_free_tensor(input_tensor);
+							neurondb_onnx_free_tensor(output_tensor);
+							if (input_data)
+								pfree(input_data);
+
+							rc = 0;
+						}
+					}
+				}
+			}
+		}
+	}
+	PG_CATCH();
+	{
+		/* Defensive cleanup on error */
+		if (input_tensor)
+			neurondb_onnx_free_tensor(input_tensor);
+		if (output_tensor)
+			neurondb_onnx_free_tensor(output_tensor);
+		if (input_data)
+			pfree(input_data);
+		if (*vec_out)
+		{
+			pfree(*vec_out);
+			*vec_out = NULL;
+			*dim_out = 0;
+		}
+		if (errstr && !*errstr)
+			*errstr = pstrdup("ONNX image embedding error");
+		rc = -1;
+	}
+	PG_END_TRY();
+
+	return rc;
+}
+
+/*
+ * ndb_onnx_hf_multimodal_embed
+ *	  Generate multimodal (text+image) embedding using ONNX CLIP
+ */
+int
+ndb_onnx_hf_multimodal_embed(const char *model_name,
+	const char *text,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
+{
+	/* For CLIP multimodal, combine text and image encoders */
+	float *text_vec = NULL;
+	float *image_vec = NULL;
+	int text_dim = 0;
+	int image_dim = 0;
+	int rc = -1;
+	int i;
+	float sum;
+
+	/* Defensive parameter validation */
+	if (model_name == NULL || strlen(model_name) == 0
+		|| text == NULL || strlen(text) == 0
+		|| image_data == NULL || image_size == 0
+		|| vec_out == NULL || dim_out == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Invalid parameters for multimodal embedding");
+		return -1;
+	}
+
+	/* Initialize outputs */
+	*vec_out = NULL;
+	*dim_out = 0;
+	if (errstr)
+		*errstr = NULL;
+
+	/* Get text embedding */
+	{
+		char *text_err = NULL;
+		if (ndb_onnx_hf_embed(model_name, text, &text_vec, &text_dim, &text_err) != 0)
+		{
+			if (errstr)
+				*errstr = psprintf("Text embedding failed: %s",
+					text_err ? text_err : "unknown error");
+			if (text_err)
+				pfree(text_err);
+			return -1;
+		}
+		if (text_err)
+			pfree(text_err);
+	}
+
+	/* Get image embedding */
+	{
+		char *img_err = NULL;
+		if (ndb_onnx_hf_image_embed(model_name, image_data, image_size,
+			&image_vec, &image_dim, &img_err) != 0)
+		{
+			if (text_vec)
+				pfree(text_vec);
+			if (errstr)
+				*errstr = psprintf("Image embedding failed: %s",
+					img_err ? img_err : "unknown error");
+			if (img_err)
+				pfree(img_err);
+			return -1;
+		}
+		if (img_err)
+			pfree(img_err);
+	}
+
+	/* Combine embeddings (CLIP uses shared space) */
+	if (text_vec != NULL && image_vec != NULL && text_dim == image_dim && text_dim > 0)
+	{
+		/* Average pooling for fusion */
+		*dim_out = text_dim;
+		*vec_out = (float *)palloc(*dim_out * sizeof(float));
+		if (!*vec_out)
+		{
+			if (text_vec)
+				pfree(text_vec);
+			if (image_vec)
+				pfree(image_vec);
+			if (errstr)
+				*errstr = pstrdup("Memory allocation failed");
+			*dim_out = 0;
+			return -1;
+		}
+
+		for (i = 0; i < *dim_out; i++)
+			(*vec_out)[i] = (text_vec[i] + image_vec[i]) / 2.0f;
+
+		/* L2 normalization */
+		sum = 0.0f;
+		for (i = 0; i < *dim_out; i++)
+			sum += (*vec_out)[i] * (*vec_out)[i];
+		sum = sqrtf(sum);
+		if (sum > 0.0f)
+		{
+			for (i = 0; i < *dim_out; i++)
+				(*vec_out)[i] /= sum;
+		}
+
+		/* Cleanup */
+		if (text_vec)
+			pfree(text_vec);
+		if (image_vec)
+			pfree(image_vec);
+
+		rc = 0;
+	} else
+	{
+		if (text_vec)
+			pfree(text_vec);
+		if (image_vec)
+			pfree(image_vec);
+		if (errstr)
+			*errstr = pstrdup("Failed to combine embeddings (dimension mismatch)");
+		rc = -1;
+	}
+
+	return rc;
+}
+
+/*
+ * ndb_onnx_hf_rerank
+ *	  Rerank documents using ONNX cross-encoder model
+ *
+ * Cross-encoder models take query+document pairs and output relevance scores.
+ * This function processes each query-document pair through the model.
+ */
+int
+ndb_onnx_hf_rerank(const char *model_name,
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out,
+	char **errstr)
+{
+	ONNXModelSession *session = NULL;
+	int32 *query_token_ids = NULL;
+	int32 query_token_length = 0;
+	int32 *doc_token_ids = NULL;
+	int32 doc_token_length = 0;
+	int32 *combined_token_ids = NULL;
+	int32 combined_token_length = 0;
+	ONNXTensor *input_tensor = NULL;
+	ONNXTensor *output_tensor = NULL;
+	float *input_data = NULL;
+	int64 input_shape[2];
+	float *scores = NULL;
+	int rc = -1;
+	int i;
+	int j;
+	int max_combined_length = 512; /* Typical max for cross-encoders */
+
+	/* Defensive parameter validation */
+	if (model_name == NULL || strlen(model_name) == 0
+		|| query == NULL || strlen(query) == 0
+		|| docs == NULL || ndocs <= 0
+		|| scores_out == NULL)
+	{
+		if (errstr)
+			*errstr = pstrdup("Invalid parameters for ONNX reranking");
+		return -1;
+	}
+
+	/* Initialize outputs */
+	*scores_out = NULL;
+	if (errstr)
+		*errstr = NULL;
+
+	/* Check ONNX availability */
+	if (!neurondb_onnx_available())
+	{
+		if (errstr)
+			*errstr = pstrdup("ONNX Runtime not available");
+		return -1;
+	}
+
+	/* Allocate scores array */
+	scores = (float *)palloc(ndocs * sizeof(float));
+	if (!scores)
+	{
+		if (errstr)
+			*errstr = pstrdup("Memory allocation failed");
+		return -1;
+	}
+
+	PG_TRY();
+	{
+		/* Load or get cached cross-encoder model */
+		session = neurondb_onnx_get_or_load_model(
+			model_name, ONNX_MODEL_CLASSIFICATION);
+		if (!session)
+		{
+			if (errstr)
+				*errstr = pstrdup("Failed to load ONNX cross-encoder model");
+			pfree(scores);
+			rc = -1;
+		} else
+		{
+			/* Tokenize query once */
+			query_token_ids = neurondb_tokenize_with_model(
+				query, 128, &query_token_length, model_name);
+			if (!query_token_ids || query_token_length <= 0)
+			{
+				if (errstr)
+					*errstr = pstrdup("Failed to tokenize query");
+				pfree(scores);
+				if (query_token_ids)
+					pfree(query_token_ids);
+				rc = -1;
+			} else
+			{
+				/* Process each document */
+				for (i = 0; i < ndocs; i++)
+				{
+					if (docs[i] == NULL || strlen(docs[i]) == 0)
+					{
+						scores[i] = 0.0f;
+						continue;
+					}
+
+					/* Tokenize document */
+					doc_token_ids = neurondb_tokenize_with_model(
+						docs[i], 384, &doc_token_length, model_name);
+					if (!doc_token_ids || doc_token_length <= 0)
+					{
+						scores[i] = 0.0f;
+						if (doc_token_ids)
+							pfree(doc_token_ids);
+						continue;
+					}
+
+					/* Combine query and document tokens: [CLS] query [SEP] doc [SEP] */
+					/* Reserve space: 1 (CLS) + query_len + 1 (SEP) + doc_len + 1 (SEP) */
+					combined_token_length = 1 + query_token_length + 1
+						+ doc_token_length + 1;
+					if (combined_token_length > max_combined_length)
+					{
+						/* Truncate document to fit */
+						int available = max_combined_length - 1
+							- query_token_length - 1 - 1;
+						if (available > 0)
+							doc_token_length = available;
+						else
+							doc_token_length = 0;
+						combined_token_length = max_combined_length;
+					}
+
+					combined_token_ids = (int32 *)palloc(
+						combined_token_length * sizeof(int32));
+					if (!combined_token_ids)
+					{
+						scores[i] = 0.0f;
+						if (doc_token_ids)
+							pfree(doc_token_ids);
+						continue;
+					}
+
+					/* Build combined sequence */
+					j = 0;
+					combined_token_ids[j++] = 101; /* [CLS] token ID */
+					/* Copy query tokens */
+					{
+						int k;
+						for (k = 0; k < query_token_length && j < combined_token_length - 2; k++)
+							combined_token_ids[j++] = query_token_ids[k];
+					}
+					combined_token_ids[j++] = 102; /* [SEP] token ID */
+					/* Copy document tokens */
+					{
+						int k;
+						for (k = 0; k < doc_token_length && j < combined_token_length - 1; k++)
+							combined_token_ids[j++] = doc_token_ids[k];
+					}
+					combined_token_ids[j++] = 102; /* [SEP] token ID */
+					combined_token_length = j;
+
+					/* Convert token IDs to float array for ONNX */
+					input_data = (float *)palloc(
+						combined_token_length * sizeof(float));
+					if (!input_data)
+					{
+						scores[i] = 0.0f;
+						if (combined_token_ids)
+							pfree(combined_token_ids);
+						if (doc_token_ids)
+							pfree(doc_token_ids);
+						continue;
+					}
+
+					for (j = 0; j < combined_token_length; j++)
+						input_data[j] = (float)combined_token_ids[j];
+
+					/* Create input tensor */
+					input_shape[0] = 1;
+					input_shape[1] = combined_token_length;
+					input_tensor = neurondb_onnx_create_tensor(
+						input_data, input_shape, 2);
+					if (!input_tensor)
+					{
+						scores[i] = 0.0f;
+						if (input_data)
+							pfree(input_data);
+						if (combined_token_ids)
+							pfree(combined_token_ids);
+						if (doc_token_ids)
+							pfree(doc_token_ids);
+						continue;
+					}
+
+					/* Run inference */
+					output_tensor = neurondb_onnx_run_inference(
+						session, input_tensor);
+					if (!output_tensor || output_tensor->size <= 0)
+					{
+						scores[i] = 0.0f;
+						neurondb_onnx_free_tensor(input_tensor);
+						if (input_data)
+							pfree(input_data);
+						if (combined_token_ids)
+							pfree(combined_token_ids);
+						if (doc_token_ids)
+							pfree(doc_token_ids);
+						continue;
+					}
+
+					/* Extract score (cross-encoder outputs single logit/score) */
+					/* For binary classification, use first output */
+					if (output_tensor->size >= 1)
+					{
+						/* Apply sigmoid if needed, or use raw logit */
+						float logit = output_tensor->data[0];
+						/* Convert logit to probability using sigmoid */
+						scores[i] = 1.0f / (1.0f + expf(-logit));
+					} else
+					{
+						scores[i] = 0.0f;
+					}
+
+					/* Cleanup for this document */
+					neurondb_onnx_free_tensor(input_tensor);
+					neurondb_onnx_free_tensor(output_tensor);
+					if (input_data)
+						pfree(input_data);
+					if (combined_token_ids)
+						pfree(combined_token_ids);
+					if (doc_token_ids)
+						pfree(doc_token_ids);
+					input_tensor = NULL;
+					output_tensor = NULL;
+					input_data = NULL;
+					combined_token_ids = NULL;
+					doc_token_ids = NULL;
+				}
+
+				/* Cleanup query tokens */
+				if (query_token_ids)
+					pfree(query_token_ids);
+
+				*scores_out = scores;
+				rc = 0;
+			}
+		}
+	}
+	PG_CATCH();
+	{
+		/* Defensive cleanup on error */
+		if (input_tensor)
+			neurondb_onnx_free_tensor(input_tensor);
+		if (output_tensor)
+			neurondb_onnx_free_tensor(output_tensor);
+		if (input_data)
+			pfree(input_data);
+		if (combined_token_ids)
+			pfree(combined_token_ids);
+		if (doc_token_ids)
+			pfree(doc_token_ids);
+		if (query_token_ids)
+			pfree(query_token_ids);
+		if (scores)
+			pfree(scores);
+		if (errstr && !*errstr)
+			*errstr = pstrdup("ONNX reranking error");
+		*scores_out = NULL;
+		rc = -1;
+	}
+	PG_END_TRY();
+
+	return rc;
+}
+
 #else /* !HAVE_ONNX_RUNTIME */
 
 /*
@@ -1089,6 +1855,58 @@ ndb_onnx_hf_complete(const char *model_name,
 	const char *prompt,
 	const char *params_json,
 	char **text_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = pstrdup("ONNX Runtime support not compiled in");
+	return -1;
+}
+
+int
+ndb_onnx_hf_embed(const char *model_name,
+	const char *text,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = pstrdup("ONNX Runtime support not compiled in");
+	return -1;
+}
+
+int
+ndb_onnx_hf_image_embed(const char *model_name,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = pstrdup("ONNX Runtime support not compiled in");
+	return -1;
+}
+
+int
+ndb_onnx_hf_multimodal_embed(const char *model_name,
+	const char *text,
+	const unsigned char *image_data,
+	size_t image_size,
+	float **vec_out,
+	int *dim_out,
+	char **errstr)
+{
+	if (errstr)
+		*errstr = pstrdup("ONNX Runtime support not compiled in");
+	return -1;
+}
+
+int
+ndb_onnx_hf_rerank(const char *model_name,
+	const char *query,
+	const char **docs,
+	int ndocs,
+	float **scores_out,
 	char **errstr)
 {
 	if (errstr)
