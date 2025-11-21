@@ -291,8 +291,10 @@ ifdef ROCM_PATH
 	HAVE_ROCM := $(shell test -f $(ROCM_PATH)/include/hip/hip_runtime.h && echo "yes" || echo "no")
 	ifeq ($(HAVE_ROCM),yes)
 		HIPCC := $(ROCM_PATH)/bin/hipcc
-		PG_CPPFLAGS += -DNDB_GPU_ROCM -I$(ROCM_PATH)/include
-		SHLIB_LINK += -L$(ROCM_PATH)/lib -lamdhip64 -lrocblas
+		HIPCCFLAGS ?= -O3 -fPIC -I$(srcdir)/include -I$(ROCM_PATH)/include -DNDB_GPU_HIP -DNDB_GPU_ROCM
+		PG_CPPFLAGS += -DNDB_GPU_HIP -DNDB_GPU_ROCM -DHAVE_ROCM -I$(ROCM_PATH)/include
+		ROCM_LIBDIR := $(shell if test -d $(ROCM_PATH)/lib64; then echo $(ROCM_PATH)/lib64; else echo $(ROCM_PATH)/lib; fi)
+		SHLIB_LINK += -L$(ROCM_LIBDIR) -lamdhip64 -lrocblas -Wl,-rpath,$(ROCM_LIBDIR)
 		OBJS += $(ROCM_GPU_C_OBJS) $(ROCM_GPU_CU_OBJS)
 	endif
 endif
@@ -304,14 +306,30 @@ METAL_OBJS :=
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 # Allow disabling explicitly: DISABLE_METAL=1 make ...
+# Or enable explicitly: GPU_MODE=metal make ...
 ifeq ($(UNAME_S),Darwin)
 ifneq ($(DISABLE_METAL),1)
 	# Enable for both arm64 and x86_64 (Rosetta builds will still report x86_64 and get Metal)
+	# Enable if GPU_MODE is metal, auto, or not set (but not if explicitly set to cuda/rocm/none)
 	ifneq ($(filter $(UNAME_M),arm64 x86_64),)
-		HAVE_METAL := yes
-		PG_CPPFLAGS += -DNDB_GPU_METAL
-		SHLIB_LINK += -framework Metal -framework MetalPerformanceShaders -framework Accelerate -framework Foundation
-		METAL_OBJS = src/gpu/metal/gpu_metal.o src/gpu/metal/gpu_metal_impl.o src/gpu/metal/gpu_backend_metal.o
+		ifeq ($(GPU_MODE),metal)
+			HAVE_METAL := yes
+			PG_CPPFLAGS += -DNDB_GPU_METAL
+			SHLIB_LINK += -framework Metal -framework MetalPerformanceShaders -framework Accelerate -framework Foundation
+			METAL_OBJS = src/gpu/metal/gpu_metal.o src/gpu/metal/gpu_metal_impl.o src/gpu/metal/gpu_backend_metal.o
+		else ifeq ($(GPU_MODE),auto)
+			# Auto-enable Metal on macOS when GPU_MODE is auto
+			HAVE_METAL := yes
+			PG_CPPFLAGS += -DNDB_GPU_METAL
+			SHLIB_LINK += -framework Metal -framework MetalPerformanceShaders -framework Accelerate -framework Foundation
+			METAL_OBJS = src/gpu/metal/gpu_metal.o src/gpu/metal/gpu_metal_impl.o src/gpu/metal/gpu_backend_metal.o
+		else ifeq ($(GPU_MODE),)
+			# Auto-enable Metal on macOS if GPU_MODE not specified
+			HAVE_METAL := yes
+			PG_CPPFLAGS += -DNDB_GPU_METAL
+			SHLIB_LINK += -framework Metal -framework MetalPerformanceShaders -framework Accelerate -framework Foundation
+			METAL_OBJS = src/gpu/metal/gpu_metal.o src/gpu/metal/gpu_metal_impl.o src/gpu/metal/gpu_backend_metal.o
+		endif
 	endif
 endif
 endif
@@ -336,13 +354,13 @@ src/gpu/cuda/%.bc: src/gpu/cuda/%.cu
 	$(NVCC) $(NVCCFLAGS) $(CUDA_ARCH_FLAGS) -Xcompiler "-fPIC" -I$(srcdir)/include -c $< -o $@
 endif
 
-# ROCm compilation rule
+# ROCm compilation rule (use HIPCC when available)
 ifeq ($(HAVE_ROCM),yes)
-HIPCC ?= $(ROCM_PATH)/bin/hipcc
-HIPCCFLAGS ?= -O3 -fPIC -I$(srcdir)/include -DNDB_GPU_ROCM
 ifdef ROCM_GPU_CU_OBJS
 src/gpu/rocm/%.o: src/gpu/rocm/%.cu
-	$(HIPCC) $(HIPCCFLAGS) -c $< -o $@
+	$(HIPCC) $(HIPCCFLAGS) -I$(shell $(PG_CONFIG) --includedir-server) -c $< -o $@
+src/gpu/rocm/%.bc: src/gpu/rocm/%.cu
+	$(HIPCC) $(HIPCCFLAGS) -I$(shell $(PG_CONFIG) --includedir-server) -c $< -o $@
 endif
 endif
 

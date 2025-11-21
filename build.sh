@@ -1109,12 +1109,16 @@ EOF
 	if [[ "$GPU_MODE" == "rocm" ]] && [[ -n "${ROCM_PATH:-}" ]]; then
 		cat >> include/neurondb_config.h <<EOF
 #define NDB_GPU_HIP 1
+#define NDB_GPU_ROCM 1
+#define HAVE_ROCM 1
 #define ROCM_PATH "${ROCM_PATH}"
 EOF
 		msg "ROCm support: Enabled"
 	else
 		cat >> include/neurondb_config.h <<EOF
 /* #undef NDB_GPU_HIP */
+/* #undef NDB_GPU_ROCM */
+/* #undef HAVE_ROCM */
 EOF
 	fi
 	
@@ -1250,6 +1254,7 @@ build_neurondb() {
 	local make_args="PG_CONFIG=$pgc"
 	[[ -n "${CUDA_PATH:-}" ]] && make_args="$make_args CUDA_PATH=$CUDA_PATH"
 	[[ -n "${ROCM_PATH:-}" ]] && make_args="$make_args ROCM_PATH=$ROCM_PATH"
+	[[ "$GPU_MODE" == "metal" ]] && make_args="$make_args GPU_MODE=metal"
 	make_args="$make_args ONNX_RUNTIME_PATH=$ONNX_RUNTIME_PATH"
 	
 	msg "Compiling NeurondB (this may take several minutes)..."
