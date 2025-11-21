@@ -19,65 +19,65 @@ NeuronDB transforms PostgreSQL into a comprehensive AI database platform. Built 
 > **📚 Detailed documentation available for each feature below**
 
 ### Vector Search & Indexing
-- **[Vector Types](https://pgelephant.com/neurondb/features/vector-types/)**: `vector` (float32), `vectorp` (packed), `vecmap` (sparse), `vgraph` (graph-based), `rtext` (retrieval text)
-- **[Indexing](https://pgelephant.com/neurondb/features/indexing/)**: HNSW, IVF with automatic tuning and maintenance
-- **[Distance Metrics](https://pgelephant.com/neurondb/features/distance-metrics/)**: L2, Cosine, Inner Product, Manhattan, Hamming, Jaccard, and more
-- **[Quantization](https://pgelephant.com/neurondb/features/quantization/)**: Product Quantization (PQ), Optimized PQ (OPQ) with 2x-32x compression
+- **[Vector Types](https://www.pgelephant.com/docs/neurondb/features/vector-types)**: `vector` (float32), `vectorp` (packed), `vecmap` (sparse), `vgraph` (graph-based), `rtext` (retrieval text)
+- **[Indexing](https://www.pgelephant.com/docs/neurondb/features/indexing)**: HNSW, IVF with automatic tuning and maintenance
+- **[Distance Metrics](https://www.pgelephant.com/docs/neurondb/features/distance-metrics)**: L2, Cosine, Inner Product, Manhattan, Hamming, Jaccard, and more
+- **[Quantization](https://www.pgelephant.com/docs/neurondb/features/quantization)**: Product Quantization (PQ), Optimized PQ (OPQ) with 2x-32x compression
 
 ### ML Algorithms & Analytics
-- **[Random Forest](https://pgelephant.com/neurondb/ml/random-forest/)**: Classification and regression with GPU acceleration
-- **[Gradient Boosting](https://pgelephant.com/neurondb/ml/gradient-boosting/)**: XGBoost, LightGBM, CatBoost integration
-- **[Clustering](https://pgelephant.com/neurondb/analytics/clustering/)**: K-Means, Mini-batch K-means, DBSCAN, GMM, Hierarchical clustering
-- **[Dimensionality Reduction](https://pgelephant.com/neurondb/analytics/dimensionality/)**: PCA, PCA Whitening
-- **[Classification](https://pgelephant.com/neurondb/ml/classification/)**: SVM, Logistic Regression, Naive Bayes, Decision Trees, Neural Networks
-- **[Regression](https://pgelephant.com/neurondb/ml/regression/)**: Linear Regression, Ridge, Lasso, Deep Learning models
-- **[Outlier Detection](https://pgelephant.com/neurondb/analytics/outliers/)**: Z-score, Modified Z-score, IQR methods
-- **[Quality Metrics](https://pgelephant.com/neurondb/analytics/quality/)**: Recall@K, Precision@K, F1@K, MRR, Davies-Bouldin Index
-- **[Drift Detection](https://pgelephant.com/neurondb/analytics/drift/)**: Centroid drift, Distribution divergence, Temporal monitoring
-- **[Topic Discovery](https://pgelephant.com/neurondb/analytics/topics/)**: Topic modeling and analysis
-- **[Time Series](https://pgelephant.com/neurondb/ml/timeseries/)**: Forecasting and analysis
-- **[Recommendation Systems](https://pgelephant.com/neurondb/ml/recommender/)**: Collaborative filtering and ranking
+- **[Random Forest](https://www.pgelephant.com/docs/neurondb/ml/random-forest/)**: Classification and regression with GPU acceleration
+- **[Gradient Boosting](https://www.pgelephant.com/docs/neurondb/ml/gradient-boosting/)**: XGBoost, LightGBM, CatBoost integration
+- **[Clustering](https://www.pgelephant.com/docs/neurondb/analytics/clustering/)**: K-Means, Mini-batch K-means, DBSCAN, GMM, Hierarchical clustering
+- **[Dimensionality Reduction](https://www.pgelephant.com/docs/neurondb/analytics/dimensionality/)**: PCA, PCA Whitening
+- **[Classification](https://www.pgelephant.com/docs/neurondb/ml/classification/)**: SVM, Logistic Regression, Naive Bayes, Decision Trees, Neural Networks
+- **[Regression](https://www.pgelephant.com/docs/neurondb/ml/regression/)**: Linear Regression, Ridge, Lasso, Deep Learning models
+- **[Outlier Detection](https://www.pgelephant.com/docs/neurondb/analytics/outliers/)**: Z-score, Modified Z-score, IQR methods
+- **[Quality Metrics](https://www.pgelephant.com/docs/neurondb/analytics/quality/)**: Recall@K, Precision@K, F1@K, MRR, Davies-Bouldin Index
+- **[Drift Detection](https://www.pgelephant.com/docs/neurondb/analytics/drift/)**: Centroid drift, Distribution divergence, Temporal monitoring
+- **[Topic Discovery](https://www.pgelephant.com/docs/neurondb/analytics/topics/)**: Topic modeling and analysis
+- **[Time Series](https://www.pgelephant.com/docs/neurondb/ml/timeseries/)**: Forecasting and analysis
+- **[Recommendation Systems](https://www.pgelephant.com/docs/neurondb/ml/recommender/)**: Collaborative filtering and ranking
 
 ### ML & Embeddings
-- **[Embedding Generation](https://pgelephant.com/neurondb/ml/embeddings/)**: Text, image, multimodal embeddings with intelligent caching
-- **[Model Inference](https://pgelephant.com/neurondb/ml/inference/)**: ONNX runtime, batch processing, model management
-- **[Model Management](https://pgelephant.com/neurondb/ml/model-management/)**: Load, export, version, monitor models with catalog integration
-- **[AutoML](https://pgelephant.com/neurondb/ml/automl/)**: Automated hyperparameter tuning and model selection
-- **[Feature Store](https://pgelephant.com/neurondb/ml/feature-store/)**: Centralized feature management and versioning
+- **[Embedding Generation](https://www.pgelephant.com/docs/neurondb/ml/embeddings/)**: Text, image, multimodal embeddings with intelligent caching
+- **[Model Inference](https://www.pgelephant.com/docs/neurondb/ml/inference/)**: ONNX runtime, batch processing, model management
+- **[Model Management](https://www.pgelephant.com/docs/neurondb/ml/model-management/)**: Load, export, version, monitor models with catalog integration
+- **[AutoML](https://www.pgelephant.com/docs/neurondb/ml/automl/)**: Automated hyperparameter tuning and model selection
+- **[Feature Store](https://www.pgelephant.com/docs/neurondb/ml/feature-store/)**: Centralized feature management and versioning
 
 ### Hybrid Search & Retrieval
-- **[Hybrid Search](https://pgelephant.com/neurondb/hybrid/overview/)**: Combine vector and full-text search with configurable weights
-- **[Multi-Vector](https://pgelephant.com/neurondb/hybrid/multi-vector/)**: Multiple embeddings per document for enhanced retrieval
-- **[Faceted Search](https://pgelephant.com/neurondb/hybrid/faceted/)**: Category-aware retrieval with filtering
-- **[Temporal Search](https://pgelephant.com/neurondb/hybrid/temporal/)**: Time-decay relevance scoring
+- **[Hybrid Search](https://www.pgelephant.com/docs/neurondb/hybrid/overview/)**: Combine vector and full-text search with configurable weights
+- **[Multi-Vector](https://www.pgelephant.com/docs/neurondb/hybrid/multi-vector/)**: Multiple embeddings per document for enhanced retrieval
+- **[Faceted Search](https://www.pgelephant.com/docs/neurondb/hybrid/faceted/)**: Category-aware retrieval with filtering
+- **[Temporal Search](https://www.pgelephant.com/docs/neurondb/hybrid/temporal/)**: Time-decay relevance scoring
 
 ### Reranking
-- **[Cross-Encoder](https://pgelephant.com/neurondb/reranking/cross-encoder/)**: Neural reranking models
-- **[LLM Reranking](https://pgelephant.com/neurondb/reranking/llm/)**: GPT/Claude-powered scoring
-- **[ColBERT](https://pgelephant.com/neurondb/reranking/colbert/)**: Late interaction models
-- **[Ensemble](https://pgelephant.com/neurondb/reranking/ensemble/)**: Combine multiple reranking strategies
+- **[Cross-Encoder](https://www.pgelephant.com/docs/neurondb/reranking/cross-encoder/)**: Neural reranking models
+- **[LLM Reranking](https://www.pgelephant.com/docs/neurondb/reranking/llm/)**: GPT/Claude-powered scoring
+- **[ColBERT](https://www.pgelephant.com/docs/neurondb/reranking/colbert/)**: Late interaction models
+- **[Ensemble](https://www.pgelephant.com/docs/neurondb/reranking/ensemble/)**: Combine multiple reranking strategies
 
 ### RAG Pipeline
-- **[Complete RAG Support](https://pgelephant.com/neurondb/rag/)**: End-to-end Retrieval Augmented Generation
-- **[LLM Integration](https://pgelephant.com/neurondb/llm/)**: Hugging Face and OpenAI integration
-- **[Document Processing](https://pgelephant.com/neurondb/nlp/)**: Text processing and NLP capabilities
+- **[Complete RAG Support](https://www.pgelephant.com/docs/neurondb/rag/)**: End-to-end Retrieval Augmented Generation
+- **[LLM Integration](https://www.pgelephant.com/docs/neurondb/llm/)**: Hugging Face and OpenAI integration
+- **[Document Processing](https://www.pgelephant.com/docs/neurondb/nlp/)**: Text processing and NLP capabilities
 
 ### Background Workers
-- **[neuranq](https://pgelephant.com/neurondb/workers/neuranq/)**: Async job queue executor with batch processing
-- **[neuranmon](https://pgelephant.com/neurondb/workers/neuranmon/)**: Live query auto-tuner and performance optimization
-- **[neurandefrag](https://pgelephant.com/neurondb/workers/neurandefrag/)**: Automatic index maintenance and defragmentation
-- **[neuranllm](https://pgelephant.com/neurondb/workers/neuranllm/)**: LLM job processing with crash recovery
+- **[neuranq](https://www.pgelephant.com/docs/neurondb/workers/neuranq/)**: Async job queue executor with batch processing
+- **[neuranmon](https://www.pgelephant.com/docs/neurondb/workers/neuranmon/)**: Live query auto-tuner and performance optimization
+- **[neurandefrag](https://www.pgelephant.com/docs/neurondb/workers/neurandefrag/)**: Automatic index maintenance and defragmentation
+- **[neuranllm](https://www.pgelephant.com/docs/neurondb/workers/neuranllm/)**: LLM job processing with crash recovery
 
 ### GPU Acceleration
-- **[CUDA Support](https://pgelephant.com/neurondb/gpu/)**: NVIDIA GPU acceleration for vector operations and ML inference
-- **[ROCm Support](https://pgelephant.com/neurondb/gpu/)**: AMD GPU acceleration
-- **[Metal Support](https://pgelephant.com/neurondb/gpu/)**: Apple Silicon GPU acceleration
-- **[Auto-Detection](https://pgelephant.com/neurondb/gpu/)**: Automatic GPU detection and fallback to CPU
+- **[CUDA Support](https://www.pgelephant.com/docs/neurondb/gpu/)**: NVIDIA GPU acceleration for vector operations and ML inference
+- **[ROCm Support](https://www.pgelephant.com/docs/neurondb/gpu/)**: AMD GPU acceleration
+- **[Metal Support](https://www.pgelephant.com/docs/neurondb/gpu/)**: Apple Silicon GPU acceleration
+- **[Auto-Detection](https://www.pgelephant.com/docs/neurondb/gpu/)**: Automatic GPU detection and fallback to CPU
 
 ### Performance & Security
-- **[SIMD Optimization](https://pgelephant.com/neurondb/performance/optimization/)**: AVX2/AVX512 (x86_64), NEON (ARM64) with prefetching
-- **[Security](https://pgelephant.com/neurondb/security/overview/)**: Encryption, differential privacy, Row-Level Security (RLS) integration
-- **[Monitoring](https://pgelephant.com/neurondb/performance/monitoring/)**: 7 built-in monitoring views, Prometheus metrics export
+- **[SIMD Optimization](https://www.pgelephant.com/docs/neurondb/performance/optimization/)**: AVX2/AVX512 (x86_64), NEON (ARM64) with prefetching
+- **[Security](https://www.pgelephant.com/docs/neurondb/security/overview/)**: Encryption, differential privacy, Row-Level Security (RLS) integration
+- **[Monitoring](https://www.pgelephant.com/docs/neurondb/performance/monitoring/)**: 7 built-in monitoring views, Prometheus metrics export
 
 ## Quick Start
 
@@ -274,7 +274,8 @@ All tests pass on PostgreSQL 16, 17, 18 across Ubuntu, Debian, Rocky Linux, and 
 
 ## Documentation
 
-- **[Full Documentation](https://pgelephant.com/neurondb)** - Comprehensive guides and API reference
+- **[Getting Started](https://www.pgelephant.com/docs/neurondb/getting-started)** - Installation and quick start guide
+- **[Full Documentation](https://www.pgelephant.com/docs/neurondb)** - Comprehensive guides and API reference
 - **[GPU Acceleration Guide](docs/gpu.md)** - CUDA/ROCm/Metal GPU support documentation
 - **[Installation Guide](INSTALL.md)** - Detailed installation instructions
 - **[Contributing Guide](CONTRIBUTING.md)** - Development workflow and code standards
@@ -317,7 +318,7 @@ Built for the PostgreSQL community with enterprise-grade reliability and 100% co
 
 <div align="center">
 
-**[Documentation](https://pgelephant.com/neurondb)** • 
+**[Documentation](https://www.pgelephant.com/docs/neurondb/getting-started)** • 
 **[GitHub](https://github.com/pgElephant/NeurondB)** • 
 **[Support](mailto:admin@pgelephant.com)**
 
