@@ -29,6 +29,7 @@
 #include "funcapi.h"
 #include "utils/array.h"
 #include "parser/parse_type.h"
+#include "parser/parse_func.h"
 #include "utils/lsyscache.h"
 #include "catalog/pg_proc.h"
 #include "nodes/makefuncs.h"
