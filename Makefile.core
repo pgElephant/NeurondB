@@ -64,7 +64,8 @@ OBJS += \
 	src/llm/llm_router.o \
 	src/llm/llm_cache.o \
 	src/llm/llm_jobs.o \
-	src/llm/hf_http.o
+	src/llm/hf_http.o \
+	src/llm/openai_http.o
 
 # ONNX Runtime integration for HuggingFace models
 OBJS += \

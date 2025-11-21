@@ -713,6 +713,33 @@ CREATE FUNCTION configure_embedding_model(text, text) RETURNS boolean
     LANGUAGE C VOLATILE;
 COMMENT ON FUNCTION configure_embedding_model IS 'Configure embedding model: (model_name, config_json)';
 
+/* Function name aliases for API consistency */
+CREATE FUNCTION neurondb_embed(text, text DEFAULT 'all-MiniLM-L6-v2') RETURNS vector
+    AS 'MODULE_PATHNAME', 'embed_text'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_embed IS 'Alias for embed_text: Generate text embedding with GPU acceleration support';
+
+CREATE FUNCTION neurondb_embed_batch(text[], text DEFAULT 'all-MiniLM-L6-v2') RETURNS vector[]
+    AS 'MODULE_PATHNAME', 'embed_text_batch'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION neurondb_embed_batch IS 'Alias for embed_text_batch: Batch text embedding with GPU acceleration support';
+
+/* Model configuration management functions */
+CREATE FUNCTION get_embedding_model_config(text) RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'get_embedding_model_config'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION get_embedding_model_config IS 'Retrieve stored configuration for an embedding model: (model_name)';
+
+CREATE FUNCTION list_embedding_model_configs() RETURNS TABLE(model_name text, config_json jsonb, created_at timestamptz, updated_at timestamptz)
+    AS 'MODULE_PATHNAME', 'list_embedding_model_configs'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION list_embedding_model_configs IS 'List all stored embedding model configurations';
+
+CREATE FUNCTION delete_embedding_model_config(text) RETURNS boolean
+    AS 'MODULE_PATHNAME', 'delete_embedding_model_config'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION delete_embedding_model_config IS 'Delete stored configuration for an embedding model: (model_name)';
+
 -- ============================================================================
 -- HYBRID SEARCH
 -- ============================================================================
@@ -970,7 +997,7 @@ COMMENT ON FUNCTION knn_regress IS 'KNN regression. Built for macos_pg16.';
 -- Random Forest - Complete C Implementation
 -- =============================================================================
 
--- Wrapper function that redirects to new unified API
+-- C function for Random Forest training
 CREATE FUNCTION train_random_forest_classifier(
     table_name text,
     feature_col text,
@@ -980,25 +1007,9 @@ CREATE FUNCTION train_random_forest_classifier(
     min_samples_split integer DEFAULT 2,
     max_features integer DEFAULT 0
 ) RETURNS integer
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-    RETURN neurondb.train(
-        'default',
-        'random_forest',
-        table_name,
-        label_col,
-        ARRAY[feature_col]::text[],
-        jsonb_build_object(
-            'n_trees', n_trees,
-            'max_depth', max_depth,
-            'min_samples_split', min_samples_split,
-            'max_features', max_features
-        )
-    );
-END;
-$$;
-COMMENT ON FUNCTION train_random_forest_classifier IS 'Train Random Forest classifier (wrapper for neurondb.train): (table, features, labels, n_trees, max_depth, min_samples_split, max_features) returns model_id';
+    AS 'MODULE_PATHNAME', 'train_random_forest_classifier'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION train_random_forest_classifier IS 'Train Random Forest classifier: (table, features, labels, n_trees, max_depth, min_samples_split, max_features) returns model_id';
 
 CREATE FUNCTION predict_random_forest(
     model_id integer,
@@ -3034,6 +3045,15 @@ COMMENT ON TABLE neurondb.neurondb_embedding_cache IS 'Cached embeddings for per
 CREATE INDEX IF NOT EXISTS idx_embedding_cache_accessed ON neurondb.neurondb_embedding_cache(last_accessed);
 CREATE INDEX IF NOT EXISTS idx_embedding_cache_model ON neurondb.neurondb_embedding_cache(model_name);
 
+-- Embedding model configuration table
+CREATE TABLE IF NOT EXISTS neurondb.neurondb_embedding_model_config (
+    model_name text PRIMARY KEY,
+    config_json jsonb NOT NULL,
+    created_at timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now()
+);
+COMMENT ON TABLE neurondb.neurondb_embedding_model_config IS 'Configuration for embedding models (batch_size, normalize, device, etc.)';
+
 -- Histogram table for metrics distribution
 CREATE TABLE IF NOT EXISTS neurondb.neurondb_histograms (
     metric_name text NOT NULL,
@@ -4387,6 +4407,32 @@ CREATE FUNCTION ndb_llm_cache_test() RETURNS boolean
     AS 'MODULE_PATHNAME', 'ndb_llm_cache_test'
     LANGUAGE C VOLATILE;
 COMMENT ON FUNCTION ndb_llm_cache_test IS 'Test LLM cache functionality';
+
+/* Advanced cache management functions */
+CREATE FUNCTION ndb_llm_cache_stats() RETURNS jsonb
+    AS 'MODULE_PATHNAME', 'ndb_llm_cache_stats'
+    LANGUAGE C STABLE;
+COMMENT ON FUNCTION ndb_llm_cache_stats IS 'Get cache statistics: total entries, stale entries, TTL, etc.';
+
+CREATE FUNCTION ndb_llm_cache_clear(text) RETURNS integer
+    AS 'MODULE_PATHNAME', 'ndb_llm_cache_clear'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION ndb_llm_cache_clear IS 'Clear cache entries: (pattern) - NULL clears all, pattern clears matching keys';
+
+CREATE FUNCTION ndb_llm_cache_evict_stale() RETURNS integer
+    AS 'MODULE_PATHNAME', 'ndb_llm_cache_evict_stale'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION ndb_llm_cache_evict_stale IS 'Evict stale cache entries (older than TTL)';
+
+CREATE FUNCTION ndb_llm_cache_evict_size(integer) RETURNS integer
+    AS 'MODULE_PATHNAME', 'ndb_llm_cache_evict_size'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION ndb_llm_cache_evict_size IS 'Evict cache entries to maintain max_size limit (LRU eviction): (max_size)';
+
+CREATE FUNCTION ndb_llm_cache_warm(text[], text) RETURNS integer
+    AS 'MODULE_PATHNAME', 'ndb_llm_cache_warm'
+    LANGUAGE C VOLATILE;
+COMMENT ON FUNCTION ndb_llm_cache_warm IS 'Pre-populate cache with embeddings: (texts[], model)';
 
 -- Create ANN index (generic wrapper)
 CREATE FUNCTION create_ann_index(
@@ -5977,24 +6023,38 @@ END;
 $$;
 COMMENT ON FUNCTION neurondb.export_model IS 'Export model: export_model(model_id, format, path) - export to ONNX/PMML/JSON';
 
+-- Export NeuronDB model to ONNX format
+CREATE OR REPLACE FUNCTION neurondb.export_model_to_onnx(
+	model_id integer,
+	output_path text
+)
+RETURNS boolean
+LANGUAGE C
+STRICT
+AS 'MODULE_PATHNAME', 'export_model_to_onnx';
+COMMENT ON FUNCTION neurondb.export_model_to_onnx(integer, text) IS 'Export NeuronDB model to ONNX format for Hugging Face compatibility';
+
+-- Import ONNX model to NeuronDB format
+CREATE OR REPLACE FUNCTION neurondb.import_model_from_onnx(
+	model_id integer,
+	onnx_path text,
+	algorithm text
+)
+RETURNS boolean
+LANGUAGE C
+STRICT
+AS 'MODULE_PATHNAME', 'import_model_from_onnx';
+COMMENT ON FUNCTION neurondb.import_model_from_onnx(integer, text, text) IS 'Import ONNX model to NeuronDB format (algorithm: ridge, lasso, linear_regression, logistic_regression)';
+
 CREATE OR REPLACE FUNCTION neurondb.embed_batch(
 	model text,
 	texts text[],
 	batch_size integer DEFAULT 32
 ) RETURNS vector[]
-LANGUAGE plpgsql AS $$
-DECLARE
-	results vector[];
-	i integer;
-BEGIN
-	results := ARRAY[]::vector[];
-	FOR i IN 1..array_length(texts, 1) LOOP
-		results := array_append(results, neurondb.embed(model, texts[i]));
-	END LOOP;
-	RETURN results;
-END;
+LANGUAGE sql STABLE AS $$
+	SELECT embed_text_batch(texts, model);
 $$;
-COMMENT ON FUNCTION neurondb.embed_batch IS 'Batch embedding: embed_batch(model, texts[], batch_size) - efficient batch processing';
+COMMENT ON FUNCTION neurondb.embed_batch IS 'Batch embedding: embed_batch(model, texts[], batch_size) - efficient batch processing using optimized batch API';
 
 CREATE OR REPLACE FUNCTION neurondb.predict_batch(
 	model_id integer,
@@ -6142,6 +6202,8 @@ GRANT EXECUTE ON FUNCTION neurondb.health TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.load TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.load_model TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.export_model TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.export_model_to_onnx TO PUBLIC;
+GRANT EXECUTE ON FUNCTION neurondb.import_model_from_onnx TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.embed_batch TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.predict_batch(integer, vector[]) TO PUBLIC;
 GRANT EXECUTE ON FUNCTION neurondb.create_pipeline TO PUBLIC;
