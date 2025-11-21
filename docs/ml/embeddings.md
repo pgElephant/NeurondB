@@ -405,20 +405,12 @@ SELECT embed_text('test text', 'my-custom-model');
 
 ### Fine-tuning
 
-Adapt models to your specific domain:
+**Note:** The `finetune_model()` function is for fine-tuning ML models (classification, regression, etc.), not embedding models. Embedding models are typically pre-trained and used as-is, or fine-tuned using external tools before being loaded into NeuronDB.
 
-```sql
--- Fine-tune model on your data
-SELECT finetune_model(
-    'all-MiniLM-L6-v2',
-    'training_data',  -- Table with text pairs
-    '{
-        "epochs": 3,
-        "learning_rate": 2e-5,
-        "batch_size": 16
-    }'::jsonb
-);
-```
+For embedding model customization, consider:
+- Using domain-specific pre-trained models (e.g., `sentence-transformers/all-mpnet-base-v2` for general text, `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` for multilingual)
+- Fine-tuning embedding models externally using frameworks like Hugging Face Transformers, then loading the ONNX model into NeuronDB
+- Using model configuration (see `configure_embedding_model()`) to adjust runtime parameters like batch size and device selection
 
 ## Next Steps
 
