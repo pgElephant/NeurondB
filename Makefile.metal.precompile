@@ -10,7 +10,11 @@ METAL_SDK = macosx
 METAL_ARCH = air64
 METAL_FLAGS = -std=metal3.0 -Os
 
-.PHONY: metal-shaders metal-clean
+# Only define targets once
+ifndef METAL_TARGETS_DEFINED
+METAL_TARGETS_DEFINED := 1
+
+.PHONY: metal-shaders metal-clean install-metal
 
 # Check if Metal compiler is available
 METAL_AVAILABLE := $(shell xcrun --find metal 2>/dev/null)
@@ -65,4 +69,6 @@ install-metal: $(METAL_LIB)
 	@ls -lh '/usr/local/pgsql.18/lib/neurondb_gpu_kernels.metallib'
 	@echo "✓ Metal library installed"
 	@echo "══════════════════════════════════════════════════════════════"
+
+endif
 

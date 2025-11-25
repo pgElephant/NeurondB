@@ -75,7 +75,18 @@ OBJS += \
 	src/onnx/neurondb_tokenizer.o \
 	src/onnx/neurondb_hf.o
 
-# GPU acceleration
+# GPU acceleration (OLD SYSTEM - disabled when using modular GPU system)
+# The modular GPU system (Makefile.gpu.*) handles GPU objects now
+# This old code is kept for backward compatibility but disabled when GPU_BACKENDS is set
+ifneq ($(GPU_BACKENDS),none)
+# Modular GPU system is active - skip old GPU object definitions
+COMMON_GPU_OBJS :=
+CUDA_GPU_C_OBJS :=
+CUDA_GPU_CU_OBJS :=
+ROCM_GPU_C_OBJS :=
+ROCM_GPU_CU_OBJS :=
+else
+# Old GPU system (only used if GPU_BACKENDS is not set)
 COMMON_GPU_SRCS := $(wildcard src/gpu/common/*.c)
 COMMON_GPU_OBJS := $(COMMON_GPU_SRCS:.c=.o)
 
@@ -89,12 +100,8 @@ ROCM_GPU_C_OBJS := $(ROCM_GPU_C_SRCS:.c=.o)
 ROCM_GPU_CU_SRCS := $(wildcard src/gpu/rocm/*.cu)
 ROCM_GPU_CU_OBJS := $(ROCM_GPU_CU_SRCS:.cu=.o)
 
-ROCM_GPU_C_SRCS := $(wildcard src/gpu/rocm/*.c)
-ROCM_GPU_C_OBJS := $(ROCM_GPU_C_SRCS:.c=.o)
-ROCM_GPU_CU_SRCS := $(wildcard src/gpu/rocm/*.cu)
-ROCM_GPU_CU_OBJS := $(ROCM_GPU_CU_SRCS:.cu=.o)
-
 OBJS += $(COMMON_GPU_OBJS)
+endif
 
 # Types and operations
 OBJS += \
@@ -276,6 +283,10 @@ ifndef ONNX_PATH
 	endif
 endif
 
+# Old CUDA/ROCm system (disabled when using modular GPU system)
+ifneq ($(GPU_BACKENDS),none)
+# Modular GPU system is active - skip old CUDA/ROCm
+else
 # Check for CUDA
 ifdef CUDA_PATH
 	HAVE_CUDA := $(shell test -f $(CUDA_PATH)/include/cuda_runtime.h && echo "yes" || echo "no")
@@ -314,13 +325,43 @@ ifdef ROCM_PATH
 		OBJS += $(ROCM_GPU_C_OBJS) $(ROCM_GPU_CU_OBJS)
 	endif
 endif
+endif
 
-# Default: Metal disabled
-METAL_OBJS :=
-
-# Check for Metal (macOS: Apple Silicon or Intel)
+# Platform detection (must be before GPU includes)
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
+
+# Export UNAME_S for use in included Makefiles
+export UNAME_S
+export UNAME_M
+
+# GPU backend configuration (set by build.sh or environment)
+GPU_BACKENDS ?= $(or $(GPU_MODE),none)
+
+# Include modular GPU Makefiles based on GPU_BACKENDS
+ifneq ($(GPU_BACKENDS),none)
+	# Include common GPU configuration first
+	-include Makefile.gpu.common
+	
+	# Include specific GPU backends
+	ifneq ($(filter cuda,$(GPU_BACKENDS)),)
+		-include Makefile.gpu.cuda
+	endif
+	
+	ifneq ($(filter metal,$(GPU_BACKENDS)),)
+		-include Makefile.gpu.metal
+	endif
+	
+	ifneq ($(filter rocm,$(GPU_BACKENDS)),)
+		-include Makefile.gpu.rocm
+	endif
+endif
+
+# Old Metal system (disabled when using modular GPU system)
+ifneq ($(GPU_BACKENDS),none)
+# Modular GPU system is active - skip old Metal (don't clear METAL_OBJS set by modular system)
+else
+# Old Metal system (only used if GPU_BACKENDS is not set)
 # Allow disabling explicitly: DISABLE_METAL=1 make ...
 ifeq ($(UNAME_S),Darwin)
 ifneq ($(DISABLE_METAL),1)
@@ -343,6 +384,7 @@ endif
 ifneq ($(strip $(METAL_OBJS)),)
 src/gpu/metal/gpu_metal_impl.o: src/gpu/metal/gpu_metal_impl.m
 	$(CC) $(filter-out -I/usr/local/include, $(PG_CPPFLAGS)) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
+endif
 endif
 
 
@@ -496,8 +538,18 @@ neurondb--1.0.sql:
 endif
 
 # Ensure SQL exists before building
+# Platform-specific prerequisites and targets
 ifeq ($(UNAME_S),Darwin)
-all: metal-shaders
+# macOS: Metal shaders must be built before the library (if Metal is enabled)
+ifneq ($(filter metal,$(GPU_BACKENDS)),)
+$(MODULE_big).dylib: metal-shaders
+all: metal-shaders $(MODULE_big).dylib
+else
+all: $(MODULE_big).dylib
+endif
+else
+# Linux: Build the shared library
+all: $(MODULE_big).so
 endif
 
 # ONNX Runtime configuration
@@ -521,6 +573,9 @@ export GCOV_PREFIX_STRIP := 0
 
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+
+# Set default goal to 'all' (must be after PGXS include)
+.DEFAULT_GOAL := all
 
 # Custom target for GPU-only tests
 installcheck-gpu:

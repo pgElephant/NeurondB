@@ -1,13 +1,15 @@
-# Platform wrapper: Debian/Ubuntu
-# Import detected settings from build.sh first (PG_CONFIG, CUDA_PATH, etc.)
+# Platform wrapper: macOS (Homebrew)
+# Import detected settings from build.sh first
 -include Makefile.local
 
-# Fallback PG_CONFIG only if not provided by Makefile.local or environment
-PG_CONFIG ?= /usr/bin/pg_config
+# Prefer Homebrew pg_config only if not defined in Makefile.local
+PG_CONFIG ?= /opt/homebrew/bin/pg_config
+ifeq ("$(wildcard $(PG_CONFIG))","")
+PG_CONFIG := $(shell command -v pg_config 2>/dev/null || echo /usr/local/bin/pg_config)
+endif
 export PG_CONFIG
 
-# The original top-level Makefile is preserved as Makefile.core by build.sh
-# to avoid losing project build logic. We include it here.
+# Defer to preserved project build logic
 include Makefile.core
 
 
