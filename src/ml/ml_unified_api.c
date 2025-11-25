@@ -42,8 +42,9 @@
 #include "neurondb_cuda_gmm.h"
 #include "neurondb_cuda_knn.h"
 #include "neurondb_validation.h"
-#include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "ml_decision_tree_internal.h"
 
 PG_FUNCTION_INFO_V1(neurondb_train);
@@ -53,27 +54,23 @@ PG_FUNCTION_INFO_V1(neurondb_load_model);
 PG_FUNCTION_INFO_V1(neurondb_evaluate);
 
 /* Forward declarations */
-static void neurondb_cleanup(MemoryContext oldcontext, MemoryContext callcontext, bool finish_spi, bool we_connected_spi);
+static void neurondb_cleanup(MemoryContext oldcontext, MemoryContext callcontext);
 static char *neurondb_quote_literal_cstr(const char *str);
 static char *neurondb_quote_literal_or_null(const char *str);
 
-/* Clean up function: restores context and optionally finishes SPI */
+/* Clean up function: restores context */
 static void
-neurondb_cleanup(MemoryContext oldcontext, MemoryContext callcontext, bool finish_spi, bool we_connected_spi)
+neurondb_cleanup(MemoryContext oldcontext, MemoryContext callcontext)
 {
-	/* Only call SPI_finish() if we actually connected SPI ourselves */
-	if (finish_spi && we_connected_spi)
-		SPI_finish();
-	
 	/* Ensure we're in oldcontext before deleting callcontext */
-	/* SPI_finish() might have changed CurrentMemoryContext */
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(callcontext);
 }
 
 /* Helper: Load training data from table into feature_matrix and label_vector */
 static bool
-neurondb_load_training_data(const char *table_name,
+neurondb_load_training_data(NdbSpiSession *session,
+							const char *table_name,
 							const char *feature_list_str,
 							const char *target_column,
 							float **feature_matrix_out,
@@ -88,13 +85,13 @@ neurondb_load_training_data(const char *table_name,
 	int feature_dim = 0;
 	int class_count = 0;
 	int valid_samples = 0; /* Track valid samples after skipping NULLs */
-	float *feature_matrix = NULL;
-	double *label_vector = NULL;
+	NDB_DECLARE(float *, feature_matrix);
+	NDB_DECLARE(double *, label_vector);
 	TupleDesc tupdesc;
 	HeapTuple tuple;
 	bool isnull;
 	Datum feat_datum;
-	ArrayType *feat_arr = NULL;
+	NDB_DECLARE(ArrayType *, feat_arr);
 	int i, j;
 	Oid feature_type;
 
@@ -113,9 +110,13 @@ neurondb_load_training_data(const char *table_name,
 	/* Add LIMIT to prevent loading too much data into memory at once */
 	/* Conservative limit: 200k samples to avoid MaxAllocSize errors */
 	{
-		int max_samples_limit = 200000;
-		char *feature_where_clause = NULL;
-		initStringInfo(&sql);
+		int			max_samples_limit = 200000;
+		NDB_DECLARE(char *, feature_where_clause);
+		char	   *target_copy;
+		const char *target_quoted_const;
+		char	   *target_quoted;
+
+		ndb_spi_stringinfo_init(session, &sql);
 		
 		/* Skip WHERE clause filtering - we'll skip NULL features during processing */
 		feature_where_clause = NULL;
@@ -123,14 +124,14 @@ neurondb_load_training_data(const char *table_name,
 		if (target_column)
 		{
 			/* Make a copy of target_column before quoting to avoid memory corruption */
-			char *target_copy = pstrdup(target_column);
-			const char *target_quoted_const = quote_identifier(target_copy);
-			char *target_quoted = (char *)target_quoted_const;
+			target_copy = pstrdup(target_column);
+			target_quoted_const = quote_identifier(target_copy);
+			target_quoted = (char *)target_quoted_const;
 			/* Remove WHERE clause filtering - we'll skip NULLs in processing */
 			appendStringInfo(&sql, "SELECT %s, %s FROM %s LIMIT %d", 
 				feature_list_str, target_quoted, table_name, max_samples_limit);
-			NDB_SAFE_PFREE_AND_NULL(target_quoted);
-			NDB_SAFE_PFREE_AND_NULL(target_copy);
+			NDB_FREE(target_quoted);
+			NDB_FREE(target_copy);
 		}
 		else
 		{
@@ -141,15 +142,14 @@ neurondb_load_training_data(const char *table_name,
 		
 		/* Free the WHERE clause if it was allocated */
 		if (feature_where_clause != NULL)
-			NDB_SAFE_PFREE_AND_NULL(feature_where_clause);
+			NDB_FREE(feature_where_clause);
 	}
 
 
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ndb_spi_stringinfo_free(session, &sql);
 		ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("neurondb_load_training_data: failed to execute data query")));
@@ -159,7 +159,7 @@ neurondb_load_training_data(const char *table_name,
 	n_samples = SPI_processed;
 	if (n_samples == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ndb_spi_stringinfo_free(session, &sql);
 		ereport(ERROR,
 			(errcode(ERRCODE_DATA_EXCEPTION),
 				errmsg("neurondb_load_training_data: no training data found")));
@@ -181,7 +181,7 @@ neurondb_load_training_data(const char *table_name,
 	feat_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
 	if (isnull)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ndb_spi_stringinfo_free(session, &sql);
 		ereport(ERROR,
 			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				errmsg("neurondb_load_training_data: feature column contains NULL values")));
@@ -197,7 +197,9 @@ neurondb_load_training_data(const char *table_name,
 		else
 		{
 			/* Try Vector type */
-			Vector *vec = DatumGetVector(feat_datum);
+			Vector	   *vec;
+
+			vec = DatumGetVector(feat_datum);
 			if (vec != NULL && vec->dim > 0)
 			{
 				feature_dim = vec->dim;
@@ -214,12 +216,15 @@ neurondb_load_training_data(const char *table_name,
 	/* Allocate arrays */
 	/* Check memory allocation size before palloc */
 	{
-		size_t feature_matrix_size = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
-		size_t label_vector_size = target_column ? sizeof(double) * (size_t)n_samples : 0;
+		size_t		feature_matrix_size;
+		size_t		label_vector_size;
+
+		feature_matrix_size = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
+		label_vector_size = target_column ? sizeof(double) * (size_t)n_samples : 0;
 		
 		if (feature_matrix_size > MaxAllocSize)
 		{
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
+			ndb_spi_stringinfo_free(session, &sql);
 			ereport(ERROR,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("neurondb_load_training_data: feature matrix size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
@@ -229,7 +234,7 @@ neurondb_load_training_data(const char *table_name,
 		
 		if (label_vector_size > MaxAllocSize)
 		{
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
+			ndb_spi_stringinfo_free(session, &sql);
 			ereport(ERROR,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("neurondb_load_training_data: label vector size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
@@ -238,17 +243,21 @@ neurondb_load_training_data(const char *table_name,
 		}
 	}
 	
-	feature_matrix = (float *)palloc(sizeof(float) * (size_t)n_samples * (size_t)feature_dim);
+	NDB_ALLOC(feature_matrix, float, (size_t)n_samples * (size_t)feature_dim);
 	if (target_column)
-		label_vector = (double *)palloc(sizeof(double) * (size_t)n_samples);
+		NDB_ALLOC(label_vector, double, (size_t)n_samples);
 
 	/* Extract all data - skip NULL features and continue */
 	valid_samples = 0;
 	for (i = 0; i < n_samples; i++)
 	{
-		HeapTuple current_tuple = SPI_tuptable->vals[i];
-		bool isnull_feat, isnull_label;
-		Datum featval, labelval;
+		HeapTuple	current_tuple;
+		bool		isnull_feat;
+		bool		isnull_label;
+		Datum		featval;
+		Datum		labelval;
+
+		current_tuple = SPI_tuptable->vals[i];
 
 		/* Features */
 		featval = SPI_getbinval(current_tuple, tupdesc, 1, &isnull_feat);
@@ -259,37 +268,44 @@ neurondb_load_training_data(const char *table_name,
 
 		if (feat_arr)
 		{
-			ArrayType *curr_arr = DatumGetArrayTypeP(featval);
+			ArrayType *curr_arr;
+			int			arr_len;
+
+			curr_arr = DatumGetArrayTypeP(featval);
 			if (ARR_NDIM(curr_arr) == 1)
 			{
-				int arr_len = ArrayGetNItems(ARR_NDIM(curr_arr), ARR_DIMS(curr_arr));
+				arr_len = ArrayGetNItems(ARR_NDIM(curr_arr), ARR_DIMS(curr_arr));
 				if (arr_len != feature_dim)
 				{
-					NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+					NDB_FREE(feature_matrix);
 					if (label_vector)
-						NDB_SAFE_PFREE_AND_NULL(label_vector);
-					NDB_SAFE_PFREE_AND_NULL(sql.data);
+						NDB_FREE(label_vector);
+					ndb_spi_stringinfo_free(session, &sql);
 					return false;
 				}
 			if (feature_type == FLOAT8ARRAYOID)
 			{
-				float8 *fdat = (float8 *)ARR_DATA_PTR(curr_arr);
+				float8	   *fdat;
+
+				fdat = (float8 *)ARR_DATA_PTR(curr_arr);
 				for (j = 0; j < feature_dim; j++)
 					feature_matrix[valid_samples * feature_dim + j] = (float)fdat[j];
 			}
 			else
 			{
-				float4 *fdat = (float4 *)ARR_DATA_PTR(curr_arr);
+				float4	   *fdat;
+
+				fdat = (float4 *)ARR_DATA_PTR(curr_arr);
 				for (j = 0; j < feature_dim; j++)
 					feature_matrix[valid_samples * feature_dim + j] = fdat[j];
 			}
 			}
 			else
 			{
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 				if (label_vector)
-					NDB_SAFE_PFREE_AND_NULL(label_vector);
-				NDB_SAFE_PFREE_AND_NULL(sql.data);
+					NDB_FREE(label_vector);
+				ndb_spi_stringinfo_free(session, &sql);
 				return false;
 			}
 		}
@@ -303,7 +319,9 @@ neurondb_load_training_data(const char *table_name,
 		else
 		{
 			/* Try Vector type */
-			Vector *vec = DatumGetVector(featval);
+			Vector	   *vec;
+
+			vec = DatumGetVector(featval);
 			if (vec != NULL && vec->dim == feature_dim)
 			{
 				for (j = 0; j < feature_dim; j++)
@@ -319,7 +337,7 @@ neurondb_load_training_data(const char *table_name,
 		/* Labels (if target_column provided) */
 		if (target_column)
 		{
-			Oid label_type;
+			Oid			label_type;
 
 			labelval = SPI_getbinval(current_tuple, tupdesc, 2, &isnull_label);
 			if (isnull_label)
@@ -349,11 +367,14 @@ neurondb_load_training_data(const char *table_name,
 
 	if (target_column && label_vector)
 	{
-		int *seen_classes = (int *)palloc0(sizeof(int) * 256);
-		int max_class = -1;
+		NDB_DECLARE(int *, seen_classes);
+		int			max_class = -1;
+		int			cls;
+
+		NDB_ALLOC(seen_classes, int, 256);
 		for (i = 0; i < n_samples; i++)
 		{
-			int cls = (int)label_vector[i];
+			cls = (int)label_vector[i];
 			if (cls >= 0 && cls < 256)
 			{
 				if (!seen_classes[cls])
@@ -367,10 +388,10 @@ neurondb_load_training_data(const char *table_name,
 		class_count = max_class + 1;
 		if (class_count == 0)
 			class_count = 2; /* Default to binary classification */
-		NDB_SAFE_PFREE_AND_NULL(seen_classes);
+		NDB_FREE(seen_classes);
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	ndb_spi_stringinfo_free(session, &sql);
 
 	if (feature_matrix_out)
 		*feature_matrix_out = feature_matrix;
@@ -402,7 +423,7 @@ neurondb_quote_literal_cstr(const char *str)
 
 	ret = TextDatumGetCString(
 		DirectFunctionCall1(quote_literal, PointerGetDatum(txt)));
-	NDB_SAFE_PFREE_AND_NULL(txt);
+	NDB_FREE(txt);
 
 	return ret;
 }
@@ -462,11 +483,11 @@ neurondb_train(PG_FUNCTION_ARGS)
 	MemoryContext oldcontext;
 	StringInfoData sql;
 	StringInfoData feature_list;
-	const char **feature_names = NULL;
+	NDB_DECLARE(const char **, feature_names);
 	int			feature_name_count = 0;
-	char	   *model_name = NULL;
+	NDB_DECLARE(char *, model_name);
 	MLGpuTrainResult gpu_result;
-	char	   *gpu_errmsg_ptr = NULL;
+	NDB_DECLARE(char *, gpu_errmsg_ptr);
 	char	   **gpu_errmsg = &gpu_errmsg_ptr;
 	char	   *project_name;
 	char	   *algorithm;
@@ -477,8 +498,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 	int			model_id = 0;
 	bool		isnull = false;
 	int			i;
-	bool		spi_was_connected;
-	bool		we_connected_spi;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	/* Argument checking */
 	if (PG_NARGS() != 6)
@@ -539,8 +559,10 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 	/* Determine backend based on GPU availability and GUC settings */
 	{
-		bool gpu_enabled_guc = neurondb_gpu_enabled;
-		bool gpu_available;
+		bool		gpu_enabled_guc;
+		bool		gpu_available;
+
+		gpu_enabled_guc = neurondb_gpu_enabled;
 		
 		/* Trigger lazy GPU initialization if needed */
 		ndb_gpu_init_if_needed();
@@ -566,26 +588,16 @@ neurondb_train(PG_FUNCTION_ARGS)
 									   ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(callcontext);
 
-	/* Check if SPI is already connected (e.g., when called from SQL) */
-	/* SPI_processed == -1 means SPI is not connected */
-	spi_was_connected = (SPI_processed != -1);
-	we_connected_spi = false;
-	
-	if (!spi_was_connected)
+	/* Begin SPI session - check if SPI is already connected */
 	{
-		int spi_ret = SPI_connect();
-		if (spi_ret != SPI_OK_CONNECT)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("SPI_connect failed with return code %d", spi_ret)));
-		}
-		we_connected_spi = true;
-		elog(DEBUG1, "neurondb_train: SPI_connect() succeeded, SPI_processed=%ld", (long)SPI_processed);
-	}
-	else
-	{
-		elog(DEBUG1, "neurondb_train: SPI already connected, SPI_processed=%ld", (long)SPI_processed);
+		bool		assume_spi_connected;
+
+		assume_spi_connected = (SPI_processed != -1);
+		spi_session = ndb_spi_session_begin(callcontext, assume_spi_connected);
+		if (assume_spi_connected)
+			elog(DEBUG1, "neurondb_train: SPI already connected, using existing session");
+		else
+			elog(DEBUG1, "neurondb_train: SPI session created, SPI_processed=%ld", (long)SPI_processed);
 	}
 
 	{
@@ -595,7 +607,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 		model_type = neurondb_get_model_type(algorithm);
 		model_type_quoted = neurondb_quote_literal_cstr(model_type);
 
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		appendStringInfo(&sql,
 						 "INSERT INTO neurondb.ml_projects (project_name, model_type, description) "
 						 "VALUES (%s, %s::neurondb.ml_model_type, 'Auto-created by neurondb.train()') "
@@ -603,11 +615,13 @@ neurondb_train(PG_FUNCTION_ARGS)
 						 "RETURNING project_id",
 						 neurondb_quote_literal_cstr(project_name),
 						 model_type_quoted);
-		NDB_SAFE_PFREE_AND_NULL(model_type_quoted);
+		NDB_FREE(model_type_quoted);
 		
 		/* Debug: log the query if it's suspicious */
 		if (sql.data == NULL || strlen(sql.data) == 0)
 		{
+			ndb_spi_session_end(&spi_session);
+			neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("neurondb: project creation query is NULL or empty")));
@@ -615,48 +629,39 @@ neurondb_train(PG_FUNCTION_ARGS)
 		elog(DEBUG1, "neurondb: project creation query: %s", sql.data);
 	}
 	
-	/* Verify SPI is still connected before executing - if not, try to reconnect */
-	if (SPI_processed == -1)
-	{
-		elog(WARNING, "neurondb_train: SPI disconnected before project creation query, attempting to reconnect");
-		if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI disconnected and reconnect failed")));
-		}
-		we_connected_spi = true; /* Mark that we connected it */
-		elog(DEBUG1, "neurondb_train: Reconnected SPI, SPI_processed=%ld", (long)SPI_processed);
-	}
-	else
-	{
-		elog(DEBUG1, "neurondb_train: Before project creation query, SPI_processed=%ld", (long)SPI_processed);
-	}
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE_IF_SELECT(ret);
+	ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 
 	if ((ret != SPI_OK_INSERT_RETURNING && ret != SPI_OK_UPDATE_RETURNING) || SPI_processed == 0)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		ndb_spi_session_end(&spi_session);
+		neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("Failed to create/get project \"%s\" (ret=%d, processed=%lu)",
 					project_name, ret, (unsigned long)SPI_processed)));
 	}
 
-	/* Validate SPI_tuptable before access - we know ret is INSERT/UPDATE RETURNING */
-	if (ret == SPI_OK_INSERT_RETURNING || ret == SPI_OK_UPDATE_RETURNING)
+	/* Extract project_id using session API */
 	{
-		NDB_CHECK_SPI_TUPTABLE();
+		int32		project_id_val;
+
+		if (!ndb_spi_get_int32(spi_session, 0, 1, &project_id_val))
+		{
+			ndb_spi_stringinfo_free(spi_session, &sql);
+			ndb_spi_session_end(&spi_session);
+			neurondb_cleanup(oldcontext, callcontext);
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("Failed to get project_id from INSERT RETURNING")));
+		}
+		project_id = project_id_val;
 	}
-	project_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-											 SPI_tuptable->tupdesc, 1, &isnull));
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	initStringInfo(&sql);
-	initStringInfo(&feature_list);
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
+	ndb_spi_stringinfo_init(spi_session, &feature_list);
 
 	if (feature_columns_array != NULL)
 	{
@@ -686,13 +691,13 @@ neurondb_train(PG_FUNCTION_ARGS)
 					appendStringInfoString(&feature_list, ", ");
 				appendStringInfoString(&feature_list, col);
 				if (feature_names == NULL)
-					feature_names = (const char **)palloc(sizeof(char *) * nelems);
+					NDB_ALLOC(feature_names, const char *, nelems);
 				feature_names[feature_name_count++] = pstrdup(col);
-				NDB_SAFE_PFREE_AND_NULL(col);
+				NDB_FREE(col);
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(elem_values);
-		NDB_SAFE_PFREE_AND_NULL(elem_nulls);
+		NDB_FREE(elem_values);
+		NDB_FREE(elem_nulls);
 
 		if (feature_list.len == 0)
 			appendStringInfoString(&feature_list, "*");
@@ -700,14 +705,14 @@ neurondb_train(PG_FUNCTION_ARGS)
 	else
 	{
 		appendStringInfoString(&feature_list, "*");
-		feature_names = (const char **)palloc(sizeof(char *));
+		NDB_ALLOC(feature_names, const char *, 1);
 		feature_names[0] = pstrdup("*");
 		feature_name_count = 1;
 	}
 
 	if (feature_name_count == 0)
 	{
-		feature_names = (const char **)palloc(sizeof(char *));
+		NDB_ALLOC(feature_names, const char *, 1);
 		feature_names[0] = pstrdup("*");
 		feature_name_count = 1;
 	}
@@ -731,7 +736,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 			{
 				char *metrics_txt = DatumGetCString(
 						DirectFunctionCall1(jsonb_out, JsonbPGetDatum(gpu_result.spec.metrics)));
-				NDB_SAFE_PFREE_AND_NULL(metrics_txt);
+				NDB_FREE(metrics_txt);
 			}
 			model_id = ml_catalog_register_model(&gpu_result.spec);
 			/* ml_catalog_register_model will throw ERROR if registration fails */
@@ -743,20 +748,20 @@ neurondb_train(PG_FUNCTION_ARGS)
 				for (i = 0; i < feature_name_count; i++)
 				{
 					void *ptr = (void *)feature_names[i];
-					ndb_safe_pfree(ptr);
-					feature_names[i] = NULL;
+					NDB_FREE(ptr);
 				}
-				NDB_SAFE_PFREE_AND_NULL(feature_names);
+				NDB_FREE(feature_names);
 			}
 			/* Free model_name before deleting callcontext */
 			if (model_name)
 			{
 		MemoryContextSwitchTo(callcontext);
-				NDB_SAFE_PFREE_AND_NULL(model_name);
+				NDB_FREE(model_name);
 				model_name = NULL;
 			}
 			MemoryContextSwitchTo(oldcontext);
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+			neurondb_cleanup(oldcontext, callcontext);
 			PG_RETURN_INT32(model_id);
 		}
 	}
@@ -775,7 +780,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 			*gpu_errmsg);
 		if (*gpu_errmsg)
 		{
-			NDB_SAFE_PFREE_AND_NULL(*gpu_errmsg);
+			NDB_FREE(*gpu_errmsg);
 			*gpu_errmsg = NULL;
 		}
 	}
@@ -788,8 +793,11 @@ neurondb_train(PG_FUNCTION_ARGS)
 	
 	/* Check if GPU was explicitly requested via GUC */
 	{
-		bool gpu_enabled_guc = neurondb_gpu_enabled;
-		bool gpu_available = neurondb_gpu_is_available();
+		bool		gpu_enabled_guc;
+		bool		gpu_available;
+
+		gpu_enabled_guc = neurondb_gpu_enabled;
+		gpu_available = neurondb_gpu_is_available();
 		
 		if (gpu_enabled_guc && gpu_available)
 		{
@@ -798,7 +806,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 			{
 				/* ereport does longjmp, so we cleanup BEFORE calling it */
 				StringInfoData errbuf;
-				initStringInfo(&errbuf);
+				ndb_spi_stringinfo_init(spi_session, &errbuf);
 				appendStringInfoString(&errbuf, *gpu_errmsg);
 				
 				ndb_gpu_free_train_result(&gpu_result);
@@ -807,20 +815,20 @@ neurondb_train(PG_FUNCTION_ARGS)
 					for (i = 0; i < feature_name_count; i++)
 					{
 						void *ptr = (void *)feature_names[i];
-						ndb_safe_pfree(ptr);
-						feature_names[i] = NULL;
+						NDB_FREE(ptr);
 					}
-					NDB_SAFE_PFREE_AND_NULL(feature_names);
+					NDB_FREE(feature_names);
 				}
 				/* Free model_name before deleting callcontext */
 				if (model_name)
 				{
  		MemoryContextSwitchTo(callcontext);
-					NDB_SAFE_PFREE_AND_NULL(model_name);
+					NDB_FREE(model_name);
 					model_name = NULL;
 				}
 				MemoryContextSwitchTo(oldcontext);
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+				neurondb_cleanup(oldcontext, callcontext);
 				
 				ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -833,8 +841,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 	ndb_gpu_free_train_result(&gpu_result);
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 
 	/* Algorithm specific codegen and SPI call */
 	if (strcmp(algorithm, "linear_regression") == 0)
@@ -847,23 +855,28 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "logistic_regression") == 0)
 	{
-		int max_iters = 1000;
-		double learning_rate = 0.01;
-		double lambda = 0.001;
+		int			max_iters = 1000;
+		double		learning_rate = 0.01;
+		double		lambda = 0.001;
 		const char *feature_col;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
 
 		if (hyperparams)
 		{
 			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
 
 			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
 						max_iters = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
@@ -871,7 +884,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 						learning_rate = DatumGetFloat8(DirectFunctionCall1(numeric_float8, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "lambda") == 0 && v.type == jbvNumeric)
 						lambda = DatumGetFloat8(DirectFunctionCall1(numeric_float8, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -887,26 +900,32 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "svm") == 0)
 	{
-		double C = 1.0;
-		int max_iters = 1000;
+		double		C = 1.0;
+		int			max_iters = 1000;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
+
 		if (hyperparams)
 		{
 			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
 
 			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "C") == 0 && v.type == jbvNumeric)
 						C = DatumGetFloat8(DirectFunctionCall1(numeric_float8, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
 						max_iters = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -919,18 +938,28 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "random_forest") == 0)
 	{
-		int n_trees = 10, max_depth = 10, min_samples = 100, max_features = 0;
+		int			n_trees = 10;
+		int			max_depth = 10;
+		int			min_samples = 100;
+		int			max_features = 0;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
+
 		if (hyperparams)
 		{
 			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
 			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "n_trees") == 0 && v.type == jbvNumeric)
 						n_trees = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
@@ -941,7 +970,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 						min_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "max_features") == 0 && v.type == jbvNumeric)
 						max_features = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -954,26 +983,27 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "decision_tree") == 0)
 	{
-		float *feature_matrix = NULL;
-		double *label_vector = NULL;
-		int n_samples = 0;
-		int feature_dim = 0;
-		int class_count = 0;
-		bytea *gpu_model_data = NULL;
-		Jsonb *gpu_metrics = NULL;
-		Jsonb *final_metrics = NULL;
-		char *gpu_errstr_ptr = NULL;
-		char **gpu_errstr = &gpu_errstr_ptr;
-		bool gpu_trained = false;
-		int max_depth;
-		int min_samples;
+		NDB_DECLARE(float *, feature_matrix);
+		NDB_DECLARE(double *, label_vector);
+		int			n_samples = 0;
+		int			feature_dim = 0;
+		int			class_count = 0;
+		NDB_DECLARE(bytea *, gpu_model_data);
+		NDB_DECLARE(Jsonb *, gpu_metrics);
+		NDB_DECLARE(Jsonb *, final_metrics);
+		NDB_DECLARE(char *, gpu_errstr_ptr);
+		char	   **gpu_errstr = &gpu_errstr_ptr;
+		bool		gpu_trained = false;
+		int			max_depth;
+		int			min_samples;
 
 		/* Load training data */
-		if (!neurondb_load_training_data(table_name, feature_list.data, target_column,
+		if (!neurondb_load_training_data(spi_session, table_name, feature_list.data, target_column,
 										 &feature_matrix, &label_vector,
 										 &n_samples, &feature_dim, &class_count))
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("Failed to load training data for Decision Tree")));
@@ -982,10 +1012,11 @@ neurondb_train(PG_FUNCTION_ARGS)
 		if (n_samples < 10)
 		{
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				NDB_FREE(label_vector);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("Decision Tree: need at least 10 samples, got %d", n_samples)));
@@ -1010,7 +1041,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 				elog(DEBUG1,
 					"neurondb: GPU training for decision_tree failed: %s",
 					*gpu_errstr);
-				NDB_SAFE_PFREE_AND_NULL(*gpu_errstr);
+				NDB_FREE(*gpu_errstr);
 				*gpu_errstr = NULL;
 			}
 			else
@@ -1034,7 +1065,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 			{
 				/* Don't use DirectFunctionCall - it crashes in CUDA context.
 				 * Build JSONB manually using JsonbBuilder API. */
-				JsonbParseState *state = NULL;
+				NDB_DECLARE(JsonbParseState *, state);
 				JsonbValue k, v;
 				
 				(void)pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
@@ -1077,12 +1108,12 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 			/* Cleanup */
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
+				NDB_FREE(label_vector);
 			if (gpu_errstr && *gpu_errstr)
 			{
-				NDB_SAFE_PFREE_AND_NULL(*gpu_errstr);
+				NDB_FREE(*gpu_errstr);
 				*gpu_errstr = NULL;
 			}
 
@@ -1090,19 +1121,20 @@ neurondb_train(PG_FUNCTION_ARGS)
 			if (model_name)
 			{
 		MemoryContextSwitchTo(callcontext);
-				NDB_SAFE_PFREE_AND_NULL(model_name);
+				NDB_FREE(model_name);
 				model_name = NULL;
 			}
 			MemoryContextSwitchTo(oldcontext);
 			
 			if (model_id > 0)
 			{
-				neurondb_cleanup(oldcontext, callcontext, false, we_connected_spi);
+				neurondb_cleanup(oldcontext, callcontext);
 				PG_RETURN_INT32(model_id);
 			}
 			else
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
 						 errmsg("Failed to register Decision Tree model in catalog")));
@@ -1111,9 +1143,9 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 		/* If GPU training failed, fall back to CPU training */
 		if (feature_matrix)
-			NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+			NDB_FREE(feature_matrix);
 		if (label_vector)
-			NDB_SAFE_PFREE_AND_NULL(label_vector);
+			NDB_FREE(label_vector);
 
 		/* Fall back to CPU training via SQL function */
 		if (neurondb_gpu_enabled)
@@ -1126,20 +1158,23 @@ neurondb_train(PG_FUNCTION_ARGS)
 		min_samples = 100;
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
+			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
+			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "max_depth") == 0 && v.type == jbvNumeric)
 						max_depth = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "min_samples") == 0 && v.type == jbvNumeric)
 						min_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -1152,23 +1187,24 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "naive_bayes") == 0)
 	{
-		float *feature_matrix = NULL;
-		double *label_vector = NULL;
-		int n_samples = 0;
-		int feature_dim = 0;
-		int class_count = 0;
-		bytea *gpu_model_data = NULL;
-		Jsonb *gpu_metrics = NULL;
-		char *gpu_errstr_ptr = NULL;
-		char **gpu_errstr = &gpu_errstr_ptr;
-		bool gpu_trained = false;
+		NDB_DECLARE(float *, feature_matrix);
+		NDB_DECLARE(double *, label_vector);
+		int			n_samples = 0;
+		int			feature_dim = 0;
+		int			class_count = 0;
+		NDB_DECLARE(bytea *, gpu_model_data);
+		NDB_DECLARE(Jsonb *, gpu_metrics);
+		NDB_DECLARE(char *, gpu_errstr_ptr);
+		char	   **gpu_errstr = &gpu_errstr_ptr;
+		bool		gpu_trained = false;
 
 		/* Load training data */
-		if (!neurondb_load_training_data(table_name, feature_list.data, target_column,
+		if (!neurondb_load_training_data(spi_session, table_name, feature_list.data, target_column,
 										 &feature_matrix, &label_vector,
 										 &n_samples, &feature_dim, &class_count))
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("Failed to load training data for Naive Bayes")));
@@ -1177,10 +1213,11 @@ neurondb_train(PG_FUNCTION_ARGS)
 		if (n_samples < 10)
 		{
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				NDB_FREE(label_vector);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("Naive Bayes: need at least 10 samples, got %d", n_samples)));
@@ -1205,7 +1242,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 				elog(DEBUG1,
 					"neurondb: GPU training for naive_bayes failed: %s",
 					*gpu_errstr);
-				NDB_SAFE_PFREE_AND_NULL(*gpu_errstr);
+				NDB_FREE(*gpu_errstr);
 				*gpu_errstr = NULL;
 			}
 			else
@@ -1220,9 +1257,9 @@ neurondb_train(PG_FUNCTION_ARGS)
 		{
 			/* Clean up allocated training data */
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
+				NDB_FREE(label_vector);
 
 			/* Fall back to CPU training via SQL function */
 			/* Only log as INFO if GPU was enabled but failed; use DEBUG1 if GPU was disabled */
@@ -1237,41 +1274,40 @@ neurondb_train(PG_FUNCTION_ARGS)
 					 feature_list.data ? feature_list.data : "(null)",
 					 target_column ? target_column : "(null)");
 			/* Use safe free/reinit to handle potential memory context changes */
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			initStringInfo(&sql);
+			ndb_spi_stringinfo_free(spi_session, &sql);
+			ndb_spi_stringinfo_init(spi_session, &sql);
 			appendStringInfo(&sql,
 				"SELECT train_naive_bayes_classifier_model_id(%s::text, %s::text, %s::text)",
 				neurondb_quote_literal_cstr(table_name),
 				neurondb_quote_literal_cstr(feature_list.data),
 				neurondb_quote_literal_or_null(target_column));
-			ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+			ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 			if (ret == SPI_OK_SELECT && SPI_processed > 0)
 			{
-				model_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-													   SPI_tuptable->tupdesc, 1, &isnull));
-				if (!isnull && model_id > 0)
+				int32 model_id_val;
+				if (ndb_spi_get_int32(spi_session, 0, 1, &model_id_val) && model_id_val > 0)
 				{
+					model_id = model_id_val;
 					/* Update metrics to ensure storage='cpu' is set */
 					/* Use safe free/reinit to handle potential memory context changes */
-					NDB_SAFE_PFREE_AND_NULL(sql.data);
-					initStringInfo(&sql);
+					ndb_spi_stringinfo_free(spi_session, &sql);
+					ndb_spi_stringinfo_init(spi_session, &sql);
 					appendStringInfo(&sql,
 						"UPDATE neurondb.ml_models SET metrics = "
 						"COALESCE(metrics, '{}'::jsonb) || '{\"storage\": \"cpu\"}'::jsonb "
 						"WHERE model_id = %d",
 						model_id);
-					ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+					ndb_spi_execute(spi_session, sql.data, false, 0);
 					goto train_complete;
 				}
 			}
 			/* If CPU training failed, report error */
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				NDB_FREE(label_vector);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("Failed to train Naive Bayes model: both GPU and CPU training failed")));
@@ -1280,27 +1316,28 @@ neurondb_train(PG_FUNCTION_ARGS)
 		{
 			/* Register GPU-trained model */
 			MLCatalogModelSpec spec;
-			Jsonb *final_metrics = NULL;
+			NDB_DECLARE(Jsonb *, final_metrics);
 
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		appendStringInfo(&sql, "SELECT pg_advisory_xact_lock(%d)", project_id);
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
+		ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 		NDB_CHECK_SPI_TUPTABLE_IF_SELECT(ret);
 		if (ret != SPI_OK_SELECT)
 			{
 				if (feature_matrix)
-					NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+					NDB_FREE(feature_matrix);
 				if (label_vector)
-					NDB_SAFE_PFREE_AND_NULL(label_vector);
+					NDB_FREE(label_vector);
 				if (gpu_model_data)
-					NDB_SAFE_PFREE_AND_NULL(gpu_model_data);
+					NDB_FREE(gpu_model_data);
 				if (gpu_metrics)
-					NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+					NDB_FREE(gpu_metrics);
 				if (gpu_errstr)
-					NDB_SAFE_PFREE_AND_NULL(gpu_errstr);
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+					NDB_FREE(gpu_errstr);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 								errmsg("Failed to acquire advisory lock")));
 			}
@@ -1314,7 +1351,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 		{
 			/* Don't use DirectFunctionCall - it crashes in CUDA context.
 			 * Build JSONB manually using JsonbBuilder API. */
-			JsonbParseState *state = NULL;
+			NDB_DECLARE(JsonbParseState *, state);
 			JsonbValue k, v;
 			
 			(void)pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
@@ -1355,12 +1392,12 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 			/* Cleanup */
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
+				NDB_FREE(label_vector);
 			if (gpu_errstr && *gpu_errstr)
 			{
-				NDB_SAFE_PFREE_AND_NULL(*gpu_errstr);
+				NDB_FREE(*gpu_errstr);
 				*gpu_errstr = NULL;
 			}
 
@@ -1368,19 +1405,21 @@ neurondb_train(PG_FUNCTION_ARGS)
 			if (model_name)
 			{
 		MemoryContextSwitchTo(callcontext);
-				NDB_SAFE_PFREE_AND_NULL(model_name);
+				NDB_FREE(model_name);
 				model_name = NULL;
 			}
 			MemoryContextSwitchTo(oldcontext);
 			
 			if (model_id > 0)
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				PG_RETURN_INT32(model_id);
 			}
 			else
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
 						 errmsg("failed to register Naive Bayes model")));
@@ -1389,18 +1428,18 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "knn") == 0 || strcmp(algorithm, "knn_classifier") == 0 || strcmp(algorithm, "knn_regressor") == 0)
 	{
-		int k_value = 5;
-		int task_type = 0; /* 0 = classification, 1 = regression */
-		float *feature_matrix = NULL;
-		double *label_vector = NULL;
-		int n_samples = 0;
-		int feature_dim = 0;
-		int class_count = 0;
-		bytea *gpu_model_data = NULL;
-		Jsonb *gpu_metrics = NULL;
-		char *gpu_errstr_ptr = NULL;
-		char **gpu_errstr = &gpu_errstr_ptr;
-		bool gpu_trained = false;
+		int			k_value = 5;
+		int			task_type = 0; /* 0 = classification, 1 = regression */
+		NDB_DECLARE(float *, feature_matrix);
+		NDB_DECLARE(double *, label_vector);
+		int			n_samples = 0;
+		int			feature_dim = 0;
+		int			class_count = 0;
+		NDB_DECLARE(bytea *, gpu_model_data);
+		NDB_DECLARE(Jsonb *, gpu_metrics);
+		NDB_DECLARE(char *, gpu_errstr_ptr);
+		char	   **gpu_errstr = &gpu_errstr_ptr;
+		bool		gpu_trained = false;
 
 		/* Set task type based on algorithm */
 		if (strcmp(algorithm, "knn_regressor") == 0)
@@ -1409,20 +1448,23 @@ neurondb_train(PG_FUNCTION_ARGS)
 		/* Parse hyperparameters */
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
+			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
+			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "k") == 0 && v.type == jbvNumeric)
 						k_value = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "task_type") == 0 && v.type == jbvNumeric)
 						task_type = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -1433,11 +1475,12 @@ neurondb_train(PG_FUNCTION_ARGS)
 			k_value = 100;
 
 		/* Load training data */
-		if (!neurondb_load_training_data(table_name, feature_list.data, target_column,
+		if (!neurondb_load_training_data(spi_session, table_name, feature_list.data, target_column,
 										 &feature_matrix, &label_vector,
 										 &n_samples, &feature_dim, &class_count))
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("Failed to load training data for KNN")));
@@ -1446,10 +1489,11 @@ neurondb_train(PG_FUNCTION_ARGS)
 		if (n_samples < k_value)
 		{
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				NDB_FREE(label_vector);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("KNN: need at least %d samples, got %d", k_value, n_samples)));
@@ -1477,7 +1521,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 				elog(DEBUG1,
 					"neurondb: GPU training for knn failed: %s",
 					*gpu_errstr);
-				NDB_SAFE_PFREE_AND_NULL(*gpu_errstr);
+				NDB_FREE(*gpu_errstr);
 				*gpu_errstr = NULL;
 			}
 			else
@@ -1509,8 +1553,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 			/* This avoids nested SPI issues */
 			elog(DEBUG1, "neurondb: KNN CPU training - creating model directly");
 			{
-				bytea *model_data = NULL;
-				Jsonb *metrics = NULL;
+				NDB_DECLARE(bytea *, model_data);
+				NDB_DECLARE(Jsonb *, metrics);
 				MLCatalogModelSpec spec;
 				StringInfoData model_buf;
 				StringInfoData metrics_json;
@@ -1520,7 +1564,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 				
 				/* For KNN (lazy learner), store minimal model data: just k and dimensions */
 				/* The actual training data stays in the table */
-				initStringInfo(&model_buf);
+				ndb_spi_stringinfo_init(spi_session, &model_buf);
 				appendBinaryStringInfo(&model_buf, (char *)&k_value, sizeof(int));
 				appendBinaryStringInfo(&model_buf, (char *)&n_samples, sizeof(int));
 				appendBinaryStringInfo(&model_buf, (char *)&feature_dim, sizeof(int));
@@ -1531,19 +1575,24 @@ neurondb_train(PG_FUNCTION_ARGS)
 				appendBinaryStringInfo(&model_buf, label_str, strlen(label_str) + 1);
 				
 				{
-					int total_size = VARHDRSZ + model_buf.len;
-					model_data = (bytea *)palloc(total_size);
+					int			total_size;
+					NDB_DECLARE(char *, model_data_raw);
+
+					total_size = VARHDRSZ + model_buf.len;
+					NDB_ALLOC(model_data_raw, char, total_size);
+					model_data = (bytea *)model_data_raw;
+					model_data_raw = NULL; /* model_data now owns the memory */
 					SET_VARSIZE(model_data, total_size);
 					memcpy(VARDATA(model_data), model_buf.data, model_buf.len);
-					NDB_SAFE_PFREE_AND_NULL(model_buf.data);
+					ndb_spi_stringinfo_free(spi_session, &model_buf);
 				}
 				
 				/* Build metrics JSONB */
-				initStringInfo(&metrics_json);
+				ndb_spi_stringinfo_init(spi_session, &metrics_json);
 				appendStringInfo(&metrics_json, "{\"storage\": \"cpu\", \"k\": %d, \"n_samples\": %d, \"n_features\": %d}",
 					k_value, n_samples, feature_dim);
 				metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(metrics_json.data)));
-				NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+				ndb_spi_stringinfo_free(spi_session, &metrics_json);
 				
 				/* Store model in catalog */
 				memset(&spec, 0, sizeof(MLCatalogModelSpec));
@@ -1564,16 +1613,16 @@ neurondb_train(PG_FUNCTION_ARGS)
 					StringInfoData column_quoted;
 					StringInfoData metrics_quoted;
 					StringInfoData metrics_txt;
-					int version = 1;
-					int32 model_id_local = 0;
+					int			version = 1;
+					int32		model_id_local = 0;
 					int ret_local;
 
 					elog(DEBUG1, "neurondb: KNN CPU training - registering model directly");
 
 					/* Get project ID and version */
 					/* Use safe free/reinit to handle potential memory context changes */
-					NDB_SAFE_PFREE_AND_NULL(sql.data);
-					initStringInfo(&sql);
+					ndb_spi_stringinfo_free(spi_session, &sql);
+					ndb_spi_stringinfo_init(spi_session, &sql);
 					appendStringInfo(&sql,
 						"INSERT INTO neurondb.ml_projects "
 						"(project_name, model_type, description) "
@@ -1582,17 +1631,18 @@ neurondb_train(PG_FUNCTION_ARGS)
 						"  SET updated_at = NOW() "
 						"RETURNING project_id",
 						quote_literal_cstr(project_name));
-				ret_local = ndb_spi_execute_safe(sql.data, false, 0);
+				ret_local = ndb_spi_execute(spi_session, sql.data, false, 0);
 				NDB_CHECK_SPI_TUPTABLE_IF_SELECT(ret_local);
 				if (ret_local != SPI_OK_INSERT_RETURNING && ret_local != SPI_OK_UPDATE_RETURNING) {
-						NDB_SAFE_PFREE_AND_NULL(tbl_str);
-						NDB_SAFE_PFREE_AND_NULL(feat_str);
-						NDB_SAFE_PFREE_AND_NULL(label_str);
+						NDB_FREE(tbl_str);
+						NDB_FREE(feat_str);
+						NDB_FREE(label_str);
 						if (feature_matrix)
-							NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+							NDB_FREE(feature_matrix);
 						if (label_vector)
-							NDB_SAFE_PFREE_AND_NULL(label_vector);
-						neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+							NDB_FREE(label_vector);
+						ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 						ereport(ERROR,
 								(errcode(ERRCODE_INTERNAL_ERROR),
 								 errmsg("Failed to train KNN model: failed to get/create project")));
@@ -1601,35 +1651,35 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 					/* Get next version */
 					/* Use safe free/reinit to handle potential memory context changes */
-					NDB_SAFE_PFREE_AND_NULL(sql.data);
-					initStringInfo(&sql);
+					ndb_spi_stringinfo_free(spi_session, &sql);
+					ndb_spi_stringinfo_init(spi_session, &sql);
 					appendStringInfo(&sql,
 						"SELECT COALESCE(MAX(version), 0) + 1 FROM neurondb.ml_models WHERE project_id = %d",
 						project_id);
-					ret_local = ndb_spi_execute_safe(sql.data, true, 0);
+					ret_local = ndb_spi_execute(spi_session, sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 					if (ret_local == SPI_OK_SELECT && SPI_processed > 0) {
 						version = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 					}
 
 					/* Build quoted strings */
-					initStringInfo(&algorithm_quoted);
+					ndb_spi_stringinfo_init(spi_session, &algorithm_quoted);
 					appendStringInfo(&algorithm_quoted, "'%s'", spec.algorithm);
 
-					initStringInfo(&table_quoted);
+					ndb_spi_stringinfo_init(spi_session, &table_quoted);
 					appendStringInfo(&table_quoted, "'%s'", spec.training_table);
 
-					initStringInfo(&column_quoted);
+					ndb_spi_stringinfo_init(spi_session, &column_quoted);
 					appendStringInfo(&column_quoted, "'%s'", spec.training_column);
 
-					initStringInfo(&metrics_txt);
+					ndb_spi_stringinfo_init(spi_session, &metrics_txt);
 					appendStringInfo(&metrics_txt, "%s", DatumGetCString(DirectFunctionCall1(jsonb_out, JsonbPGetDatum(spec.metrics))));
 
-					initStringInfo(&metrics_quoted);
+					ndb_spi_stringinfo_init(spi_session, &metrics_quoted);
 					appendStringInfo(&metrics_quoted, "'%s'", metrics_txt.data);
 
 					/* Insert the model */
-					initStringInfo(&insert_sql);
+					ndb_spi_stringinfo_init(spi_session, &insert_sql);
 					appendStringInfo(&insert_sql,
 							"INSERT INTO neurondb.ml_models "
 							"(project_id, version, algorithm, status, "
@@ -1650,24 +1700,25 @@ neurondb_train(PG_FUNCTION_ARGS)
 							spec.num_samples,
 							spec.num_features);
 
-					ret_local = ndb_spi_execute_safe(insert_sql.data, false, 0);
+					ret_local = ndb_spi_execute(spi_session, insert_sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 					if ((ret_local != SPI_OK_INSERT_RETURNING && ret_local != SPI_OK_UPDATE_RETURNING)
 						|| SPI_processed == 0) {
-						NDB_SAFE_PFREE_AND_NULL(tbl_str);
-						NDB_SAFE_PFREE_AND_NULL(feat_str);
-						NDB_SAFE_PFREE_AND_NULL(label_str);
-						NDB_SAFE_PFREE_AND_NULL(algorithm_quoted.data);
-						NDB_SAFE_PFREE_AND_NULL(table_quoted.data);
-						NDB_SAFE_PFREE_AND_NULL(column_quoted.data);
-						NDB_SAFE_PFREE_AND_NULL(metrics_txt.data);
-						NDB_SAFE_PFREE_AND_NULL(metrics_quoted.data);
-						NDB_SAFE_PFREE_AND_NULL(insert_sql.data);
+						NDB_FREE(tbl_str);
+						NDB_FREE(feat_str);
+						NDB_FREE(label_str);
+						ndb_spi_stringinfo_free(spi_session, &algorithm_quoted);
+						ndb_spi_stringinfo_free(spi_session, &table_quoted);
+						ndb_spi_stringinfo_free(spi_session, &column_quoted);
+						ndb_spi_stringinfo_free(spi_session, &metrics_txt);
+						ndb_spi_stringinfo_free(spi_session, &metrics_quoted);
+						ndb_spi_stringinfo_free(spi_session, &insert_sql);
 						if (feature_matrix)
-							NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+							NDB_FREE(feature_matrix);
 						if (label_vector)
-							NDB_SAFE_PFREE_AND_NULL(label_vector);
-						neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+							NDB_FREE(label_vector);
+						ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 						ereport(ERROR,
 								(errcode(ERRCODE_INTERNAL_ERROR),
 								 errmsg("Failed to train KNN model: failed to insert model")));
@@ -1677,8 +1728,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 					/* Update model_data separately */
 					/* Use safe free/reinit to handle potential memory context changes */
-					NDB_SAFE_PFREE_AND_NULL(sql.data);
-					initStringInfo(&sql);
+					ndb_spi_stringinfo_free(spi_session, &sql);
+					ndb_spi_stringinfo_init(spi_session, &sql);
 					appendStringInfo(&sql,
 						"UPDATE neurondb.ml_models SET model_data = $1 WHERE model_id = %d",
 						model_id_local);
@@ -1690,20 +1741,21 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 						ret_local = SPI_execute_with_args(sql.data, 1, argtypes, values, nulls, false, 0);
 						if (ret_local != SPI_OK_UPDATE) {
-							NDB_SAFE_PFREE_AND_NULL(tbl_str);
-							NDB_SAFE_PFREE_AND_NULL(feat_str);
-							NDB_SAFE_PFREE_AND_NULL(label_str);
-							NDB_SAFE_PFREE_AND_NULL(algorithm_quoted.data);
-							NDB_SAFE_PFREE_AND_NULL(table_quoted.data);
-							NDB_SAFE_PFREE_AND_NULL(column_quoted.data);
-							NDB_SAFE_PFREE_AND_NULL(metrics_txt.data);
-							NDB_SAFE_PFREE_AND_NULL(metrics_quoted.data);
-							NDB_SAFE_PFREE_AND_NULL(insert_sql.data);
+							NDB_FREE(tbl_str);
+							NDB_FREE(feat_str);
+							NDB_FREE(label_str);
+							ndb_spi_stringinfo_free(spi_session, &algorithm_quoted);
+							ndb_spi_stringinfo_free(spi_session, &table_quoted);
+							ndb_spi_stringinfo_free(spi_session, &column_quoted);
+							ndb_spi_stringinfo_free(spi_session, &metrics_txt);
+							ndb_spi_stringinfo_free(spi_session, &metrics_quoted);
+							ndb_spi_stringinfo_free(spi_session, &insert_sql);
 							if (feature_matrix)
-								NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+								NDB_FREE(feature_matrix);
 							if (label_vector)
-								NDB_SAFE_PFREE_AND_NULL(label_vector);
-							neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+								NDB_FREE(label_vector);
+							ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 							ereport(ERROR,
 									(errcode(ERRCODE_INTERNAL_ERROR),
 									 errmsg("Failed to train KNN model: failed to update model_data")));
@@ -1711,25 +1763,25 @@ neurondb_train(PG_FUNCTION_ARGS)
 					}
 
 					/* Cleanup */
-					NDB_SAFE_PFREE_AND_NULL(algorithm_quoted.data);
-					NDB_SAFE_PFREE_AND_NULL(table_quoted.data);
-					NDB_SAFE_PFREE_AND_NULL(column_quoted.data);
-					NDB_SAFE_PFREE_AND_NULL(metrics_txt.data);
-					NDB_SAFE_PFREE_AND_NULL(metrics_quoted.data);
-					NDB_SAFE_PFREE_AND_NULL(insert_sql.data);
+					ndb_spi_stringinfo_free(spi_session, &algorithm_quoted);
+					ndb_spi_stringinfo_free(spi_session, &table_quoted);
+					ndb_spi_stringinfo_free(spi_session, &column_quoted);
+					ndb_spi_stringinfo_free(spi_session, &metrics_txt);
+					ndb_spi_stringinfo_free(spi_session, &metrics_quoted);
+					ndb_spi_stringinfo_free(spi_session, &insert_sql);
 					model_id = model_id_local;
 				}
 
 				/* Cleanup */
-				NDB_SAFE_PFREE_AND_NULL(tbl_str);
-				NDB_SAFE_PFREE_AND_NULL(feat_str);
-				NDB_SAFE_PFREE_AND_NULL(label_str);
+				NDB_FREE(tbl_str);
+				NDB_FREE(feat_str);
+				NDB_FREE(label_str);
 
 				/* Clean up training data that was loaded but not used for KNN */
 				if (feature_matrix)
-					NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+					NDB_FREE(feature_matrix);
 				if (label_vector)
-					NDB_SAFE_PFREE_AND_NULL(label_vector);
+					NDB_FREE(label_vector);
 
 				if (model_id > 0)
 				{
@@ -1737,7 +1789,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 				}
 				else
 				{
-					neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+					ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 					ereport(ERROR,
 							(errcode(ERRCODE_INTERNAL_ERROR),
 							 errmsg("Failed to train KNN model: failed to register model in catalog")));
@@ -1749,27 +1802,28 @@ neurondb_train(PG_FUNCTION_ARGS)
 			/* Register GPU-trained model */
 			MLCatalogModelSpec spec;
 			StringInfoData metrics_json;
-			Jsonb *final_metrics = NULL;
+			NDB_DECLARE(Jsonb *, final_metrics);
 
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		appendStringInfo(&sql, "SELECT pg_advisory_xact_lock(%d)", project_id);
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
+		ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 		NDB_CHECK_SPI_TUPTABLE_IF_SELECT(ret);
 		if (ret != SPI_OK_SELECT)
 			{
 				if (feature_matrix)
-					NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+					NDB_FREE(feature_matrix);
 				if (label_vector)
-					NDB_SAFE_PFREE_AND_NULL(label_vector);
+					NDB_FREE(label_vector);
 				if (gpu_model_data)
-					NDB_SAFE_PFREE_AND_NULL(gpu_model_data);
+					NDB_FREE(gpu_model_data);
 				if (gpu_metrics)
-					NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+					NDB_FREE(gpu_metrics);
 				if (gpu_errstr)
-					NDB_SAFE_PFREE_AND_NULL(gpu_errstr);
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+					NDB_FREE(gpu_errstr);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 								errmsg("Failed to acquire advisory lock")));
 			}
@@ -1781,13 +1835,13 @@ neurondb_train(PG_FUNCTION_ARGS)
 			}
 			else
 			{
-				initStringInfo(&metrics_json);
+				ndb_spi_stringinfo_init(spi_session, &metrics_json);
 				appendStringInfo(&metrics_json, "{\"k\": %d, \"task_type\": %d", k_value, task_type);
 				if (gpu_trained)
 					appendStringInfo(&metrics_json, ", \"storage\": \"gpu\"");
 				appendStringInfoChar(&metrics_json, '}');
 				final_metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(metrics_json.data)));
-				NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+				ndb_spi_stringinfo_free(spi_session, &metrics_json);
 			}
 
 			memset(&spec, 0, sizeof(MLCatalogModelSpec));
@@ -1804,12 +1858,12 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 			/* Cleanup GPU training data */
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
+				NDB_FREE(label_vector);
 			if (gpu_errstr && *gpu_errstr)
 			{
-				NDB_SAFE_PFREE_AND_NULL(*gpu_errstr);
+				NDB_FREE(*gpu_errstr);
 				*gpu_errstr = NULL;
 			}
 
@@ -1817,19 +1871,21 @@ neurondb_train(PG_FUNCTION_ARGS)
 			if (model_name)
 			{
 		MemoryContextSwitchTo(callcontext);
-				NDB_SAFE_PFREE_AND_NULL(model_name);
+				NDB_FREE(model_name);
 				model_name = NULL;
 			}
 			MemoryContextSwitchTo(oldcontext);
 			
 			if (model_id > 0)
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				PG_RETURN_INT32(model_id);
 			}
 			else
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
 						 errmsg("failed to register KNN model")));
@@ -1838,21 +1894,29 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "ridge") == 0)
 	{
-		double alpha = 1.0;
+		double		alpha = 1.0;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
+
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
+			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
+			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "alpha") == 0 && v.type == jbvNumeric)
 						alpha = DatumGetFloat8(DirectFunctionCall1(numeric_float8, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -1865,24 +1929,32 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "lasso") == 0)
 	{
-		double alpha = 1.0;
-		int max_iters = 1000;
+		double		alpha = 1.0;
+		int			max_iters = 1000;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
+
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
+			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
+			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "alpha") == 0 && v.type == jbvNumeric)
 						alpha = DatumGetFloat8(DirectFunctionCall1(numeric_float8, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
 						max_iters = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -1914,56 +1986,62 @@ neurondb_train(PG_FUNCTION_ARGS)
 		model_id = ml_catalog_register_model(&spec);
 		if (model_id <= 0)
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("Failed to register %s model", algorithm)));
 		}
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		PG_RETURN_INT32(model_id);
 	}
 	else if (strcmp(algorithm, "gmm") == 0)
 	{
-		int k_value = 3;
-		int max_iters = 100;
-		float *feature_matrix = NULL;
-		double *label_vector = NULL;
-		int n_samples = 0;
-		int feature_dim = 0;
-		int class_count = 0;
-		bytea *gpu_model_data = NULL;
-		Jsonb *gpu_metrics = NULL;
-		char *gpu_errstr_ptr = NULL;
-		char **gpu_errstr = &gpu_errstr_ptr;
-		bool gpu_trained = false;
+		int			k_value = 3;
+		int			max_iters = 100;
+		NDB_DECLARE(float *, feature_matrix);
+		NDB_DECLARE(double *, label_vector);
+		int			n_samples = 0;
+		int			feature_dim = 0;
+		int			class_count = 0;
+		NDB_DECLARE(bytea *, gpu_model_data);
+		NDB_DECLARE(Jsonb *, gpu_metrics);
+		NDB_DECLARE(char *, gpu_errstr_ptr);
+		char	   **gpu_errstr = &gpu_errstr_ptr;
+		bool		gpu_trained = false;
 
 		/* Parse hyperparameters */
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
+			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
+			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "k") == 0 && v.type == jbvNumeric)
 						k_value = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
 						max_iters = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
 
 		/* Load training data */
-		if (!neurondb_load_training_data(table_name, feature_list.data, NULL,
+		if (!neurondb_load_training_data(spi_session, table_name, feature_list.data, NULL,
 										 &feature_matrix, &label_vector,
 										 &n_samples, &feature_dim, &class_count))
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("Failed to load training data for GMM")));
@@ -1972,10 +2050,11 @@ neurondb_train(PG_FUNCTION_ARGS)
 		if (n_samples < k_value)
 		{
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				NDB_FREE(label_vector);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("GMM: need at least %d samples, got %d", k_value, n_samples)));
@@ -2003,7 +2082,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 				elog(DEBUG1,
 					"neurondb: GPU training for gmm failed: %s",
 					*gpu_errstr);
-				NDB_SAFE_PFREE_AND_NULL(*gpu_errstr);
+				NDB_FREE(*gpu_errstr);
 				*gpu_errstr = NULL;
 			}
 			else
@@ -2018,9 +2097,9 @@ neurondb_train(PG_FUNCTION_ARGS)
 		{
 			/* Clean up allocated training data */
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
+				NDB_FREE(label_vector);
 			
 			/* Fall back to CPU training via SQL function */
 			/* Only log as INFO if GPU was enabled but failed; use DEBUG1 if GPU was disabled */
@@ -2033,15 +2112,15 @@ neurondb_train(PG_FUNCTION_ARGS)
 					 table_name ? table_name : "(null)",
 					 feature_list.data ? feature_list.data : "(null)");
 			/* Use safe free/reinit to handle potential memory context changes */
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			initStringInfo(&sql);
+			ndb_spi_stringinfo_free(spi_session, &sql);
+			ndb_spi_stringinfo_init(spi_session, &sql);
 			appendStringInfo(&sql,
 							 	"SELECT train_gmm_model_id(%s::text, %s::text, %d, %d)",
 							 neurondb_quote_literal_cstr(table_name),
 							 neurondb_quote_literal_cstr(feature_list.data),
 							 k_value,
 							 max_iters);
-			ret = ndb_spi_execute_safe(sql.data, true, 0);
+			ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 			if (ret == SPI_OK_SELECT && SPI_processed > 0)
 			{
@@ -2051,24 +2130,25 @@ neurondb_train(PG_FUNCTION_ARGS)
 				{
 					/* Update metrics to ensure storage='cpu' is set */
 					/* Use safe free/reinit to handle potential memory context changes */
-					NDB_SAFE_PFREE_AND_NULL(sql.data);
-					initStringInfo(&sql);
+					ndb_spi_stringinfo_free(spi_session, &sql);
+					ndb_spi_stringinfo_init(spi_session, &sql);
 					appendStringInfo(&sql,
 						"UPDATE neurondb.ml_models SET metrics = "
 						"COALESCE(metrics, '{}'::jsonb) || '{\"storage\": \"cpu\"}'::jsonb "
 						"WHERE model_id = %d",
 						model_id);
-					ndb_spi_execute_safe(sql.data, false, 0);
+					ndb_spi_execute(spi_session, sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 					goto train_complete;
 				}
 			}
 			/* If CPU training failed, report error */
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				NDB_FREE(label_vector);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("Failed to train GMM model: both GPU and CPU training failed")));
@@ -2078,27 +2158,28 @@ neurondb_train(PG_FUNCTION_ARGS)
 			/* Register GPU-trained model */
 			MLCatalogModelSpec spec;
 			StringInfoData metrics_json;
-			Jsonb *final_metrics = NULL;
+			NDB_DECLARE(Jsonb *, final_metrics);
 
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		appendStringInfo(&sql, "SELECT pg_advisory_xact_lock(%d)", project_id);
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
+		ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 		NDB_CHECK_SPI_TUPTABLE_IF_SELECT(ret);
 		if (ret != SPI_OK_SELECT)
 			{
 				if (feature_matrix)
-					NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+					NDB_FREE(feature_matrix);
 				if (label_vector)
-					NDB_SAFE_PFREE_AND_NULL(label_vector);
+					NDB_FREE(label_vector);
 				if (gpu_model_data)
-					NDB_SAFE_PFREE_AND_NULL(gpu_model_data);
+					NDB_FREE(gpu_model_data);
 				if (gpu_metrics)
-					NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+					NDB_FREE(gpu_metrics);
 				if (gpu_errstr)
-					NDB_SAFE_PFREE_AND_NULL(gpu_errstr);
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+					NDB_FREE(gpu_errstr);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 								errmsg("Failed to acquire advisory lock")));
 			}
@@ -2110,13 +2191,13 @@ neurondb_train(PG_FUNCTION_ARGS)
 			}
 			else
 			{
-				initStringInfo(&metrics_json);
+				ndb_spi_stringinfo_init(spi_session, &metrics_json);
 				appendStringInfo(&metrics_json, "{\"k\": %d, \"max_iters\": %d", k_value, max_iters);
 				if (gpu_trained)
 					appendStringInfo(&metrics_json, ", \"storage\": \"gpu\"");
 				appendStringInfoChar(&metrics_json, '}');
 				final_metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(metrics_json.data)));
-				NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+				ndb_spi_stringinfo_free(spi_session, &metrics_json);
 			}
 
 			memset(&spec, 0, sizeof(MLCatalogModelSpec));
@@ -2133,12 +2214,12 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 			/* Cleanup GPU training data */
 			if (feature_matrix)
-				NDB_SAFE_PFREE_AND_NULL(feature_matrix);
+				NDB_FREE(feature_matrix);
 			if (label_vector)
-				NDB_SAFE_PFREE_AND_NULL(label_vector);
+				NDB_FREE(label_vector);
 			if (gpu_errstr && *gpu_errstr)
 			{
-				NDB_SAFE_PFREE_AND_NULL(*gpu_errstr);
+				NDB_FREE(*gpu_errstr);
 				*gpu_errstr = NULL;
 			}
 
@@ -2146,19 +2227,21 @@ neurondb_train(PG_FUNCTION_ARGS)
 			if (model_name)
 			{
 		MemoryContextSwitchTo(callcontext);
-				NDB_SAFE_PFREE_AND_NULL(model_name);
+				NDB_FREE(model_name);
 				model_name = NULL;
 			}
 			MemoryContextSwitchTo(oldcontext);
 			
 			if (model_id > 0)
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				PG_RETURN_INT32(model_id);
 			}
 			else
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
 						 errmsg("failed to register GMM model")));
@@ -2167,24 +2250,32 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "kmeans") == 0)
 	{
-		int k_value = 3;
-		int max_iters = 100;
+		int			k_value = 3;
+		int			max_iters = 100;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
+
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
+			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
+			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "k") == 0 && v.type == jbvNumeric)
 						k_value = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
 						max_iters = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -2197,19 +2288,27 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "minibatch_kmeans") == 0)
 	{
-		int k_value = 3;
-		int batch_size = 100;
-		int max_iters = 100;
+		int			k_value = 3;
+		int			batch_size = 100;
+		int			max_iters = 100;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
+
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
+			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
+			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "k") == 0 && v.type == jbvNumeric)
 						k_value = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
@@ -2217,7 +2316,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 						batch_size = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
 						max_iters = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -2234,21 +2333,29 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(algorithm, "hierarchical") == 0)
 	{
-		int n_clusters = 3;
+		int			n_clusters = 3;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
+
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
+			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
+			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "n_clusters") == 0 && v.type == jbvNumeric)
 						n_clusters = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -2267,32 +2374,37 @@ neurondb_train(PG_FUNCTION_ARGS)
 		if (model_name)
 		{
 			MemoryContextSwitchTo(callcontext);
-			NDB_SAFE_PFREE_AND_NULL(model_name);
+			NDB_FREE(model_name);
 			model_name = NULL;
 		}
 		MemoryContextSwitchTo(oldcontext);
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("PCA is not supported via neurondb.train - use pca_transform() function directly")));
 	}
 	else if (strcmp(algorithm, "opq") == 0)
 	{
-		int num_subspaces = 8;
+		int			num_subspaces = 8;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
+
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
-			JsonbValue	v;
-			int			r;
+			it = JsonbIteratorInit(&hyperparams->root);
+
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "num_subspaces") == 0 && v.type == jbvNumeric)
 						num_subspaces = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -2303,30 +2415,39 @@ neurondb_train(PG_FUNCTION_ARGS)
 		if (model_name)
 		{
 			MemoryContextSwitchTo(callcontext);
-			NDB_SAFE_PFREE_AND_NULL(model_name);
+			NDB_FREE(model_name);
 			model_name = NULL;
 		}
 		MemoryContextSwitchTo(oldcontext);
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("OPQ is not supported via neurondb.train - use train_opq_rotation() function directly")));
 	}
 	else if (strcmp(algorithm, "xgboost") == 0)
 	{
-		int n_estimators = 100;
-		int max_depth = 6;
-		double learning_rate = 0.1;
+		int			n_estimators = 100;
+		int			max_depth = 6;
+		double		learning_rate = 0.1;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		char	   *key;
+
 		if (hyperparams)
 		{
-			JsonbIterator *it = JsonbIteratorInit(&hyperparams->root);
+			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
+			char	   *key;
+
+			it = JsonbIteratorInit(&hyperparams->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 			{
 				if (r == WJB_KEY)
 				{
-					char *key = pnstrdup(v.val.string.val, v.val.string.len);
+					key = pnstrdup(v.val.string.val, v.val.string.len);
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "n_estimators") == 0 && v.type == jbvNumeric)
 						n_estimators = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
@@ -2334,7 +2455,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 						max_depth = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
 					else if (strcmp(key, "learning_rate") == 0 && v.type == jbvNumeric)
 						learning_rate = DatumGetFloat8(DirectFunctionCall1(numeric_float8, NumericGetDatum(v.val.numeric)));
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 		}
@@ -2353,11 +2474,12 @@ neurondb_train(PG_FUNCTION_ARGS)
 		if (model_name)
 		{
 			MemoryContextSwitchTo(callcontext);
-			NDB_SAFE_PFREE_AND_NULL(model_name);
+			NDB_FREE(model_name);
 			model_name = NULL;
 		}
 		MemoryContextSwitchTo(oldcontext);
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("Unsupported algorithm: \"%s\"", algorithm),
@@ -2376,7 +2498,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 		/* The training function will handle its own SPI connection internally */
 		{
 			MemoryContext oldcontext_nested = MemoryContextSwitchTo(callcontext);
-			ret = ndb_spi_execute_safe(sql.data, false, 0);
+			ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 			NDB_CHECK_SPI_TUPTABLE_IF_SELECT(ret);
 			MemoryContextSwitchTo(oldcontext_nested);
 		}
@@ -2404,7 +2526,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 													   SPI_tuptable->tupdesc, 1, &isnull));
 				if (isnull || model_id <= 0)
 				{
-					neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+					ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 					ereport(ERROR,
 							(errcode(ERRCODE_INTERNAL_ERROR),
 							 errmsg("%s training returned invalid model id", algorithm)));
@@ -2412,7 +2535,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 			}
 			else
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
 						 errmsg("%s training did not return a model id (ret=%d, processed=%ld, tuptable=%p)",
@@ -2436,7 +2560,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 		/* This path is for when training was done via direct function calls, not SQL */
 		if (SPI_processed == 0)
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("%s training did not return a model id", algorithm)));
@@ -2446,7 +2571,8 @@ neurondb_train(PG_FUNCTION_ARGS)
 											   SPI_tuptable->tupdesc, 1, &isnull));
 		if (isnull)
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("%s training returned NULL model id", algorithm)));
@@ -2455,14 +2581,16 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 	if (ret < 0)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("Training failed for algorithm \"%s\"", algorithm)));
 	}
 
 	{
-		bool model_registered = false;
+		bool		model_registered = false;
+
 		if (model_id > 0)
 		{
 			model_registered = true;
@@ -2470,20 +2598,21 @@ neurondb_train(PG_FUNCTION_ARGS)
 		if (!model_registered)
 		{
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		appendStringInfo(&sql, "SELECT pg_advisory_xact_lock(%d)", project_id);
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
+		ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 		NDB_CHECK_SPI_TUPTABLE_IF_SELECT(ret);
 		if (ret != SPI_OK_SELECT)
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("Failed to acquire advisory lock")));
 			}
 
 			/* Use safe free/reinit to handle potential memory context changes */
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			initStringInfo(&sql);
+			ndb_spi_stringinfo_free(spi_session, &sql);
+			ndb_spi_stringinfo_init(spi_session, &sql);
 			appendStringInfo(&sql,
 							 "WITH next_version AS (SELECT COALESCE(MAX(version), 0) + 1 AS v FROM neurondb.ml_models WHERE project_id = %d) "
 							 "INSERT INTO neurondb.ml_models (project_id, version, algorithm, training_table, training_column, status, parameters) "
@@ -2493,11 +2622,12 @@ neurondb_train(PG_FUNCTION_ARGS)
 							 neurondb_quote_literal_cstr(algorithm),
 							 neurondb_quote_literal_cstr(table_name),
 							 neurondb_quote_literal_or_null(target_column));
-			ret = ndb_spi_execute_safe(sql.data, false, 0);
+			ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 			if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0)
 			{
-				neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
 						 errmsg("Failed to register model in catalog")));
@@ -2509,21 +2639,24 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 	/* Update metrics to store backend type for CPU-trained models */
 	{
-		bool gpu_enabled_guc = neurondb_gpu_enabled;
-		bool gpu_available = neurondb_gpu_is_available();
+		bool		gpu_enabled_guc;
+		bool		gpu_available;
+
+		gpu_enabled_guc = neurondb_gpu_enabled;
+		gpu_available = neurondb_gpu_is_available();
 		
 		/* If GPU was not used (either disabled or not available), mark as CPU */
 		if (!gpu_enabled_guc || !gpu_available)
 		{
 			/* Use safe free/reinit to handle potential memory context changes */
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			initStringInfo(&sql);
+			ndb_spi_stringinfo_free(spi_session, &sql);
+			ndb_spi_stringinfo_init(spi_session, &sql);
 			appendStringInfo(&sql,
 				"UPDATE neurondb.ml_models SET metrics = "
 				"COALESCE(metrics, '{}'::jsonb) || '{\"storage\": \"cpu\"}'::jsonb "
 				"WHERE model_id = %d",
 				model_id);
-			ret = ndb_spi_execute_safe(sql.data, false, 0);
+			ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 			NDB_CHECK_SPI_TUPTABLE_IF_SELECT(ret);
 			if (ret != SPI_OK_UPDATE)
 			{
@@ -2541,13 +2674,14 @@ train_complete:
 	if (model_name)
 	{
 		MemoryContextSwitchTo(callcontext);
-		NDB_SAFE_PFREE_AND_NULL(model_name);
+		NDB_FREE(model_name);
 		model_name = NULL;
 	}
 	if (model_id <= 0 || model_id > 2147483647)
 	{
 		MemoryContextSwitchTo(oldcontext);
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb.train: invalid model_id (%d) returned for algorithm '%s'",
@@ -2557,7 +2691,8 @@ train_complete:
 	
 	/* Now switch back to oldcontext before cleanup */
 	MemoryContextSwitchTo(oldcontext);
-	neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+	ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 	PG_RETURN_INT32(model_id);
 }
 
@@ -2577,14 +2712,13 @@ neurondb_predict(PG_FUNCTION_ARGS)
 	StringInfoData features_str;
 	int			ret;
 	bool		isnull = false;
-	char	   *algorithm = NULL;
+	NDB_DECLARE(char *, algorithm);
 	float8		prediction = 0.0;
 	int			ndims, nelems, i;
 	int		   *dims;
 	float8	   *features;
-	float8	   *features_float = NULL; /* Allocated if conversion needed */
-	bool		spi_was_connected;
-	bool		we_connected_spi;
+	NDB_DECLARE(float8 *, features_float); /* Allocated if conversion needed */
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	if (PG_NARGS() != 2)
 		ereport(ERROR,
@@ -2600,42 +2734,44 @@ neurondb_predict(PG_FUNCTION_ARGS)
 									   ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(callcontext);
 
-	spi_was_connected = (SPI_processed != -1);
-	we_connected_spi = false;
-
-	if (!spi_was_connected)
+	/* Begin SPI session */
 	{
-		if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			neurondb_cleanup(oldcontext, callcontext, false, we_connected_spi);
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_connect failed")));
-		}
-		we_connected_spi = true;
+		bool		assume_spi_connected;
+
+		assume_spi_connected = (SPI_processed != -1);
+		spi_session = ndb_spi_session_begin(callcontext, assume_spi_connected);
 	}
 
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 		"SELECT algorithm::text FROM neurondb.ml_models WHERE model_id = %d",
 		model_id);
 	elog(DEBUG1, "neurondb_predict: executing query: %s", sql.data);
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT || SPI_processed == 0)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		ndb_spi_session_end(&spi_session);
+		neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Model not found: %d", model_id)));
 	}
-	algorithm = TextDatumGetCString(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
-	if (isnull)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Model algorithm is NULL for model_id=%d", model_id)));
+		text *algorithm_text = ndb_spi_get_text(spi_session, 0, 1, callcontext);
+		if (algorithm_text == NULL)
+		{
+			ndb_spi_stringinfo_free(spi_session, &sql);
+			ndb_spi_session_end(&spi_session);
+			neurondb_cleanup(oldcontext, callcontext);
+			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Model algorithm is NULL for model_id=%d", model_id)));
+		}
+		algorithm = text_to_cstring(algorithm_text);
 	}
 
 	ndims = ARR_NDIM(features_array);
 	if (ndims != 1)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("neurondb.predict: features must be 1-dimensional array, got %d dimensions", ndims)));
@@ -2644,7 +2780,8 @@ neurondb_predict(PG_FUNCTION_ARGS)
 	nelems = ArrayGetNItems(ndims, dims);
 	if (nelems <= 0 || nelems > 100000)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("neurondb.predict: invalid feature count: %d (expected 1-100000)", nelems)));
@@ -2653,7 +2790,8 @@ neurondb_predict(PG_FUNCTION_ARGS)
 	/* Validate array element type */
 	if (ARR_ELEMTYPE(features_array) != FLOAT8OID && ARR_ELEMTYPE(features_array) != FLOAT4OID)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("neurondb.predict: features array must be float8[] or float4[], got OID %u", ARR_ELEMTYPE(features_array))));
@@ -2666,13 +2804,14 @@ neurondb_predict(PG_FUNCTION_ARGS)
 		float4 *features_f4 = (float4 *) ARR_DATA_PTR(features_array);
 		if (features_f4 == NULL)
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb.predict: features array data pointer is NULL")));
 		}
 		/* Allocate float8 array and convert */
-		features_float = (float8 *)palloc(sizeof(float8) * nelems);
+		NDB_ALLOC(features_float, float8, nelems);
 		for (i = 0; i < nelems; i++)
 			features_float[i] = (float8)features_f4[i];
 		features = features_float;
@@ -2683,7 +2822,8 @@ neurondb_predict(PG_FUNCTION_ARGS)
 		features = (float8 *) ARR_DATA_PTR(features_array);
 		if (features == NULL)
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb.predict: features array data pointer is NULL")));
@@ -2691,7 +2831,7 @@ neurondb_predict(PG_FUNCTION_ARGS)
 		features_float = NULL; /* Not allocated, don't free */
 	}
 
-	initStringInfo(&features_str);
+	ndb_spi_stringinfo_init(spi_session, &features_str);
 	/* Build vector literal for algorithms that need it (NB, GMM) */
 	if (strcmp(algorithm, "naive_bayes") == 0 || 
 		strcmp(algorithm, "gmm") == 0)
@@ -2721,8 +2861,8 @@ neurondb_predict(PG_FUNCTION_ARGS)
 	}
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 
 	if (strcmp(algorithm, "linear_regression") == 0)
 		appendStringInfo(&sql, "SELECT predict_linear_regression(%d, %s)", model_id, features_str.data);
@@ -2736,20 +2876,21 @@ neurondb_predict(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT predict_decision_tree(%d, %s)", model_id, features_str.data);
 	else if (strcmp(algorithm, "naive_bayes") == 0)
 	{
-		bytea	   *model_data = NULL;
-		Jsonb	   *metrics = NULL;
+		NDB_DECLARE(bytea *, model_data);
+		NDB_DECLARE(Jsonb *, metrics);
 		bool		is_gpu = false;
 		int			nb_class = 0;
 		double		nb_probability = 0.0;
-		float	   *features_float = NULL;
+		NDB_DECLARE(float *, features_float);
 		int			feature_dim = nelems;
-		char	   *errstr = NULL;
+		NDB_DECLARE(char *, errstr);
 		int			rc;
 
 
 		if (!ml_catalog_fetch_model_payload(model_id, &model_data, NULL, &metrics))
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Naive Bayes model %d not found", model_id)));
 		}
 
@@ -2757,8 +2898,9 @@ neurondb_predict(PG_FUNCTION_ARGS)
 		if (model_data == NULL)
 		{
 			if (metrics)
-				NDB_SAFE_PFREE_AND_NULL(metrics);
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				NDB_FREE(metrics);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("Naive Bayes model %d has no model data (model not trained)", model_id),
@@ -2771,10 +2913,10 @@ neurondb_predict(PG_FUNCTION_ARGS)
 
 		if (metrics != NULL)
 		{
-			JsonbIterator *it = NULL;
+			NDB_DECLARE(JsonbIterator *, it);
 			JsonbValue	v;
 			int			r;
-			bool found_storage = false;
+			bool		found_storage = false;
 			
 			PG_TRY();
 			{
@@ -2791,9 +2933,9 @@ neurondb_predict(PG_FUNCTION_ARGS)
 							found_storage = true;
 							if (strcmp(storage, "gpu") == 0)
 								is_gpu = true;
-							NDB_SAFE_PFREE_AND_NULL(storage);
+							NDB_FREE(storage);
 						}
-						NDB_SAFE_PFREE_AND_NULL(key);
+						NDB_FREE(key);
 					}
 				}
 			}
@@ -2815,14 +2957,16 @@ neurondb_predict(PG_FUNCTION_ARGS)
 		}
 
 		
-		features_float = (float *) palloc(sizeof(float) * feature_dim);
+		NDB_ALLOC(features_float, float, feature_dim);
 		for (i = 0; i < feature_dim; i++)
 			features_float[i] = (float) features[i];
 
 		/* Use model's training backend (from catalog) regardless of current GPU state */
 		{
 			const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-			bool gpu_currently_enabled = (backend != NULL && neurondb_gpu_is_available());
+			bool		gpu_currently_enabled;
+
+			gpu_currently_enabled = (backend != NULL && neurondb_gpu_is_available());
 			
 			elog(DEBUG1,
 				"neurondb_predict: model trained on %s, GPU currently %s",
@@ -2834,12 +2978,13 @@ neurondb_predict(PG_FUNCTION_ARGS)
 				/* Model was trained on GPU - must use GPU prediction */
 				if (!gpu_currently_enabled)
 				{
-					NDB_SAFE_PFREE_AND_NULL(features_float);
+					NDB_FREE(features_float);
 					if (model_data)
-						NDB_SAFE_PFREE_AND_NULL(model_data);
+						NDB_FREE(model_data);
 					if (metrics)
-						NDB_SAFE_PFREE_AND_NULL(metrics);
-					neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+						NDB_FREE(metrics);
+					ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 					ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("Naive Bayes: model %d was trained on GPU but GPU is not currently enabled", model_id),
@@ -2853,16 +2998,17 @@ neurondb_predict(PG_FUNCTION_ARGS)
 					if (rc == 0)
 					{
 						prediction = (double) nb_class;
-						NDB_SAFE_PFREE_AND_NULL(features_float);
+						NDB_FREE(features_float);
 						if (model_data)
-							NDB_SAFE_PFREE_AND_NULL(model_data);
+							NDB_FREE(model_data);
 						if (metrics)
-							NDB_SAFE_PFREE_AND_NULL(metrics);
-						neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+							NDB_FREE(metrics);
+						ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 						PG_RETURN_FLOAT8(prediction);
 					}
 					if (errstr)
-						NDB_SAFE_PFREE_AND_NULL(errstr);
+						NDB_FREE(errstr);
 				}
 			}
 			else
@@ -2872,36 +3018,38 @@ neurondb_predict(PG_FUNCTION_ARGS)
 			}
 		}
 		appendStringInfo(&sql, "SELECT predict_naive_bayes_model_id(%d, %s)", model_id, features_str.data);
-		NDB_SAFE_PFREE_AND_NULL(features_float);
+		NDB_FREE(features_float);
 		if (model_data)
-			NDB_SAFE_PFREE_AND_NULL(model_data);
+			NDB_FREE(model_data);
 		if (metrics)
-			NDB_SAFE_PFREE_AND_NULL(metrics);
+			NDB_FREE(metrics);
 	}
 	else if (strcmp(algorithm, "ridge") == 0 || strcmp(algorithm, "lasso") == 0)
 		appendStringInfo(&sql, "SELECT predict_regularized_regression(%d, %s)", model_id, features_str.data);
 	else if (strcmp(algorithm, "knn") == 0 || strcmp(algorithm, "knn_classifier") == 0 || strcmp(algorithm, "knn_regressor") == 0)
 	{
-		bytea	   *model_data = NULL;
-		Jsonb	   *metrics = NULL;
+		NDB_DECLARE(bytea *, model_data);
+		NDB_DECLARE(Jsonb *, metrics);
 		bool		is_gpu = false;
 		double		knn_prediction = 0.0;
-		float	   *features_float = NULL;
+		NDB_DECLARE(float *, features_float);
 		int			feature_dim = nelems;
-		char	   *errstr = NULL;
+		NDB_DECLARE(char *, errstr);
 		int			rc;
 
 		if (!ml_catalog_fetch_model_payload(model_id, &model_data, NULL, &metrics))
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("KNN model %d not found", model_id)));
 		}
 
 		if (model_data == NULL)
 		{
 			if (metrics)
-				NDB_SAFE_PFREE_AND_NULL(metrics);
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+				NDB_FREE(metrics);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("KNN model %d has no model data (model not trained)", model_id),
@@ -2910,7 +3058,7 @@ neurondb_predict(PG_FUNCTION_ARGS)
 
 		if (metrics != NULL)
 		{
-			JsonbIterator *it = NULL;
+			NDB_DECLARE(JsonbIterator *, it);
 			JsonbValue	v;
 			int			r;
 			PG_TRY();
@@ -2927,9 +3075,9 @@ neurondb_predict(PG_FUNCTION_ARGS)
 							char *storage = pnstrdup(v.val.string.val, v.val.string.len);
 							if (strcmp(storage, "gpu") == 0)
 								is_gpu = true;
-							NDB_SAFE_PFREE_AND_NULL(storage);
+							NDB_FREE(storage);
 						}
-						NDB_SAFE_PFREE_AND_NULL(key);
+						NDB_FREE(key);
 					}
 				}
 			}
@@ -2940,14 +3088,16 @@ neurondb_predict(PG_FUNCTION_ARGS)
 			}
 			PG_END_TRY();
 		}
-		features_float = (float *) palloc(sizeof(float) * feature_dim);
+		NDB_ALLOC(features_float, float, feature_dim);
 		for (i = 0; i < feature_dim; i++)
 			features_float[i] = (float) features[i];
 
 		/* Use model's training backend (from catalog) regardless of current GPU state */
 		{
 			const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-			bool gpu_currently_enabled = (backend != NULL && neurondb_gpu_is_available());
+			bool		gpu_currently_enabled;
+
+			gpu_currently_enabled = (backend != NULL && neurondb_gpu_is_available());
 			
 			elog(DEBUG1,
 				"neurondb_predict: model trained on %s, GPU currently %s",
@@ -2959,12 +3109,13 @@ neurondb_predict(PG_FUNCTION_ARGS)
 				/* Model was trained on GPU - must use GPU prediction */
 				if (!gpu_currently_enabled)
 				{
-					NDB_SAFE_PFREE_AND_NULL(features_float);
+					NDB_FREE(features_float);
 					if (model_data)
-						NDB_SAFE_PFREE_AND_NULL(model_data);
+						NDB_FREE(model_data);
 					if (metrics)
-						NDB_SAFE_PFREE_AND_NULL(metrics);
-					neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+						NDB_FREE(metrics);
+					ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 					ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("KNN: model %d was trained on GPU but GPU is not currently enabled", model_id),
@@ -2978,16 +3129,17 @@ neurondb_predict(PG_FUNCTION_ARGS)
 					if (rc == 0)
 					{
 						prediction = knn_prediction;
-						NDB_SAFE_PFREE_AND_NULL(features_float);
+						NDB_FREE(features_float);
 						if (model_data)
-							NDB_SAFE_PFREE_AND_NULL(model_data);
+							NDB_FREE(model_data);
 						if (metrics)
-							NDB_SAFE_PFREE_AND_NULL(metrics);
-						neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+							NDB_FREE(metrics);
+						ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 						PG_RETURN_FLOAT8(prediction);
 					}
 					if (errstr)
-						NDB_SAFE_PFREE_AND_NULL(errstr);
+						NDB_FREE(errstr);
 				}
 			}
 			else
@@ -2997,11 +3149,11 @@ neurondb_predict(PG_FUNCTION_ARGS)
 			}
 		}
 		appendStringInfo(&sql, "SELECT predict_knn_model_id(%d, %s)", model_id, features_str.data);
-		NDB_SAFE_PFREE_AND_NULL(features_float);
+		NDB_FREE(features_float);
 		if (model_data)
-			NDB_SAFE_PFREE_AND_NULL(model_data);
+			NDB_FREE(model_data);
 		if (metrics)
-			NDB_SAFE_PFREE_AND_NULL(metrics);
+			NDB_FREE(metrics);
 	}
 	else if (strcmp(algorithm, "kmeans") == 0)
 		appendStringInfo(&sql, "SELECT predict_kmeans_model_id(%d, %s)", model_id, features_str.data);
@@ -3015,23 +3167,26 @@ neurondb_predict(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT predict_gmm_model_id(%d, %s)", model_id, features_str.data);
 	else
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("Unsupported algorithm for prediction: \"%s\"", algorithm)));
 	}
 
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT || SPI_processed == 0)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("Prediction query did not return a result")));
 	}
 	prediction = DatumGetFloat8(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
-	neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+	ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 
 	PG_RETURN_FLOAT8(prediction);
 }
@@ -3053,8 +3208,7 @@ neurondb_deploy(PG_FUNCTION_ARGS)
 	int			ret;
 	int			deployment_id = 0;
 	bool		isnull = false;
-	bool		spi_was_connected;
-	bool		we_connected_spi;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	if (PG_NARGS() < 1 || PG_NARGS() > 2)
 		ereport(ERROR,
@@ -3075,20 +3229,15 @@ neurondb_deploy(PG_FUNCTION_ARGS)
 	else
 		strategy = pstrdup("replace");
 
-	spi_was_connected = (SPI_processed != -1);
-	we_connected_spi = false;
-
-	if (!spi_was_connected)
+	/* Begin SPI session */
 	{
-		if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			neurondb_cleanup(oldcontext, callcontext, false, we_connected_spi);
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_connect failed")));
-		}
-		we_connected_spi = true;
+		bool		assume_spi_connected;
+
+		assume_spi_connected = (SPI_processed != -1);
+		spi_session = ndb_spi_session_begin(callcontext, assume_spi_connected);
 	}
 
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfoString(&sql,
 		"CREATE TABLE IF NOT EXISTS neurondb.ml_deployments ("
 		"deployment_id SERIAL PRIMARY KEY, "
@@ -3097,12 +3246,12 @@ neurondb_deploy(PG_FUNCTION_ARGS)
 		"strategy TEXT NOT NULL, "
 		"status TEXT DEFAULT 'active', "
 		"deployed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)");
-	(void) ndb_spi_execute_safe(sql.data, false, 0);
+	(void) ndb_spi_execute(spi_session, sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 					 "INSERT INTO neurondb.ml_deployments (model_id, deployment_name, strategy, status, deployed_at) "
 					 "VALUES (%d, %s, %s, 'active', CURRENT_TIMESTAMP) RETURNING deployment_id",
@@ -3110,17 +3259,19 @@ neurondb_deploy(PG_FUNCTION_ARGS)
 					 neurondb_quote_literal_cstr(psprintf("deploy_%d_%ld", model_id, (long) time(NULL))),
 					 neurondb_quote_literal_cstr(strategy));
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
+	ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR), errmsg("Failed to create deployment")));
 	}
 	deployment_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 
-	neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+	ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 
 
 	PG_RETURN_INT32(deployment_id);
@@ -3147,8 +3298,7 @@ neurondb_load_model(PG_FUNCTION_ARGS)
 	int			model_id = 0;
 	int			project_id = 0;
 	bool		isnull = false;
-	bool		spi_was_connected;
-	bool		we_connected_spi;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	if (PG_NARGS() != 3)
 		ereport(ERROR,
@@ -3180,20 +3330,15 @@ neurondb_load_model(PG_FUNCTION_ARGS)
 									   ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(callcontext);
 
-	spi_was_connected = (SPI_processed != -1);
-	we_connected_spi = false;
-
-	if (!spi_was_connected)
+	/* Begin SPI session */
 	{
-		if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			neurondb_cleanup(oldcontext, callcontext, false, we_connected_spi);
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_connect failed")));
-		}
-		we_connected_spi = true;
+		bool		assume_spi_connected;
+
+		assume_spi_connected = (SPI_processed != -1);
+		spi_session = ndb_spi_session_begin(callcontext, assume_spi_connected);
 	}
 
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 		"INSERT INTO neurondb.ml_projects (project_name, model_type, description) "
 		"VALUES (%s, 'external', 'External model import') "
@@ -3201,31 +3346,33 @@ neurondb_load_model(PG_FUNCTION_ARGS)
 		"RETURNING project_id",
 		neurondb_quote_literal_cstr(project_name));
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
+	ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if ((ret != SPI_OK_INSERT_RETURNING && ret != SPI_OK_UPDATE_RETURNING) || SPI_processed == 0)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR), errmsg("Failed to create/get external project \"%s\"", project_name)));
 	}
 	project_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		appendStringInfo(&sql, "SELECT pg_advisory_xact_lock(%d)", project_id);
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
+		ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 		NDB_CHECK_SPI_TUPTABLE_IF_SELECT(ret);
 		if (ret != SPI_OK_SELECT)
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("Failed to acquire advisory lock")));
 		}
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 		"WITH next_version AS (SELECT COALESCE(MAX(version), 0) + 1 AS v FROM neurondb.ml_models WHERE project_id = %d) "
 		"INSERT INTO neurondb.ml_models (project_id, version, model_name, algorithm, training_table, training_column, status, metadata) "
@@ -3237,15 +3384,17 @@ neurondb_load_model(PG_FUNCTION_ARGS)
 		neurondb_quote_literal_cstr(model_path),
 		neurondb_quote_literal_cstr(model_format));
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
+	ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed == 0)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("Failed to register external model")));
 	}
 	model_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
-	neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+	ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 
 	PG_RETURN_INT32(model_id);
 }
@@ -3268,13 +3417,12 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 	StringInfoData sql;
 	int			ret;
 	bool		isnull = false;
-	char	   *algorithm = NULL;
+	NDB_DECLARE(char *, algorithm);
 	char	   *table_name;
 	char	   *feature_col;
 	char	   *label_col;
-	Jsonb	   *result = NULL;
-	bool		spi_was_connected;
-	bool		we_connected_spi;
+	NDB_DECLARE(Jsonb *, result);
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	if (PG_NARGS() != 4)
 		ereport(ERROR,
@@ -3327,30 +3475,26 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 									   ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(callcontext);
 
-	spi_was_connected = (SPI_processed != -1);
-	we_connected_spi = false;
-
-	if (!spi_was_connected)
+	/* Begin SPI session */
 	{
-		if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			neurondb_cleanup(oldcontext, callcontext, false, we_connected_spi);
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_connect failed")));
-		}
-		we_connected_spi = true;
+		bool		assume_spi_connected;
+
+		assume_spi_connected = (SPI_processed != -1);
+		spi_session = ndb_spi_session_begin(callcontext, assume_spi_connected);
 	}
 
 	/* Get algorithm from model_id */
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 		"SELECT algorithm::text FROM neurondb.ml_models WHERE model_id = %d",
 		model_id);
 	elog(DEBUG1, "neurondb_evaluate: executing query: %s", sql.data);
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT || SPI_processed == 0)
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Model not found: %d", model_id)));
 	}
 	{
@@ -3358,14 +3502,15 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		temp_algorithm = TextDatumGetCString(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 		if (isnull)
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Model algorithm is NULL for model_id=%d", model_id)));
 		}
 		/* Copy algorithm to callcontext to avoid corruption from subsequent SPI calls */
 		algorithm = pstrdup(temp_algorithm);
 		Assert(algorithm != NULL);
 		Assert(strlen(algorithm) > 0);
-		NDB_SAFE_PFREE_AND_NULL(temp_algorithm);
+		NDB_FREE(temp_algorithm);
 	}
 
 	/* Note: Early model validation removed - dt_model_deserialize and dt_model_free are static */
@@ -3396,7 +3541,8 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 	{
 		if (label_col == NULL)
 		{
-			neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+			ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("neurondb.evaluate: label_col cannot be NULL for supervised algorithm '%s'", algorithm)));
@@ -3405,8 +3551,8 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 
 	/* Dispatch to algorithm-specific evaluate function */
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	if (strcmp(algorithm, "linear_regression") == 0)
 	{
 		char *q_table_name = neurondb_quote_literal_cstr(table_name);
@@ -3416,9 +3562,9 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_linear_regression_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else if (strcmp(algorithm, "logistic_regression") == 0)
 	{
@@ -3429,9 +3575,9 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_logistic_regression_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else if (strcmp(algorithm, "ridge") == 0)
 	{
@@ -3442,9 +3588,9 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_ridge_regression_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else if (strcmp(algorithm, "lasso") == 0)
 	{
@@ -3455,9 +3601,9 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_lasso_regression_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else if (strcmp(algorithm, "random_forest") == 0)
 	{
@@ -3468,9 +3614,9 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_random_forest_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else if (strcmp(algorithm, "svm") == 0)
 	{
@@ -3481,9 +3627,9 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_svm_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else if (strcmp(algorithm, "decision_tree") == 0)
 	{
@@ -3494,9 +3640,9 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_decision_tree_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else if (strcmp(algorithm, "naive_bayes") == 0)
 	{
@@ -3507,9 +3653,9 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_naive_bayes_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else if (strcmp(algorithm, "knn") == 0 || strcmp(algorithm, "knn_classifier") == 0 || strcmp(algorithm, "knn_regressor") == 0)
 	{
@@ -3520,9 +3666,9 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_knn_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else if (strcmp(algorithm, "kmeans") == 0)
 	{
@@ -3532,8 +3678,8 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_kmeans_by_model_id(%d, %s, %s)",
 			model_id, q_table_name, q_feature_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
 	}
 	else if (strcmp(algorithm, "gmm") == 0)
 	{
@@ -3543,8 +3689,8 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_gmm_by_model_id(%d, %s, %s)",
 			model_id, q_table_name, q_feature_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
 	}
 	else if (strcmp(algorithm, "minibatch_kmeans") == 0)
 	{
@@ -3554,8 +3700,8 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_minibatch_kmeans_by_model_id(%d, %s, %s)",
 			model_id, q_table_name, q_feature_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
 	}
 	else if (strcmp(algorithm, "hierarchical") == 0)
 	{
@@ -3565,8 +3711,8 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_hierarchical_by_model_id(%d, %s, %s)",
 			model_id, q_table_name, q_feature_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
 	}
 	else if (strcmp(algorithm, "xgboost") == 0)
 	{
@@ -3577,13 +3723,14 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		appendStringInfo(&sql, "SELECT evaluate_xgboost_by_model_id(%d, %s, %s, %s)",
 			model_id, q_table_name, q_feature_col, q_label_col);
 
-		NDB_SAFE_PFREE_AND_NULL(q_table_name);
-		NDB_SAFE_PFREE_AND_NULL(q_feature_col);
-		NDB_SAFE_PFREE_AND_NULL(q_label_col);
+		NDB_FREE(q_table_name);
+		NDB_FREE(q_feature_col);
+		NDB_FREE(q_label_col);
 	}
 	else
 	{
-		neurondb_cleanup(oldcontext, callcontext, true, we_connected_spi);
+		ndb_spi_session_end(&spi_session);
+neurondb_cleanup(oldcontext, callcontext);
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("neurondb.evaluate: algorithm '%s' does not support evaluation", algorithm)));
@@ -3599,7 +3746,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 	/* Wrap entire evaluation in error handler to prevent crashes */
 	PG_TRY();
 	{
-		ret = ndb_spi_execute_safe(sql.data, true, 0);
+		ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		{
@@ -3607,7 +3754,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 			MemoryContextSwitchTo(oldcontext);
 			result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
 				CStringGetDatum("{\"error\": \"evaluation query failed\"}")));
-			SPI_finish();
+			ndb_spi_session_end(&spi_session);
 			MemoryContextDelete(callcontext);
 			PG_RETURN_JSONB_P(result);
 		}
@@ -3628,7 +3775,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 				MemoryContextSwitchTo(oldcontext);
 				result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
 					CStringGetDatum("{\"error\": \"evaluation returned NULL\"}")));
-				SPI_finish();
+				ndb_spi_session_end(&spi_session);
 				MemoryContextDelete(callcontext);
 				PG_RETURN_JSONB_P(result);
 			}
@@ -3640,7 +3787,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 				MemoryContextSwitchTo(oldcontext);
 				result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
 					CStringGetDatum("{\"error\": \"invalid JSONB pointer\"}")));
-				SPI_finish();
+				ndb_spi_session_end(&spi_session);
 				MemoryContextDelete(callcontext);
 				PG_RETURN_JSONB_P(result);
 			}
@@ -3653,15 +3800,15 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 				MemoryContextSwitchTo(oldcontext);
 				result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
 					CStringGetDatum("{\"error\": \"invalid JSONB structure\"}")));
-				SPI_finish();
+				ndb_spi_session_end(&spi_session);
 				MemoryContextDelete(callcontext);
 				PG_RETURN_JSONB_P(result);
 			}
 			
 			/*
-			 * Copy JSONB to caller's context before SPI_finish().
+			 * Copy JSONB to caller's context before session end.
 			 * This ensures the JSONB is valid after SPI context is cleaned up.
-			 * SPI_finish() will delete the SPI memory context, so any pointers
+			 * Session end will delete the SPI memory context, so any pointers
 			 * to data allocated in that context will become invalid.
 			 */
 			MemoryContextSwitchTo(oldcontext);
@@ -3671,7 +3818,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 			{
 				if (result != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(result);
+					NDB_FREE(result);
 					result = NULL;
 				}
 				result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in, 
@@ -3681,7 +3828,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 	}
 	PG_CATCH();
 	{
-		ErrorData *edata = NULL;
+		NDB_DECLARE(ErrorData *, edata);
 		char *error_msg;
 		
 		/*
@@ -3694,7 +3841,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		
 		/* Suppress shadow warnings from nested PG_TRY blocks */
 		#pragma GCC diagnostic push
-		#pragma GCC diagnostic ignored "-Wshadow=compatible-local"
+		#pragma GCC diagnostic ignored "-Wshadow"
 		PG_TRY();
 		{
 			if (CurrentMemoryContext != ErrorContext)
@@ -3722,9 +3869,12 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		
 		/* Escape JSON special characters */
 		{
-			char *escaped = palloc(strlen(error_msg) * 2 + 1);
-			char *p = escaped;
-			const char *s = error_msg;
+			NDB_DECLARE(char *, escaped);
+			char *p;
+			const char *s;
+			NDB_ALLOC(escaped, char, strlen(error_msg) * 2 + 1);
+			p = escaped;
+			s = error_msg;
 			while (*s)
 			{
 				if (*s == '"' || *s == '\\' || *s == '\n' || *s == '\r')
@@ -3742,7 +3892,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 				s++;
 			}
 			*p = '\0';
-			NDB_SAFE_PFREE_AND_NULL(error_msg);
+			NDB_FREE(error_msg);
 			error_msg = NULL;
 			error_msg = escaped;
 		}
@@ -3750,13 +3900,13 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		/* Return error JSONB */
 		{
 			StringInfoData error_json;
-			initStringInfo(&error_json);
+			ndb_spi_stringinfo_init(spi_session, &error_json);
 			appendStringInfo(&error_json, "{\"error\": \"%s\"}", error_msg);
 			result = (Jsonb *) DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 				CStringGetDatum(error_json.data)));
-			NDB_SAFE_PFREE_AND_NULL(error_json.data);
+			ndb_spi_stringinfo_free(spi_session, &error_json);
 			error_json.data = NULL;
-			NDB_SAFE_PFREE_AND_NULL(error_msg);
+			NDB_FREE(error_msg);
 			error_msg = NULL;
 
 			/* Defensive check: ensure result is valid */
@@ -3771,11 +3921,11 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 		if (edata != NULL)
 			FreeErrorData(edata);
 		
-		SPI_finish();
+		ndb_spi_session_end(&spi_session);
 		
 		/*
 		 * Clean up memory context. Must switch to oldcontext before
-		 * deleting callcontext, as SPI_finish() or error handling may
+		 * deleting callcontext, as session end or error handling may
 		 * have changed CurrentMemoryContext. Attempting to delete a
 		 * context while in that context will cause a crash.
 		 */
@@ -3791,10 +3941,10 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 	PG_END_TRY();
 
 	/* Now safe to clean up SPI and delete callcontext */
-	SPI_finish();
+	ndb_spi_session_end(&spi_session);
 	
 	/* Ensure we're in oldcontext before deleting callcontext */
-	/* SPI_finish() might have changed CurrentMemoryContext */
+	/* Session end might have changed CurrentMemoryContext */
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(callcontext);
 
