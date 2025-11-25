@@ -1,0 +1,68 @@
+# Makefile.metal.precompile
+# Pre-compile Metal shaders at build time to avoid XPC runtime compilation
+
+METAL_SOURCES = src/gpu/metal/gpu_distance_kernel.metal
+METAL_LIB = src/gpu/metal/neurondb_gpu_kernels.metallib
+METAL_AIR = src/gpu/metal/neurondb_gpu_kernels.air
+
+# Metal compiler settings for Apple Silicon
+METAL_SDK = macosx
+METAL_ARCH = air64
+METAL_FLAGS = -std=metal3.0 -Os
+
+.PHONY: metal-shaders metal-clean
+
+# Check if Metal compiler is available
+METAL_AVAILABLE := $(shell xcrun --find metal 2>/dev/null)
+ifeq ($(METAL_AVAILABLE),)
+	METAL_AVAILABLE := no
+else
+	METAL_AVAILABLE := yes
+endif
+
+# Compile Metal shaders to .metallib (optional if Metal compiler available)
+metal-shaders: $(METAL_LIB)
+
+$(METAL_AIR): $(METAL_SOURCES)
+	@if [ "$(METAL_AVAILABLE)" = "yes" ]; then \
+		echo "══════════════════════════════════════════════════════════════"; \
+		echo "Compiling Metal shaders to AIR..."; \
+		echo "══════════════════════════════════════════════════════════════"; \
+		xcrun -sdk $(METAL_SDK) metal $(METAL_FLAGS) -c $(METAL_SOURCES) -o $(METAL_AIR) || exit 1; \
+		echo "✓ Metal shaders compiled to AIR"; \
+	else \
+		echo "[WARNING] Metal compiler not found, skipping Metal shader compilation"; \
+		echo "[INFO] Metal backend will use CPU-based algorithms"; \
+		touch $(METAL_AIR); \
+	fi
+
+$(METAL_LIB): $(METAL_AIR)
+	@if [ "$(METAL_AVAILABLE)" = "yes" ]; then \
+		echo "══════════════════════════════════════════════════════════════"; \
+		echo "Creating Metal library (.metallib)..."; \
+		echo "══════════════════════════════════════════════════════════════"; \
+		xcrun -sdk $(METAL_SDK) metallib $(METAL_AIR) -o $(METAL_LIB) || exit 1; \
+		echo "✓ Metal library created: $(METAL_LIB)"; \
+		ls -lh $(METAL_LIB) || true; \
+		echo "══════════════════════════════════════════════════════════════"; \
+	else \
+		echo "[WARNING] Metal compiler not found, skipping Metal library creation"; \
+		echo "[INFO] Metal backend will use CPU-based algorithms"; \
+		touch $(METAL_LIB); \
+	fi
+
+metal-clean:
+	rm -f $(METAL_AIR) $(METAL_LIB)
+
+# Install Metal library with extension
+install-metal: $(METAL_LIB)
+	@echo "══════════════════════════════════════════════════════════════"
+	@echo "Installing Metal library..."
+	@echo "══════════════════════════════════════════════════════════════"
+	@mkdir -p '/usr/local/pgsql.18/lib'
+	@cp -f $(METAL_LIB) '/usr/local/pgsql.18/lib/neurondb_gpu_kernels.metallib'
+	@chmod 644 '/usr/local/pgsql.18/lib/neurondb_gpu_kernels.metallib'
+	@ls -lh '/usr/local/pgsql.18/lib/neurondb_gpu_kernels.metallib'
+	@echo "✓ Metal library installed"
+	@echo "══════════════════════════════════════════════════════════════"
+

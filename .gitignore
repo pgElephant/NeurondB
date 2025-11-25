@@ -1,55 +1,241 @@
-# Prerequisites
-*.d
-
-# Object files
+# Build artifacts
 *.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
 *.so
-*.so.*
 *.dylib
+*.a
+*.bc
+*.pc
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+# CUDA build artifacts
+*.ptx
+*.fatbin
+*.cubin
 
-# Debug files
+# Auto-generated configuration
+include/neurondb_config.h
+
+# Backup and temporary files
+*.bak
+*.bak[0-9]
+*.old
+*~
+*.tmp
+*.swp
+*.swo
+
+# Regression test results
+results/
+regression.diffs
+regression.out
+tmp_check/
+tmp_check_iso/
+/log
+log/
+output_iso/
+
+# Build directories
+build/
+releases/
+
+# Mac OS
+.DS_Store
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-*
+
+# Configuration files (local)
+*.local
+
+# Compiled binaries
+neurondb.dylib
+libneurondb.a
+libneurondb.pc
+
+# Test and temporary files
+/tmp/
+*.log
+test_*.sql
+tests/datasets/
+tests/log/
+tests/error/
+tests/output/
+
+# Documentation build
+site/
+docs/_build/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+venv/
+env/
+
+# Python build artifacts
+dist/
+*.egg-info/
+*.dist-info/
+.eggs/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Database data directories
+pg_data*/
+neurondb_data*/
+*data[0-9]*/
+
+# macOS specific
 *.dSYM/
-*.su
-*.idb
-*.pdb
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# Extension build artifacts
+*.sql.in
+*.control.in
 
-# debug information files
-*.dwo
+# Dataset downloads and caches
+dataset/datasets/
+dataset/*.hdf5
+dataset/*.gz
+dataset/*.tar
+dataset/*.zip
+dataset/*.ndjson
+dataset/*.json.gz
+
+# PMLB (Penn Machine Learning Benchmark) datasets
+pmlb/
+
+# Worker backups and patches
+*.orig
+*.rej
+/tmp/*.patch
+Oops.rej
+
+# PostgreSQL data directories (specific)
+neurondb_data17/
+neurondb_data18/
+neurondb--1.0.sql
+neurondb--1.0.sql.tmp
+neurondb--1.0.sql.funcs
+neurondb--1.0.sql.reg.funcs
+neurondb--1.0.sql.clf.funcs
+neurondb--1.0.sql.knn.funcs
+neurondb--1.0.sql.ens.funcs
+
+# Metal GPU build artifacts
+src/gpu/**/*.air
+*.metallib
+
+# Demo output and test files
+demo/ML/out/*.out
+demo/ML/*.md
+demo/*.out
+!demo/ML/sql/*.sql
+
+# Cleanup notes and scripts
+CLEANUP_NOTES.txt
+compile_metal.sh
+compile_metal_clean.sh
+compile_metal_final.sh
+test_metal_direct
+test_metal_direct.c
+
+# Markdown files - ignore by default, only track explicitly added ones
+# New .md files will be ignored unless explicitly added with 'git add -f'
+*.md
+# Explicitly allow important root-level documentation files
+!README.md
+!CONTRIBUTING.md
+!SECURITY.md
+!INSTALL.md
+# Allow docs directory (main documentation)
+!docs/
+!docs/**/*.md
+# Allow demo README files
+!demo/models/README.md
+!demo/workers/README.md
+!docker/README.md
+!tools/README.md
+# Allow MCP server README
+!bin/mcp/README.md
+# Note: node_modules .md files are already ignored by node_modules/ pattern
+
+# Platform-specific SQL build artifacts
+neurondb--1.0.sql.linux
+neurondb--1.0.sql.macos
+
+# Temporary/accidental files
+/a
+/commit_message_amend.txt
+
+# Code coverage
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Profiling and debugging
+*.profraw
+*.gcda
+*.gcno
+*.gcov
+
+# ONNX model files (generated)
+*.onnx
+
+# Compiled TypeScript (MCP server)
+bin/mcp/dist/
+bin/mcp/build/
+
+# Python virtual environments (already covered but explicit)
+**/venv/
+**/env/
+**/__pycache__/
+
+# Node.js
+node_modules/
+bin/mcp/node_modules/
+
+# TypeScript/JavaScript build artifacts
+*.js.map
+bin/mcp/**/*.js
+bin/mcp/**/*.d.ts
+!bin/mcp/**/*.config.js
+
+# Editor and IDE files
+.cursor/
+.idea/
+.vscode/
+*.sublime-*
+*.code-workspace
+
+# OS files
+Thumbs.db
+
+# Temporary test files
+test_*.sql
+*_test.sql
+*_demo.sql
+extreme_*.sql
+final_*.sql
+
+# Unnecessary documentation (legacy)
+ML_FINAL_STATUS.md
+ML_ALGORITHMS_STATUS.md
+ML_IMPLEMENTATION_SUMMARY.md
+ML_PROJECT_IMPLEMENTATION.md
+VERSION_COMPATIBILITY.md
+REORGANIZATION_PLAN.md
+src/DIRECTORY_STRUCTURE.md
+src/gpu/GPU_STATUS.md
+
+# Log files
+l
+
+# Coverage output directory
+tests/coverage/
