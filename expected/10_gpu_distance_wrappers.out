@@ -1,0 +1,24 @@
+-- Extension created in 01_types_basic
+SET neurondb.gpu_enabled = off;
+-- L2 distance: [1,2] vs [4,6] => sqrt(25) = 5
+SELECT vector_l2_distance_gpu('[1,2]'::vector, '[4,6]'::vector);
+ vector_l2_distance_gpu 
+------------------------
+                      5
+(1 row)
+
+-- Cosine distance identical vectors => 0
+SELECT vector_cosine_distance_gpu('[1,2,3]'::vector, '[1,2,3]'::vector);
+ vector_cosine_distance_gpu 
+----------------------------
+                          0
+(1 row)
+
+-- Inner product distance is negative dot product
+-- [1,2]·[3,4] = 11 => distance = -11
+SELECT vector_inner_product_gpu('[1,2]'::vector, '[3,4]'::vector);
+ vector_inner_product_gpu 
+--------------------------
+                      -11
+(1 row)
+

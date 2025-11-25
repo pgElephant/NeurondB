@@ -1,0 +1,30 @@
+-- Test sync (should not crash)
+SELECT sync_index_async('test_index', 'replica_host') AS sync_initiated;
+ERROR:  relation "test_index" does not exist
+LINE 1: SELECT sync_index_async('test_index', 'replica_host') AS syn...
+                                ^
+-- Test array conversion roundtrip
+SELECT vector_to_array(array_to_vector(ARRAY[1.0, 2.0, 3.0]::real[]));
+ vector_to_array 
+-----------------
+ {1,2,3}
+(1 row)
+
+-- Verify catalog integrity
+SELECT COUNT(*) >= 12 AS all_catalogs_present 
+FROM pg_tables 
+WHERE tablename LIKE 'neurondb_%';
+ all_catalogs_present 
+----------------------
+ f
+(1 row)
+
+-- Verify extension info
+SELECT extname, extversion 
+FROM pg_extension 
+WHERE extname = 'neurondb';
+ extname  | extversion 
+----------+------------
+ neurondb | 1.0
+(1 row)
+

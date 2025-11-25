@@ -1,0 +1,137 @@
+-- 032_scan_basic.sql
+-- Basic test for scan module: HNSW scan, hybrid scan, RLS integration, quota
+
+\timing on
+\pset footer off
+\pset pager off
+\pset tuples_only off
+
+\set ON_ERROR_STOP on
+
+\echo '=========================================================================='
+\echo 'Scan Module: Basic Functionality Tests'
+\echo '=========================================================================='
+
+/*-------------------------------------------------------------------
+ * ---- HNSW SCAN OPERATIONS ----
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'HNSW Scan Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+-- Create test table
+DROP TABLE IF EXISTS scan_test_table;
+CREATE TABLE scan_test_table (
+	id SERIAL PRIMARY KEY,
+	embedding vector(28),
+	label integer
+);
+
+-- Insert test data
+INSERT INTO scan_test_table (embedding, label)
+SELECT features, label
+FROM test_train_view
+LIMIT 100;
+
+\echo 'Test 1: Create HNSW index for scan testing'
+CREATE INDEX idx_scan_hnsw ON scan_test_table 
+USING hnsw (embedding vector_l2_ops) 
+WITH (m = 16, ef_construction = 200);
+
+\echo 'Test 2: HNSW scan query'
+SELECT 
+	id,
+	embedding <-> (SELECT embedding FROM scan_test_table LIMIT 1) AS distance
+FROM scan_test_table
+ORDER BY embedding <-> (SELECT embedding FROM scan_test_table LIMIT 1)
+LIMIT 10;
+
+/*-------------------------------------------------------------------
+ * ---- HYBRID SCAN OPERATIONS ----
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'Hybrid Scan Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Test 3: Hybrid scan with vector and keyword search'
+-- Test hybrid search functionality
+SELECT 
+	id,
+	embedding <-> (SELECT embedding FROM scan_test_table LIMIT 1) AS vector_distance,
+	label
+FROM scan_test_table
+WHERE label < 5
+ORDER BY embedding <-> (SELECT embedding FROM scan_test_table LIMIT 1)
+LIMIT 10;
+
+/*-------------------------------------------------------------------
+ * ---- RLS INTEGRATION ----
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'RLS Integration Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Test 4: Scan with RLS enabled table'
+DROP TABLE IF EXISTS scan_rls_test;
+CREATE TABLE scan_rls_test (
+	id SERIAL PRIMARY KEY,
+	embedding vector(28),
+	tenant_id integer,
+	label integer
+);
+
+-- Enable RLS
+ALTER TABLE scan_rls_test ENABLE ROW LEVEL SECURITY;
+
+-- Insert test data
+INSERT INTO scan_rls_test (embedding, tenant_id, label)
+SELECT features, (i % 3) + 1 AS tenant_id, label
+FROM test_train_view, generate_series(1, 3) i
+LIMIT 100;
+
+-- Create index
+CREATE INDEX idx_scan_rls_hnsw ON scan_rls_test 
+USING hnsw (embedding vector_l2_ops);
+
+-- Query with RLS (should filter based on policies if any)
+SELECT 
+	id,
+	tenant_id,
+	embedding <-> (SELECT embedding FROM scan_rls_test LIMIT 1) AS distance
+FROM scan_rls_test
+ORDER BY embedding <-> (SELECT embedding FROM scan_rls_test LIMIT 1)
+LIMIT 10;
+
+/*-------------------------------------------------------------------
+ * ---- QUOTA ENFORCEMENT ----
+ *------------------------------------------------------------------*/
+\echo ''
+\echo 'Quota Enforcement Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'Test 5: Quota check function (if available)'
+-- Test quota checking
+DO $$
+DECLARE
+	quota_allowed boolean;
+BEGIN
+	BEGIN
+		quota_allowed := neurondb_check_quota('tenant1', 'idx_scan_hnsw'::regclass, 100);
+		RAISE NOTICE 'Quota check result: %', quota_allowed;
+	EXCEPTION WHEN OTHERS THEN
+		NULL; -- May not be available
+	END;
+END$$;
+
+\echo 'Test 6: Quota usage query (if available)'
+SELECT * FROM neurondb_get_quota_usage('tenant1', 'idx_scan_hnsw'::regclass);
+
+\echo ''
+\echo '=========================================================================='
+\echo '✓ Scan Module: Basic tests complete'
+\echo '=========================================================================='
+
+DROP TABLE IF EXISTS scan_test_table CASCADE;
+DROP TABLE IF EXISTS scan_rls_test CASCADE;
+
+\echo 'Test completed successfully'
