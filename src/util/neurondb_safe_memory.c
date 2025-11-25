@@ -47,9 +47,23 @@ ndb_safe_pfree_and_null_impl(void *ptr)
 			"neurondb: suspicious pointer pattern in ndb_safe_pfree: %p",
 			ptr);
 	}
+
+	/*
+	 * In debug builds, validate current memory context is valid before freeing.
+	 * This helps catch cases where we're trying to free in an invalid context.
+	 * Note: pfree() itself will validate the pointer's context, but this gives
+	 * us an early warning if CurrentMemoryContext is invalid.
+	 */
+	if (!MemoryContextIsValid(CurrentMemoryContext))
+	{
+		elog(WARNING,
+			"neurondb: attempting to free pointer %p while CurrentMemoryContext %p is invalid",
+			ptr, CurrentMemoryContext);
+	}
 #endif
 
 	/* Actually free the pointer - was calling itself recursively before! */
+	/* pfree() will validate the pointer's context internally */
 	pfree(ptr);
 	return true;
 }
