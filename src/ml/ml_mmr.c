@@ -1,0 +1,370 @@
+/*-------------------------------------------------------------------------
+ *
+ * ml_mmr.c
+ *    Maximal Marginal Relevance (MMR) for diverse reranking
+ *
+ * MMR balances relevance and diversity in search results by iteratively
+ * selecting documents that are relevant to the query while being
+ * dissimilar to already-selected results.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ *
+ * IDENTIFICATION
+ *    src/ml/ml_mmr.c
+ *
+ *-------------------------------------------------------------------------
+ */
+
+#include "postgres.h"
+#include "fmgr.h"
+#include "utils/builtins.h"
+#include "utils/array.h"
+#include "catalog/pg_type.h"
+#include "utils/lsyscache.h"
+
+#include "neurondb.h"
+
+#include <math.h>
+#include <float.h>
+#include "neurondb_validation.h"
+#include "neurondb_safe_memory.h"
+
+/*
+ * Compute cosine similarity between two vectors
+ */
+static inline double
+cosine_similarity(const float *a, const float *b, int dim)
+{
+	double dot = 0.0;
+	double norm_a = 0.0;
+	double norm_b = 0.0;
+	int i;
+
+	for (i = 0; i < dim; i++)
+	{
+		dot += a[i] * b[i];
+		norm_a += a[i] * a[i];
+		norm_b += b[i] * b[i];
+	}
+
+	if (norm_a < 1e-10 || norm_b < 1e-10)
+		return 0.0;
+
+	return dot / (sqrt(norm_a) * sqrt(norm_b));
+}
+
+/*
+ * mmr_rerank
+ *    Rerank results using Maximal Marginal Relevance
+ *
+ * MMR Formula:
+ *   MMR = λ × Sim(D_i, Q) - (1-λ) × max(Sim(D_i, D_j) for D_j in S)
+ *
+ * Arguments:
+ *   - query_vector: query embedding
+ *   - candidate_vectors: array of candidate document embeddings
+ *   - lambda: balance parameter [0,1] (1.0 = pure relevance, 0.0 = pure diversity)
+ *   - top_k: number of results to return
+ *
+ * Returns: array of indices (1-based) in MMR order
+ */
+PG_FUNCTION_INFO_V1(mmr_rerank);
+
+Datum
+mmr_rerank(PG_FUNCTION_ARGS)
+{
+	ArrayType *query_array;
+	ArrayType *candidates_array;
+	float lambda;
+	int top_k;
+	float *query;
+	int query_dim;
+	float **candidates;
+	int n_candidates;
+	int dim;
+	bool *selected;
+	int *result_indices;
+	double *query_scores;
+	ArrayType *result;
+	Datum *result_datums;
+	int selected_count;
+	int i, j;
+	int16 typlen;
+	bool typbyval;
+	char typalign;
+
+	/* Parse arguments */
+	query_array = PG_GETARG_ARRAYTYPE_P(0);
+	candidates_array = PG_GETARG_ARRAYTYPE_P(1);
+	lambda = PG_GETARG_FLOAT4(2);
+	top_k = PG_GETARG_INT32(3);
+
+	if (lambda < 0.0 || lambda > 1.0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("lambda must be between 0.0 and 1.0")));
+
+	/* Extract query vector */
+	query_dim = ARR_DIMS(query_array)[0];
+	query = (float *)ARR_DATA_PTR(query_array);
+
+	/* Extract candidate vectors */
+	if (ARR_NDIM(candidates_array) != 2)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("candidates must be 2-dimensional "
+				       "array")));
+
+	n_candidates = ARR_DIMS(candidates_array)[0];
+	dim = ARR_DIMS(candidates_array)[1];
+
+	if (dim != query_dim)
+	{
+		elog(DEBUG1,
+		     "Query dimension %d != candidate dimension %d",
+		     query_dim,
+		     dim);
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Query dimension %d != candidate dimension %d",
+					query_dim,
+					dim)));
+	}
+
+	if (top_k < 1)
+		top_k = n_candidates;
+	else if (top_k > n_candidates)
+		top_k = n_candidates;
+
+	/* Parse candidate vectors */
+	candidates = (float **)palloc(sizeof(float *) * n_candidates);
+	{
+		float *data = (float *)ARR_DATA_PTR(candidates_array);
+		for (i = 0; i < n_candidates; i++)
+			candidates[i] = &data[i * dim];
+	}
+
+	/* Compute query-candidate similarities */
+	query_scores = (double *)palloc(sizeof(double) * n_candidates);
+	for (i = 0; i < n_candidates; i++)
+		query_scores[i] = cosine_similarity(query, candidates[i], dim);
+
+	/* MMR algorithm */
+	selected = (bool *)palloc0(sizeof(bool) * n_candidates);
+	result_indices = (int *)palloc(sizeof(int) * top_k);
+	selected_count = 0;
+
+	while (selected_count < top_k)
+	{
+		double max_mmr = -1e30;
+		int best_idx = -1;
+
+		/* Find candidate with maximum MMR score */
+		for (i = 0; i < n_candidates; i++)
+		{
+			double mmr_score;
+			double max_sim_to_selected;
+
+			if (selected[i])
+				continue;
+
+			/* Compute max similarity to already-selected documents */
+			max_sim_to_selected = 0.0;
+			for (j = 0; j < selected_count; j++)
+			{
+				int selected_idx = result_indices[j];
+				double sim = cosine_similarity(candidates[i],
+					candidates[selected_idx],
+					dim);
+				if (sim > max_sim_to_selected)
+					max_sim_to_selected = sim;
+			}
+
+			/* MMR = λ × Sim(D_i, Q) - (1-λ) × max Sim(D_i, S) */
+			mmr_score = lambda * query_scores[i]
+				- (1.0 - lambda) * max_sim_to_selected;
+
+			if (mmr_score > max_mmr)
+			{
+				max_mmr = mmr_score;
+				best_idx = i;
+			}
+		}
+
+		if (best_idx == -1)
+			break;
+
+		result_indices[selected_count] = best_idx;
+		selected[best_idx] = true;
+		selected_count++;
+	}
+
+	/* Build result array (1-based indices) */
+	result_datums = (Datum *)palloc(sizeof(Datum) * selected_count);
+	for (i = 0; i < selected_count; i++)
+		result_datums[i] = Int32GetDatum(result_indices[i] + 1);
+
+	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
+	result = construct_array(result_datums,
+		selected_count,
+		INT4OID,
+		typlen,
+		typbyval,
+		typalign);
+
+	/* Cleanup */
+	NDB_SAFE_PFREE_AND_NULL(candidates);
+	NDB_SAFE_PFREE_AND_NULL(query_scores);
+	NDB_SAFE_PFREE_AND_NULL(selected);
+	NDB_SAFE_PFREE_AND_NULL(result_indices);
+	NDB_SAFE_PFREE_AND_NULL(result_datums);
+
+	PG_RETURN_ARRAYTYPE_P(result);
+}
+
+/*
+ * mmr_rerank_with_scores
+ *    MMR reranking that also returns MMR scores
+ *
+ * Returns: array of (index, mmr_score) tuples
+ */
+PG_FUNCTION_INFO_V1(mmr_rerank_with_scores);
+
+Datum
+mmr_rerank_with_scores(PG_FUNCTION_ARGS)
+{
+	ArrayType *query_array;
+	ArrayType *candidates_array;
+	float lambda;
+	int top_k;
+	float *query;
+	int query_dim;
+	float **candidates;
+	int n_candidates;
+	int dim;
+	bool *selected;
+	int *result_indices;
+	double *result_scores;
+	double *query_scores;
+	ArrayType *result;
+	Datum *result_datums;
+	int selected_count;
+	int i, j;
+
+	/* Parse arguments (same as mmr_rerank) */
+	query_array = PG_GETARG_ARRAYTYPE_P(0);
+	candidates_array = PG_GETARG_ARRAYTYPE_P(1);
+	lambda = PG_GETARG_FLOAT4(2);
+	top_k = PG_GETARG_INT32(3);
+
+	if (lambda < 0.0 || lambda > 1.0)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("lambda must be between 0.0 and 1.0")));
+
+	query_dim = ARR_DIMS(query_array)[0];
+	query = (float *)ARR_DATA_PTR(query_array);
+
+	if (ARR_NDIM(candidates_array) != 2)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("candidates must be 2-dimensional "
+				       "array")));
+
+	n_candidates = ARR_DIMS(candidates_array)[0];
+	dim = ARR_DIMS(candidates_array)[1];
+
+	if (dim != query_dim)
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Dimension mismatch")));
+
+	if (top_k < 1 || top_k > n_candidates)
+		top_k = n_candidates;
+
+	candidates = (float **)palloc(sizeof(float *) * n_candidates);
+	{
+		float *data = (float *)ARR_DATA_PTR(candidates_array);
+		for (i = 0; i < n_candidates; i++)
+			candidates[i] = &data[i * dim];
+	}
+
+	query_scores = (double *)palloc(sizeof(double) * n_candidates);
+	for (i = 0; i < n_candidates; i++)
+		query_scores[i] = cosine_similarity(query, candidates[i], dim);
+
+	selected = (bool *)palloc0(sizeof(bool) * n_candidates);
+	result_indices = (int *)palloc(sizeof(int) * top_k);
+	result_scores = (double *)palloc(sizeof(double) * top_k);
+	selected_count = 0;
+
+	/* MMR algorithm with score tracking */
+	while (selected_count < top_k)
+	{
+		double max_mmr = -1e30;
+		int best_idx = -1;
+
+		for (i = 0; i < n_candidates; i++)
+		{
+			double mmr_score;
+			double max_sim_to_selected;
+
+			if (selected[i])
+				continue;
+
+			max_sim_to_selected = 0.0;
+			for (j = 0; j < selected_count; j++)
+			{
+				int selected_idx = result_indices[j];
+				double sim = cosine_similarity(candidates[i],
+					candidates[selected_idx],
+					dim);
+				if (sim > max_sim_to_selected)
+					max_sim_to_selected = sim;
+			}
+
+			mmr_score = lambda * query_scores[i]
+				- (1.0 - lambda) * max_sim_to_selected;
+
+			if (mmr_score > max_mmr)
+			{
+				max_mmr = mmr_score;
+				best_idx = i;
+			}
+		}
+
+		if (best_idx == -1)
+			break;
+
+		result_indices[selected_count] = best_idx;
+		result_scores[selected_count] = max_mmr;
+		selected[best_idx] = true;
+		selected_count++;
+	}
+
+	/* Build result array: flat array [idx1, score1, idx2, score2, ...] */
+	result_datums = (Datum *)palloc(sizeof(Datum) * selected_count * 2);
+	for (i = 0; i < selected_count; i++)
+	{
+		result_datums[i * 2] = Int32GetDatum(result_indices[i] + 1);
+		result_datums[i * 2 + 1] =
+			Float4GetDatum((float)result_scores[i]);
+	}
+
+	result = construct_array(result_datums,
+		selected_count * 2,
+		FLOAT4OID,
+		sizeof(float4),
+		true,
+		'i');
+
+	/* Cleanup */
+	NDB_SAFE_PFREE_AND_NULL(candidates);
+	NDB_SAFE_PFREE_AND_NULL(query_scores);
+	NDB_SAFE_PFREE_AND_NULL(selected);
+	NDB_SAFE_PFREE_AND_NULL(result_indices);
+	NDB_SAFE_PFREE_AND_NULL(result_scores);
+	NDB_SAFE_PFREE_AND_NULL(result_datums);
+
+	PG_RETURN_ARRAYTYPE_P(result);
+}
