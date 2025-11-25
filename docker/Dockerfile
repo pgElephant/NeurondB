@@ -3,6 +3,15 @@
 # NeuronDB reference image (CPU)
 # Multi-stage build that compiles the extension against PostgreSQL and bundles
 # ONNX Runtime for HuggingFace integration.
+#
+# Supports:
+#   - PostgreSQL: 16, 17, 18 (via PG_MAJOR build arg)
+#   - Architectures: amd64, arm64
+#   - OS: Debian Bookworm (via postgres base image)
+#
+# Build args:
+#   PG_MAJOR: PostgreSQL major version (16, 17, or 18, default: 17)
+#   ONNX_VERSION: ONNX Runtime version (default: 1.17.0)
 
 ARG PG_MAJOR=17
 ARG ONNX_VERSION=1.17.0
@@ -56,6 +65,7 @@ WORKDIR /build/Neurondb
 COPY . .
 
 # Build and install NeuronDB into the builder image
+# Note: Architecture is automatically detected and handled by the build system
 RUN make clean && \
     make && \
     make install

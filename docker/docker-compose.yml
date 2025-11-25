@@ -1,6 +1,11 @@
 version: "3.9"
 
+# NeuronDB Docker Compose Configuration
+# Supports multiple variants: CPU, CUDA, ROCm, and Metal
+# Each variant supports PostgreSQL 16, 17, and 18 (configurable via build args)
+
 services:
+  # CPU variant (default, no profile needed)
   neurondb:
     build:
       context: ..
@@ -8,8 +13,8 @@ services:
       args:
         PG_MAJOR: 17
         ONNX_VERSION: 1.17.0
-    image: neurondb:cpu
-    container_name: neurondb
+    image: neurondb:cpu-pg17
+    container_name: neurondb-cpu
     environment:
       POSTGRES_USER: neurondb
       POSTGRES_PASSWORD: neurondb
@@ -24,18 +29,19 @@ services:
       timeout: 5s
       retries: 5
 
-  neurondb-gpu:
-    profiles: ["gpu"]
+  # CUDA GPU variant
+  neurondb-cuda:
+    profiles: ["cuda", "gpu"]
     build:
       context: ..
-      dockerfile: docker/Dockerfile.gpu
+      dockerfile: docker/Dockerfile.gpu.cuda
       args:
         PG_MAJOR: 17
         CUDA_VERSION: 12.4.1
         ONNX_VERSION: 1.17.0
         ENABLE_RAPIDS: 0
-    image: neurondb:gpu
-    container_name: neurondb-gpu
+    image: neurondb:cuda-pg17
+    container_name: neurondb-cuda
     environment:
       POSTGRES_USER: neurondb
       POSTGRES_PASSWORD: neurondb
@@ -54,7 +60,65 @@ services:
               capabilities: [gpu]
     runtime: nvidia
     volumes:
-      - neurondb-gpu-data:/var/lib/postgresql/data
+      - neurondb-cuda-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neurondb"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # ROCm GPU variant
+  neurondb-rocm:
+    profiles: ["rocm", "gpu"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu.rocm
+      args:
+        PG_MAJOR: 17
+        ROCM_VERSION: 5.7
+        ONNX_VERSION: 1.17.0
+    image: neurondb:rocm-pg17
+    container_name: neurondb-rocm
+    environment:
+      POSTGRES_USER: neurondb
+      POSTGRES_PASSWORD: neurondb
+      POSTGRES_DB: neurondb
+      NEURONDB_GPU_ENABLED: "on"
+    ports:
+      - "5435:5432"
+    volumes:
+      - neurondb-rocm-data:/var/lib/postgresql/data
+    # ROCm requires device access - adjust based on your setup
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U neurondb"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # Metal GPU variant (macOS/Apple Silicon)
+  neurondb-metal:
+    profiles: ["metal", "gpu"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gpu.metal
+      args:
+        PG_MAJOR: 17
+        ONNX_VERSION: 1.17.0
+    image: neurondb:metal-pg17
+    container_name: neurondb-metal
+    environment:
+      POSTGRES_USER: neurondb
+      POSTGRES_PASSWORD: neurondb
+      POSTGRES_DB: neurondb
+      NEURONDB_GPU_ENABLED: "on"
+    ports:
+      - "5436:5432"
+    volumes:
+      - neurondb-metal-data:/var/lib/postgresql/data
+    platform: linux/arm64
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U neurondb"]
       interval: 30s
@@ -63,5 +127,6 @@ services:
 
 volumes:
   neurondb-data:
-  neurondb-gpu-data:
-
+  neurondb-cuda-data:
+  neurondb-rocm-data:
+  neurondb-metal-data:
