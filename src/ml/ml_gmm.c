@@ -60,18 +60,18 @@ extern cublasHandle_t ndb_cuda_get_cublas_handle(void);
 #include <math.h>
 #include <float.h>
 
-#define GMM_EPSILON		1e-6		/* Regularization for covariance */
-#define GMM_MIN_PROB	1e-10		/* Minimum probability to avoid log(0) */
+#define GMM_EPSILON		1e-6	/* Regularization for covariance */
+#define GMM_MIN_PROB	1e-10	/* Minimum probability to avoid log(0) */
 
 /* GMM model structure */
 typedef struct GMMModel
 {
-	int				k;
-	int				dim;
-	double		   *mixing_coeffs;
-	double		  **means;
-	double		  **variances;
-} GMMModel;
+	int			k;
+	int			dim;
+	double	   *mixing_coeffs;
+	double	  **means;
+	double	  **variances;
+}			GMMModel;
 
 /*
  * Compute Gaussian probability density (diagonal covariance)
@@ -85,8 +85,8 @@ gaussian_pdf(const float *x, const double *mean, const double *variance, int dim
 
 	for (d = 0; d < dim; d++)
 	{
-		double	diff = (double)x[d] - mean[d];
-		double	var = variance[d] + GMM_EPSILON;
+		double		diff = (double) x[d] - mean[d];
+		double		var = variance[d] + GMM_EPSILON;
 
 		log_likelihood -= 0.5 * (diff * diff) / var;
 		log_det += log(var);
@@ -156,7 +156,7 @@ cluster_gmm(PG_FUNCTION_ARGS)
 
 	for (k = 0; k < num_components; k++)
 	{
-		int	idx;
+		int			idx;
 
 		model.means[k] = (double *) palloc(sizeof(double) * dim);
 		model.variances[k] = (double *) palloc(sizeof(double) * dim);
@@ -184,14 +184,14 @@ cluster_gmm(PG_FUNCTION_ARGS)
 
 		for (i = 0; i < nvec; i++)
 		{
-			double	sum = 0.0;
+			double		sum = 0.0;
 
 			for (k = 0; k < num_components; k++)
 			{
-				double	pdf = gaussian_pdf(data[i],
-										 model.means[k],
-										 model.variances[k],
-										 dim);
+				double		pdf = gaussian_pdf(data[i],
+											   model.means[k],
+											   model.variances[k],
+											   dim);
 
 				responsibilities[i][k] = model.mixing_coeffs[k] * pdf;
 				sum += responsibilities[i][k];
@@ -217,7 +217,7 @@ cluster_gmm(PG_FUNCTION_ARGS)
 		prev_log_likelihood = log_likelihood;
 
 		{
-			double *N_k = (double *) palloc0(sizeof(double) * num_components);
+			double	   *N_k = (double *) palloc0(sizeof(double) * num_components);
 
 			for (k = 0; k < num_components; k++)
 			{
@@ -254,7 +254,8 @@ cluster_gmm(PG_FUNCTION_ARGS)
 				{
 					for (d = 0; d < dim; d++)
 					{
-						double diff = data[i][d] - model.means[k][d];
+						double		diff = data[i][d] - model.means[k][d];
+
 						model.variances[k][d] +=
 							responsibilities[i][k] * diff * diff;
 					}
@@ -270,8 +271,8 @@ cluster_gmm(PG_FUNCTION_ARGS)
 
 		if ((iter + 1) % 10 == 0)
 			elog(DEBUG1,
-				"neurondb: GMM iteration %d, log_likelihood=%.6f",
-				iter + 1, log_likelihood);
+				 "neurondb: GMM iteration %d, log_likelihood=%.6f",
+				 iter + 1, log_likelihood);
 	}
 
 	result_datums = (Datum *) palloc(sizeof(Datum) * nvec * num_components);
@@ -288,14 +289,14 @@ cluster_gmm(PG_FUNCTION_ARGS)
 	lbs[1] = 1;
 
 	result = construct_md_array(result_datums,
-							   NULL,
-							   2,
-							   dims,
-							   lbs,
-							   FLOAT8OID,
-							   sizeof(float8),
-							   FLOAT8PASSBYVAL,
-							   'd');
+								NULL,
+								2,
+								dims,
+								lbs,
+								FLOAT8OID,
+								sizeof(float8),
+								FLOAT8PASSBYVAL,
+								'd');
 
 	for (i = 0; i < nvec; i++)
 	{
@@ -324,31 +325,32 @@ cluster_gmm(PG_FUNCTION_ARGS)
  * Serialize GMMModel to bytea for storage
  */
 static bytea *
-gmm_model_serialize_to_bytea(const GMMModel *model)
+gmm_model_serialize_to_bytea(const GMMModel * model)
 {
 	StringInfoData buf;
-	int i, j;
-	int total_size;
-	bytea *result;
+	int			i,
+				j;
+	int			total_size;
+	bytea	   *result;
 
 	initStringInfo(&buf);
 
-	appendBinaryStringInfo(&buf, (char *)&model->k, sizeof(int));
-	appendBinaryStringInfo(&buf, (char *)&model->dim, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &model->k, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &model->dim, sizeof(int));
 
 	for (i = 0; i < model->k; i++)
-		appendBinaryStringInfo(&buf, (char *)&model->mixing_coeffs[i], sizeof(double));
-
-	for (i = 0; i < model->k; i++)
-		for (j = 0; j < model->dim; j++)
-			appendBinaryStringInfo(&buf, (char *)&model->means[i][j], sizeof(double));
+		appendBinaryStringInfo(&buf, (char *) &model->mixing_coeffs[i], sizeof(double));
 
 	for (i = 0; i < model->k; i++)
 		for (j = 0; j < model->dim; j++)
-			appendBinaryStringInfo(&buf, (char *)&model->variances[i][j], sizeof(double));
+			appendBinaryStringInfo(&buf, (char *) &model->means[i][j], sizeof(double));
+
+	for (i = 0; i < model->k; i++)
+		for (j = 0; j < model->dim; j++)
+			appendBinaryStringInfo(&buf, (char *) &model->variances[i][j], sizeof(double));
 
 	total_size = VARHDRSZ + buf.len;
-	result = (bytea *)palloc(total_size);
+	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
@@ -360,21 +362,22 @@ gmm_model_serialize_to_bytea(const GMMModel *model)
  * Deserialize GMMModel from bytea
  */
 static GMMModel *
-gmm_model_deserialize_from_bytea(const bytea *data)
+gmm_model_deserialize_from_bytea(const bytea * data)
 {
-	GMMModel *model;
+	GMMModel   *model;
 	const char *buf;
-	int offset = 0;
-	int i, j;
+	int			offset = 0;
+	int			i,
+				j;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: invalid GMM model data: too small")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: invalid GMM model data: too small")));
 
 	buf = VARDATA(data);
 
-	model = (GMMModel *)palloc0(sizeof(GMMModel));
+	model = (GMMModel *) palloc0(sizeof(GMMModel));
 
 	memcpy(&model->k, buf + offset, sizeof(int));
 	offset += sizeof(int);
@@ -383,16 +386,16 @@ gmm_model_deserialize_from_bytea(const bytea *data)
 
 	if (model->k <= 0 || model->k > 100)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: invalid model data: k=%d (expected 1-100)", model->k)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: invalid model data: k=%d (expected 1-100)", model->k)));
 	if (model->dim <= 0 || model->dim > 100000)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: invalid model data: dim=%d (expected 1-100000)", model->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: invalid model data: dim=%d (expected 1-100000)", model->dim)));
 
-	model->mixing_coeffs = (double *)palloc0(sizeof(double) * model->k);
-	model->means = (double **)palloc(sizeof(double *) * model->k);
-	model->variances = (double **)palloc(sizeof(double *) * model->k);
+	model->mixing_coeffs = (double *) palloc0(sizeof(double) * model->k);
+	model->means = (double **) palloc(sizeof(double *) * model->k);
+	model->variances = (double **) palloc(sizeof(double *) * model->k);
 
 	for (i = 0; i < model->k; i++)
 	{
@@ -402,7 +405,7 @@ gmm_model_deserialize_from_bytea(const bytea *data)
 
 	for (i = 0; i < model->k; i++)
 	{
-		model->means[i] = (double *)palloc(sizeof(double) * model->dim);
+		model->means[i] = (double *) palloc(sizeof(double) * model->dim);
 		for (j = 0; j < model->dim; j++)
 		{
 			memcpy(&model->means[i][j], buf + offset, sizeof(double));
@@ -412,7 +415,7 @@ gmm_model_deserialize_from_bytea(const bytea *data)
 
 	for (i = 0; i < model->k; i++)
 	{
-		model->variances[i] = (double *)palloc(sizeof(double) * model->dim);
+		model->variances[i] = (double *) palloc(sizeof(double) * model->dim);
 		for (j = 0; j < model->dim; j++)
 		{
 			memcpy(&model->variances[i][j], buf + offset, sizeof(double));
@@ -433,23 +436,28 @@ PG_FUNCTION_INFO_V1(train_gmm_model_id);
 Datum
 train_gmm_model_id(PG_FUNCTION_ARGS)
 {
-	text *table_name;
-	text *vector_column;
-	int num_components;
-	int max_iters;
-	char *tbl_str;
-	char *col_str;
-	float **data;
-	int nvec, dim;
-	GMMModel model;
-	double **responsibilities;
-	double log_likelihood, prev_log_likelihood;
-	int iter, i, k, d;
-	bytea *model_data;
+	text	   *table_name;
+	text	   *vector_column;
+	int			num_components;
+	int			max_iters;
+	char	   *tbl_str;
+	char	   *col_str;
+	float	  **data;
+	int			nvec,
+				dim;
+	GMMModel	model;
+	double	  **responsibilities;
+	double		log_likelihood,
+				prev_log_likelihood;
+	int			iter,
+				i,
+				k,
+				d;
+	bytea	   *model_data;
 	MLCatalogModelSpec spec;
-	Jsonb *metrics;
+	Jsonb	   *metrics;
 	StringInfoData metrics_json;
-	int32 model_id;
+	int32		model_id;
 
 	table_name = PG_GETARG_TEXT_PP(0);
 	vector_column = PG_GETARG_TEXT_PP(1);
@@ -458,8 +466,8 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 
 	if (num_components < 1 || num_components > 100)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("num_components must be between 1 and 100")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("num_components must be between 1 and 100")));
 
 	if (max_iters < 1)
 		max_iters = 100;
@@ -474,32 +482,33 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(tbl_str);
 		NDB_SAFE_PFREE_AND_NULL(col_str);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("Not enough vectors (%d) for %d components", nvec, num_components)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Not enough vectors (%d) for %d components", nvec, num_components)));
 	}
 
 	model.k = num_components;
 	model.dim = dim;
-	model.mixing_coeffs = (double *)palloc(sizeof(double) * num_components);
-	model.means = (double **)palloc(sizeof(double *) * num_components);
-	model.variances = (double **)palloc(sizeof(double *) * num_components);
+	model.mixing_coeffs = (double *) palloc(sizeof(double) * num_components);
+	model.means = (double **) palloc(sizeof(double *) * num_components);
+	model.variances = (double **) palloc(sizeof(double *) * num_components);
 
 	for (k = 0; k < num_components; k++)
 	{
-		int idx;
-		model.means[k] = (double *)palloc(sizeof(double) * dim);
-		model.variances[k] = (double *)palloc(sizeof(double) * dim);
+		int			idx;
+
+		model.means[k] = (double *) palloc(sizeof(double) * dim);
+		model.variances[k] = (double *) palloc(sizeof(double) * dim);
 		idx = rand() % nvec;
 		for (d = 0; d < dim; d++)
-			model.means[k][d] = (double)data[idx][d];
+			model.means[k][d] = (double) data[idx][d];
 		for (d = 0; d < dim; d++)
 			model.variances[k][d] = 1.0;
 		model.mixing_coeffs[k] = 1.0 / num_components;
 	}
 
-	responsibilities = (double **)palloc(sizeof(double *) * nvec);
+	responsibilities = (double **) palloc(sizeof(double *) * nvec);
 	for (i = 0; i < nvec; i++)
-		responsibilities[i] = (double *)palloc(sizeof(double) * num_components);
+		responsibilities[i] = (double *) palloc(sizeof(double) * num_components);
 
 	prev_log_likelihood = -DBL_MAX;
 
@@ -509,23 +518,25 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 
 		for (i = 0; i < nvec; i++)
 		{
-			double sum = 0.0;
+			double		sum = 0.0;
+
 			for (k = 0; k < num_components; k++)
 			{
-				double pdf = gaussian_pdf(data[i], model.means[k], model.variances[k], dim);
+				double		pdf = gaussian_pdf(data[i], model.means[k], model.variances[k], dim);
+
 				responsibilities[i][k] = model.mixing_coeffs[k] * pdf;
 				sum += responsibilities[i][k];
 			}
-		if (sum > GMM_MIN_PROB)
-		{
-			double point_likelihood = 0.0;
+			if (sum > GMM_MIN_PROB)
+			{
+				double		point_likelihood = 0.0;
 
-			for (k = 0; k < num_components; k++)
-				responsibilities[i][k] /= sum;
-			for (k = 0; k < num_components; k++)
-				point_likelihood += model.mixing_coeffs[k] * gaussian_pdf(data[i], model.means[k], model.variances[k], dim);
-			log_likelihood += log(point_likelihood + GMM_MIN_PROB);
-		}
+				for (k = 0; k < num_components; k++)
+					responsibilities[i][k] /= sum;
+				for (k = 0; k < num_components; k++)
+					point_likelihood += model.mixing_coeffs[k] * gaussian_pdf(data[i], model.means[k], model.variances[k], dim);
+				log_likelihood += log(point_likelihood + GMM_MIN_PROB);
+			}
 		}
 
 		if (fabs(log_likelihood - prev_log_likelihood) < 1e-6)
@@ -533,7 +544,8 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 		prev_log_likelihood = log_likelihood;
 
 		{
-			double *N_k = (double *)palloc0(sizeof(double) * num_components);
+			double	   *N_k = (double *) palloc0(sizeof(double) * num_components);
+
 			for (k = 0; k < num_components; k++)
 			{
 				for (i = 0; i < nvec; i++)
@@ -561,7 +573,8 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 				{
 					for (d = 0; d < dim; d++)
 					{
-						double diff = data[i][d] - model.means[k][d];
+						double		diff = data[i][d] - model.means[k][d];
+
 						model.variances[k][d] += responsibilities[i][k] * diff * diff;
 					}
 				}
@@ -576,7 +589,7 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json, "{\"storage\": \"cpu\", \"k\": %d, \"dim\": %d, \"max_iters\": %d}",
-		model.k, model.dim, max_iters);
+					 model.k, model.dim, max_iters);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(metrics_json.data)));
 	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
 
@@ -624,25 +637,26 @@ PG_FUNCTION_INFO_V1(predict_gmm_model_id);
 Datum
 predict_gmm_model_id(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	Vector *features;
-	bytea *model_data = NULL;
-	Jsonb *metrics = NULL;
-	GMMModel *model = NULL;
-	double *probabilities;
-	int predicted_cluster = 0;
-	double max_prob = -DBL_MAX;
-	int i, k;
+	int32		model_id;
+	Vector	   *features;
+	bytea	   *model_data = NULL;
+	Jsonb	   *metrics = NULL;
+	GMMModel   *model = NULL;
+	double	   *probabilities;
+	int			predicted_cluster = 0;
+	double		max_prob = -DBL_MAX;
+	int			i,
+				k;
 
 	model_id = PG_GETARG_INT32(0);
 	features = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(features);
+	NDB_CHECK_VECTOR_VALID(features);
 
 	/* Load model from catalog */
 	if (!ml_catalog_fetch_model_payload(model_id, &model_data, NULL, &metrics))
 	{
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			errmsg("GMM model %d not found", model_id)));
+						errmsg("GMM model %d not found", model_id)));
 	}
 
 	if (model_data == NULL)
@@ -650,15 +664,16 @@ predict_gmm_model_id(PG_FUNCTION_ARGS)
 		if (metrics)
 			NDB_SAFE_PFREE_AND_NULL(metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("GMM model %d has no model data", model_id)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("GMM model %d has no model data", model_id)));
 	}
 
 	/* Ensure bytea is in current function's memory context */
 	if (model_data != NULL)
 	{
-		int data_len = VARSIZE(model_data);
-		bytea *copy = (bytea *)palloc(data_len);
+		int			data_len = VARSIZE(model_data);
+		bytea	   *copy = (bytea *) palloc(data_len);
+
 		memcpy(copy, model_data, data_len);
 		model_data = copy;
 	}
@@ -683,16 +698,17 @@ predict_gmm_model_id(PG_FUNCTION_ARGS)
 		if (metrics)
 			NDB_SAFE_PFREE_AND_NULL(metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("Feature dimension mismatch: expected %d, got %d",
-				model->dim, features->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Feature dimension mismatch: expected %d, got %d",
+						model->dim, features->dim)));
 	}
 
 	/* Compute probabilities for each component */
-	probabilities = (double *)palloc(sizeof(double) * model->k);
+	probabilities = (double *) palloc(sizeof(double) * model->k);
 	for (k = 0; k < model->k; k++)
 	{
-		double pdf = gaussian_pdf(features->data, model->means[k], model->variances[k], model->dim);
+		double		pdf = gaussian_pdf(features->data, model->means[k], model->variances[k], model->dim);
+
 		probabilities[k] = model->mixing_coeffs[k] * pdf;
 		if (probabilities[k] > max_prob)
 		{
@@ -727,12 +743,13 @@ predict_gmm_model_id(PG_FUNCTION_ARGS)
 static inline double
 gmm_euclidean_distance_squared(const float *a, const double *b, int dim)
 {
-	double sum = 0.0;
-	int i;
+	double		sum = 0.0;
+	int			i;
 
 	for (i = 0; i < dim; i++)
 	{
-		double diff = (double)a[i] - b[i];
+		double		diff = (double) a[i] - b[i];
+
 		sum += diff * diff;
 	}
 	return sum;
@@ -744,12 +761,13 @@ gmm_euclidean_distance_squared(const float *a, const double *b, int dim)
 static inline double
 gmm_euclidean_distance_ff(const float *a, const float *b, int dim)
 {
-	double sum = 0.0;
-	int i;
+	double		sum = 0.0;
+	int			i;
 
 	for (i = 0; i < dim; i++)
 	{
-		double diff = (double)a[i] - (double)b[i];
+		double		diff = (double) a[i] - (double) b[i];
+
 		sum += diff * diff;
 	}
 	return sqrt(sum);
@@ -768,40 +786,42 @@ PG_FUNCTION_INFO_V1(evaluate_gmm_by_model_id);
 Datum
 evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	text *table_name;
-	text *vector_col;
-	char *tbl_str;
-	char *col_str;
-	int ret;
-	int nvec = 0;
-	int i, j, c;
-	float **data = NULL;
-	int dim = 0;
-	GMMModel *model = NULL;
-	int *assignments = NULL;
-	int *cluster_sizes = NULL;
-	double inertia = 0.0;
-	double silhouette = 0.0;
-	double *a_scores = NULL;
-	double *b_scores = NULL;
+	int32		model_id;
+	text	   *table_name;
+	text	   *vector_col;
+	char	   *tbl_str;
+	char	   *col_str;
+	int			ret;
+	int			nvec = 0;
+	int			i,
+				j,
+				c;
+	float	  **data = NULL;
+	int			dim = 0;
+	GMMModel   *model = NULL;
+	int		   *assignments = NULL;
+	int		   *cluster_sizes = NULL;
+	double		inertia = 0.0;
+	double		silhouette = 0.0;
+	double	   *a_scores = NULL;
+	double	   *b_scores = NULL;
 	MemoryContext oldcontext;
 	StringInfoData jsonbuf;
-	Jsonb *result_jsonb = NULL;
-	bytea *model_payload = NULL;
-	Jsonb *model_metrics = NULL;
+	Jsonb	   *result_jsonb = NULL;
+	bytea	   *model_payload = NULL;
+	Jsonb	   *model_metrics = NULL;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_gmm_by_model_id: model_id is required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_gmm_by_model_id: model_id is required")));
 
 	model_id = PG_GETARG_INT32(0);
 
 	if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_gmm_by_model_id: table_name and vector_col are required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_gmm_by_model_id: table_name and vector_col are required")));
 
 	table_name = PG_GETARG_TEXT_PP(1);
 	vector_col = PG_GETARG_TEXT_PP(2);
@@ -817,8 +837,8 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(tbl_str);
 		NDB_SAFE_PFREE_AND_NULL(col_str);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_gmm_by_model_id: model %d not found", model_id)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_gmm_by_model_id: model %d not found", model_id)));
 	}
 
 	if (model_payload == NULL)
@@ -828,8 +848,8 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		if (model_metrics)
 			NDB_SAFE_PFREE_AND_NULL(model_metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_gmm_by_model_id: model %d has no model_data", model_id)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_gmm_by_model_id: model %d has no model_data", model_id)));
 	}
 
 	/* Deserialize model */
@@ -843,8 +863,8 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		if (model_metrics)
 			NDB_SAFE_PFREE_AND_NULL(model_metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_gmm_by_model_id: failed to deserialize model")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_gmm_by_model_id: failed to deserialize model")));
 	}
 
 	/* Connect to SPI */
@@ -866,8 +886,8 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		if (model_metrics)
 			NDB_SAFE_PFREE_AND_NULL(model_metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: evaluate_gmm_by_model_id: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_gmm_by_model_id: SPI_connect failed")));
 	}
 
 	/* Fetch test data */
@@ -892,8 +912,8 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		if (model_metrics)
 			NDB_SAFE_PFREE_AND_NULL(model_metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_gmm_by_model_id: no valid data found")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_gmm_by_model_id: no valid data found")));
 	}
 
 	if (dim != model->dim)
@@ -918,24 +938,25 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		if (model_metrics)
 			NDB_SAFE_PFREE_AND_NULL(model_metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_gmm_by_model_id: dimension mismatch: model dim=%d, data dim=%d",
-					model->dim, dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_gmm_by_model_id: dimension mismatch: model dim=%d, data dim=%d",
+						model->dim, dim)));
 	}
 
 	/* Assign points to clusters (based on maximum probability) */
-	assignments = (int *)palloc(sizeof(int) * nvec);
-	cluster_sizes = (int *)palloc0(sizeof(int) * model->k);
+	assignments = (int *) palloc(sizeof(int) * nvec);
+	cluster_sizes = (int *) palloc0(sizeof(int) * model->k);
 
 	for (i = 0; i < nvec; i++)
 	{
-		double max_prob = -DBL_MAX;
-		int best = 0;
+		double		max_prob = -DBL_MAX;
+		int			best = 0;
 
 		for (c = 0; c < model->k; c++)
 		{
-			double pdf = gaussian_pdf(data[i], model->means[c], model->variances[c], dim);
-			double prob = model->mixing_coeffs[c] * pdf;
+			double		pdf = gaussian_pdf(data[i], model->means[c], model->variances[c], dim);
+			double		prob = model->mixing_coeffs[c] * pdf;
+
 			if (prob > max_prob)
 			{
 				max_prob = prob;
@@ -948,15 +969,15 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	}
 
 	/* Compute silhouette score */
-	a_scores = (double *)palloc0(sizeof(double) * nvec);
-	b_scores = (double *)palloc0(sizeof(double) * nvec);
+	a_scores = (double *) palloc0(sizeof(double) * nvec);
+	b_scores = (double *) palloc0(sizeof(double) * nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
-		int my_cluster = assignments[i];
-		int same_count = 0;
-		double same_dist = 0.0;
-		double min_other_dist = DBL_MAX;
+		int			my_cluster = assignments[i];
+		int			same_count = 0;
+		double		same_dist = 0.0;
+		double		min_other_dist = DBL_MAX;
 
 		if (cluster_sizes[my_cluster] <= 1)
 		{
@@ -972,21 +993,22 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 				continue;
 			if (assignments[j] == my_cluster)
 			{
-				double dist = gmm_euclidean_distance_ff(data[i], data[j], dim);
+				double		dist = gmm_euclidean_distance_ff(data[i], data[j], dim);
+
 				same_dist += dist;
 				same_count++;
 			}
 		}
 		if (same_count > 0)
-			a_scores[i] = same_dist / (double)same_count;
+			a_scores[i] = same_dist / (double) same_count;
 		else
 			a_scores[i] = 0.0;
 
 		/* Minimum average distance to other clusters */
 		{
-			double other_dist = 0.0;
-			int other_count = 0;
-			int other_cluster_loop;
+			double		other_dist = 0.0;
+			int			other_count = 0;
+			int			other_cluster_loop;
 
 			for (other_cluster_loop = 0; other_cluster_loop < model->k; other_cluster_loop++)
 			{
@@ -999,7 +1021,7 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 				other_count = 0;
 
 				for (j = 0; j < nvec; j++)
-			{
+				{
 					if (assignments[j] == other_cluster_loop)
 					{
 						other_dist += gmm_euclidean_distance_ff(data[i], data[j], dim);
@@ -1008,7 +1030,7 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 				}
 				if (other_count > 0)
 				{
-					other_dist /= (double)other_count;
+					other_dist /= (double) other_count;
 					if (other_dist < min_other_dist)
 						min_other_dist = other_dist;
 				}
@@ -1023,26 +1045,31 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 
 	/* Compute average silhouette */
 	{
-		int valid_count = 0;
-		double sum_silhouette = 0.0;
+		int			valid_count = 0;
+		double		sum_silhouette = 0.0;
 
 		for (i = 0; i < nvec; i++)
 		{
-			/* Skip if no other clusters (b_scores is 0 and a_scores might be 0) */
-			double max_ab;
+			/*
+			 * Skip if no other clusters (b_scores is 0 and a_scores might be
+			 * 0)
+			 */
+			double		max_ab;
+
 			if (b_scores[i] <= 0.0 && a_scores[i] <= 0.0)
 				continue;
 
 			max_ab = (a_scores[i] > b_scores[i]) ? a_scores[i] : b_scores[i];
 			if (max_ab > 0.0)
 			{
-				double s = (b_scores[i] - a_scores[i]) / max_ab;
+				double		s = (b_scores[i] - a_scores[i]) / max_ab;
+
 				sum_silhouette += s;
 				valid_count++;
 			}
 		}
 		if (valid_count > 0)
-			silhouette = sum_silhouette / (double)valid_count;
+			silhouette = sum_silhouette / (double) valid_count;
 	}
 
 	/* Cleanup */
@@ -1077,22 +1104,22 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	/* Build jsonb result in SPI context */
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
-		"{\"inertia\":%.6f,\"silhouette_score\":%.6f,\"n_samples\":%d}",
-		inertia,
-		silhouette,
-		nvec);
+					 "{\"inertia\":%.6f,\"silhouette_score\":%.6f,\"n_samples\":%d}",
+					 inertia,
+					 silhouette,
+					 nvec);
 
-				PG_TRY(); /* renamed local variables to avoid shadowing */
+	PG_TRY();					/* renamed local variables to avoid shadowing */
 	{
 		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-			CStringGetDatum(jsonbuf.data)));
-		
+														  CStringGetDatum(jsonbuf.data)));
+
 		if (result_jsonb == NULL)
 		{
 			elog(WARNING, "neurondb: evaluate_gmm_by_model_id: jsonb_in returned NULL");
 			/* Create a minimal valid JSONB object */
 			result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-				CStringGetDatum("{}")));
+															  CStringGetDatum("{}")));
 		}
 	}
 	PG_CATCH();
@@ -1103,12 +1130,12 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		FlushErrorState();
 		/* Create a minimal valid JSONB object in a safe way */
 		/* Suppress shadow warnings from nested PG_TRY blocks */
-		#pragma GCC diagnostic push
-		#pragma GCC diagnostic ignored "-Wshadow"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow"
 		PG_TRY();
 		{
 			result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-				CStringGetDatum("{}")));
+															  CStringGetDatum("{}")));
 		}
 		PG_CATCH();
 		{
@@ -1117,13 +1144,13 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 			result_jsonb = NULL;
 		}
 		PG_END_TRY();
-		#pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 	}
 	PG_END_TRY();
 
 	if (jsonbuf.data)
 		NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
-	
+
 	/*
 	 * Validate and copy result_jsonb to caller's context before SPI_finish().
 	 * The JSONB is allocated in SPI context and will be invalid after
@@ -1134,21 +1161,21 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		elog(WARNING, "neurondb: evaluate_gmm_by_model_id: result_jsonb is NULL, creating empty object");
 		/* Create empty JSONB as fallback */
 		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-			CStringGetDatum("{}")));
+														  CStringGetDatum("{}")));
 	}
-	
+
 	/* This ensures the JSONB remains valid after the SPI context is deleted */
 	MemoryContextSwitchTo(oldcontext);
-	result_jsonb = (Jsonb *)PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result_jsonb));
-	
+	result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result_jsonb));
+
 	/* Now safe to finish SPI (this switches back to oldcontext automatically) */
 	SPI_finish();
-	
+
 	/* Free strings allocated before SPI_connect (in oldcontext) */
 	/* Note: tbl_str and col_str were allocated in oldcontext, not SPI context */
 	NDB_SAFE_PFREE_AND_NULL(tbl_str);
 	NDB_SAFE_PFREE_AND_NULL(col_str);
-	
+
 	/* Return result (already in oldcontext) */
 	PG_RETURN_JSONB_P(result_jsonb);
 }
@@ -1165,15 +1192,15 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 /* GPU Model State */
 typedef struct GmmGpuModelState
 {
-	bytea *model_blob;
-	Jsonb *metrics;
-	int feature_dim;
-	int n_samples;
-	int n_components;
-} GmmGpuModelState;
+	bytea	   *model_blob;
+	Jsonb	   *metrics;
+	int			feature_dim;
+	int			n_samples;
+	int			n_components;
+}			GmmGpuModelState;
 
 static void
-gmm_gpu_release_state(GmmGpuModelState *state)
+gmm_gpu_release_state(GmmGpuModelState * state)
 {
 	if (state == NULL)
 		return;
@@ -1185,15 +1212,15 @@ gmm_gpu_release_state(GmmGpuModelState *state)
 }
 
 static bool
-gmm_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
+gmm_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 {
 	GmmGpuModelState *state;
-	bytea *payload;
-	Jsonb *metrics;
-	int rc;
-	int n_components = 2;
-	int max_iters = 100;
-	const ndb_gpu_backend *backend;
+	bytea	   *payload;
+	Jsonb	   *metrics;
+	int			rc;
+	int			n_components = 2;
+	int			max_iters = 100;
+	const		ndb_gpu_backend *backend;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1213,44 +1240,44 @@ gmm_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	/* Extract hyperparameters */
 	if (spec->hyperparameters != NULL)
 	{
-		Datum n_components_datum;
-		Datum max_iters_datum;
-		Datum numeric_datum;
-		Numeric num;
+		Datum		n_components_datum;
+		Datum		max_iters_datum;
+		Datum		numeric_datum;
+		Numeric		num;
 
 		n_components_datum = DirectFunctionCall2(
-			jsonb_object_field,
-			JsonbPGetDatum(spec->hyperparameters),
-			CStringGetTextDatum("n_components"));
+												 jsonb_object_field,
+												 JsonbPGetDatum(spec->hyperparameters),
+												 CStringGetTextDatum("n_components"));
 		if (DatumGetPointer(n_components_datum) != NULL)
 		{
 			numeric_datum = DirectFunctionCall1(
-				jsonb_numeric, n_components_datum);
+												jsonb_numeric, n_components_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
 				n_components = DatumGetInt32(
-					DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(num)));
+											 DirectFunctionCall1(numeric_int4,
+																 NumericGetDatum(num)));
 				if (n_components <= 0 || n_components > 1000)
 					n_components = 2;
 			}
 		}
 
 		max_iters_datum = DirectFunctionCall2(
-			jsonb_object_field,
-			JsonbPGetDatum(spec->hyperparameters),
-			CStringGetTextDatum("max_iters"));
+											  jsonb_object_field,
+											  JsonbPGetDatum(spec->hyperparameters),
+											  CStringGetTextDatum("max_iters"));
 		if (DatumGetPointer(max_iters_datum) != NULL)
 		{
 			numeric_datum = DirectFunctionCall1(
-				jsonb_numeric, max_iters_datum);
+												jsonb_numeric, max_iters_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
 				max_iters = DatumGetInt32(
-					DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(num)));
+										  DirectFunctionCall1(numeric_int4,
+															  NumericGetDatum(num)));
 				if (max_iters <= 0 || max_iters > 10000)
 					max_iters = 100;
 			}
@@ -1261,13 +1288,13 @@ gmm_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	metrics = NULL;
 
 	rc = backend->gmm_train(spec->feature_matrix,
-		spec->sample_count,
-		spec->feature_dim,
-		n_components,
-		spec->hyperparameters,
-		&payload,
-		&metrics,
-		errstr);
+							spec->sample_count,
+							spec->feature_dim,
+							n_components,
+							spec->hyperparameters,
+							&payload,
+							&metrics,
+							errstr);
 	if (rc != 0 || payload == NULL)
 	{
 		if (payload != NULL)
@@ -1279,11 +1306,11 @@ gmm_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 
 	if (model->backend_state != NULL)
 	{
-		gmm_gpu_release_state((GmmGpuModelState *)model->backend_state);
+		gmm_gpu_release_state((GmmGpuModelState *) model->backend_state);
 		model->backend_state = NULL;
 	}
 
-	state = (GmmGpuModelState *)palloc0(sizeof(GmmGpuModelState));
+	state = (GmmGpuModelState *) palloc0(sizeof(GmmGpuModelState));
 	state->model_blob = payload;
 	state->feature_dim = spec->feature_dim;
 	state->n_samples = spec->sample_count;
@@ -1291,8 +1318,8 @@ gmm_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 
 	if (metrics != NULL)
 	{
-		state->metrics = (Jsonb *)PG_DETOAST_DATUM_COPY(
-			PointerGetDatum(metrics));
+		state->metrics = (Jsonb *) PG_DETOAST_DATUM_COPY(
+														 PointerGetDatum(metrics));
 	}
 	else
 	{
@@ -1307,18 +1334,18 @@ gmm_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 }
 
 static bool
-gmm_gpu_predict(const MLGpuModel *model,
-	const float *input,
-	int input_dim,
-	float *output,
-	int output_dim,
-	char **errstr)
+gmm_gpu_predict(const MLGpuModel * model,
+				const float *input,
+				int input_dim,
+				float *output,
+				int output_dim,
+				char **errstr)
 {
-	const GmmGpuModelState *state;
-	int cluster_out;
-	double probability_out;
-	int rc;
-	const ndb_gpu_backend *backend;
+	const		GmmGpuModelState *state;
+	int			cluster_out;
+	double		probability_out;
+	int			rc;
+	const		ndb_gpu_backend *backend;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1331,7 +1358,7 @@ gmm_gpu_predict(const MLGpuModel *model,
 	if (!model->gpu_ready || model->backend_state == NULL)
 		return false;
 
-	state = (const GmmGpuModelState *)model->backend_state;
+	state = (const GmmGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 		return false;
 
@@ -1340,28 +1367,28 @@ gmm_gpu_predict(const MLGpuModel *model,
 		return false;
 
 	rc = backend->gmm_predict(state->model_blob,
-		input,
-		state->feature_dim > 0 ? state->feature_dim : input_dim,
-		&cluster_out,
-		&probability_out,
-		errstr);
+							  input,
+							  state->feature_dim > 0 ? state->feature_dim : input_dim,
+							  &cluster_out,
+							  &probability_out,
+							  errstr);
 	if (rc != 0)
 		return false;
 
 	/* GMM prediction returns cluster ID as output */
-	output[0] = (float)cluster_out;
+	output[0] = (float) cluster_out;
 
 	return true;
 }
 
 static bool
-gmm_gpu_evaluate(const MLGpuModel *model,
-	const MLGpuEvalSpec *spec,
-	MLGpuMetrics *out,
-	char **errstr)
+gmm_gpu_evaluate(const MLGpuModel * model,
+				 const MLGpuEvalSpec * spec,
+				 MLGpuMetrics * out,
+				 char **errstr)
 {
-	const GmmGpuModelState *state;
-	Jsonb *metrics_json;
+	const		GmmGpuModelState *state;
+	Jsonb	   *metrics_json;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1370,24 +1397,24 @@ gmm_gpu_evaluate(const MLGpuModel *model,
 	if (model->backend_state == NULL)
 		return false;
 
-	state = (const GmmGpuModelState *)model->backend_state;
+	state = (const GmmGpuModelState *) model->backend_state;
 
 	{
 		StringInfoData buf;
 
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
-			"{\"algorithm\":\"gmm\","
-			"\"storage\":\"gpu\","
-			"\"n_features\":%d,"
-			"\"n_samples\":%d,"
-			"\"n_components\":%d}",
-			state->feature_dim > 0 ? state->feature_dim : 0,
-			state->n_samples > 0 ? state->n_samples : 0,
-			state->n_components);
+						 "{\"algorithm\":\"gmm\","
+						 "\"storage\":\"gpu\","
+						 "\"n_features\":%d,"
+						 "\"n_samples\":%d,"
+						 "\"n_components\":%d}",
+						 state->feature_dim > 0 ? state->feature_dim : 0,
+						 state->n_samples > 0 ? state->n_samples : 0,
+						 state->n_components);
 
 		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-			jsonb_in, CStringGetDatum(buf.data)));
+														  jsonb_in, CStringGetDatum(buf.data)));
 		NDB_SAFE_PFREE_AND_NULL(buf.data);
 	}
 
@@ -1398,14 +1425,14 @@ gmm_gpu_evaluate(const MLGpuModel *model,
 }
 
 static bool
-gmm_gpu_serialize(const MLGpuModel *model,
-	bytea **payload_out,
-	Jsonb **metadata_out,
-	char **errstr)
+gmm_gpu_serialize(const MLGpuModel * model,
+				  bytea * *payload_out,
+				  Jsonb * *metadata_out,
+				  char **errstr)
 {
-	const GmmGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
+	const		GmmGpuModelState *state;
+	bytea	   *payload_copy;
+	int			payload_size;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1416,12 +1443,12 @@ gmm_gpu_serialize(const MLGpuModel *model,
 	if (model == NULL || model->backend_state == NULL)
 		return false;
 
-	state = (const GmmGpuModelState *)model->backend_state;
+	state = (const GmmGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 		return false;
 
 	payload_size = VARSIZE(state->model_blob);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, state->model_blob, payload_size);
 
 	if (payload_out != NULL)
@@ -1431,8 +1458,8 @@ gmm_gpu_serialize(const MLGpuModel *model,
 
 	if (metadata_out != NULL && state->metrics != NULL)
 	{
-		*metadata_out = (Jsonb *)PG_DETOAST_DATUM_COPY(
-			PointerGetDatum(state->metrics));
+		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
+														PointerGetDatum(state->metrics));
 	}
 	else if (metadata_out != NULL)
 	{
@@ -1443,14 +1470,14 @@ gmm_gpu_serialize(const MLGpuModel *model,
 }
 
 static bool
-gmm_gpu_deserialize(MLGpuModel *model,
-	const bytea *payload,
-	const Jsonb *metadata,
-	char **errstr)
+gmm_gpu_deserialize(MLGpuModel * model,
+					const bytea * payload,
+					const Jsonb * metadata,
+					char **errstr)
 {
 	GmmGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
+	bytea	   *payload_copy;
+	int			payload_size;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1458,17 +1485,17 @@ gmm_gpu_deserialize(MLGpuModel *model,
 		return false;
 
 	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, payload, payload_size);
 
-	state = (GmmGpuModelState *)palloc0(sizeof(GmmGpuModelState));
+	state = (GmmGpuModelState *) palloc0(sizeof(GmmGpuModelState));
 	state->model_blob = payload_copy;
 	state->feature_dim = -1;
 	state->n_samples = -1;
 	state->n_components = -1;
 
 	if (model->backend_state != NULL)
-		gmm_gpu_release_state((GmmGpuModelState *)model->backend_state);
+		gmm_gpu_release_state((GmmGpuModelState *) model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1478,12 +1505,12 @@ gmm_gpu_deserialize(MLGpuModel *model,
 }
 
 static void
-gmm_gpu_destroy(MLGpuModel *model)
+gmm_gpu_destroy(MLGpuModel * model)
 {
 	if (model == NULL)
 		return;
 	if (model->backend_state != NULL)
-		gmm_gpu_release_state((GmmGpuModelState *)model->backend_state);
+		gmm_gpu_release_state((GmmGpuModelState *) model->backend_state);
 	model->backend_state = NULL;
 	model->gpu_ready = false;
 	model->is_gpu_resident = false;
@@ -1499,7 +1526,7 @@ static const MLGpuModelOps gmm_gpu_model_ops = {
 	.destroy = gmm_gpu_destroy,
 };
 
-#endif	/* NDB_GPU_CUDA */
+#endif							/* NDB_GPU_CUDA */
 
 void
 neurondb_gpu_register_gmm_model(void)

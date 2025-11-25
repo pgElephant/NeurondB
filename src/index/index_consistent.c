@@ -47,34 +47,37 @@ PG_FUNCTION_INFO_V1(consistent_index_create);
 Datum
 consistent_index_create(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_PP(0);
-	text *vector_col = PG_GETARG_TEXT_PP(1);
-	uint32 random_seed = PG_GETARG_INT32(2);
-	char *tbl_str = text_to_cstring(table_name);
-	char *col_str = text_to_cstring(vector_col);
-	char *index_tbl;
-	Oid relid;
+	text	   *table_name = PG_GETARG_TEXT_PP(0);
+	text	   *vector_col = PG_GETARG_TEXT_PP(1);
+	uint32		random_seed = PG_GETARG_INT32(2);
+	char	   *tbl_str = text_to_cstring(table_name);
+	char	   *col_str = text_to_cstring(vector_col);
+	char	   *index_tbl;
+	Oid			relid;
 
 	elog(DEBUG1,
-		"Creating consistent HNSW on %s.%s (seed=%u)",
-		tbl_str,
-		col_str,
-		random_seed);
+		 "Creating consistent HNSW on %s.%s (seed=%u)",
+		 tbl_str,
+		 col_str,
+		 random_seed);
 
 	/* Check if the index already exists */
 	if (index_exists(tbl_str, col_str))
 	{
 		elog(DEBUG1,
-			"Index already exists for %s.%s",
-			tbl_str,
-			col_str);
+			 "Index already exists for %s.%s",
+			 tbl_str,
+			 col_str);
 		PG_RETURN_BOOL(true);
 	}
 
 	/* Build the HNSW index (this would be much more elaborate in reality) */
 	build_hnsw_index(tbl_str, col_str, random_seed);
 
-	/* Store metadata for deterministic operation; in real code, update catalog */
+	/*
+	 * Store metadata for deterministic operation; in real code, update
+	 * catalog
+	 */
 	index_tbl = get_index_table(tbl_str, col_str, random_seed);
 
 	/* Validate relation exists */
@@ -82,8 +85,8 @@ consistent_index_create(PG_FUNCTION_ARGS)
 	if (!OidIsValid(relid))
 	{
 		ereport(ERROR,
-			(errmsg("Failed to find or create index table %s",
-				index_tbl)));
+				(errmsg("Failed to find or create index table %s",
+						index_tbl)));
 	}
 
 	PG_RETURN_BOOL(true);
@@ -97,19 +100,19 @@ PG_FUNCTION_INFO_V1(consistent_knn_search);
 Datum
 consistent_knn_search(PG_FUNCTION_ARGS)
 {
-	Vector *query = PG_GETARG_VECTOR_P(0);
-	int32 k = PG_GETARG_INT32(1);
-	int64 snapshot_xmin = PG_GETARG_INT64(2);
+	Vector	   *query = PG_GETARG_VECTOR_P(0);
+	int32		k = PG_GETARG_INT32(1);
+	int64		snapshot_xmin = PG_GETARG_INT64(2);
 	FuncCallContext *funcctx;
-	TupleDesc tupdesc;
-	Datum values[2];
-	bool nulls[2];
-	HeapTuple tuple;
-	int call_cntr;
-	int max_calls;
-	char *vector_str;
-	char sql[2048];
-	int ret;
+	TupleDesc	tupdesc;
+	Datum		values[2];
+	bool		nulls[2];
+	HeapTuple	tuple;
+	int			call_cntr;
+	int			max_calls;
+	char	   *vector_str;
+	char		sql[2048];
+	int			ret;
 
 	NDB_CHECK_VECTOR_VALID(query);
 
@@ -123,37 +126,41 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 			MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		elog(DEBUG1,
-			"Consistent kNN search for %d neighbors with snapshot "
-			"xmin " NDB_INT64_FMT,
-			k,
-			NDB_INT64_CAST(snapshot_xmin));
+			 "Consistent kNN search for %d neighbors with snapshot "
+			 "xmin " NDB_INT64_FMT,
+			 k,
+			 NDB_INT64_CAST(snapshot_xmin));
 
 		/* Convert query vector to string for SQL embedding */
 		vector_str = vector_to_sql_literal(query);
 
-		/* Pin a transaction snapshot to ensure MVCC-visible deterministic results */
+		/*
+		 * Pin a transaction snapshot to ensure MVCC-visible deterministic
+		 * results
+		 */
 		PushActiveSnapshot(GetTransactionSnapshot());
 
 		if (SPI_connect() != SPI_OK_CONNECT)
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("SPI_connect failed in "
-					       "consistent_knn_search")));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("SPI_connect failed in "
+							"consistent_knn_search")));
 
 		/*
-		 * Use index-backed search: this must reference the correct index table in a complete impl.
-		 * For this mockup, we assume "my_vectors(id, embedding)" exists.
+		 * Use index-backed search: this must reference the correct index
+		 * table in a complete impl. For this mockup, we assume
+		 * "my_vectors(id, embedding)" exists.
 		 *
 		 * Deteministic ordering: ORDER BY dist ASC, ctid ASC, id ASC
 		 */
 		snprintf(sql,
-			sizeof(sql),
-			"SELECT id, l2_distance(embedding, %s) AS dist "
-			"FROM my_vectors "
-			"ORDER BY dist ASC, ctid ASC, id ASC "
-			"LIMIT %d",
-			vector_str,
-			k);
+				 sizeof(sql),
+				 "SELECT id, l2_distance(embedding, %s) AS dist "
+				 "FROM my_vectors "
+				 "ORDER BY dist ASC, ctid ASC, id ASC "
+				 "LIMIT %d",
+				 vector_str,
+				 k);
 
 		ret = ndb_spi_execute_safe(sql, true, k);
 		NDB_CHECK_SPI_TUPTABLE();
@@ -162,9 +169,9 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 			SPI_finish();
 			PopActiveSnapshot();
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("SPI_execute failed in "
-					       "consistent_knn_search")));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("SPI_execute failed in "
+							"consistent_knn_search")));
 		}
 
 		funcctx->max_calls = SPI_processed;
@@ -172,21 +179,24 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 		/* Save results for per-call access */
 		funcctx->user_fctx = SPI_tuptable;
 
-		/* Set up tuple descriptor for results (id BIGINT, dist DOUBLE PRECISION) */
+		/*
+		 * Set up tuple descriptor for results (id BIGINT, dist DOUBLE
+		 * PRECISION)
+		 */
 		tupdesc = CreateTemplateTupleDesc(2);
 		TupleDescInitEntry(
-			tupdesc, (AttrNumber)1, "id", INT8OID, -1, 0);
+						   tupdesc, (AttrNumber) 1, "id", INT8OID, -1, 0);
 		TupleDescInitEntry(
-			tupdesc, (AttrNumber)2, "dist", FLOAT8OID, -1, 0);
+						   tupdesc, (AttrNumber) 2, "dist", FLOAT8OID, -1, 0);
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
 		MemoryContextSwitchTo(oldcontext);
 
 		elog(DEBUG1,
-			"Consistent query: snapshot " NDB_INT64_FMT
-			" returned %lu results",
-			NDB_INT64_CAST(snapshot_xmin),
-			(unsigned long)SPI_processed);
+			 "Consistent query: snapshot " NDB_INT64_FMT
+			 " returned %lu results",
+			 NDB_INT64_CAST(snapshot_xmin),
+			 (unsigned long) SPI_processed);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
@@ -196,9 +206,9 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 
 	if (call_cntr < max_calls)
 	{
-		SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
-		HeapTuple spi_tuple;
-		bool isnull;
+		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
+		HeapTuple	spi_tuple;
+		bool		isnull;
 
 		spi_tuple = tuptable->vals[call_cntr];
 
@@ -213,9 +223,10 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
 
 		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
-	} else
+	}
+	else
 	{
-		SPITupleTable *tuptable = (SPITupleTable *)funcctx->user_fctx;
+		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
 
 		if (tuptable)
 			SPI_freetuptable(tuptable);
@@ -234,8 +245,8 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 static bool
 index_exists(const char *table, const char *col)
 {
-	(void)table;
-	(void)col;
+	(void) table;
+	(void) col;
 
 	/* For demonstration, always rebuild */
 	return false;
@@ -251,18 +262,18 @@ index_exists(const char *table, const char *col)
 static void
 build_hnsw_index(const char *table, const char *col, uint32 seed)
 {
-	char *index_table;
+	char	   *index_table;
 	StringInfoData sql;
-	int ret;
-	SPIPlanPtr plan;
-	Oid argtypes[4];
-	Datum values[4];
+	int			ret;
+	SPIPlanPtr	plan;
+	Oid			argtypes[4];
+	Datum		values[4];
 
 	elog(DEBUG1,
-		"Building deterministic HNSW index: %s.%s (seed=%u)",
-		table,
-		col,
-		seed);
+		 "Building deterministic HNSW index: %s.%s (seed=%u)",
+		 table,
+		 col,
+		 seed);
 
 	/* Compute deterministic index table name */
 	index_table = get_index_table(table, col, seed);
@@ -274,18 +285,19 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 	/* Create index table if it does not exist */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"CREATE TABLE IF NOT EXISTS %s (id bigint, v %s, PRIMARY "
-		"KEY(id))",
-		index_table,
-		"vector"); // Replace "vector" with the actual type if needed
+					 "CREATE TABLE IF NOT EXISTS %s (id bigint, v %s, PRIMARY "
+					 "KEY(id))",
+					 index_table,
+					 "vector");
+	//Replace "vector" with the actual type if needed
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
+		ret = ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_UTILITY)
 		elog(ERROR,
-			"Failed to create index table '%s': %s",
-			index_table,
-			sql.data);
+			 "Failed to create index table '%s': %s",
+			 index_table,
+			 sql.data);
 
 	/* Use safe free/reinit to handle potential memory context changes */
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
@@ -300,18 +312,18 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 	initStringInfo(&sql);
 
 	/*
-	 * Insert source vectors with deterministic ordering. Use 'seed' to shuffle.
-	 * For demonstration, we order by hashtext(id || seed).
+	 * Insert source vectors with deterministic ordering. Use 'seed' to
+	 * shuffle. For demonstration, we order by hashtext(id || seed).
 	 *
 	 * NOTE: This does not actually build CQ-HNSW; only prepared data table.
 	 */
 	appendStringInfo(&sql,
-		"INSERT INTO %s (id, v) "
-		"SELECT id, %s FROM %s ORDER BY hashtext(id::text || '%u')",
-		index_table,
-		col,
-		table,
-		seed);
+					 "INSERT INTO %s (id, v) "
+					 "SELECT id, %s FROM %s ORDER BY hashtext(id::text || '%u')",
+					 index_table,
+					 col,
+					 table,
+					 seed);
 
 	ret = ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -323,12 +335,12 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"CREATE TABLE IF NOT EXISTS neurondb_hnsw_metadata ("
-		"  tablename text PRIMARY KEY, "
-		"  colname text, "
-		"  index_table text, "
-		"  build_seed int8, "
-		"  build_time timestamptz default clock_timestamp())");
+					 "CREATE TABLE IF NOT EXISTS neurondb_hnsw_metadata ("
+					 "  tablename text PRIMARY KEY, "
+					 "  colname text, "
+					 "  index_table text, "
+					 "  build_seed int8, "
+					 "  build_time timestamptz default clock_timestamp())");
 	ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 
@@ -337,14 +349,14 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 	initStringInfo(&sql);
 
 	appendStringInfo(&sql,
-		"INSERT INTO neurondb_hnsw_metadata (tablename, colname, "
-		"index_table, build_seed) "
-		"VALUES ($1, $2, $3, $4) "
-		"ON CONFLICT (tablename) DO UPDATE SET "
-		"  colname=EXCLUDED.colname, "
-		"  index_table=EXCLUDED.index_table, "
-		"  build_seed=EXCLUDED.build_seed, "
-		"  build_time=clock_timestamp()");
+					 "INSERT INTO neurondb_hnsw_metadata (tablename, colname, "
+					 "index_table, build_seed) "
+					 "VALUES ($1, $2, $3, $4) "
+					 "ON CONFLICT (tablename) DO UPDATE SET "
+					 "  colname=EXCLUDED.colname, "
+					 "  index_table=EXCLUDED.index_table, "
+					 "  build_seed=EXCLUDED.build_seed, "
+					 "  build_time=clock_timestamp()");
 
 	argtypes[0] = TEXTOID;
 	argtypes[1] = TEXTOID;
@@ -353,14 +365,14 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 	values[0] = CStringGetTextDatum(table);
 	values[1] = CStringGetTextDatum(col);
 	values[2] = CStringGetTextDatum(index_table);
-	values[3] = Int64GetDatum((int64)seed);
+	values[3] = Int64GetDatum((int64) seed);
 
 	plan = SPI_prepare(sql.data, 4, argtypes);
 	if (plan == NULL)
 		elog(ERROR, "Failed to prepare metadata update");
 
 	if ((ret = SPI_execute_plan(plan, values, NULL, false, 0))
-			!= SPI_OK_INSERT
+		!= SPI_OK_INSERT
 		&& ret != SPI_OK_UPDATE)
 		elog(ERROR, "Metadata insert/update failed (%d)", ret);
 
@@ -378,13 +390,14 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 static char *
 get_index_table(const char *table, const char *col, uint32 seed)
 {
-	char *buf = palloc(strlen(table) + strlen(col) + 32);
+	char	   *buf = palloc(strlen(table) + strlen(col) + 32);
+
 	snprintf(buf,
-		strlen(table) + strlen(col) + 32,
-		"__hnsw_%s_%s_%08x",
-		table,
-		col,
-		seed);
+			 strlen(table) + strlen(col) + 32,
+			 "__hnsw_%s_%s_%08x",
+			 table,
+			 col,
+			 seed);
 	return buf;
 }
 
@@ -394,10 +407,11 @@ get_index_table(const char *table, const char *col, uint32 seed)
 static Oid
 get_relid_from_name(const char *relname)
 {
-	Oid relid = InvalidOid;
+	Oid			relid = InvalidOid;
+
 	/* See to_regclass, but simplified for demonstration */
 	relid = DatumGetObjectId(
-		DirectFunctionCall1(to_regclass, CStringGetDatum(relname)));
+							 DirectFunctionCall1(to_regclass, CStringGetDatum(relname)));
 	return relid;
 }
 
@@ -408,12 +422,12 @@ get_relid_from_name(const char *relname)
 static char *
 vector_to_sql_literal(Vector *v)
 {
-	char *out;
-	int n;
-	char *quoted;
+	char	   *out;
+	int			n;
+	char	   *quoted;
 
 	out = vector_out_internal(v);
-	n = (int)strlen(out) + 4;
+	n = (int) strlen(out) + 4;
 	quoted = palloc(n);
 	snprintf(quoted, n, "'%s'", out);
 	return quoted;

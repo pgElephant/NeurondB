@@ -64,12 +64,13 @@
 static inline double
 vector_distance(const double *a, const double *b, int dim)
 {
-	double	sum = 0.0;
-	int		i;
+	double		sum = 0.0;
+	int			i;
 
 	for (i = 0; i < dim; i++)
 	{
-		double	diff = a[i] - b[i];
+		double		diff = a[i] - b[i];
+
 		sum += diff * diff;
 	}
 	return sqrt(sum);
@@ -137,25 +138,25 @@ detect_centroid_drift(PG_FUNCTION_ARGS)
 	current_tbl = text_to_cstring(current_table);
 	current_col = text_to_cstring(current_column);
 
-		 elog(DEBUG1,
-		 	"neurondb: Drift detection: baseline=%s.%s, current=%s.%s",
+	elog(DEBUG1,
+		 "neurondb: Drift detection: baseline=%s.%s, current=%s.%s",
 		 baseline_tbl, baseline_col, current_tbl, current_col);
 
 	/* Fetch vectors */
 	baseline_vecs = neurondb_fetch_vectors_from_table(
-		baseline_tbl, baseline_col, &n_baseline, &dim_baseline);
+													  baseline_tbl, baseline_col, &n_baseline, &dim_baseline);
 	current_vecs = neurondb_fetch_vectors_from_table(
-		current_tbl, current_col, &n_current, &dim_current);
+													 current_tbl, current_col, &n_current, &dim_current);
 
 	if (n_baseline < 10 || n_current < 10)
 	{
 		elog(DEBUG1,
-		     "Need at least 10 vectors in each dataset (baseline=%d, current=%d)",
-		     n_baseline, n_current);
+			 "Need at least 10 vectors in each dataset (baseline=%d, current=%d)",
+			 n_baseline, n_current);
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("Need at least 10 vectors in each dataset (baseline=%d, current=%d)",
-					n_baseline, n_current)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("Need at least 10 vectors in each dataset (baseline=%d, current=%d)",
+						n_baseline, n_current)));
 	}
 
 	if (dim_baseline != dim_current)
@@ -181,7 +182,8 @@ detect_centroid_drift(PG_FUNCTION_ARGS)
 	{
 		for (d = 0; d < dim_baseline; d++)
 		{
-			double	diff = (double) baseline_vecs[i][d] - baseline_mean[d];
+			double		diff = (double) baseline_vecs[i][d] - baseline_mean[d];
+
 			baseline_std[d] += diff * diff;
 		}
 	}
@@ -196,7 +198,7 @@ detect_centroid_drift(PG_FUNCTION_ARGS)
 	avg_std /= dim_baseline;
 
 	if (avg_std < 1e-10)
-		avg_std = 1.0;	/* Avoid division by zero */
+		avg_std = 1.0;			/* Avoid division by zero */
 
 	/* Compute current centroid */
 	current_mean = (double *) palloc0(sizeof(double) * dim_current);
@@ -214,8 +216,8 @@ detect_centroid_drift(PG_FUNCTION_ARGS)
 	normalized_drift = drift_distance / avg_std;
 	is_significant = (normalized_drift > 3.0);
 
-		 elog(DEBUG1,
-		 	"neurondb: Drift distance=%.4f, normalized=%.4f, significant=%s",
+	elog(DEBUG1,
+		 "neurondb: Drift distance=%.4f, normalized=%.4f, significant=%s",
 		 drift_distance, normalized_drift, is_significant ? "YES" : "NO");
 
 	/* Build result tuple */
@@ -300,9 +302,9 @@ compute_distribution_divergence(PG_FUNCTION_ARGS)
 
 	/* Fetch vectors */
 	baseline_vecs = neurondb_fetch_vectors_from_table(
-		baseline_tbl, baseline_col, &n_baseline, &dim_baseline);
+													  baseline_tbl, baseline_col, &n_baseline, &dim_baseline);
 	current_vecs = neurondb_fetch_vectors_from_table(
-		current_tbl, current_col, &n_current, &dim_current);
+													 current_tbl, current_col, &n_current, &dim_current);
 
 	if (n_baseline < 10 || n_current < 10)
 		ereport(ERROR,
@@ -342,7 +344,8 @@ compute_distribution_divergence(PG_FUNCTION_ARGS)
 	{
 		for (d = 0; d < dim_baseline; d++)
 		{
-			double	diff = (double) baseline_vecs[i][d] - baseline_mean[d];
+			double		diff = (double) baseline_vecs[i][d] - baseline_mean[d];
+
 			baseline_var[d] += diff * diff;
 		}
 	}
@@ -353,7 +356,8 @@ compute_distribution_divergence(PG_FUNCTION_ARGS)
 	{
 		for (d = 0; d < dim_current; d++)
 		{
-			double	diff = (double) current_vecs[i][d] - current_mean[d];
+			double		diff = (double) current_vecs[i][d] - current_mean[d];
+
 			current_var[d] += diff * diff;
 		}
 	}
@@ -364,8 +368,8 @@ compute_distribution_divergence(PG_FUNCTION_ARGS)
 	divergence = 0.0;
 	for (d = 0; d < dim_baseline; d++)
 	{
-		double	mean_diff = baseline_mean[d] - current_mean[d];
-		double	var_ratio;
+		double		mean_diff = baseline_mean[d] - current_mean[d];
+		double		var_ratio;
 
 		if (baseline_var[d] < 1e-10 || current_var[d] < 1e-10)
 			continue;
@@ -373,7 +377,8 @@ compute_distribution_divergence(PG_FUNCTION_ARGS)
 		var_ratio = current_var[d] / baseline_var[d];
 
 		/*
-		 * KL(P||Q) ≈ 0.5 * [log(σ_q²/σ_p²) + σ_p²/σ_q² + (μ_p-μ_q)²/σ_q² - 1]
+		 * KL(P||Q) ≈ 0.5 * [log(σ_q²/σ_p²) + σ_p²/σ_q² +
+		 * (μ_p-μ_q)²/σ_q² - 1]
 		 */
 		divergence += 0.5 *
 			(log(var_ratio) + 1.0 / var_ratio +

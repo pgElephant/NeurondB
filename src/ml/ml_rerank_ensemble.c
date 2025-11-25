@@ -52,9 +52,9 @@
  */
 typedef struct DocScore
 {
-	int32 doc_id;
-	double ensemble_score;
-} DocScore;
+	int32		doc_id;
+	double		ensemble_score;
+}			DocScore;
 
 /*
  * Comparison for sorting by score (descending)
@@ -62,8 +62,8 @@ typedef struct DocScore
 static int
 docscore_cmp(const void *a, const void *b)
 {
-	const DocScore *da = (const DocScore *)a;
-	const DocScore *db = (const DocScore *)b;
+	const		DocScore *da = (const DocScore *) a;
+	const		DocScore *db = (const DocScore *) b;
 
 	if (da->ensemble_score > db->ensemble_score)
 		return -1;
@@ -109,24 +109,25 @@ PG_FUNCTION_INFO_V1(rerank_ensemble_weighted);
 Datum
 rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 {
-	ArrayType *doc_ids_array;
-	ArrayType *score_matrix_array;
-	ArrayType *weights_array;
-	bool normalize;
-	int32 *doc_ids;
-	float8 *score_matrix;
-	float8 *weights;
-	int num_docs;
-	int num_systems;
-	DocScore *doc_scores;
-	double *normalized_scores;
-	double weight_sum;
-	int i, s;
-	ArrayType *result;
-	Datum *result_datums;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
+	ArrayType  *doc_ids_array;
+	ArrayType  *score_matrix_array;
+	ArrayType  *weights_array;
+	bool		normalize;
+	int32	   *doc_ids;
+	float8	   *score_matrix;
+	float8	   *weights;
+	int			num_docs;
+	int			num_systems;
+	DocScore   *doc_scores;
+	double	   *normalized_scores;
+	double		weight_sum;
+	int			i,
+				s;
+	ArrayType  *result;
+	Datum	   *result_datums;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
 
 	/* Parse arguments */
 	doc_ids_array = PG_GETARG_ARRAYTYPE_P(0);
@@ -142,37 +143,37 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 	/* Validate and extract arrays */
 	if (ARR_NDIM(doc_ids_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("doc_ids must be 1-dimensional array")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("doc_ids must be 1-dimensional array")));
 
 	if (ARR_NDIM(score_matrix_array) != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("score_matrix must be 2-dimensional "
-				       "array")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("score_matrix must be 2-dimensional "
+						"array")));
 
 	num_docs = ARR_DIMS(doc_ids_array)[0];
 	num_systems = ARR_DIMS(score_matrix_array)[0];
 
 	if (ARR_DIMS(score_matrix_array)[1] != num_docs)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("score_matrix must have %d columns to match doc_ids",
-					num_docs)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("score_matrix must have %d columns to match doc_ids",
+						num_docs)));
 
-	doc_ids = (int32 *)ARR_DATA_PTR(doc_ids_array);
-	score_matrix = (float8 *)ARR_DATA_PTR(score_matrix_array);
+	doc_ids = (int32 *) ARR_DATA_PTR(doc_ids_array);
+	score_matrix = (float8 *) ARR_DATA_PTR(score_matrix_array);
 
 	/* Handle weights */
 	if (weights_array != NULL)
 	{
 		if (ARR_DIMS(weights_array)[0] != num_systems)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("weights array must have %d elements",
-						num_systems)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("weights array must have %d elements",
+							num_systems)));
 
-		weights = (float8 *)ARR_DATA_PTR(weights_array);
+		weights = (float8 *) ARR_DATA_PTR(weights_array);
 
 		/* Normalize weights to sum to 1.0 */
 		weight_sum = 0.0;
@@ -181,40 +182,42 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 
 		if (weight_sum < 1e-10)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("Weights must sum to positive "
-					       "value")));
-	} else
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("Weights must sum to positive "
+							"value")));
+	}
+	else
 	{
 		/* Equal weights */
-		weights = (float8 *)palloc(sizeof(float8) * num_systems);
-	NDB_CHECK_ALLOC(weights, "weights");
+		weights = (float8 *) palloc(sizeof(float8) * num_systems);
+		NDB_CHECK_ALLOC(weights, "weights");
 		for (s = 0; s < num_systems; s++)
 			weights[s] = 1.0 / num_systems;
 		weight_sum = 1.0;
 	}
 
-		elog(DEBUG1,
-			"neurondb: Ensemble reranking: %d systems, %d docs",
-		num_systems,
-		num_docs);
+	elog(DEBUG1,
+		 "neurondb: Ensemble reranking: %d systems, %d docs",
+		 num_systems,
+		 num_docs);
 
 	/* Normalize scores if requested */
 	normalized_scores =
-		(double *)palloc(sizeof(double) * num_systems * num_docs);
+		(double *) palloc(sizeof(double) * num_systems * num_docs);
 
 	if (normalize)
 	{
 		/* Min-max normalization per system */
 		for (s = 0; s < num_systems; s++)
 		{
-			double min_score = DBL_MAX;
-			double max_score = -DBL_MAX;
+			double		min_score = DBL_MAX;
+			double		max_score = -DBL_MAX;
 
 			/* Find min/max */
 			for (i = 0; i < num_docs; i++)
 			{
-				double score = score_matrix[s * num_docs + i];
+				double		score = score_matrix[s * num_docs + i];
+
 				if (score < min_score)
 					min_score = score;
 				if (score > max_score)
@@ -223,20 +226,23 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 
 			/* Normalize to [0, 1] */
 			{
-				double range = max_score - min_score;
+				double		range = max_score - min_score;
+
 				if (range < 1e-10)
-					range = 1.0; /* All scores equal */
+					range = 1.0;	/* All scores equal */
 
 				for (i = 0; i < num_docs; i++)
 				{
-					double score =
+					double		score =
 						score_matrix[s * num_docs + i];
+
 					normalized_scores[s * num_docs + i] =
 						(score - min_score) / range;
 				}
 			}
 		}
-	} else
+	}
+	else
 	{
 		/* Use raw scores */
 		for (s = 0; s < num_systems; s++)
@@ -246,12 +252,12 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 	}
 
 	/* Compute ensemble scores (weighted sum) */
-	doc_scores = (DocScore *)palloc(sizeof(DocScore) * num_docs);
+	doc_scores = (DocScore *) palloc(sizeof(DocScore) * num_docs);
 	NDB_CHECK_ALLOC(doc_scores, "doc_scores");
 
 	for (i = 0; i < num_docs; i++)
 	{
-		double ensemble_score = 0.0;
+		double		ensemble_score = 0.0;
 
 		for (s = 0; s < num_systems; s++)
 			ensemble_score += (weights[s] / weight_sum)
@@ -265,14 +271,14 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 	qsort(doc_scores, num_docs, sizeof(DocScore), docscore_cmp);
 
 	/* Build result array */
-	result_datums = (Datum *)palloc(sizeof(Datum) * num_docs);
+	result_datums = (Datum *) palloc(sizeof(Datum) * num_docs);
 	NDB_CHECK_ALLOC(result_datums, "result_datums");
 	for (i = 0; i < num_docs; i++)
 		result_datums[i] = Int32GetDatum(doc_scores[i].doc_id);
 
 	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
 	result = construct_array(
-		result_datums, num_docs, INT4OID, typlen, typbyval, typalign);
+							 result_datums, num_docs, INT4OID, typlen, typbyval, typalign);
 
 	/* Cleanup */
 	NDB_SAFE_PFREE_AND_NULL(normalized_scores);
@@ -302,21 +308,23 @@ PG_FUNCTION_INFO_V1(rerank_ensemble_borda);
 Datum
 rerank_ensemble_borda(PG_FUNCTION_ARGS)
 {
-	ArrayType *ranked_lists_array;
-	int ndim;
-	int *dims;
-	int num_systems;
-	int max_docs;
-	int32 *ranked_lists;
-	DocScore *doc_scores;
-	int *doc_id_map;
-	int num_unique_docs;
-	int s, i, rank;
-	ArrayType *result;
-	Datum *result_datums;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
+	ArrayType  *ranked_lists_array;
+	int			ndim;
+	int		   *dims;
+	int			num_systems;
+	int			max_docs;
+	int32	   *ranked_lists;
+	DocScore   *doc_scores;
+	int		   *doc_id_map;
+	int			num_unique_docs;
+	int			s,
+				i,
+				rank;
+	ArrayType  *result;
+	Datum	   *result_datums;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
 
 	/* Parse arguments */
 	ranked_lists_array = PG_GETARG_ARRAYTYPE_P(0);
@@ -324,21 +332,21 @@ rerank_ensemble_borda(PG_FUNCTION_ARGS)
 	ndim = ARR_NDIM(ranked_lists_array);
 	if (ndim != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("ranked_lists must be 2-dimensional")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("ranked_lists must be 2-dimensional")));
 
 	dims = ARR_DIMS(ranked_lists_array);
 	num_systems = dims[0];
 	max_docs = dims[1];
-	ranked_lists = (int32 *)ARR_DATA_PTR(ranked_lists_array);
+	ranked_lists = (int32 *) ARR_DATA_PTR(ranked_lists_array);
 
-		elog(DEBUG1,
-			"neurondb: Borda count ensemble: %d systems, max %d docs",
-		num_systems,
-		max_docs);
+	elog(DEBUG1,
+		 "neurondb: Borda count ensemble: %d systems, max %d docs",
+		 num_systems,
+		 max_docs);
 
 	/* Collect unique doc IDs */
-	doc_id_map = (int *)palloc0(sizeof(int) * num_systems * max_docs);
+	doc_id_map = (int *) palloc0(sizeof(int) * num_systems * max_docs);
 	NDB_CHECK_ALLOC(doc_id_map, "doc_id_map");
 	num_unique_docs = 0;
 
@@ -346,9 +354,9 @@ rerank_ensemble_borda(PG_FUNCTION_ARGS)
 	{
 		for (i = 0; i < max_docs; i++)
 		{
-			int32 doc_id = ranked_lists[s * max_docs + i];
-			int found = 0;
-			int j;
+			int32		doc_id = ranked_lists[s * max_docs + i];
+			int			found = 0;
+			int			j;
 
 			if (doc_id <= 0)
 				continue;
@@ -371,7 +379,7 @@ rerank_ensemble_borda(PG_FUNCTION_ARGS)
 	}
 
 	/* Initialize scores */
-	doc_scores = (DocScore *)palloc0(sizeof(DocScore) * num_unique_docs);
+	doc_scores = (DocScore *) palloc0(sizeof(DocScore) * num_unique_docs);
 	NDB_CHECK_ALLOC(doc_scores, "doc_scores");
 	for (i = 0; i < num_unique_docs; i++)
 	{
@@ -384,10 +392,10 @@ rerank_ensemble_borda(PG_FUNCTION_ARGS)
 	{
 		for (rank = 0; rank < max_docs; rank++)
 		{
-			int32 doc_id = ranked_lists[s * max_docs + rank];
-			int points =
-				max_docs - rank; /* Higher rank = more points */
-			int j;
+			int32		doc_id = ranked_lists[s * max_docs + rank];
+			int			points =
+				max_docs - rank;	/* Higher rank = more points */
+			int			j;
 
 			if (doc_id <= 0)
 				continue;
@@ -407,18 +415,18 @@ rerank_ensemble_borda(PG_FUNCTION_ARGS)
 	qsort(doc_scores, num_unique_docs, sizeof(DocScore), docscore_cmp);
 
 	/* Build result */
-	result_datums = (Datum *)palloc(sizeof(Datum) * num_unique_docs);
+	result_datums = (Datum *) palloc(sizeof(Datum) * num_unique_docs);
 	NDB_CHECK_ALLOC(result_datums, "result_datums");
 	for (i = 0; i < num_unique_docs; i++)
 		result_datums[i] = Int32GetDatum(doc_scores[i].doc_id);
 
 	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
 	result = construct_array(result_datums,
-		num_unique_docs,
-		INT4OID,
-		typlen,
-		typbyval,
-		typalign);
+							 num_unique_docs,
+							 INT4OID,
+							 typlen,
+							 typbyval,
+							 typalign);
 
 	NDB_SAFE_PFREE_AND_NULL(doc_id_map);
 	NDB_SAFE_PFREE_AND_NULL(doc_scores);

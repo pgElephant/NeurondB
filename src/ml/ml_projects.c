@@ -57,16 +57,16 @@ PG_FUNCTION_INFO_V1(neurondb_list_project_models);
 Datum
 neurondb_create_ml_project(PG_FUNCTION_ARGS)
 {
-	text *project_name_text = PG_GETARG_TEXT_PP(0);
-	text *model_type_text = PG_GETARG_TEXT_PP(1);
-	text *description_text = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
-	char *project_name;
-	char *model_type;
-	char *description;
+	text	   *project_name_text = PG_GETARG_TEXT_PP(0);
+	text	   *model_type_text = PG_GETARG_TEXT_PP(1);
+	text	   *description_text = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
+	char	   *project_name;
+	char	   *model_type;
+	char	   *description;
 	StringInfoData sql;
-	int ret;
-	int project_id;
-	bool isnull;
+	int			ret;
+	int			project_id;
+	bool		isnull;
 
 	project_name = text_to_cstring(project_name_text);
 	model_type = text_to_cstring(model_type_text);
@@ -76,25 +76,25 @@ neurondb_create_ml_project(PG_FUNCTION_ARGS)
 	/* Validate project name */
 	if (strlen(project_name) < 3 || strlen(project_name) > 100)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("project name must be between 3 and 100 "
-				       "characters")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("project name must be between 3 and 100 "
+						"characters")));
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"INSERT INTO neurondb.ml_projects (project_name, model_type, "
-		"description) "
-		"VALUES (%s, %s::neurondb.ml_model_type, %s) "
-		"ON CONFLICT (project_name) DO NOTHING "
-		"RETURNING project_id",
-		quote_literal_cstr(project_name),
-		quote_literal_cstr(model_type),
-		description ? quote_literal_cstr(description) : "NULL");
+					 "INSERT INTO neurondb.ml_projects (project_name, model_type, "
+					 "description) "
+					 "VALUES (%s, %s::neurondb.ml_model_type, %s) "
+					 "ON CONFLICT (project_name) DO NOTHING "
+					 "RETURNING project_id",
+					 quote_literal_cstr(project_name),
+					 quote_literal_cstr(model_type),
+					 description ? quote_literal_cstr(description) : "NULL");
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_connect failed")));
 
 	ret = ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -102,8 +102,8 @@ neurondb_create_ml_project(PG_FUNCTION_ARGS)
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: failed to create project: %s", project_name)));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: failed to create project: %s", project_name)));
 	}
 
 	if (SPI_processed == 0)
@@ -112,32 +112,32 @@ neurondb_create_ml_project(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(sql.data);
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
-			"SELECT project_id FROM neurondb.ml_projects WHERE "
-			"project_name = %s",
-			quote_literal_cstr(project_name));
+						 "SELECT project_id FROM neurondb.ml_projects WHERE "
+						 "project_name = %s",
+						 quote_literal_cstr(project_name));
 
 		ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		{
 			SPI_finish();
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("neurondb: project exists but could not retrieve ID: %s",
-						project_name)));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: project exists but could not retrieve ID: %s",
+							project_name)));
 		}
 	}
 
 	project_id = DatumGetInt32(SPI_getbinval(
-		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+											 SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 
 	SPI_finish();
 
 	elog(LOG,
-		"neurondb: created ML project '%s' (id=%d, type=%s)",
-		project_name,
-		project_id,
-		model_type);
+		 "neurondb: created ML project '%s' (id=%d, type=%s)",
+		 project_name,
+		 project_id,
+		 model_type);
 
 	PG_RETURN_INT32(project_id);
 }
@@ -152,32 +152,32 @@ neurondb_create_ml_project(PG_FUNCTION_ARGS)
 Datum
 neurondb_list_ml_projects(PG_FUNCTION_ARGS)
 {
-	ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
-	TupleDesc tupdesc;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	TupleDesc	tupdesc;
 	Tuplestorestate *tupstore;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
-	int ret;
-	int i;
+	int			ret;
+	int			i;
 
 	/* Check result context */
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("set-valued function called in context "
-				       "that cannot accept a set")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("set-valued function called in context "
+						"that cannot accept a set")));
 
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("materialize mode required, but it is "
-				       "not allowed in this context")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("materialize mode required, but it is "
+						"not allowed in this context")));
 
 	/* Build tuple descriptor */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: return type must be a row type")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: return type must be a row type")));
 
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
 	oldcontext = MemoryContextSwitchTo(per_query_ctx);
@@ -192,50 +192,50 @@ neurondb_list_ml_projects(PG_FUNCTION_ARGS)
 	/* Query projects */
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_connect failed")));
 
 	ret = ndb_spi_execute_safe("SELECT * FROM neurondb.ml_projects_summary ORDER BY "
-			  "created_at DESC",
-		true,
-		0);
+							   "created_at DESC",
+							   true,
+							   0);
 	NDB_CHECK_SPI_TUPTABLE();
 
 	if (ret == SPI_OK_SELECT)
 	{
-		for (i = 0; i < (int)SPI_processed; i++)
+		for (i = 0; i < (int) SPI_processed; i++)
 		{
-			HeapTuple spi_tuple = SPI_tuptable->vals[i];
-			Datum values[6];
-			bool nulls[6];
+			HeapTuple	spi_tuple = SPI_tuptable->vals[i];
+			Datum		values[6];
+			bool		nulls[6];
 
 			memset(nulls, 0, sizeof(nulls));
 
 			/* Extract values from SPI tuple */
 			values[0] = SPI_getbinval(spi_tuple,
-				SPI_tuptable->tupdesc,
-				1,
-				&nulls[0]); /* project_id */
+									  SPI_tuptable->tupdesc,
+									  1,
+									  &nulls[0]);	/* project_id */
 			values[1] = SPI_getbinval(spi_tuple,
-				SPI_tuptable->tupdesc,
-				2,
-				&nulls[1]); /* project_name */
+									  SPI_tuptable->tupdesc,
+									  2,
+									  &nulls[1]);	/* project_name */
 			values[2] = SPI_getbinval(spi_tuple,
-				SPI_tuptable->tupdesc,
-				3,
-				&nulls[2]); /* model_type */
+									  SPI_tuptable->tupdesc,
+									  3,
+									  &nulls[2]);	/* model_type */
 			values[3] = SPI_getbinval(spi_tuple,
-				SPI_tuptable->tupdesc,
-				7,
-				&nulls[3]); /* total_models */
+									  SPI_tuptable->tupdesc,
+									  7,
+									  &nulls[3]);	/* total_models */
 			values[4] = SPI_getbinval(spi_tuple,
-				SPI_tuptable->tupdesc,
-				8,
-				&nulls[4]); /* latest_version */
+									  SPI_tuptable->tupdesc,
+									  8,
+									  &nulls[4]);	/* latest_version */
 			values[5] = SPI_getbinval(spi_tuple,
-				SPI_tuptable->tupdesc,
-				9,
-				&nulls[5]); /* deployed_version */
+									  SPI_tuptable->tupdesc,
+									  9,
+									  &nulls[5]);	/* deployed_version */
 
 			tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 		}
@@ -243,7 +243,7 @@ neurondb_list_ml_projects(PG_FUNCTION_ARGS)
 
 	SPI_finish();
 
-	return (Datum)0;
+	return (Datum) 0;
 }
 
 /*
@@ -259,20 +259,20 @@ neurondb_list_ml_projects(PG_FUNCTION_ARGS)
 Datum
 neurondb_delete_ml_project(PG_FUNCTION_ARGS)
 {
-	text *project_name_text = PG_GETARG_TEXT_PP(0);
-	char *project_name = text_to_cstring(project_name_text);
+	text	   *project_name_text = PG_GETARG_TEXT_PP(0);
+	char	   *project_name = text_to_cstring(project_name_text);
 	StringInfoData sql;
-	int ret;
+	int			ret;
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"DELETE FROM neurondb.ml_projects WHERE project_name = %s",
-		quote_literal_cstr(project_name));
+					 "DELETE FROM neurondb.ml_projects WHERE project_name = %s",
+					 quote_literal_cstr(project_name));
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_connect failed")));
 
 	ret = ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -281,8 +281,8 @@ neurondb_delete_ml_project(PG_FUNCTION_ARGS)
 
 	if (ret != SPI_OK_DELETE)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: failed to delete project: %s", project_name)));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: failed to delete project: %s", project_name)));
 
 	elog(LOG, "neurondb: deleted ML project '%s'", project_name);
 
@@ -302,24 +302,24 @@ neurondb_delete_ml_project(PG_FUNCTION_ARGS)
 Datum
 neurondb_get_project_info(PG_FUNCTION_ARGS)
 {
-	text *project_name_text = PG_GETARG_TEXT_PP(0);
-	char *project_name = text_to_cstring(project_name_text);
+	text	   *project_name_text = PG_GETARG_TEXT_PP(0);
+	char	   *project_name = text_to_cstring(project_name_text);
 	StringInfoData sql;
-	int ret;
-	Datum result;
-	bool isnull;
+	int			ret;
+	Datum		result;
+	bool		isnull;
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT row_to_json(p)::jsonb FROM "
-		"neurondb.ml_projects_summary p "
-		"WHERE project_name = %s",
-		quote_literal_cstr(project_name));
+					 "SELECT row_to_json(p)::jsonb FROM "
+					 "neurondb.ml_projects_summary p "
+					 "WHERE project_name = %s",
+					 quote_literal_cstr(project_name));
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_connect failed")));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -328,19 +328,19 @@ neurondb_get_project_info(PG_FUNCTION_ARGS)
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: project not found: %s", project_name)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: project not found: %s", project_name)));
 	}
 
 	result = SPI_getbinval(
-		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+						   SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
 
 	if (isnull)
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: failed to get project info for: %s", project_name)));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: failed to get project info for: %s", project_name)));
 	}
 
 	/* Copy result to upper memory context */
@@ -368,37 +368,37 @@ neurondb_get_project_info(PG_FUNCTION_ARGS)
 Datum
 neurondb_train_kmeans_project(PG_FUNCTION_ARGS)
 {
-	text *project_name_text = PG_GETARG_TEXT_PP(0);
-	text *table_name_text = PG_GETARG_TEXT_PP(1);
-	text *vector_col_text = PG_GETARG_TEXT_PP(2);
-	int32 num_clusters = PG_GETARG_INT32(3);
-	int32 max_iters = PG_ARGISNULL(4) ? 100 : PG_GETARG_INT32(4);
-	char *project_name = text_to_cstring(project_name_text);
-	char *table_name = text_to_cstring(table_name_text);
-	char *vector_col = text_to_cstring(vector_col_text);
+	text	   *project_name_text = PG_GETARG_TEXT_PP(0);
+	text	   *table_name_text = PG_GETARG_TEXT_PP(1);
+	text	   *vector_col_text = PG_GETARG_TEXT_PP(2);
+	int32		num_clusters = PG_GETARG_INT32(3);
+	int32		max_iters = PG_ARGISNULL(4) ? 100 : PG_GETARG_INT32(4);
+	char	   *project_name = text_to_cstring(project_name_text);
+	char	   *table_name = text_to_cstring(table_name_text);
+	char	   *vector_col = text_to_cstring(vector_col_text);
 	StringInfoData sql;
-	int ret;
-	int project_id;
-	int next_version;
-	int model_id;
-	bool isnull;
-	int64 start_time;
-	int64 end_time;
-	int training_time_ms;
+	int			ret;
+	int			project_id;
+	int			next_version;
+	int			model_id;
+	bool		isnull;
+	int64		start_time;
+	int64		end_time;
+	int			training_time_ms;
 
 	start_time = GetCurrentTimestamp();
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_connect failed")));
 
 	/* Get project ID */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT project_id FROM neurondb.ml_projects WHERE "
-		"project_name = %s",
-		quote_literal_cstr(project_name));
+					 "SELECT project_id FROM neurondb.ml_projects WHERE "
+					 "project_name = %s",
+					 quote_literal_cstr(project_name));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -406,20 +406,20 @@ neurondb_train_kmeans_project(PG_FUNCTION_ARGS)
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: project not found: %s", project_name)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: project not found: %s", project_name)));
 	}
 
 	project_id = DatumGetInt32(SPI_getbinval(
-		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+											 SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 
 	/* Get next version number */
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT COALESCE(MAX(version), 0) + 1 FROM neurondb.ml_models "
-		"WHERE project_id = %d",
-		project_id);
+					 "SELECT COALESCE(MAX(version), 0) + 1 FROM neurondb.ml_models "
+					 "WHERE project_id = %d",
+					 project_id);
 
 	ret = ndb_spi_execute_safe(sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -427,29 +427,29 @@ neurondb_train_kmeans_project(PG_FUNCTION_ARGS)
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: failed to get next version")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: failed to get next version")));
 	}
 
 	next_version = DatumGetInt32(SPI_getbinval(
-		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+											   SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 
 	/* Create model record */
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"INSERT INTO neurondb.ml_models "
-		"(project_id, version, algorithm, status, training_table, "
-		"training_column, parameters) "
-		"VALUES (%d, %d, 'kmeans', 'training', %s, %s, '{\"k\": %d, "
-		"\"max_iters\": %d}'::jsonb) "
-		"RETURNING model_id",
-		project_id,
-		next_version,
-		quote_literal_cstr(table_name),
-		quote_literal_cstr(vector_col),
-		num_clusters,
-		max_iters);
+					 "INSERT INTO neurondb.ml_models "
+					 "(project_id, version, algorithm, status, training_table, "
+					 "training_column, parameters) "
+					 "VALUES (%d, %d, 'kmeans', 'training', %s, %s, '{\"k\": %d, "
+					 "\"max_iters\": %d}'::jsonb) "
+					 "RETURNING model_id",
+					 project_id,
+					 next_version,
+					 quote_literal_cstr(table_name),
+					 quote_literal_cstr(vector_col),
+					 num_clusters,
+					 max_iters);
 
 	ret = ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -457,46 +457,50 @@ neurondb_train_kmeans_project(PG_FUNCTION_ARGS)
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: failed to create model record")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: failed to create model record")));
 	}
 
 	model_id = DatumGetInt32(SPI_getbinval(
-		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+										   SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 
 	SPI_finish();
 
 	/* Train the actual model (call existing cluster_kmeans) */
-	/* For now, we just mark it as completed - actual training integration comes next */
+
+	/*
+	 * For now, we just mark it as completed - actual training integration
+	 * comes next
+	 */
 
 	end_time = GetCurrentTimestamp();
-	training_time_ms = (int)((end_time - start_time) / 1000);
+	training_time_ms = (int) ((end_time - start_time) / 1000);
 
 	/* Update model status */
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_connect failed")));
 
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"UPDATE neurondb.ml_models "
-		"SET status = 'completed', completed_at = NOW(), "
-		"training_time_ms = %d "
-		"WHERE model_id = %d",
-		training_time_ms,
-		model_id);
+					 "UPDATE neurondb.ml_models "
+					 "SET status = 'completed', completed_at = NOW(), "
+					 "training_time_ms = %d "
+					 "WHERE model_id = %d",
+					 training_time_ms,
+					 model_id);
 
 	ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	SPI_finish();
 
 	elog(LOG,
-		"neurondb: trained K-means model for project '%s' (version %d, model_id=%d)",
-		project_name,
-		next_version,
-		model_id);
+		 "neurondb: trained K-means model for project '%s' (version %d, model_id=%d)",
+		 project_name,
+		 next_version,
+		 model_id);
 
 	PG_RETURN_INT32(model_id);
 }
@@ -505,12 +509,13 @@ neurondb_train_kmeans_project(PG_FUNCTION_ARGS)
  * Helper: Deserialize K-Means model from bytea
  */
 static int
-kmeans_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int *num_clusters_out, int *dim_out)
+kmeans_model_deserialize_from_bytea(const bytea * data, float ***centers_out, int *num_clusters_out, int *dim_out)
 {
 	const char *buf;
-	int offset = 0;
-	int i, j;
-	float **centers;
+	int			offset = 0;
+	int			i,
+				j;
+	float	  **centers;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 2)
 		return -1;
@@ -527,10 +532,10 @@ kmeans_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int
 		return -1;
 
 	/* Allocate centroids */
-	centers = (float **)palloc(sizeof(float *) * *num_clusters_out);
+	centers = (float **) palloc(sizeof(float *) * *num_clusters_out);
 	for (i = 0; i < *num_clusters_out; i++)
 	{
-		centers[i] = (float *)palloc(sizeof(float) * *dim_out);
+		centers[i] = (float *) palloc(sizeof(float) * *dim_out);
 		for (j = 0; j < *dim_out; j++)
 		{
 			memcpy(&centers[i][j], buf + offset, sizeof(float));
@@ -548,12 +553,13 @@ kmeans_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int
 static double
 euclidean_dist(const float *a, const float *b, int dim)
 {
-	double sum = 0.0;
-	int i;
+	double		sum = 0.0;
+	int			i;
 
 	for (i = 0; i < dim; i++)
 	{
-		double diff = (double)a[i] - (double)b[i];
+		double		diff = (double) a[i] - (double) b[i];
+
 		sum += diff * diff;
 	}
 
@@ -569,45 +575,45 @@ euclidean_dist(const float *a, const float *b, int dim)
 Datum
 predict_kmeans_project(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	ArrayType *features_array = PG_GETARG_ARRAYTYPE_P(1);
-	bytea *model_data = NULL;
-	Jsonb *parameters = NULL;
-	Jsonb *metrics = NULL;
-	float **centers = NULL;
-	int n_clusters = 0;
-	int dim = 0;
-	float *features = NULL;
-	int n_features = 0;
-	int cluster_id = 0;
-	int i;
-	double min_dist = DBL_MAX;
-	double dist;
+	int32		model_id = PG_GETARG_INT32(0);
+	ArrayType  *features_array = PG_GETARG_ARRAYTYPE_P(1);
+	bytea	   *model_data = NULL;
+	Jsonb	   *parameters = NULL;
+	Jsonb	   *metrics = NULL;
+	float	  **centers = NULL;
+	int			n_clusters = 0;
+	int			dim = 0;
+	float	   *features = NULL;
+	int			n_features = 0;
+	int			cluster_id = 0;
+	int			i;
+	double		min_dist = DBL_MAX;
+	double		dist;
 
 	/* Validate inputs */
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("predict_kmeans_project: model_id and features cannot be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("predict_kmeans_project: model_id and features cannot be NULL")));
 
 	/* Extract features array */
 	if (ARR_NDIM(features_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("predict_kmeans_project: features must be 1-dimensional array")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("predict_kmeans_project: features must be 1-dimensional array")));
 
 	n_features = ARR_DIMS(features_array)[0];
-	features = (float *)palloc(sizeof(float) * n_features);
+	features = (float *) palloc(sizeof(float) * n_features);
 	for (i = 0; i < n_features; i++)
-		features[i] = (float)DatumGetFloat8(ARR_DATA_PTR(features_array)[i]);
+		features[i] = (float) DatumGetFloat8(ARR_DATA_PTR(features_array)[i]);
 
 	/* Load model from catalog */
 	if (!ml_catalog_fetch_model_payload(model_id, &model_data, &parameters, &metrics))
 	{
 		NDB_SAFE_PFREE_AND_NULL(features);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("predict_kmeans_project: model %d not found", model_id)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("predict_kmeans_project: model %d not found", model_id)));
 	}
 
 	/* Deserialize model */
@@ -620,8 +626,8 @@ predict_kmeans_project(PG_FUNCTION_ARGS)
 			NDB_SAFE_PFREE_AND_NULL(metrics);
 		NDB_SAFE_PFREE_AND_NULL(features);
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("predict_kmeans_project: failed to deserialize model %d", model_id)));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("predict_kmeans_project: failed to deserialize model %d", model_id)));
 	}
 
 	/* Validate dimension match */
@@ -637,9 +643,9 @@ predict_kmeans_project(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(centers);
 		NDB_SAFE_PFREE_AND_NULL(features);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("predict_kmeans_project: feature dimension mismatch: model expects %d, got %d",
-					dim, n_features)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("predict_kmeans_project: feature dimension mismatch: model expects %d, got %d",
+						dim, n_features)));
 	}
 
 	/* Find closest centroid */
@@ -676,39 +682,43 @@ predict_kmeans_project(PG_FUNCTION_ARGS)
 Datum
 evaluate_kmeans_project_by_model_id(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	text *table_name;
-	text *feature_col;
-	char *tbl_str;
-	char *feat_str;
+	int32		model_id;
+	text	   *table_name;
+	text	   *feature_col;
+	char	   *tbl_str;
+	char	   *feat_str;
 	StringInfoData query;
-	int ret;
-	int n_points = 0;
+	int			ret;
+	int			n_points = 0;
 	StringInfoData jsonbuf;
-	Jsonb *result;
+	Jsonb	   *result;
 	MemoryContext oldcontext;
-	double inertia;
-	int n_clusters;
+	double		inertia;
+	int			n_clusters;
 
 	/* Validate arguments */
 	if (PG_NARGS() != 3)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_project_by_model_id: 3 arguments are required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_project_by_model_id: 3 arguments are required")));
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_project_by_model_id: model_id is required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_project_by_model_id: model_id is required")));
 
 	model_id = PG_GETARG_INT32(0);
-	/* Suppress unused variable warning - placeholder for future implementation */
+
+	/*
+	 * Suppress unused variable warning - placeholder for future
+	 * implementation
+	 */
 	(void) model_id;
 
 	if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_project_by_model_id: table_name and feature_col are required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_project_by_model_id: table_name and feature_col are required")));
 
 	table_name = PG_GETARG_TEXT_PP(1);
 	feature_col = PG_GETARG_TEXT_PP(2);
@@ -721,21 +731,21 @@ evaluate_kmeans_project_by_model_id(PG_FUNCTION_ARGS)
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: evaluate_kmeans_project_by_model_id: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_kmeans_project_by_model_id: SPI_connect failed")));
 
 	/* Build query */
 	initStringInfo(&query);
 	appendStringInfo(&query,
-		"SELECT %s FROM %s WHERE %s IS NOT NULL",
-		feat_str, tbl_str, feat_str);
+					 "SELECT %s FROM %s WHERE %s IS NOT NULL",
+					 feat_str, tbl_str, feat_str);
 
 	ret = ndb_spi_execute_safe(query.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: evaluate_kmeans_project_by_model_id: query failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_kmeans_project_by_model_id: query failed")));
 
 	n_points = SPI_processed;
 	if (n_points < 2)
@@ -744,20 +754,21 @@ evaluate_kmeans_project_by_model_id(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(tbl_str);
 		NDB_SAFE_PFREE_AND_NULL(feat_str);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_project_by_model_id: need at least 2 points, got %d",
-					n_points)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_project_by_model_id: need at least 2 points, got %d",
+						n_points)));
 	}
 
 	/* Load model and compute actual inertia */
 	{
-		bytea *model_payload = NULL;
-		Jsonb *model_parameters = NULL;
-		float **centers = NULL;
-		float **data = NULL;
-		int model_dim = 0;
-		int i, c;
-		int *assignments = NULL;
+		bytea	   *model_payload = NULL;
+		Jsonb	   *model_parameters = NULL;
+		float	  **centers = NULL;
+		float	  **data = NULL;
+		int			model_dim = 0;
+		int			i,
+					c;
+		int		   *assignments = NULL;
 
 		/* Load model from catalog */
 		if (ml_catalog_fetch_model_payload(model_id, &model_payload, &model_parameters, NULL))
@@ -765,7 +776,7 @@ evaluate_kmeans_project_by_model_id(PG_FUNCTION_ARGS)
 			if (model_payload != NULL && VARSIZE(model_payload) > VARHDRSZ)
 			{
 				const char *buf = VARDATA(model_payload);
-				int offset = 0;
+				int			offset = 0;
 
 				/* Deserialize k-means model (same format as ml_kmeans.c) */
 				memcpy(&n_clusters, buf + offset, sizeof(int));
@@ -776,10 +787,10 @@ evaluate_kmeans_project_by_model_id(PG_FUNCTION_ARGS)
 				if (n_clusters > 0 && n_clusters <= 10000 && model_dim > 0 && model_dim <= 100000)
 				{
 					/* Allocate centroids */
-					centers = (float **)palloc(sizeof(float *) * n_clusters);
+					centers = (float **) palloc(sizeof(float *) * n_clusters);
 					for (c = 0; c < n_clusters; c++)
 					{
-						centers[c] = (float *)palloc(sizeof(float) * model_dim);
+						centers[c] = (float *) palloc(sizeof(float) * model_dim);
 						for (i = 0; i < model_dim; i++)
 						{
 							memcpy(&centers[c][i], buf + offset, sizeof(float));
@@ -793,23 +804,27 @@ evaluate_kmeans_project_by_model_id(PG_FUNCTION_ARGS)
 					if (data != NULL && n_points > 0)
 					{
 						/* Allocate assignments */
-						assignments = (int *)palloc(sizeof(int) * n_points);
+						assignments = (int *) palloc(sizeof(int) * n_points);
 
-						/* Assign points to nearest centroids and compute inertia */
+						/*
+						 * Assign points to nearest centroids and compute
+						 * inertia
+						 */
 						inertia = 0.0;
 						for (i = 0; i < n_points; i++)
 						{
-							double min_dist_sq = DBL_MAX;
-							int best = 0;
+							double		min_dist_sq = DBL_MAX;
+							int			best = 0;
 
 							for (c = 0; c < n_clusters; c++)
 							{
-								double dist_sq = 0.0;
-								int d;
+								double		dist_sq = 0.0;
+								int			d;
 
 								for (d = 0; d < model_dim; d++)
 								{
-									double diff = (double)data[i][d] - (double)centers[c][d];
+									double		diff = (double) data[i][d] - (double) centers[c][d];
+
 									dist_sq += diff * diff;
 								}
 								if (dist_sq < min_dist_sq)
@@ -819,7 +834,8 @@ evaluate_kmeans_project_by_model_id(PG_FUNCTION_ARGS)
 								}
 							}
 							assignments[i] = best;
-							inertia += min_dist_sq; /* Sum of squared distances */
+							inertia += min_dist_sq; /* Sum of squared
+													 * distances */
 						}
 
 						/* Cleanup data */
@@ -874,8 +890,8 @@ evaluate_kmeans_project_by_model_id(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldcontext);
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
-		"{\"inertia\":%.6f,\"n_clusters\":%d,\"n_points\":%d}",
-		inertia, n_clusters, n_points);
+					 "{\"inertia\":%.6f,\"n_clusters\":%d,\"n_points\":%d}",
+					 inertia, n_clusters, n_points);
 
 	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
 	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
@@ -901,24 +917,24 @@ evaluate_kmeans_project_by_model_id(PG_FUNCTION_ARGS)
 Datum
 neurondb_deploy_model(PG_FUNCTION_ARGS)
 {
-	text *project_name_text = PG_GETARG_TEXT_PP(0);
-	int32 version = PG_ARGISNULL(1) ? -1 : PG_GETARG_INT32(1);
-	char *project_name = text_to_cstring(project_name_text);
+	text	   *project_name_text = PG_GETARG_TEXT_PP(0);
+	int32		version = PG_ARGISNULL(1) ? -1 : PG_GETARG_INT32(1);
+	char	   *project_name = text_to_cstring(project_name_text);
 	StringInfoData sql;
-	int ret;
+	int			ret;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_connect failed")));
 
 	/* Undeploy all current models for this project */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"UPDATE neurondb.ml_models SET is_deployed = FALSE "
-		"WHERE project_id = (SELECT project_id FROM "
-		"neurondb.ml_projects WHERE project_name = %s)",
-		quote_literal_cstr(project_name));
+					 "UPDATE neurondb.ml_models SET is_deployed = FALSE "
+					 "WHERE project_id = (SELECT project_id FROM "
+					 "neurondb.ml_projects WHERE project_name = %s)",
+					 quote_literal_cstr(project_name));
 
 	ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -929,25 +945,26 @@ neurondb_deploy_model(PG_FUNCTION_ARGS)
 	if (version > 0)
 	{
 		appendStringInfo(&sql,
-			"UPDATE neurondb.ml_models SET is_deployed = TRUE, "
-			"deployed_at = NOW() "
-			"WHERE project_id = (SELECT project_id FROM "
-			"neurondb.ml_projects WHERE project_name = %s) "
-			"AND version = %d AND status = 'completed'",
-			quote_literal_cstr(project_name),
-			version);
-	} else
+						 "UPDATE neurondb.ml_models SET is_deployed = TRUE, "
+						 "deployed_at = NOW() "
+						 "WHERE project_id = (SELECT project_id FROM "
+						 "neurondb.ml_projects WHERE project_name = %s) "
+						 "AND version = %d AND status = 'completed'",
+						 quote_literal_cstr(project_name),
+						 version);
+	}
+	else
 	{
 		appendStringInfo(&sql,
-			"UPDATE neurondb.ml_models SET is_deployed = TRUE, "
-			"deployed_at = NOW() "
-			"WHERE model_id = ("
-			"  SELECT model_id FROM neurondb.ml_models "
-			"  WHERE project_id = (SELECT project_id FROM "
-			"neurondb.ml_projects WHERE project_name = %s) "
-			"  AND status = 'completed' "
-			"  ORDER BY version DESC LIMIT 1)",
-			quote_literal_cstr(project_name));
+						 "UPDATE neurondb.ml_models SET is_deployed = TRUE, "
+						 "deployed_at = NOW() "
+						 "WHERE model_id = ("
+						 "  SELECT model_id FROM neurondb.ml_models "
+						 "  WHERE project_id = (SELECT project_id FROM "
+						 "neurondb.ml_projects WHERE project_name = %s) "
+						 "  AND status = 'completed' "
+						 "  ORDER BY version DESC LIMIT 1)",
+						 quote_literal_cstr(project_name));
 	}
 
 	ret = ndb_spi_execute_safe(sql.data, false, 0);
@@ -957,14 +974,14 @@ neurondb_deploy_model(PG_FUNCTION_ARGS)
 
 	if (ret != SPI_OK_UPDATE || SPI_processed == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: failed to deploy model for project: %s",
-					project_name)));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: failed to deploy model for project: %s",
+						project_name)));
 
 	elog(LOG,
-		"neurondb: deployed model for project '%s' (version %d)",
-		project_name,
-		version);
+		 "neurondb: deployed model for project '%s' (version %d)",
+		 project_name,
+		 version);
 
 	PG_RETURN_BOOL(true);
 }
@@ -982,25 +999,25 @@ neurondb_deploy_model(PG_FUNCTION_ARGS)
 Datum
 neurondb_get_deployed_model(PG_FUNCTION_ARGS)
 {
-	text *project_name_text = PG_GETARG_TEXT_PP(0);
-	char *project_name = text_to_cstring(project_name_text);
+	text	   *project_name_text = PG_GETARG_TEXT_PP(0);
+	char	   *project_name = text_to_cstring(project_name_text);
 	StringInfoData sql;
-	int ret;
-	int model_id;
-	bool isnull;
+	int			ret;
+	int			model_id;
+	bool		isnull;
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT model_id FROM neurondb.ml_models "
-		"WHERE project_id = (SELECT project_id FROM "
-		"neurondb.ml_projects WHERE project_name = %s) "
-		"AND is_deployed = TRUE LIMIT 1",
-		quote_literal_cstr(project_name));
+					 "SELECT model_id FROM neurondb.ml_models "
+					 "WHERE project_id = (SELECT project_id FROM "
+					 "neurondb.ml_projects WHERE project_name = %s) "
+					 "AND is_deployed = TRUE LIMIT 1",
+					 quote_literal_cstr(project_name));
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_connect failed")));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -1012,7 +1029,7 @@ neurondb_get_deployed_model(PG_FUNCTION_ARGS)
 	}
 
 	model_id = DatumGetInt32(SPI_getbinval(
-		SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+										   SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
 
 	SPI_finish();
 
@@ -1035,35 +1052,35 @@ neurondb_get_deployed_model(PG_FUNCTION_ARGS)
 Datum
 neurondb_list_project_models(PG_FUNCTION_ARGS)
 {
-	text *project_name_text = PG_GETARG_TEXT_PP(0);
-	char *project_name = text_to_cstring(project_name_text);
-	ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
-	TupleDesc tupdesc;
+	text	   *project_name_text = PG_GETARG_TEXT_PP(0);
+	char	   *project_name = text_to_cstring(project_name_text);
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	TupleDesc	tupdesc;
 	Tuplestorestate *tupstore;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
 	StringInfoData sql;
-	int ret;
-	int i;
+	int			ret;
+	int			i;
 
 	/* Check result context */
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("set-valued function called in context "
-				       "that cannot accept a set")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("set-valued function called in context "
+						"that cannot accept a set")));
 
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("materialize mode required, but it is "
-				       "not allowed in this context")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("materialize mode required, but it is "
+						"not allowed in this context")));
 
 	/* Build tuple descriptor */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: return type must be a row type")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: return type must be a row type")));
 
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
 	oldcontext = MemoryContextSwitchTo(per_query_ctx);
@@ -1078,31 +1095,31 @@ neurondb_list_project_models(PG_FUNCTION_ARGS)
 	/* Query models */
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_connect failed")));
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT model_id, version, algorithm::text, status::text, "
-		"is_deployed, "
-		"metrics, training_time_ms, created_at "
-		"FROM neurondb.ml_models "
-		"WHERE project_id = (SELECT project_id FROM "
-		"neurondb.ml_projects WHERE project_name = %s) "
-		"ORDER BY version DESC",
-		quote_literal_cstr(project_name));
+					 "SELECT model_id, version, algorithm::text, status::text, "
+					 "is_deployed, "
+					 "metrics, training_time_ms, created_at "
+					 "FROM neurondb.ml_models "
+					 "WHERE project_id = (SELECT project_id FROM "
+					 "neurondb.ml_projects WHERE project_name = %s) "
+					 "ORDER BY version DESC",
+					 quote_literal_cstr(project_name));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 
 	if (ret == SPI_OK_SELECT)
 	{
-		for (i = 0; i < (int)SPI_processed; i++)
+		for (i = 0; i < (int) SPI_processed; i++)
 		{
-			HeapTuple spi_tuple = SPI_tuptable->vals[i];
-			Datum values[8];
-			bool nulls[8];
-			int j;
+			HeapTuple	spi_tuple = SPI_tuptable->vals[i];
+			Datum		values[8];
+			bool		nulls[8];
+			int			j;
 
 			memset(nulls, 0, sizeof(nulls));
 
@@ -1110,9 +1127,9 @@ neurondb_list_project_models(PG_FUNCTION_ARGS)
 			for (j = 0; j < 8; j++)
 			{
 				values[j] = SPI_getbinval(spi_tuple,
-					SPI_tuptable->tupdesc,
-					j + 1,
-					&nulls[j]);
+										  SPI_tuptable->tupdesc,
+										  j + 1,
+										  &nulls[j]);
 			}
 
 			tuplestore_putvalues(tupstore, tupdesc, values, nulls);
@@ -1121,5 +1138,5 @@ neurondb_list_project_models(PG_FUNCTION_ARGS)
 
 	SPI_finish();
 
-	return (Datum)0;
+	return (Datum) 0;
 }

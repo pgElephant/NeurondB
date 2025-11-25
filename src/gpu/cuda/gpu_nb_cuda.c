@@ -38,30 +38,31 @@
 /* Gaussian Naive Bayes model structure (matches ml_naive_bayes.c) */
 typedef struct GaussianNBModel
 {
-	double	   *class_priors;		/* P(class) */
-	double	  **means;				/* Mean for each feature per class */
-	double	  **variances;			/* Variance for each feature per class */
+	double	   *class_priors;	/* P(class) */
+	double	  **means;			/* Mean for each feature per class */
+	double	  **variances;		/* Variance for each feature per class */
 	int			n_classes;
 	int			n_features;
-} GaussianNBModel;
+}			GaussianNBModel;
 
 int
-ndb_cuda_nb_pack_model(const GaussianNBModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+ndb_cuda_nb_pack_model(const GaussianNBModel * model,
+					   bytea * *model_data,
+					   Jsonb * *metrics,
+					   char **errstr)
 {
-	size_t payload_bytes;
-	size_t priors_bytes;
-	size_t means_bytes;
-	size_t variances_bytes;
-	bytea *blob;
-	char *base;
+	size_t		payload_bytes;
+	size_t		priors_bytes;
+	size_t		means_bytes;
+	size_t		variances_bytes;
+	bytea	   *blob;
+	char	   *base;
 	NdbCudaNbModelHeader *hdr;
-	double *priors_dest;
-	double *means_dest;
-	double *variances_dest;
-	int i, j;
+	double	   *priors_dest;
+	double	   *means_dest;
+	double	   *variances_dest;
+	int			i,
+				j;
 
 	if (errstr)
 		*errstr = NULL;
@@ -87,12 +88,12 @@ ndb_cuda_nb_pack_model(const GaussianNBModel *model,
 	}
 
 	/* Check for integer overflow in size calculations */
-	priors_bytes = sizeof(double) * (size_t)model->n_classes;
-	means_bytes = sizeof(double) * (size_t)model->n_classes * (size_t)model->n_features;
-	variances_bytes = sizeof(double) * (size_t)model->n_classes * (size_t)model->n_features;
+	priors_bytes = sizeof(double) * (size_t) model->n_classes;
+	means_bytes = sizeof(double) * (size_t) model->n_classes * (size_t) model->n_features;
+	variances_bytes = sizeof(double) * (size_t) model->n_classes * (size_t) model->n_features;
 
-	if (means_bytes / sizeof(double) / (size_t)model->n_classes != (size_t)model->n_features ||
-		variances_bytes / sizeof(double) / (size_t)model->n_classes != (size_t)model->n_features)
+	if (means_bytes / sizeof(double) / (size_t) model->n_classes != (size_t) model->n_features ||
+		variances_bytes / sizeof(double) / (size_t) model->n_classes != (size_t) model->n_features)
 	{
 		if (errstr)
 			*errstr = pstrdup("invalid NB model: integer overflow in size calculation");
@@ -117,36 +118,37 @@ ndb_cuda_nb_pack_model(const GaussianNBModel *model,
 	}
 
 	/* Note: palloc never returns NULL in PostgreSQL - it errors on failure */
-	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
+	blob = (bytea *) palloc(VARHDRSZ + payload_bytes);
 
 	SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
 	base = VARDATA(blob);
 
-	hdr = (NdbCudaNbModelHeader *)base;
+	hdr = (NdbCudaNbModelHeader *) base;
 	hdr->n_classes = model->n_classes;
 	hdr->n_features = model->n_features;
-	hdr->n_samples = 0;  /* Not stored in model */
+	hdr->n_samples = 0;			/* Not stored in model */
 
-	priors_dest = (double *)(base + sizeof(NdbCudaNbModelHeader));
-	means_dest = (double *)(base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t)model->n_classes);
-	variances_dest = (double *)(base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t)model->n_classes + sizeof(double) * (size_t)model->n_classes * (size_t)model->n_features);
+	priors_dest = (double *) (base + sizeof(NdbCudaNbModelHeader));
+	means_dest = (double *) (base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t) model->n_classes);
+	variances_dest = (double *) (base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t) model->n_classes + sizeof(double) * (size_t) model->n_classes * (size_t) model->n_features);
 
-		if (model->class_priors != NULL)
+	if (model->class_priors != NULL)
+	{
+		for (i = 0; i < model->n_classes; i++)
 		{
-			for (i = 0; i < model->n_classes; i++)
+			double		prior = model->class_priors[i];
+
+			/* Validate prior: must be finite and in [0, 1] */
+			if (!isfinite(prior) || prior < 0.0 || prior > 1.0)
 			{
-				double prior = model->class_priors[i];
-				/* Validate prior: must be finite and in [0, 1] */
-				if (!isfinite(prior) || prior < 0.0 || prior > 1.0)
-				{
-					if (errstr)
-						*errstr = pstrdup("invalid NB model: class_priors contains invalid value (must be in [0, 1])");
-					NDB_SAFE_PFREE_AND_NULL(blob);
-					return -1;
-				}
-				priors_dest[i] = prior;
+				if (errstr)
+					*errstr = pstrdup("invalid NB model: class_priors contains invalid value (must be in [0, 1])");
+				NDB_SAFE_PFREE_AND_NULL(blob);
+				return -1;
 			}
+			priors_dest[i] = prior;
 		}
+	}
 	else
 	{
 		/* Initialize with default values if NULL */
@@ -162,7 +164,8 @@ ndb_cuda_nb_pack_model(const GaussianNBModel *model,
 			{
 				for (j = 0; j < model->n_features; j++)
 				{
-					double mean_val = model->means[i][j];
+					double		mean_val = model->means[i][j];
+
 					/* Validate mean: must be finite */
 					if (!isfinite(mean_val))
 					{
@@ -196,7 +199,8 @@ ndb_cuda_nb_pack_model(const GaussianNBModel *model,
 			{
 				for (j = 0; j < model->n_features; j++)
 				{
-					double var_val = model->variances[i][j];
+					double		var_val = model->variances[i][j];
+
 					/* Validate variance: must be finite and positive */
 					if (!isfinite(var_val) || var_val < 0.0)
 					{
@@ -229,21 +233,21 @@ ndb_cuda_nb_pack_model(const GaussianNBModel *model,
 	if (metrics != NULL)
 	{
 		StringInfoData buf;
-		Jsonb *metrics_json = NULL;
+		Jsonb	   *metrics_json = NULL;
 
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
-			"{\"algorithm\":\"naive_bayes\","
-			"\"storage\":\"gpu\","
-			"\"n_classes\":%d,"
-			"\"n_features\":%d}",
-			model->n_classes,
-			model->n_features);
+						 "{\"algorithm\":\"naive_bayes\","
+						 "\"storage\":\"gpu\","
+						 "\"n_classes\":%d,"
+						 "\"n_features\":%d}",
+						 model->n_classes,
+						 model->n_features);
 
 		PG_TRY();
 		{
 			metrics_json = DatumGetJsonbP(
-				DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+										  DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
 		}
 		PG_CATCH();
 		{
@@ -263,25 +267,25 @@ ndb_cuda_nb_pack_model(const GaussianNBModel *model,
 
 int
 ndb_cuda_nb_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	int class_count,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				  const double *labels,
+				  int n_samples,
+				  int feature_dim,
+				  int class_count,
+				  const Jsonb * hyperparams,
+				  bytea * *model_data,
+				  Jsonb * *metrics,
+				  char **errstr)
 {
-	int *class_counts = NULL;
-	double *class_priors = NULL;
-	double *means = NULL;
-	double *variances = NULL;
+	int		   *class_counts = NULL;
+	double	   *class_priors = NULL;
+	double	   *means = NULL;
+	double	   *variances = NULL;
 	struct GaussianNBModel model;
-	bytea *blob = NULL;
-	Jsonb *metrics_json = NULL;
-	int i;
-	int j;
-	int rc = -1;
+	bytea	   *blob = NULL;
+	Jsonb	   *metrics_json = NULL;
+	int			i;
+	int			j;
+	int			rc = -1;
 
 	/* Initialize model structure to avoid undefined behavior in cleanup */
 	memset(&model, 0, sizeof(GaussianNBModel));
@@ -328,7 +332,7 @@ ndb_cuda_nb_train(const float *features,
 	}
 
 	/* Check for integer overflow in memory allocation */
-	if (feature_dim > 0 && (size_t)n_samples > MaxAllocSize / sizeof(float) / (size_t)feature_dim)
+	if (feature_dim > 0 && (size_t) n_samples > MaxAllocSize / sizeof(float) / (size_t) feature_dim)
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA NB train: feature array size exceeds MaxAllocSize");
@@ -336,28 +340,28 @@ ndb_cuda_nb_train(const float *features,
 	}
 
 	elog(DEBUG1, "ndb_cuda_nb_train: entry: n_samples=%d, feature_dim=%d, class_count=%d",
-		n_samples, feature_dim, class_count);
+		 n_samples, feature_dim, class_count);
 
 	/* Allocate host memory with overflow checks */
 	/* Note: palloc never returns NULL in PostgreSQL - it errors on failure */
-	class_counts = (int *)palloc0(sizeof(int) * class_count);
-	class_priors = (double *)palloc(sizeof(double) * class_count);
+	class_counts = (int *) palloc0(sizeof(int) * class_count);
+	class_priors = (double *) palloc(sizeof(double) * class_count);
 
-	if (feature_dim > 0 && (size_t)class_count > MaxAllocSize / sizeof(double) / (size_t)feature_dim)
+	if (feature_dim > 0 && (size_t) class_count > MaxAllocSize / sizeof(double) / (size_t) feature_dim)
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA NB train: means array size exceeds MaxAllocSize");
 		goto cleanup;
 	}
-	means = (double *)palloc0(sizeof(double) * (size_t)class_count * (size_t)feature_dim);
-	variances = (double *)palloc0(sizeof(double) * (size_t)class_count * (size_t)feature_dim);
+	means = (double *) palloc0(sizeof(double) * (size_t) class_count * (size_t) feature_dim);
+	variances = (double *) palloc0(sizeof(double) * (size_t) class_count * (size_t) feature_dim);
 
 	/* Validate input data for NaN/Inf before processing */
 	/* Use rint() to match CPU training behavior - labels must be integral */
 	for (i = 0; i < n_samples; i++)
 	{
-		double label_val = labels[i];
-		int class;
+		double		label_val = labels[i];
+		int			class;
 
 		if (!isfinite(label_val))
 		{
@@ -370,7 +374,7 @@ ndb_cuda_nb_train(const float *features,
 		class = (int) rint(label_val);
 
 		/* Check label is close to an integer and in valid range */
-		if (class < 0 || class >= class_count || fabs(label_val - (double)class) > 1e-6)
+		if (class < 0 || class >= class_count || fabs(label_val - (double) class) > 1e-6)
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA NB train: invalid class label in labels array (must be integral 0 or 1 for binary)");
@@ -391,9 +395,11 @@ ndb_cuda_nb_train(const float *features,
 		}
 	}
 
-	/* Step 1: Count samples per class using CUDA
-	 * NOTE: This may fail due to CUDA context issues in forked PostgreSQL backends.
-	 * If GPU training consistently fails, disable GPU or use CPU training. */
+	/*
+	 * Step 1: Count samples per class using CUDA NOTE: This may fail due to
+	 * CUDA context issues in forked PostgreSQL backends. If GPU training
+	 * consistently fails, disable GPU or use CPU training.
+	 */
 	elog(DEBUG1, "ndb_cuda_nb_train: Calling ndb_cuda_nb_count_classes");
 	if (ndb_cuda_nb_count_classes(labels, n_samples, class_count, class_counts) != 0)
 	{
@@ -402,7 +408,7 @@ ndb_cuda_nb_train(const float *features,
 		goto cleanup;
 	}
 	elog(DEBUG1, "ndb_cuda_nb_train: count_classes returned, class_counts[0]=%d, class_counts[1]=%d",
-		class_counts[0], class_counts[1]);
+		 class_counts[0], class_counts[1]);
 
 	/* Step 2: Compute class priors with division by zero protection */
 	elog(DEBUG1, "ndb_cuda_nb_train: Computing class priors");
@@ -416,7 +422,7 @@ ndb_cuda_nb_train(const float *features,
 	{
 		if (class_counts[i] > 0)
 		{
-			class_priors[i] = (double)class_counts[i] / (double)n_samples;
+			class_priors[i] = (double) class_counts[i] / (double) n_samples;
 			/* Validate computed prior */
 			if (!isfinite(class_priors[i]) || class_priors[i] < 0.0 || class_priors[i] > 1.0)
 			{
@@ -427,7 +433,7 @@ ndb_cuda_nb_train(const float *features,
 		}
 		else
 		{
-			class_priors[i] = 1e-10;  /* Avoid log(0) */
+			class_priors[i] = 1e-10;	/* Avoid log(0) */
 		}
 	}
 	elog(DEBUG1, "ndb_cuda_nb_train: Class priors computed, calling ndb_cuda_nb_compute_means");
@@ -459,8 +465,8 @@ ndb_cuda_nb_train(const float *features,
 	model.n_classes = class_count;
 	model.n_features = feature_dim;
 	model.class_priors = class_priors;
-	model.means = (double **)palloc(sizeof(double *) * class_count);
-	model.variances = (double **)palloc(sizeof(double *) * class_count);
+	model.means = (double **) palloc(sizeof(double *) * class_count);
+	model.variances = (double **) palloc(sizeof(double *) * class_count);
 
 	for (i = 0; i < class_count; i++)
 	{
@@ -468,7 +474,10 @@ ndb_cuda_nb_train(const float *features,
 		model.variances[i] = variances + i * feature_dim;
 	}
 
-	/* Pack model - pass NULL for metrics if caller doesn't want them to avoid DirectFunctionCall issues */
+	/*
+	 * Pack model - pass NULL for metrics if caller doesn't want them to avoid
+	 * DirectFunctionCall issues
+	 */
 	if (ndb_cuda_nb_pack_model(&model, &blob, metrics ? &metrics_json : NULL, errstr) != 0)
 	{
 		if (errstr && *errstr == NULL)
@@ -503,28 +512,29 @@ cleanup:
 }
 
 int
-ndb_cuda_nb_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	int *class_out,
-	double *probability_out,
-	char **errstr)
+ndb_cuda_nb_predict(const bytea * model_data,
+					const float *input,
+					int feature_dim,
+					int *class_out,
+					double *probability_out,
+					char **errstr)
 {
 	const char *base;
 	NdbCudaNbModelHeader *hdr;
 	const double *priors;
 	const double *means;
 	const double *variances;
-	double *class_log_probs;
-	double max_log_prob;
-	int best_class;
-	int i, j;
-	size_t expected_size;
-	double log_prob;
-	double diff;
-	double var;
-	double log_pdf;
-	double prob;
+	double	   *class_log_probs;
+	double		max_log_prob;
+	int			best_class;
+	int			i,
+				j;
+	size_t		expected_size;
+	double		log_prob;
+	double		diff;
+	double		var;
+	double		log_pdf;
+	double		prob;
 
 	if (errstr)
 		*errstr = NULL;
@@ -544,7 +554,7 @@ ndb_cuda_nb_predict(const bytea *model_data,
 	}
 
 	base = VARDATA_ANY(model_data);
-	hdr = (NdbCudaNbModelHeader *)base;
+	hdr = (NdbCudaNbModelHeader *) base;
 
 	/* Validate model header */
 	if (hdr->n_classes <= 0 || hdr->n_classes > 1000000)
@@ -568,9 +578,9 @@ ndb_cuda_nb_predict(const bytea *model_data,
 
 	/* Validate bytea size matches expected payload */
 	expected_size = sizeof(NdbCudaNbModelHeader)
-		+ sizeof(double) * (size_t)hdr->n_classes
-		+ sizeof(double) * (size_t)hdr->n_classes * (size_t)hdr->n_features
-		+ sizeof(double) * (size_t)hdr->n_classes * (size_t)hdr->n_features;
+		+ sizeof(double) * (size_t) hdr->n_classes
+		+ sizeof(double) * (size_t) hdr->n_classes * (size_t) hdr->n_features
+		+ sizeof(double) * (size_t) hdr->n_classes * (size_t) hdr->n_features;
 	if (VARSIZE_ANY_EXHDR(model_data) < expected_size)
 	{
 		if (errstr)
@@ -589,19 +599,23 @@ ndb_cuda_nb_predict(const bytea *model_data,
 		}
 	}
 
-	priors = (const double *)(base + sizeof(NdbCudaNbModelHeader));
-	means = (const double *)(base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t)hdr->n_classes);
-	variances = (const double *)(base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t)hdr->n_classes + sizeof(double) * (size_t)hdr->n_classes * (size_t)hdr->n_features);
+	priors = (const double *) (base + sizeof(NdbCudaNbModelHeader));
+	means = (const double *) (base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t) hdr->n_classes);
+	variances = (const double *) (base + sizeof(NdbCudaNbModelHeader) + sizeof(double) * (size_t) hdr->n_classes + sizeof(double) * (size_t) hdr->n_classes * (size_t) hdr->n_features);
 
 	/* Note: palloc never returns NULL in PostgreSQL - it errors on failure */
-	class_log_probs = (double *)palloc(sizeof(double) * hdr->n_classes);
+	class_log_probs = (double *) palloc(sizeof(double) * hdr->n_classes);
 
-	/* Note: priors, means, variances are computed from valid bytea offsets, so they cannot be NULL */
+	/*
+	 * Note: priors, means, variances are computed from valid bytea offsets,
+	 * so they cannot be NULL
+	 */
 
 	/* Compute log probability for each class */
 	for (i = 0; i < hdr->n_classes; i++)
 	{
-		double prior = priors[i];
+		double		prior = priors[i];
+
 		if (!isfinite(prior) || prior < 0.0)
 		{
 			if (errstr)
@@ -609,13 +623,13 @@ ndb_cuda_nb_predict(const bytea *model_data,
 			NDB_SAFE_PFREE_AND_NULL(class_log_probs);
 			return -1;
 		}
-		log_prob = log(prior + 1e-10);  /* Add small epsilon to avoid log(0) */
+		log_prob = log(prior + 1e-10);	/* Add small epsilon to avoid log(0) */
 
 		for (j = 0; j < feature_dim; j++)
 		{
-			double mean_val = means[i * feature_dim + j];
-			double var_val = variances[i * feature_dim + j];
-			
+			double		mean_val = means[i * feature_dim + j];
+			double		var_val = variances[i * feature_dim + j];
+
 			/* Validate model parameters */
 			if (!isfinite(mean_val) || !isfinite(var_val) || var_val <= 0.0)
 			{
@@ -625,9 +639,9 @@ ndb_cuda_nb_predict(const bytea *model_data,
 				return -1;
 			}
 
-			diff = (double)input[j] - mean_val;
-			var = var_val + 1e-9;  /* Regularization */
-			
+			diff = (double) input[j] - mean_val;
+			var = var_val + 1e-9;	/* Regularization */
+
 			/* Check for division by zero */
 			if (var <= 0.0)
 			{
@@ -638,7 +652,7 @@ ndb_cuda_nb_predict(const bytea *model_data,
 			}
 
 			log_pdf = -0.5 * log(2.0 * M_PI * var) - 0.5 * (diff * diff) / var;
-			
+
 			/* Validate computed log_pdf */
 			if (!isfinite(log_pdf))
 			{
@@ -677,9 +691,9 @@ ndb_cuda_nb_predict(const bytea *model_data,
 
 	/* Convert log probabilities to probabilities (normalize) */
 	{
-		double max_log = max_log_prob;
-		double sum = 0.0;
-		int k;
+		double		max_log = max_log_prob;
+		double		sum = 0.0;
+		int			k;
 
 		/* Validate max_log */
 		if (!isfinite(max_log))
@@ -692,7 +706,8 @@ ndb_cuda_nb_predict(const bytea *model_data,
 
 		for (k = 0; k < hdr->n_classes; k++)
 		{
-			double exp_val = exp(class_log_probs[k] - max_log);
+			double		exp_val = exp(class_log_probs[k] - max_log);
+
 			if (!isfinite(exp_val))
 			{
 				if (errstr)
@@ -734,17 +749,17 @@ ndb_cuda_nb_predict(const bytea *model_data,
  * Batch prediction: predict for multiple samples
  */
 int
-ndb_cuda_nb_predict_batch(const bytea *model_data,
-	const float *features,
-	int n_samples,
-	int feature_dim,
-	int *predictions_out,
-	char **errstr)
+ndb_cuda_nb_predict_batch(const bytea * model_data,
+						  const float *features,
+						  int n_samples,
+						  int feature_dim,
+						  int *predictions_out,
+						  char **errstr)
 {
 	const char *base;
-	const NdbCudaNbModelHeader *hdr;
-	int i;
-	int rc;
+	const		NdbCudaNbModelHeader *hdr;
+	int			i;
+	int			rc;
 
 	if (errstr)
 		*errstr = NULL;
@@ -766,14 +781,14 @@ ndb_cuda_nb_predict_batch(const bytea *model_data,
 	}
 
 	base = VARDATA_ANY(model_data);
-	hdr = (const NdbCudaNbModelHeader *)base;
+	hdr = (const NdbCudaNbModelHeader *) base;
 
 	/* Validate model header */
 	if (hdr->n_features != feature_dim)
 	{
 		if (errstr)
 			*errstr = psprintf("CUDA NB batch predict: feature dimension mismatch (expected %d, got %d)",
-				hdr->n_features, feature_dim);
+							   hdr->n_features, feature_dim);
 		return -1;
 	}
 
@@ -781,15 +796,15 @@ ndb_cuda_nb_predict_batch(const bytea *model_data,
 	for (i = 0; i < n_samples; i++)
 	{
 		const float *input = features + (i * feature_dim);
-		int class_out = 0;
-		double probability_out = 0.0;
+		int			class_out = 0;
+		double		probability_out = 0.0;
 
 		rc = ndb_cuda_nb_predict(model_data,
-			input,
-			feature_dim,
-			&class_out,
-			&probability_out,
-			errstr);
+								 input,
+								 feature_dim,
+								 &class_out,
+								 &probability_out,
+								 errstr);
 
 		if (rc != 0)
 		{
@@ -808,25 +823,25 @@ ndb_cuda_nb_predict_batch(const bytea *model_data,
  * Batch evaluation: compute metrics for multiple samples
  */
 int
-ndb_cuda_nb_evaluate_batch(const bytea *model_data,
-	const float *features,
-	const int *labels,
-	int n_samples,
-	int feature_dim,
-	double *accuracy_out,
-	double *precision_out,
-	double *recall_out,
-	double *f1_out,
-	char **errstr)
+ndb_cuda_nb_evaluate_batch(const bytea * model_data,
+						   const float *features,
+						   const int *labels,
+						   int n_samples,
+						   int feature_dim,
+						   double *accuracy_out,
+						   double *precision_out,
+						   double *recall_out,
+						   double *f1_out,
+						   char **errstr)
 {
-	int *predictions = NULL;
-	int tp = 0;
-	int tn = 0;
-	int fp = 0;
-	int fn = 0;
-	int i;
-	int total_correct = 0;
-	int rc;
+	int		   *predictions = NULL;
+	int			tp = 0;
+	int			tn = 0;
+	int			fp = 0;
+	int			fn = 0;
+	int			i;
+	int			total_correct = 0;
+	int			rc;
 
 	if (errstr)
 		*errstr = NULL;
@@ -849,15 +864,15 @@ ndb_cuda_nb_evaluate_batch(const bytea *model_data,
 
 	/* Allocate predictions array */
 	/* Note: palloc never returns NULL in PostgreSQL - it errors on failure */
-	predictions = (int *)palloc(sizeof(int) * (size_t)n_samples);
+	predictions = (int *) palloc(sizeof(int) * (size_t) n_samples);
 
 	/* Batch predict */
 	rc = ndb_cuda_nb_predict_batch(model_data,
-		features,
-		n_samples,
-		feature_dim,
-		predictions,
-		errstr);
+								   features,
+								   n_samples,
+								   feature_dim,
+								   predictions,
+								   errstr);
 
 	if (rc != 0)
 	{
@@ -868,8 +883,8 @@ ndb_cuda_nb_evaluate_batch(const bytea *model_data,
 	/* Compute confusion matrix for binary classification */
 	for (i = 0; i < n_samples; i++)
 	{
-		int true_label = labels[i];
-		int pred_label = predictions[i];
+		int			true_label = labels[i];
+		int			pred_label = predictions[i];
 
 		if (true_label < 0 || true_label > 1)
 			continue;
@@ -894,16 +909,16 @@ ndb_cuda_nb_evaluate_batch(const bytea *model_data,
 
 	/* Compute metrics */
 	*accuracy_out = (n_samples > 0)
-		? ((double)total_correct / (double)n_samples)
+		? ((double) total_correct / (double) n_samples)
 		: 0.0;
 
 	if ((tp + fp) > 0)
-		*precision_out = (double)tp / (double)(tp + fp);
+		*precision_out = (double) tp / (double) (tp + fp);
 	else
 		*precision_out = 0.0;
 
 	if ((tp + fn) > 0)
-		*recall_out = (double)tp / (double)(tp + fn);
+		*recall_out = (double) tp / (double) (tp + fn);
 	else
 		*recall_out = 0.0;
 
@@ -924,14 +939,14 @@ ndb_cuda_nb_evaluate_batch(const bytea *model_data,
 
 int
 ndb_cuda_nb_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	int class_count,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				  const double *labels,
+				  int n_samples,
+				  int feature_dim,
+				  int class_count,
+				  const Jsonb * hyperparams,
+				  bytea * *model_data,
+				  Jsonb * *metrics,
+				  char **errstr)
 {
 	(void) features;
 	(void) labels;
@@ -947,12 +962,12 @@ ndb_cuda_nb_train(const float *features,
 }
 
 int
-ndb_cuda_nb_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	int *class_out,
-	double *probability_out,
-	char **errstr)
+ndb_cuda_nb_predict(const bytea * model_data,
+					const float *input,
+					int feature_dim,
+					int *class_out,
+					double *probability_out,
+					char **errstr)
 {
 	(void) model_data;
 	(void) input;
@@ -966,9 +981,9 @@ ndb_cuda_nb_predict(const bytea *model_data,
 
 int
 ndb_cuda_nb_pack_model(const struct GaussianNBModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+					   bytea * *model_data,
+					   Jsonb * *metrics,
+					   char **errstr)
 {
 	(void) model;
 	(void) model_data;
@@ -979,12 +994,12 @@ ndb_cuda_nb_pack_model(const struct GaussianNBModel *model,
 }
 
 int
-ndb_cuda_nb_predict_batch(const bytea *model_data,
-	const float *features,
-	int n_samples,
-	int feature_dim,
-	int *predictions_out,
-	char **errstr)
+ndb_cuda_nb_predict_batch(const bytea * model_data,
+						  const float *features,
+						  int n_samples,
+						  int feature_dim,
+						  int *predictions_out,
+						  char **errstr)
 {
 	(void) model_data;
 	(void) features;
@@ -997,16 +1012,16 @@ ndb_cuda_nb_predict_batch(const bytea *model_data,
 }
 
 int
-ndb_cuda_nb_evaluate_batch(const bytea *model_data,
-	const float *features,
-	const int *labels,
-	int n_samples,
-	int feature_dim,
-	double *accuracy_out,
-	double *precision_out,
-	double *recall_out,
-	double *f1_out,
-	char **errstr)
+ndb_cuda_nb_evaluate_batch(const bytea * model_data,
+						   const float *features,
+						   const int *labels,
+						   int n_samples,
+						   int feature_dim,
+						   double *accuracy_out,
+						   double *precision_out,
+						   double *recall_out,
+						   double *f1_out,
+						   char **errstr)
 {
 	(void) model_data;
 	(void) features;
@@ -1022,5 +1037,4 @@ ndb_cuda_nb_evaluate_batch(const bytea *model_data,
 	return -1;
 }
 
-#endif /* NDB_GPU_CUDA */
-
+#endif							/* NDB_GPU_CUDA */

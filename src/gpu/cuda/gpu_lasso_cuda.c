@@ -31,33 +31,33 @@
 
 /* Reuse linear regression evaluation kernel */
 extern cudaError_t launch_linreg_eval_kernel(const float *features,
-	const double *targets,
-	const double *coefficients,
-	double intercept,
-	int n_samples,
-	int feature_dim,
-	double *sse_out,
-	double *sae_out,
-	long long *count_out);
+											 const double *targets,
+											 const double *coefficients,
+											 double intercept,
+											 int n_samples,
+											 int feature_dim,
+											 double *sse_out,
+											 double *sae_out,
+											 long long *count_out);
 
 /* Lasso coordinate descent kernels */
 extern cudaError_t launch_lasso_compute_rho_kernel(const float *features,
-	const double *residuals,
-	int n_samples,
-	int feature_dim,
-	int feature_idx,
-	double *rho_out);
+												   const double *residuals,
+												   int n_samples,
+												   int feature_dim,
+												   int feature_idx,
+												   double *rho_out);
 extern cudaError_t launch_lasso_compute_z_kernel(const float *features,
-	int n_samples,
-	int feature_dim,
-	int feature_idx,
-	double *z_out);
+												 int n_samples,
+												 int feature_dim,
+												 int feature_idx,
+												 double *z_out);
 extern cudaError_t launch_lasso_update_residuals_kernel(const float *features,
-	double *residuals,
-	int n_samples,
-	int feature_dim,
-	int feature_idx,
-	double weight_diff);
+														double *residuals,
+														int n_samples,
+														int feature_dim,
+														int feature_idx,
+														double weight_diff);
 
 /*
  * Soft thresholding operator for Lasso
@@ -73,10 +73,10 @@ soft_threshold(double x, double lambda)
 }
 
 int
-ndb_cuda_lasso_pack_model(const LassoModel *model,
-			 bytea **model_data,
-			 Jsonb **metrics,
-			 char **errstr)
+ndb_cuda_lasso_pack_model(const LassoModel * model,
+						  bytea * *model_data,
+						  Jsonb * *metrics,
+						  char **errstr)
 {
 	size_t		payload_bytes;
 	bytea	   *blob;
@@ -112,37 +112,38 @@ ndb_cuda_lasso_pack_model(const LassoModel *model,
 	if (model->coefficients)
 	{
 		int			i;
+
 		for (i = 0; i < model->n_features; i++)
 			coef_dest[i] = (float) model->coefficients[i];
 	}
 
 	if (metrics)
 	{
-		StringInfoData	buf;
-		Jsonb		   *metrics_json;
+		StringInfoData buf;
+		Jsonb	   *metrics_json;
 
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
-			"{\"algorithm\":\"lasso\","
-			"\"storage\":\"gpu\","
-			"\"n_features\":%d,"
-			"\"n_samples\":%d,"
-			"\"lambda\":%.6f,"
-			"\"max_iters\":%d,"
-			"\"r_squared\":%.6f,"
-			"\"mse\":%.6f,"
-			"\"mae\":%.6f}",
-			model->n_features,
-			model->n_samples,
-			model->lambda,
-			model->max_iters,
-			model->r_squared,
-			model->mse,
-			model->mae);
+						 "{\"algorithm\":\"lasso\","
+						 "\"storage\":\"gpu\","
+						 "\"n_features\":%d,"
+						 "\"n_samples\":%d,"
+						 "\"lambda\":%.6f,"
+						 "\"max_iters\":%d,"
+						 "\"r_squared\":%.6f,"
+						 "\"mse\":%.6f,"
+						 "\"mae\":%.6f}",
+						 model->n_features,
+						 model->n_samples,
+						 model->lambda,
+						 model->max_iters,
+						 model->r_squared,
+						 model->mse,
+						 model->mae);
 
 		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-											 jsonb_in,
-											 CStringGetDatum(buf.data)));
+														  jsonb_in,
+														  CStringGetDatum(buf.data)));
 		NDB_SAFE_PFREE_AND_NULL(buf.data);
 		*metrics = metrics_json;
 	}
@@ -153,25 +154,27 @@ ndb_cuda_lasso_pack_model(const LassoModel *model,
 
 int
 ndb_cuda_lasso_train(const float *features,
-		     const double *targets,
-		     int n_samples,
-		     int feature_dim,
-		     const Jsonb *hyperparams,
-		     bytea **model_data,
-		     Jsonb **metrics,
-		     char **errstr)
+					 const double *targets,
+					 int n_samples,
+					 int feature_dim,
+					 const Jsonb * hyperparams,
+					 bytea * *model_data,
+					 Jsonb * *metrics,
+					 char **errstr)
 {
 	double		lambda = 0.01;
-	int		max_iters = 1000;
+	int			max_iters = 1000;
 	double	   *weights = NULL;
 	double	   *weights_old = NULL;
 	double	   *residuals = NULL;
 	double		y_mean = 0.0;
 	bytea	   *payload = NULL;
 	Jsonb	   *metrics_json = NULL;
-	int		iter, i, j;
+	int			iter,
+				i,
+				j;
 	bool		converged = false;
-	int		rc = -1;
+	int			rc = -1;
 	cudaError_t cuda_err;
 	float	   *d_features = NULL;
 	double	   *d_residuals = NULL;
@@ -181,7 +184,7 @@ ndb_cuda_lasso_train(const float *features,
 	double	   *h_z = NULL;
 	size_t		feature_bytes;
 	size_t		residual_bytes;
-	int		cleanup_needed = 0;
+	int			cleanup_needed = 0;
 
 	if (errstr)
 		*errstr = NULL;
@@ -191,7 +194,7 @@ ndb_cuda_lasso_train(const float *features,
 	{
 		if (errstr)
 			*errstr = pstrdup("invalid input parameters for CUDA "
-					  "Lasso train");
+							  "Lasso train");
 		return -1;
 	}
 
@@ -199,16 +202,17 @@ ndb_cuda_lasso_train(const float *features,
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: lasso: dataset too large: n_samples=%d, feature_dim=%d",
-					n_samples, feature_dim);
+							   n_samples, feature_dim);
 		return -1;
 	}
 
 	/* Extract hyperparameters from JSON */
 	if (hyperparams)
 	{
-		char   *hyperparams_text;
+		char	   *hyperparams_text;
+
 		hyperparams_text = DatumGetCString(DirectFunctionCall1(
-			jsonb_out, JsonbPGetDatum(hyperparams)));
+															   jsonb_out, JsonbPGetDatum(hyperparams)));
 		/* TODO: Parse lambda and max_iters from JSON */
 		NDB_SAFE_PFREE_AND_NULL(hyperparams_text);
 	}
@@ -224,7 +228,7 @@ ndb_cuda_lasso_train(const float *features,
 		}
 		y_mean += targets[i];
 	}
-	y_mean /= (double)n_samples;
+	y_mean /= (double) n_samples;
 
 	weights = (double *) palloc0(sizeof(double) * feature_dim);
 	weights_old = (double *) palloc(sizeof(double) * feature_dim);
@@ -236,43 +240,43 @@ ndb_cuda_lasso_train(const float *features,
 		residuals[i] = targets[i] - y_mean;
 
 	/* Allocate GPU memory */
-	feature_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
-	residual_bytes = sizeof(double) * (size_t)n_samples;
+	feature_bytes = sizeof(float) * (size_t) n_samples * (size_t) feature_dim;
+	residual_bytes = sizeof(double) * (size_t) n_samples;
 
-	cuda_err = cudaMalloc((void **)&d_features, feature_bytes);
+	cuda_err = cudaMalloc((void **) &d_features, feature_bytes);
 	if (cuda_err != cudaSuccess)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: lasso: failed to allocate GPU memory for features: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		goto cleanup_host;
 	}
 	cleanup_needed = 1;
 
-	cuda_err = cudaMalloc((void **)&d_residuals, residual_bytes);
+	cuda_err = cudaMalloc((void **) &d_residuals, residual_bytes);
 	if (cuda_err != cudaSuccess)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: lasso: failed to allocate GPU memory for residuals: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		goto cleanup;
 	}
 
-	cuda_err = cudaMalloc((void **)&d_rho, sizeof(double));
+	cuda_err = cudaMalloc((void **) &d_rho, sizeof(double));
 	if (cuda_err != cudaSuccess)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: lasso: failed to allocate GPU memory for rho: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		goto cleanup;
 	}
 
-	cuda_err = cudaMalloc((void **)&d_z, sizeof(double));
+	cuda_err = cudaMalloc((void **) &d_z, sizeof(double));
 	if (cuda_err != cudaSuccess)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: lasso: failed to allocate GPU memory for z: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		goto cleanup;
 	}
 
@@ -282,7 +286,7 @@ ndb_cuda_lasso_train(const float *features,
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: lasso: failed to copy features to GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		goto cleanup;
 	}
 
@@ -291,7 +295,7 @@ ndb_cuda_lasso_train(const float *features,
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: lasso: failed to copy residuals to GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		goto cleanup;
 	}
 
@@ -311,16 +315,16 @@ ndb_cuda_lasso_train(const float *features,
 
 			/* Compute rho on GPU */
 			cuda_err = launch_lasso_compute_rho_kernel(d_features,
-				d_residuals,
-				n_samples,
-				feature_dim,
-				j,
-				d_rho);
+													   d_residuals,
+													   n_samples,
+													   feature_dim,
+													   j,
+													   d_rho);
 			if (cuda_err != cudaSuccess)
 			{
 				if (errstr)
 					*errstr = psprintf("neurondb: lasso: rho kernel failed: %s",
-							cudaGetErrorString(cuda_err));
+									   cudaGetErrorString(cuda_err));
 				goto cleanup;
 			}
 
@@ -329,7 +333,7 @@ ndb_cuda_lasso_train(const float *features,
 			{
 				if (errstr)
 					*errstr = psprintf("neurondb: lasso: sync after rho failed: %s",
-							cudaGetErrorString(cuda_err));
+									   cudaGetErrorString(cuda_err));
 				goto cleanup;
 			}
 
@@ -338,22 +342,22 @@ ndb_cuda_lasso_train(const float *features,
 			{
 				if (errstr)
 					*errstr = psprintf("neurondb: lasso: failed to copy rho from GPU: %s",
-							cudaGetErrorString(cuda_err));
+									   cudaGetErrorString(cuda_err));
 				goto cleanup;
 			}
 			rho = *h_rho;
 
 			/* Compute z on GPU */
 			cuda_err = launch_lasso_compute_z_kernel(d_features,
-				n_samples,
-				feature_dim,
-				j,
-				d_z);
+													 n_samples,
+													 feature_dim,
+													 j,
+													 d_z);
 			if (cuda_err != cudaSuccess)
 			{
 				if (errstr)
 					*errstr = psprintf("neurondb: lasso: z kernel failed: %s",
-							cudaGetErrorString(cuda_err));
+									   cudaGetErrorString(cuda_err));
 				goto cleanup;
 			}
 
@@ -362,7 +366,7 @@ ndb_cuda_lasso_train(const float *features,
 			{
 				if (errstr)
 					*errstr = psprintf("neurondb: lasso: sync after z failed: %s",
-							cudaGetErrorString(cuda_err));
+									   cudaGetErrorString(cuda_err));
 				goto cleanup;
 			}
 
@@ -371,7 +375,7 @@ ndb_cuda_lasso_train(const float *features,
 			{
 				if (errstr)
 					*errstr = psprintf("neurondb: lasso: failed to copy z from GPU: %s",
-							cudaGetErrorString(cuda_err));
+									   cudaGetErrorString(cuda_err));
 				goto cleanup;
 			}
 			z = *h_z;
@@ -393,16 +397,16 @@ ndb_cuda_lasso_train(const float *features,
 			{
 				/* Update residuals on GPU */
 				cuda_err = launch_lasso_update_residuals_kernel(d_features,
-					d_residuals,
-					n_samples,
-					feature_dim,
-					j,
-					weight_diff);
+																d_residuals,
+																n_samples,
+																feature_dim,
+																j,
+																weight_diff);
 				if (cuda_err != cudaSuccess)
 				{
 					if (errstr)
 						*errstr = psprintf("neurondb: lasso: residual update kernel failed: %s",
-								cudaGetErrorString(cuda_err));
+										   cudaGetErrorString(cuda_err));
 					goto cleanup;
 				}
 
@@ -411,7 +415,7 @@ ndb_cuda_lasso_train(const float *features,
 				{
 					if (errstr)
 						*errstr = psprintf("neurondb: lasso: sync after residual update failed: %s",
-								cudaGetErrorString(cuda_err));
+										   cudaGetErrorString(cuda_err));
 					goto cleanup;
 				}
 			}
@@ -420,7 +424,8 @@ ndb_cuda_lasso_train(const float *features,
 		diff = 0.0;
 		for (j = 0; j < feature_dim; j++)
 		{
-			double d = weights[j] - weights_old[j];
+			double		d = weights[j] - weights_old[j];
+
 			diff += d * d;
 		}
 		if (sqrt(diff) < 1e-6)
@@ -433,7 +438,7 @@ ndb_cuda_lasso_train(const float *features,
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: lasso: failed to copy residuals from GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		goto cleanup;
 	}
 
@@ -461,8 +466,8 @@ ndb_cuda_lasso_train(const float *features,
 		/* Compute metrics using residuals already on host */
 		for (i = 0; i < n_samples; i++)
 		{
-			double	error = residuals[i];
-			double	target_diff = targets[i] - y_mean;
+			double		error = residuals[i];
+			double		target_diff = targets[i] - y_mean;
 
 			mse += error * error;
 			mae += fabs(error);
@@ -470,8 +475,8 @@ ndb_cuda_lasso_train(const float *features,
 			ss_tot += target_diff * target_diff;
 		}
 
-		mse /= (double)n_samples;
-		mae /= (double)n_samples;
+		mse /= (double) n_samples;
+		mae /= (double) n_samples;
 		model.r_squared = (ss_tot > 1e-10) ? (1.0 - (ss_res / ss_tot)) : 0.0;
 		model.mse = mse;
 		model.mae = mae;
@@ -484,7 +489,7 @@ ndb_cuda_lasso_train(const float *features,
 			model.mae = 0.0;
 
 		rc = ndb_cuda_lasso_pack_model(
-			&model, &payload, &metrics_json, errstr);
+									   &model, &payload, &metrics_json, errstr);
 
 		NDB_SAFE_PFREE_AND_NULL(model.coefficients);
 	}
@@ -528,17 +533,17 @@ cleanup_host:
 }
 
 int
-ndb_cuda_lasso_predict(const bytea *model_data,
-		      const float *input,
-		      int feature_dim,
-		      double *prediction_out,
-		      char **errstr)
+ndb_cuda_lasso_predict(const bytea * model_data,
+					   const float *input,
+					   int feature_dim,
+					   double *prediction_out,
+					   char **errstr)
 {
-	const NdbCudaLassoModelHeader *hdr;
+	const		NdbCudaLassoModelHeader *hdr;
 	const float *coefficients;
-	const bytea *detoasted;
+	const		bytea *detoasted;
 	double		prediction;
-	int		i;
+	int			i;
 
 	if (errstr)
 		*errstr = NULL;
@@ -546,7 +551,7 @@ ndb_cuda_lasso_predict(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = pstrdup(
-				"invalid parameters for CUDA Lasso predict");
+							  "invalid parameters for CUDA Lasso predict");
 		return -1;
 	}
 
@@ -554,17 +559,17 @@ ndb_cuda_lasso_predict(const bytea *model_data,
 
 	/* Validate bytea size */
 	{
-		size_t	expected_size = sizeof(NdbCudaLassoModelHeader)
-					+ sizeof(float) * (size_t) feature_dim;
-		size_t	actual_size = VARSIZE(detoasted) - VARHDRSZ;
+		size_t		expected_size = sizeof(NdbCudaLassoModelHeader)
+			+ sizeof(float) * (size_t) feature_dim;
+		size_t		actual_size = VARSIZE(detoasted) - VARHDRSZ;
 
 		if (actual_size < expected_size)
 		{
 			if (errstr)
 				*errstr = psprintf("model data too small: "
-						   "expected %zu bytes, got %zu",
-						   expected_size,
-						   actual_size);
+								   "expected %zu bytes, got %zu",
+								   expected_size,
+								   actual_size);
 			return -1;
 		}
 	}
@@ -574,14 +579,14 @@ ndb_cuda_lasso_predict(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = psprintf("feature dimension mismatch: model "
-					   "has %d, input has %d",
-					   hdr->feature_dim,
-					   feature_dim);
+							   "has %d, input has %d",
+							   hdr->feature_dim,
+							   feature_dim);
 		return -1;
 	}
 
 	coefficients = (const float *) ((const char *) hdr
-					+ sizeof(NdbCudaLassoModelHeader));
+									+ sizeof(NdbCudaLassoModelHeader));
 
 	prediction = hdr->intercept;
 	for (i = 0; i < feature_dim; i++)
@@ -594,45 +599,45 @@ ndb_cuda_lasso_predict(const bytea *model_data,
 /*
  * ndb_cuda_lasso_evaluate
  *    GPU-accelerated batch evaluation for Lasso Regression
- * 
+ *
  * Reuses the linear regression evaluation kernel since evaluation
  * is identical (just computes predictions and metrics).
  */
 int
-ndb_cuda_lasso_evaluate(const bytea *model_data,
-	const float *features,
-	const double *targets,
-	int n_samples,
-	int feature_dim,
-	double *mse_out,
-	double *mae_out,
-	double *rmse_out,
-	double *r_squared_out,
-	char **errstr)
+ndb_cuda_lasso_evaluate(const bytea * model_data,
+						const float *features,
+						const double *targets,
+						int n_samples,
+						int feature_dim,
+						double *mse_out,
+						double *mae_out,
+						double *rmse_out,
+						double *r_squared_out,
+						char **errstr)
 {
-	const NdbCudaLassoModelHeader *hdr;
+	const		NdbCudaLassoModelHeader *hdr;
 	const float *coefficients;
-	const bytea *detoasted;
+	const		bytea *detoasted;
 	cudaError_t cuda_err;
-	float *d_features = NULL;
-	double *d_targets = NULL;
-	double *d_coefficients = NULL;
-	double *d_sse = NULL;
-	double *d_sae = NULL;
-	long long *d_count = NULL;
-	double h_sse = 0.0;
-	double h_sae = 0.0;
-	long long h_count = 0;
-	double y_mean = 0.0;
-	double ss_tot = 0.0;
-	double mse = 0.0;
-	double mae = 0.0;
-	double rmse = 0.0;
-	double r_squared = 0.0;
-	size_t feature_bytes;
-	size_t target_bytes;
-	size_t coeff_bytes;
-	int i;
+	float	   *d_features = NULL;
+	double	   *d_targets = NULL;
+	double	   *d_coefficients = NULL;
+	double	   *d_sse = NULL;
+	double	   *d_sae = NULL;
+	long long  *d_count = NULL;
+	double		h_sse = 0.0;
+	double		h_sae = 0.0;
+	long long	h_count = 0;
+	double		y_mean = 0.0;
+	double		ss_tot = 0.0;
+	double		mse = 0.0;
+	double		mae = 0.0;
+	double		rmse = 0.0;
+	double		r_squared = 0.0;
+	size_t		feature_bytes;
+	size_t		target_bytes;
+	size_t		coeff_bytes;
+	int			i;
 
 	if (errstr)
 		*errstr = NULL;
@@ -663,7 +668,7 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: invalid n_samples %d",
-					n_samples);
+							   n_samples);
 		return -1;
 	}
 
@@ -671,7 +676,7 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: invalid feature_dim %d",
-					feature_dim);
+							   feature_dim);
 		return -1;
 	}
 
@@ -683,37 +688,37 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 	}
 
 	/* Detoast the bytea to ensure we have the full data */
-	detoasted = (const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+	detoasted = (const bytea *) PG_DETOAST_DATUM(PointerGetDatum(model_data));
 
 	/* Validate bytea size */
 	{
-		size_t expected_size = sizeof(NdbCudaLassoModelHeader)
-			+ sizeof(float) * (size_t)feature_dim;
-		size_t actual_size = VARSIZE(detoasted) - VARHDRSZ;
+		size_t		expected_size = sizeof(NdbCudaLassoModelHeader)
+			+ sizeof(float) * (size_t) feature_dim;
+		size_t		actual_size = VARSIZE(detoasted) - VARHDRSZ;
 
 		if (actual_size < expected_size)
 		{
 			if (errstr)
 				*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: model data too small: "
-						"expected %zu bytes, got %zu",
-					expected_size,
-					actual_size);
+								   "expected %zu bytes, got %zu",
+								   expected_size,
+								   actual_size);
 			return -1;
 		}
 	}
 
-	hdr = (const NdbCudaLassoModelHeader *)VARDATA(detoasted);
+	hdr = (const NdbCudaLassoModelHeader *) VARDATA(detoasted);
 	if (hdr->feature_dim != feature_dim)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: feature dimension mismatch: "
-					"model has %d, input has %d",
-				hdr->feature_dim,
-				feature_dim);
+							   "model has %d, input has %d",
+							   hdr->feature_dim,
+							   feature_dim);
 		return -1;
 	}
 
-	coefficients = (const float *)((const char *)hdr + sizeof(NdbCudaLassoModelHeader));
+	coefficients = (const float *) ((const char *) hdr + sizeof(NdbCudaLassoModelHeader));
 
 	/* Compute y_mean for R-squared calculation */
 	for (i = 0; i < n_samples; i++)
@@ -722,46 +727,46 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 			y_mean += targets[i];
 	}
 	if (n_samples > 0)
-		y_mean /= (double)n_samples;
+		y_mean /= (double) n_samples;
 
 	/* Allocate GPU memory for features */
-	feature_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
-	cuda_err = cudaMalloc((void **)&d_features, feature_bytes);
+	feature_bytes = sizeof(float) * (size_t) n_samples * (size_t) feature_dim;
+	cuda_err = cudaMalloc((void **) &d_features, feature_bytes);
 	if (cuda_err != cudaSuccess)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to allocate GPU memory for features: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
 	/* Allocate GPU memory for targets */
-	target_bytes = sizeof(double) * (size_t)n_samples;
-	cuda_err = cudaMalloc((void **)&d_targets, target_bytes);
+	target_bytes = sizeof(double) * (size_t) n_samples;
+	cuda_err = cudaMalloc((void **) &d_targets, target_bytes);
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to allocate GPU memory for targets: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
 	/* Allocate GPU memory for coefficients */
-	coeff_bytes = sizeof(double) * (size_t)feature_dim;
-	cuda_err = cudaMalloc((void **)&d_coefficients, coeff_bytes);
+	coeff_bytes = sizeof(double) * (size_t) feature_dim;
+	cuda_err = cudaMalloc((void **) &d_coefficients, coeff_bytes);
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
 		cudaFree(d_targets);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to allocate GPU memory for coefficients: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
 	/* Allocate GPU memory for output accumulators */
-	cuda_err = cudaMalloc((void **)&d_sse, sizeof(double));
+	cuda_err = cudaMalloc((void **) &d_sse, sizeof(double));
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
@@ -769,11 +774,11 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		cudaFree(d_coefficients);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to allocate GPU memory for SSE: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
-	cuda_err = cudaMalloc((void **)&d_sae, sizeof(double));
+	cuda_err = cudaMalloc((void **) &d_sae, sizeof(double));
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
@@ -782,11 +787,11 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		cudaFree(d_sse);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to allocate GPU memory for SAE: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
-	cuda_err = cudaMalloc((void **)&d_count, sizeof(long long));
+	cuda_err = cudaMalloc((void **) &d_count, sizeof(long long));
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
@@ -796,7 +801,7 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		cudaFree(d_sae);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to allocate GPU memory for count: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -812,7 +817,7 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to copy features to GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -828,13 +833,14 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to copy targets to GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
 	/* Convert coefficients from float to double and copy to GPU */
 	{
-		double *h_coefficients_double = (double *)palloc(sizeof(double) * (size_t)feature_dim);
+		double	   *h_coefficients_double = (double *) palloc(sizeof(double) * (size_t) feature_dim);
+
 		if (h_coefficients_double == NULL)
 		{
 			cudaFree(d_features);
@@ -849,7 +855,7 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		}
 
 		for (i = 0; i < feature_dim; i++)
-			h_coefficients_double[i] = (double)coefficients[i];
+			h_coefficients_double[i] = (double) coefficients[i];
 
 		cuda_err = cudaMemcpy(d_coefficients, h_coefficients_double, coeff_bytes, cudaMemcpyHostToDevice);
 		NDB_SAFE_PFREE_AND_NULL(h_coefficients_double);
@@ -864,21 +870,21 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 			cudaFree(d_count);
 			if (errstr)
 				*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to copy coefficients to GPU: %s",
-						cudaGetErrorString(cuda_err));
+								   cudaGetErrorString(cuda_err));
 			return -1;
 		}
 	}
 
 	/* Launch evaluation kernel (reuse linear regression kernel) */
 	cuda_err = launch_linreg_eval_kernel(d_features,
-		d_targets,
-		d_coefficients,
-		(double)hdr->intercept,
-		n_samples,
-		feature_dim,
-		d_sse,
-		d_sae,
-		d_count);
+										 d_targets,
+										 d_coefficients,
+										 (double) hdr->intercept,
+										 n_samples,
+										 feature_dim,
+										 d_sse,
+										 d_sae,
+										 d_count);
 
 	if (cuda_err != cudaSuccess)
 	{
@@ -890,7 +896,7 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: evaluation kernel failed: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -906,7 +912,7 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to copy SSE from GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -921,7 +927,7 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to copy SAE from GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -936,7 +942,7 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: failed to copy count from GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -949,20 +955,20 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 	cudaFree(d_count);
 
 	/* Defensive check: ensure count matches expected */
-	if (h_count != (long long)n_samples)
+	if (h_count != (long long) n_samples)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_lasso_evaluate: count mismatch: expected %d, got %lld",
-					n_samples,
-					(long long)h_count);
+							   n_samples,
+							   (long long) h_count);
 		return -1;
 	}
 
 	/* Compute final metrics */
 	if (h_count > 0)
 	{
-		mse = h_sse / (double)h_count;
-		mae = h_sae / (double)h_count;
+		mse = h_sse / (double) h_count;
+		mae = h_sae / (double) h_count;
 		rmse = sqrt(mse);
 
 		/* Compute SS_tot for R-squared */
@@ -970,7 +976,8 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 		{
 			if (targets != NULL)
 			{
-				double diff = targets[i] - y_mean;
+				double		diff = targets[i] - y_mean;
+
 				ss_tot += diff * diff;
 			}
 		}
@@ -997,4 +1004,4 @@ ndb_cuda_lasso_evaluate(const bytea *model_data,
 	return 0;
 }
 
-#endif	/* NDB_GPU_CUDA */
+#endif							/* NDB_GPU_CUDA */

@@ -89,16 +89,17 @@ PG_FUNCTION_INFO_V1(recall_at_k);
 Datum
 recall_at_k(PG_FUNCTION_ARGS)
 {
-	ArrayType *retrieved_array;
-	ArrayType *relevant_array;
-	int k;
-	int32 *retrieved_ids;
-	int32 *relevant_ids;
-	int n_retrieved;
-	int n_relevant;
-	int found_count;
-	int i, j;
-	double recall;
+	ArrayType  *retrieved_array;
+	ArrayType  *relevant_array;
+	int			k;
+	int32	   *retrieved_ids;
+	int32	   *relevant_ids;
+	int			n_retrieved;
+	int			n_relevant;
+	int			found_count;
+	int			i,
+				j;
+	double		recall;
 
 	/* Parse arguments */
 	retrieved_array = PG_GETARG_ARRAYTYPE_P(0);
@@ -108,13 +109,13 @@ recall_at_k(PG_FUNCTION_ARGS)
 	/* Extract arrays */
 	n_retrieved = ARR_DIMS(retrieved_array)[0];
 	n_relevant = ARR_DIMS(relevant_array)[0];
-	retrieved_ids = (int32 *)ARR_DATA_PTR(retrieved_array);
-	relevant_ids = (int32 *)ARR_DATA_PTR(relevant_array);
+	retrieved_ids = (int32 *) ARR_DATA_PTR(retrieved_array);
+	relevant_ids = (int32 *) ARR_DATA_PTR(relevant_array);
 
 	if (n_relevant == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("relevant_ids cannot be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("relevant_ids cannot be empty")));
 
 	if (k < 0 || k > n_retrieved)
 		k = n_retrieved;
@@ -133,14 +134,14 @@ recall_at_k(PG_FUNCTION_ARGS)
 		}
 	}
 
-	recall = (double)found_count / n_relevant;
+	recall = (double) found_count / n_relevant;
 
-		elog(DEBUG1,
-			"neurondb: Recall@%d = %.4f (found %d of %d)",
-		k,
-		recall,
-		found_count,
-		n_relevant);
+	elog(DEBUG1,
+		 "neurondb: Recall@%d = %.4f (found %d of %d)",
+		 k,
+		 recall,
+		 found_count,
+		 n_relevant);
 
 	PG_RETURN_FLOAT8(recall);
 }
@@ -155,16 +156,17 @@ PG_FUNCTION_INFO_V1(precision_at_k);
 Datum
 precision_at_k(PG_FUNCTION_ARGS)
 {
-	ArrayType *retrieved_array;
-	ArrayType *relevant_array;
-	int k;
-	int32 *retrieved_ids;
-	int32 *relevant_ids;
-	int n_retrieved;
-	int n_relevant;
-	int found_count;
-	int i, j;
-	double precision;
+	ArrayType  *retrieved_array;
+	ArrayType  *relevant_array;
+	int			k;
+	int32	   *retrieved_ids;
+	int32	   *relevant_ids;
+	int			n_retrieved;
+	int			n_relevant;
+	int			found_count;
+	int			i,
+				j;
+	double		precision;
 
 	retrieved_array = PG_GETARG_ARRAYTYPE_P(0);
 	relevant_array = PG_GETARG_ARRAYTYPE_P(1);
@@ -172,13 +174,13 @@ precision_at_k(PG_FUNCTION_ARGS)
 
 	n_retrieved = ARR_DIMS(retrieved_array)[0];
 	n_relevant = ARR_DIMS(relevant_array)[0];
-	retrieved_ids = (int32 *)ARR_DATA_PTR(retrieved_array);
-	relevant_ids = (int32 *)ARR_DATA_PTR(relevant_array);
+	retrieved_ids = (int32 *) ARR_DATA_PTR(retrieved_array);
+	relevant_ids = (int32 *) ARR_DATA_PTR(relevant_array);
 
 	if (n_relevant == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("relevant_ids cannot be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("relevant_ids cannot be empty")));
 
 	if (k < 0 || k > n_retrieved)
 		k = n_retrieved;
@@ -200,7 +202,7 @@ precision_at_k(PG_FUNCTION_ARGS)
 		}
 	}
 
-	precision = (double)found_count / k;
+	precision = (double) found_count / k;
 	PG_RETURN_FLOAT8(precision);
 }
 
@@ -214,16 +216,19 @@ PG_FUNCTION_INFO_V1(f1_at_k);
 Datum
 f1_at_k(PG_FUNCTION_ARGS)
 {
-	ArrayType *retrieved_array;
-	ArrayType *relevant_array;
-	int k;
-	int32 *retrieved_ids;
-	int32 *relevant_ids;
-	int n_retrieved;
-	int n_relevant;
-	int found_count;
-	int i, j;
-	double precision, recall, f1;
+	ArrayType  *retrieved_array;
+	ArrayType  *relevant_array;
+	int			k;
+	int32	   *retrieved_ids;
+	int32	   *relevant_ids;
+	int			n_retrieved;
+	int			n_relevant;
+	int			found_count;
+	int			i,
+				j;
+	double		precision,
+				recall,
+				f1;
 
 	retrieved_array = PG_GETARG_ARRAYTYPE_P(0);
 	relevant_array = PG_GETARG_ARRAYTYPE_P(1);
@@ -231,13 +236,13 @@ f1_at_k(PG_FUNCTION_ARGS)
 
 	n_retrieved = ARR_DIMS(retrieved_array)[0];
 	n_relevant = ARR_DIMS(relevant_array)[0];
-	retrieved_ids = (int32 *)ARR_DATA_PTR(retrieved_array);
-	relevant_ids = (int32 *)ARR_DATA_PTR(relevant_array);
+	retrieved_ids = (int32 *) ARR_DATA_PTR(retrieved_array);
+	relevant_ids = (int32 *) ARR_DATA_PTR(relevant_array);
 
 	if (n_relevant == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("relevant_ids cannot be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("relevant_ids cannot be empty")));
 
 	if (k < 0 || k > n_retrieved)
 		k = n_retrieved;
@@ -258,8 +263,8 @@ f1_at_k(PG_FUNCTION_ARGS)
 		}
 	}
 
-	precision = (double)found_count / k;
-	recall = (double)found_count / n_relevant;
+	precision = (double) found_count / k;
+	recall = (double) found_count / n_relevant;
 
 	if (precision + recall < 1e-10)
 		f1 = 0.0;
@@ -292,17 +297,22 @@ PG_FUNCTION_INFO_V1(mean_reciprocal_rank);
 Datum
 mean_reciprocal_rank(PG_FUNCTION_ARGS)
 {
-	ArrayType *retrieved_array;
-	ArrayType *relevant_array;
-	int ndim_retrieved, ndim_relevant;
-	int *dims_retrieved, *dims_relevant;
-	int n_queries;
-	int max_retrieved_len, max_relevant_len;
-	int32 *retrieved_data;
-	int32 *relevant_data;
-	double mrr;
-	double sum_rr;
-	int q, i, j;
+	ArrayType  *retrieved_array;
+	ArrayType  *relevant_array;
+	int			ndim_retrieved,
+				ndim_relevant;
+	int		   *dims_retrieved,
+			   *dims_relevant;
+	int			n_queries;
+	int			max_retrieved_len,
+				max_relevant_len;
+	int32	   *retrieved_data;
+	int32	   *relevant_data;
+	double		mrr;
+	double		sum_rr;
+	int			q,
+				i,
+				j;
 
 	retrieved_array = PG_GETARG_ARRAYTYPE_P(0);
 	relevant_array = PG_GETARG_ARRAYTYPE_P(1);
@@ -313,8 +323,8 @@ mean_reciprocal_rank(PG_FUNCTION_ARGS)
 
 	if (ndim_retrieved != 2 || ndim_relevant != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("Both arrays must be 2-dimensional")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Both arrays must be 2-dimensional")));
 
 	dims_retrieved = ARR_DIMS(retrieved_array);
 	dims_relevant = ARR_DIMS(relevant_array);
@@ -324,20 +334,20 @@ mean_reciprocal_rank(PG_FUNCTION_ARGS)
 
 	if (dims_relevant[0] != n_queries)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("Number of queries must match in both "
-				       "arrays")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Number of queries must match in both "
+						"arrays")));
 
-	retrieved_data = (int32 *)ARR_DATA_PTR(retrieved_array);
-	relevant_data = (int32 *)ARR_DATA_PTR(relevant_array);
+	retrieved_data = (int32 *) ARR_DATA_PTR(retrieved_array);
+	relevant_data = (int32 *) ARR_DATA_PTR(relevant_array);
 
 	/* Compute reciprocal ranks */
 	sum_rr = 0.0;
 	for (q = 0; q < n_queries; q++)
 	{
-		int first_relevant_rank = -1;
-		int32 *query_retrieved = &retrieved_data[q * max_retrieved_len];
-		int32 *query_relevant = &relevant_data[q * max_relevant_len];
+		int			first_relevant_rank = -1;
+		int32	   *query_retrieved = &retrieved_data[q * max_retrieved_len];
+		int32	   *query_relevant = &relevant_data[q * max_relevant_len];
 
 		/* Find rank of first relevant item */
 		for (i = 0; i < max_retrieved_len; i++)
@@ -348,7 +358,7 @@ mean_reciprocal_rank(PG_FUNCTION_ARGS)
 					&& query_relevant[j] > 0)
 				{
 					first_relevant_rank =
-						i + 1; /* 1-based rank */
+						i + 1;	/* 1-based rank */
 					break;
 				}
 			}

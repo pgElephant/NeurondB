@@ -22,41 +22,42 @@
  */
 typedef struct ANNBufferEntry
 {
-	Oid index_oid;
-	int32 centroid_id;
+	Oid			index_oid;
+	int32		centroid_id;
 	TimestampTz last_access;
-	int32 access_count;
-	float4 cached_vector[128]; /* Fixed size for simplicity */
-	bool valid;
-} ANNBufferEntry;
+	int32		access_count;
+	float4		cached_vector[128]; /* Fixed size for simplicity */
+	bool		valid;
+}			ANNBufferEntry;
 
 typedef struct ANNBufferControl
 {
-	int num_entries;
-	int max_entries;
-	int64 total_hits;
-	int64 total_misses;
-	LWLock *lock;
+	int			num_entries;
+	int			max_entries;
+	int64		total_hits;
+	int64		total_misses;
+	LWLock	   *lock;
 	ANNBufferEntry entries[FLEXIBLE_ARRAY_MEMBER];
-} ANNBufferControl;
+}			ANNBufferControl;
 
-static ANNBufferControl *ann_buffer_control = NULL;
+static ANNBufferControl * ann_buffer_control = NULL;
 
 /*
  * neurondb_ann_buffer_init: Initialize the ANN buffer in shared memory
  */
-static void __attribute__((unused))
+static void
+__attribute__((unused))
 neurondb_ann_buffer_init(void)
 {
-	bool found;
-	Size size;
-	int max_entries = 1000; /* Default: cache 1000 centroids */
+	bool		found;
+	Size		size;
+	int			max_entries = 1000; /* Default: cache 1000 centroids */
 
 	size = offsetof(ANNBufferControl, entries)
 		+ max_entries * sizeof(ANNBufferEntry);
 
-	ann_buffer_control = (ANNBufferControl *)ShmemInitStruct(
-		"NeuronDB ANN Buffer", size, &found);
+	ann_buffer_control = (ANNBufferControl *) ShmemInitStruct(
+															  "NeuronDB ANN Buffer", size, &found);
 
 	if (!found)
 	{
@@ -67,8 +68,8 @@ neurondb_ann_buffer_init(void)
 		ann_buffer_control->total_misses = 0;
 
 		elog(DEBUG1,
-			"neurondb: ANN buffer initialized with %d entries",
-			max_entries);
+			 "neurondb: ANN buffer initialized with %d entries",
+			 max_entries);
 	}
 }
 
@@ -79,14 +80,14 @@ PG_FUNCTION_INFO_V1(neurondb_ann_buffer_get_centroid);
 Datum
 neurondb_ann_buffer_get_centroid(PG_FUNCTION_ARGS)
 {
-	Oid index_oid = PG_GETARG_OID(0);
-	int32 centroid_id = PG_GETARG_INT32(1);
-	int i;
-	bool found;
+	Oid			index_oid = PG_GETARG_OID(0);
+	int32		centroid_id = PG_GETARG_INT32(1);
+	int			i;
+	bool		found;
 
-	(void)fcinfo;
-	(void)index_oid;
-	(void)centroid_id;
+	(void) fcinfo;
+	(void) index_oid;
+	(void) centroid_id;
 
 	found = false;
 
@@ -101,7 +102,7 @@ neurondb_ann_buffer_get_centroid(PG_FUNCTION_ARGS)
 		if (ann_buffer_control->entries[i].valid
 			&& ann_buffer_control->entries[i].index_oid == index_oid
 			&& ann_buffer_control->entries[i].centroid_id
-				== centroid_id)
+			== centroid_id)
 		{
 			found = true;
 			ann_buffer_control->total_hits++;
@@ -114,8 +115,8 @@ neurondb_ann_buffer_get_centroid(PG_FUNCTION_ARGS)
 	{
 		ann_buffer_control->total_misses++;
 		elog(DEBUG1,
-			"neurondb: Cache miss for centroid %d",
-			centroid_id);
+			 "neurondb: Cache miss for centroid %d",
+			 centroid_id);
 		PG_RETURN_NULL();
 	}
 
@@ -131,12 +132,12 @@ PG_FUNCTION_INFO_V1(neurondb_ann_buffer_put_centroid);
 Datum
 neurondb_ann_buffer_put_centroid(PG_FUNCTION_ARGS)
 {
-	Oid index_oid = PG_GETARG_OID(0);
-	int32 centroid_id = PG_GETARG_INT32(1);
-	text *vector = PG_GETARG_TEXT_PP(2);
-	int slot;
+	Oid			index_oid = PG_GETARG_OID(0);
+	int32		centroid_id = PG_GETARG_INT32(1);
+	text	   *vector = PG_GETARG_TEXT_PP(2);
+	int			slot;
 
-	(void)vector;
+	(void) vector;
 
 	if (ann_buffer_control == NULL)
 	{
@@ -147,7 +148,8 @@ neurondb_ann_buffer_put_centroid(PG_FUNCTION_ARGS)
 	if (ann_buffer_control->num_entries < ann_buffer_control->max_entries)
 	{
 		slot = ann_buffer_control->num_entries++;
-	} else
+	}
+	else
 	{
 		/* Evict LRU entry (entry with oldest last_access) */
 		slot = 0;
@@ -159,9 +161,9 @@ neurondb_ann_buffer_put_centroid(PG_FUNCTION_ARGS)
 	ann_buffer_control->entries[slot].access_count = 0;
 	ann_buffer_control->entries[slot].valid = true;
 	elog(DEBUG1,
-		"neurondb: Cached centroid %d in slot %d",
-		centroid_id,
-		slot);
+		 "neurondb: Cached centroid %d in slot %d",
+		 centroid_id,
+		 slot);
 
 	PG_RETURN_BOOL(true);
 }
@@ -174,36 +176,37 @@ Datum
 neurondb_ann_buffer_get_stats(PG_FUNCTION_ARGS)
 {
 	StringInfoData stats;
-	float8 hit_rate;
+	float8		hit_rate;
 
-	(void)fcinfo;
+	(void) fcinfo;
 
 	if (ann_buffer_control == NULL)
 	{
 		PG_RETURN_TEXT_P(cstring_to_text(
-			"{\"error\":\"buffer not initialized\"}"));
+										 "{\"error\":\"buffer not initialized\"}"));
 	}
 
 	if (ann_buffer_control->total_hits + ann_buffer_control->total_misses
 		> 0)
 	{
-		hit_rate = (float8)ann_buffer_control->total_hits
+		hit_rate = (float8) ann_buffer_control->total_hits
 			/ (ann_buffer_control->total_hits
-				+ ann_buffer_control->total_misses);
-	} else
+			   + ann_buffer_control->total_misses);
+	}
+	else
 	{
 		hit_rate = 0.0;
 	}
 
 	initStringInfo(&stats);
 	appendStringInfo(&stats,
-		"{\"entries\":%d,\"max_entries\":%d,\"hits\":" NDB_INT64_FMT
-		",\"misses\":" NDB_INT64_FMT ",\"hit_rate\":%.2f}",
-		ann_buffer_control->num_entries,
-		ann_buffer_control->max_entries,
-		NDB_INT64_CAST(ann_buffer_control->total_hits),
-		NDB_INT64_CAST(ann_buffer_control->total_misses),
-		hit_rate);
+					 "{\"entries\":%d,\"max_entries\":%d,\"hits\":" NDB_INT64_FMT
+					 ",\"misses\":" NDB_INT64_FMT ",\"hit_rate\":%.2f}",
+					 ann_buffer_control->num_entries,
+					 ann_buffer_control->max_entries,
+					 NDB_INT64_CAST(ann_buffer_control->total_hits),
+					 NDB_INT64_CAST(ann_buffer_control->total_misses),
+					 hit_rate);
 
 	PG_RETURN_TEXT_P(cstring_to_text(stats.data));
 }
@@ -215,9 +218,9 @@ PG_FUNCTION_INFO_V1(neurondb_ann_buffer_clear);
 Datum
 neurondb_ann_buffer_clear(PG_FUNCTION_ARGS)
 {
-	int i;
+	int			i;
 
-	(void)fcinfo;
+	(void) fcinfo;
 
 	if (ann_buffer_control == NULL)
 	{

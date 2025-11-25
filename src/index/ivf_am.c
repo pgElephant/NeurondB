@@ -50,9 +50,9 @@
 extern float fp16_to_float(uint16 fp16);
 
 /* IVF parameters */
-#define IVF_DEFAULT_NLISTS 100 /* Number of clusters/centroids */
-#define IVF_DEFAULT_NPROBE 10 /* Number of lists to probe */
-#define IVF_MAX_ITERATIONS 50 /* KMeans max iterations */
+#define IVF_DEFAULT_NLISTS 100	/* Number of clusters/centroids */
+#define IVF_DEFAULT_NPROBE 10	/* Number of lists to probe */
+#define IVF_MAX_ITERATIONS 50	/* KMeans max iterations */
 #define IVF_CONVERGENCE_THRESHOLD 0.001 /* KMeans convergence */
 
 /*
@@ -60,29 +60,29 @@ extern float fp16_to_float(uint16 fp16);
  */
 typedef struct IvfOptions
 {
-	int32 vl_len_; /* varlena header (do not touch directly!) */
-	int nlists; /* Number of clusters */
-	int nprobe; /* Number of lists to probe */
-} IvfOptions;
+	int32		vl_len_;		/* varlena header (do not touch directly!) */
+	int			nlists;			/* Number of clusters */
+	int			nprobe;			/* Number of lists to probe */
+}			IvfOptions;
 
 /* Reloption kind - registered in _PG_init() */
-extern int relopt_kind_ivf;
+extern int	relopt_kind_ivf;
 
 /*
  * IVF metadata page (block 0)
  */
 typedef struct IvfMetaPageData
 {
-	uint32 magicNumber;
-	uint32 version;
-	int nlists; /* Number of inverted lists */
-	int nprobe; /* Default nprobe */
-	int dim; /* Vector dimension */
+	uint32		magicNumber;
+	uint32		version;
+	int			nlists;			/* Number of inverted lists */
+	int			nprobe;			/* Default nprobe */
+	int			dim;			/* Vector dimension */
 	BlockNumber centroidsBlock; /* Block containing centroids */
-	int64 insertedVectors;
-} IvfMetaPageData;
+	int64		insertedVectors;
+}			IvfMetaPageData;
 
-typedef IvfMetaPageData *IvfMetaPage;
+typedef IvfMetaPageData * IvfMetaPage;
 
 #define IVF_MAGIC_NUMBER 0x49564646 /* "IVFF" in hex */
 #define IVF_VERSION 1
@@ -92,14 +92,14 @@ typedef IvfMetaPageData *IvfMetaPage;
  */
 typedef struct IvfCentroidData
 {
-	int listId; /* Inverted list ID */
-	int dim; /* Vector dimension */
-	int64 memberCount; /* Vectors in this list */
-	BlockNumber firstBlock; /* First block of inverted list */
+	int			listId;			/* Inverted list ID */
+	int			dim;			/* Vector dimension */
+	int64		memberCount;	/* Vectors in this list */
+	BlockNumber firstBlock;		/* First block of inverted list */
 	/* Followed by float4 centroid[dim] */
-} IvfCentroidData;
+}			IvfCentroidData;
 
-typedef IvfCentroidData *IvfCentroid;
+typedef IvfCentroidData * IvfCentroid;
 
 #define IvfGetCentroidVector(centroid) \
 	((float4 *)((char *)(centroid) + MAXALIGN(sizeof(IvfCentroidData))))
@@ -116,31 +116,34 @@ typedef IvfCentroidData *IvfCentroid;
 static float4 *
 ivfExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 {
-	float4 *result;
-	int i;
+	float4	   *result;
+	int			i;
 	MemoryContext oldctx;
-	Oid vectorOid, halfvecOid, sparsevecOid, bitOid;
+	Oid			vectorOid,
+				halfvecOid,
+				sparsevecOid,
+				bitOid;
 
 	if (out_dim == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("ivf: out_dim cannot be NULL")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("ivf: out_dim cannot be NULL")));
 
 	/* Type OIDs are cached at index build time in build state */
-	bitOid = BITOID; /* PostgreSQL built-in type */
-	
+	bitOid = BITOID;			/* PostgreSQL built-in type */
+
 	/* Get type OIDs - use LookupTypeNameOid for proper namespace lookup */
 	{
-		List *names;
-		
+		List	   *names;
+
 		names = list_make2(makeString("public"), makeString("vector"));
 		vectorOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
 		list_free(names);
-		
+
 		names = list_make2(makeString("public"), makeString("halfvec"));
 		halfvecOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
 		list_free(names);
-		
+
 		names = list_make2(makeString("public"), makeString("sparsevec"));
 		sparsevecOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
 		list_free(names);
@@ -151,27 +154,30 @@ ivfExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 	/* Check type and extract accordingly */
 	if (typeOid == vectorOid)
 	{
-		Vector *v = DatumGetVector(value);
+		Vector	   *v = DatumGetVector(value);
+
 		*out_dim = v->dim;
-		result = (float4 *)palloc(v->dim * sizeof(float4));
+		result = (float4 *) palloc(v->dim * sizeof(float4));
 		for (i = 0; i < v->dim; i++)
 			result[i] = v->data[i];
 	}
 	else if (typeOid == halfvecOid)
 	{
-		VectorF16 *hv = (VectorF16 *)PG_DETOAST_DATUM(value);
+		VectorF16  *hv = (VectorF16 *) PG_DETOAST_DATUM(value);
+
 		*out_dim = hv->dim;
-		result = (float4 *)palloc(hv->dim * sizeof(float4));
+		result = (float4 *) palloc(hv->dim * sizeof(float4));
 		for (i = 0; i < hv->dim; i++)
 			result[i] = fp16_to_float(hv->data[i]);
 	}
 	else if (typeOid == sparsevecOid)
 	{
-		VectorMap *sv = (VectorMap *)PG_DETOAST_DATUM(value);
-		int32 *indices = VECMAP_INDICES(sv);
-		float4 *values = VECMAP_VALUES(sv);
+		VectorMap  *sv = (VectorMap *) PG_DETOAST_DATUM(value);
+		int32	   *indices = VECMAP_INDICES(sv);
+		float4	   *values = VECMAP_VALUES(sv);
+
 		*out_dim = sv->total_dim;
-		result = (float4 *)palloc0(sv->total_dim * sizeof(float4));
+		result = (float4 *) palloc0(sv->total_dim * sizeof(float4));
 		for (i = 0; i < sv->nnz; i++)
 		{
 			if (indices[i] >= 0 && indices[i] < sv->total_dim)
@@ -180,16 +186,18 @@ ivfExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 	}
 	else if (typeOid == bitOid)
 	{
-		VarBit *bit_vec = (VarBit *)PG_DETOAST_DATUM(value);
-		int nbits = VARBITLEN(bit_vec);
-		bits8 *bit_data = VARBITS(bit_vec);
+		VarBit	   *bit_vec = (VarBit *) PG_DETOAST_DATUM(value);
+		int			nbits = VARBITLEN(bit_vec);
+		bits8	   *bit_data = VARBITS(bit_vec);
+
 		*out_dim = nbits;
-		result = (float4 *)palloc(nbits * sizeof(float4));
+		result = (float4 *) palloc(nbits * sizeof(float4));
 		for (i = 0; i < nbits; i++)
 		{
-			int byte_idx = i / BITS_PER_BYTE;
-			int bit_idx = i % BITS_PER_BYTE;
-			int bit_val = (bit_data[byte_idx] >> (BITS_PER_BYTE - 1 - bit_idx)) & 1;
+			int			byte_idx = i / BITS_PER_BYTE;
+			int			bit_idx = i % BITS_PER_BYTE;
+			int			bit_val = (bit_data[byte_idx] >> (BITS_PER_BYTE - 1 - bit_idx)) & 1;
+
 			result[i] = bit_val ? 1.0f : -1.0f;
 		}
 	}
@@ -197,9 +205,9 @@ ivfExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 	{
 		MemoryContextSwitchTo(oldctx);
 		ereport(ERROR,
-			(errcode(ERRCODE_DATATYPE_MISMATCH),
-				errmsg("ivf: unsupported type OID %u", typeOid)));
-		return NULL; /* not reached */
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("ivf: unsupported type OID %u", typeOid)));
+		return NULL;			/* not reached */
 	}
 
 	MemoryContextSwitchTo(oldctx);
@@ -212,13 +220,13 @@ ivfExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 static Oid
 ivfGetKeyType(Relation index, int attno)
 {
-	TupleDesc indexDesc = RelationGetDescr(index);
+	TupleDesc	indexDesc = RelationGetDescr(index);
 	Form_pg_attribute attr;
 
 	if (attno < 1 || attno > indexDesc->natts)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("ivf: invalid attribute number %d", attno)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("ivf: invalid attribute number %d", attno)));
 
 	attr = TupleDescAttr(indexDesc, attno - 1);
 	return attr->atttypid;
@@ -229,9 +237,10 @@ ivfGetKeyType(Relation index, int attno)
  */
 typedef struct IvfListPageHeader
 {
-	BlockNumber nextBlock; /* Next block in chain, InvalidBlockNumber if last */
-	int32 entryCount; /* Number of entries on this page */
-} IvfListPageHeader;
+	BlockNumber nextBlock;		/* Next block in chain, InvalidBlockNumber if
+								 * last */
+	int32		entryCount;		/* Number of entries on this page */
+}			IvfListPageHeader;
 
 /*
  * Inverted list entry
@@ -239,11 +248,11 @@ typedef struct IvfListPageHeader
 typedef struct IvfListEntryData
 {
 	ItemPointerData heapPtr;
-	int16 dim;
+	int16		dim;
 	/* Followed by float4 vector[dim] */
-} IvfListEntryData;
+}			IvfListEntryData;
 
-typedef IvfListEntryData *IvfListEntry;
+typedef IvfListEntryData * IvfListEntry;
 
 #define IvfGetListPageHeader(page) \
 	((IvfListPageHeader *)PageGetSpecialPointer(page))
@@ -253,117 +262,117 @@ typedef IvfListEntryData *IvfListEntry;
  */
 typedef struct IvfScanOpaqueData
 {
-	Vector *queryVector; /* Query vector */
-	int strategy; /* Distance strategy (1=L2, 2=Cosine, etc.) */
-	int nprobe; /* Number of clusters to probe */
-	int k; /* Number of results to return */
-	bool firstCall; /* First call to gettuple */
-	int resultCount; /* Number of results found */
-	ItemPointerData *results; /* Result heap TIDs */
-	float4 *distances; /* Result distances */
-	int currentResult; /* Current result index */
-	int *selectedClusters; /* Selected cluster IDs (nprobe) */
-	int currentCluster; /* Current cluster being scanned */
-	BlockNumber currentListBlock; /* Current list block */
-	int currentListOffset; /* Current offset in list */
-} IvfScanOpaqueData;
+	Vector	   *queryVector;	/* Query vector */
+	int			strategy;		/* Distance strategy (1=L2, 2=Cosine, etc.) */
+	int			nprobe;			/* Number of clusters to probe */
+	int			k;				/* Number of results to return */
+	bool		firstCall;		/* First call to gettuple */
+	int			resultCount;	/* Number of results found */
+	ItemPointerData *results;	/* Result heap TIDs */
+	float4	   *distances;		/* Result distances */
+	int			currentResult;	/* Current result index */
+	int		   *selectedClusters;	/* Selected cluster IDs (nprobe) */
+	int			currentCluster; /* Current cluster being scanned */
+	BlockNumber currentListBlock;	/* Current list block */
+	int			currentListOffset;	/* Current offset in list */
+}			IvfScanOpaqueData;
 
-typedef IvfScanOpaqueData *IvfScanOpaque;
+typedef IvfScanOpaqueData * IvfScanOpaque;
 
 /*
  * KMeans clustering state
  */
 typedef struct KMeansState
 {
-	int k; /* Number of clusters */
-	int dim; /* Vector dimension */
-	int maxIter; /* Max iterations */
-	float4 threshold; /* Convergence threshold */
+	int			k;				/* Number of clusters */
+	int			dim;			/* Vector dimension */
+	int			maxIter;		/* Max iterations */
+	float4		threshold;		/* Convergence threshold */
 
 	/* Centroids */
-	float4 **centroids; /* k x dim */
-	int *assignments; /* Vector assignments */
-	int *counts; /* Points per cluster */
+	float4	  **centroids;		/* k x dim */
+	int		   *assignments;	/* Vector assignments */
+	int		   *counts;			/* Points per cluster */
 
 	/* Data */
-	float4 **data; /* n x dim training data */
-	int n; /* Number of data points */
+	float4	  **data;			/* n x dim training data */
+	int			n;				/* Number of data points */
 
 	MemoryContext ctx;
-} KMeansState;
+}			KMeansState;
 
 /* Forward declarations */
 static IndexBuildResult *
 ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo);
 static void ivfbuildempty(Relation index);
 static bool ivfinsert(Relation index,
-	Datum *values,
-	bool *isnull,
-	ItemPointer ht_ctid,
-	Relation heapRel,
-	IndexUniqueCheck checkUnique,
-	bool indexUnchanged,
-	struct IndexInfo *indexInfo);
-static IndexBulkDeleteResult *ivfbulkdelete(IndexVacuumInfo *info,
-	IndexBulkDeleteResult *stats,
-	IndexBulkDeleteCallback callback,
-	void *callback_state);
-static IndexBulkDeleteResult *ivfvacuumcleanup(IndexVacuumInfo *info,
-	IndexBulkDeleteResult *stats);
+					  Datum *values,
+					  bool *isnull,
+					  ItemPointer ht_ctid,
+					  Relation heapRel,
+					  IndexUniqueCheck checkUnique,
+					  bool indexUnchanged,
+					  struct IndexInfo *indexInfo);
+static IndexBulkDeleteResult * ivfbulkdelete(IndexVacuumInfo * info,
+											 IndexBulkDeleteResult * stats,
+											 IndexBulkDeleteCallback callback,
+											 void *callback_state);
+static IndexBulkDeleteResult * ivfvacuumcleanup(IndexVacuumInfo * info,
+												IndexBulkDeleteResult * stats);
 static bool ivfdelete(Relation index,
-	ItemPointer tid,
-	Datum *values,
-	bool *isnull,
-	Relation heapRel,
-	struct IndexInfo *indexInfo) __attribute__((unused));
+					  ItemPointer tid,
+					  Datum *values,
+					  bool *isnull,
+					  Relation heapRel,
+					  struct IndexInfo *indexInfo) __attribute__((unused));
 static bool ivfupdate(Relation index,
-	ItemPointer tid,
-	Datum *values,
-	bool *isnull,
-	ItemPointer otid,
-	Relation heapRel,
-	struct IndexInfo *indexInfo) __attribute__((unused));
+					  ItemPointer tid,
+					  Datum *values,
+					  bool *isnull,
+					  ItemPointer otid,
+					  Relation heapRel,
+					  struct IndexInfo *indexInfo) __attribute__((unused));
 static void ivfcostestimate(struct PlannerInfo *root,
-	struct IndexPath *path,
-	double loop_count,
-	Cost *indexStartupCost,
-	Cost *indexTotalCost,
-	Selectivity *indexSelectivity,
-	double *indexCorrelation,
-	double *indexPages);
-static bytea *ivfoptions(Datum reloptions, bool validate);
+							struct IndexPath *path,
+							double loop_count,
+							Cost * indexStartupCost,
+							Cost * indexTotalCost,
+							Selectivity * indexSelectivity,
+							double *indexCorrelation,
+							double *indexPages);
+static bytea * ivfoptions(Datum reloptions, bool validate);
 static bool ivfproperty(Oid index_oid,
-	int attno,
-	IndexAMProperty prop,
-	const char *propname,
-	bool *res,
-	bool *isnull);
+						int attno,
+						IndexAMProperty prop,
+						const char *propname,
+						bool *res,
+						bool *isnull);
 static IndexScanDesc ivfbeginscan(Relation index, int nkeys, int norderbys);
 static void ivfrescan(IndexScanDesc scan,
-	ScanKey keys,
-	int nkeys,
-	ScanKey orderbys,
-	int norderbys);
+					  ScanKey keys,
+					  int nkeys,
+					  ScanKey orderbys,
+					  int norderbys);
 static bool ivfgettuple(IndexScanDesc scan, ScanDirection dir);
 static void ivfendscan(IndexScanDesc scan);
 
 /* Build callback */
 static void ivfBuildCallback(Relation index,
-	ItemPointer tid,
-	Datum *values,
-	bool *isnull,
-	bool tupleIsAlive,
-	void *state);
+							 ItemPointer tid,
+							 Datum *values,
+							 bool *isnull,
+							 bool tupleIsAlive,
+							 void *state);
 
 /* KMeans helper functions */
-static KMeansState *kmeans_init(int k, int dim, float4 **data, int n);
-static void kmeans_run(KMeansState *state);
-static void kmeans_assign(KMeansState *state);
-static void kmeans_update_centroids(KMeansState *state);
-static float4 kmeans_compute_cost(KMeansState *state);
-static void kmeans_free(KMeansState *state);
-static float4 vector_distance_l2(const float4 *v1, const float4 *v2, int dim);
-static int find_nearest_centroid(KMeansState *state, const float4 *vector);
+static KMeansState * kmeans_init(int k, int dim, float4 * *data, int n);
+static void kmeans_run(KMeansState * state);
+static void kmeans_assign(KMeansState * state);
+static void kmeans_update_centroids(KMeansState * state);
+static float4 kmeans_compute_cost(KMeansState * state);
+static void kmeans_free(KMeansState * state);
+static float4 vector_distance_l2(const float4 * v1, const float4 * v2, int dim);
+static int	find_nearest_centroid(KMeansState * state, const float4 * vector);
 
 /*
  * SQL-callable handler
@@ -430,19 +439,19 @@ ivf_handler(PG_FUNCTION_ARGS)
  */
 typedef struct IvfBuildState
 {
-	Relation heap;
-	Relation index;
-	IndexInfo *indexInfo;
+	Relation	heap;
+	Relation	index;
+	IndexInfo  *indexInfo;
 	IvfMetaPage metaPage;
-	Buffer metaBuffer;
+	Buffer		metaBuffer;
 	MemoryContext tmpCtx;
-	double indtuples;
-	float4 **sampleVectors; /* Sampled vectors for KMeans */
-	int sampleCount;
-	int maxSamples;
-	int dim;
-	Oid keyType;
-} IvfBuildState;
+	double		indtuples;
+	float4	  **sampleVectors;	/* Sampled vectors for KMeans */
+	int			sampleCount;
+	int			maxSamples;
+	int			dim;
+	Oid			keyType;
+}			IvfBuildState;
 
 static void
 ivfBuildCallback(Relation index,
@@ -452,18 +461,18 @@ ivfBuildCallback(Relation index,
 				 bool tupleIsAlive,
 				 void *state)
 {
-	IvfBuildState *buildstate = (IvfBuildState *)state;
-	float4 *vectorData;
-	int dim;
+	IvfBuildState *buildstate = (IvfBuildState *) state;
+	float4	   *vectorData;
+	int			dim;
 
 	if (isnull[0])
 		return;
 
 	/* Extract vector data */
 	vectorData = ivfExtractVectorData(values[0],
-		buildstate->keyType,
-		&dim,
-		buildstate->tmpCtx);
+									  buildstate->keyType,
+									  &dim,
+									  buildstate->tmpCtx);
 
 	if (vectorData == NULL)
 		return;
@@ -476,11 +485,11 @@ ivfBuildCallback(Relation index,
 	if (buildstate->sampleCount < buildstate->maxSamples)
 	{
 		buildstate->sampleVectors[buildstate->sampleCount] =
-			(float4 *)MemoryContextAlloc(buildstate->tmpCtx,
-				dim * sizeof(float4));
+			(float4 *) MemoryContextAlloc(buildstate->tmpCtx,
+										  dim * sizeof(float4));
 		memcpy(buildstate->sampleVectors[buildstate->sampleCount],
-			vectorData,
-			dim * sizeof(float4));
+			   vectorData,
+			   dim * sizeof(float4));
 		buildstate->sampleCount++;
 	}
 
@@ -494,17 +503,17 @@ ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	IndexBuildResult *result;
 	IvfBuildState buildstate;
 	IvfOptions *options;
-	Buffer metaBuffer;
-	Page metaPage;
+	Buffer		metaBuffer;
+	Page		metaPage;
 	IvfMetaPage meta;
 	KMeansState *kmeans;
-	int nlists;
-	int i;
+	int			nlists;
+	int			i;
 	BlockNumber centroidsBlock;
-	Buffer centroidsBuf;
-	Page centroidsPage;
+	Buffer		centroidsBuf;
+	Page		centroidsPage;
 	IvfCentroidData *centroid;
-	Size centroidSize;
+	Size		centroidSize;
 	OffsetNumber offnum;
 
 	elog(INFO, "neurondb: Building IVF index on %s", RelationGetRelationName(index));
@@ -515,42 +524,43 @@ ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	buildstate.index = index;
 	buildstate.indexInfo = indexInfo;
 	buildstate.tmpCtx = AllocSetContextCreate(CurrentMemoryContext,
-		"IVF build temporary context",
-		ALLOCSET_DEFAULT_SIZES);
+											  "IVF build temporary context",
+											  ALLOCSET_DEFAULT_SIZES);
 	buildstate.keyType = ivfGetKeyType(index, 1);
 
 	/* Get index options */
-	options = (IvfOptions *)indexInfo->ii_AmCache;
+	options = (IvfOptions *) indexInfo->ii_AmCache;
 	if (options == NULL)
 	{
-		Datum relopts = PointerGetDatum(index->rd_options);
-		options = (IvfOptions *)build_reloptions(relopts,
-			true,
-			relopt_kind_ivf,
-			sizeof(IvfOptions),
-			NULL,
-			0);
-		indexInfo->ii_AmCache = (void *)options;
+		Datum		relopts = PointerGetDatum(index->rd_options);
+
+		options = (IvfOptions *) build_reloptions(relopts,
+												  true,
+												  relopt_kind_ivf,
+												  sizeof(IvfOptions),
+												  NULL,
+												  0);
+		indexInfo->ii_AmCache = (void *) options;
 	}
 	nlists = options ? options->nlists : IVF_DEFAULT_NLISTS;
 
 	/* Initialize metadata page */
 	metaBuffer = ReadBuffer(index, P_NEW);
- if (!BufferIsValid(metaBuffer))
- 	{
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: ReadBuffer failed")));
- 	}
+	if (!BufferIsValid(metaBuffer))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ReadBuffer failed")));
+	}
 	LockBuffer(metaBuffer, BUFFER_LOCK_EXCLUSIVE);
 	metaPage = BufferGetPage(metaBuffer);
 	PageInit(metaPage, BufferGetPageSize(metaBuffer), sizeof(IvfMetaPageData));
-	meta = (IvfMetaPage)PageGetContents(metaPage);
+	meta = (IvfMetaPage) PageGetContents(metaPage);
 	meta->magicNumber = IVF_MAGIC_NUMBER;
 	meta->version = IVF_VERSION;
 	meta->nlists = nlists;
 	meta->nprobe = options ? options->nprobe : IVF_DEFAULT_NPROBE;
-	meta->dim = 0; /* Will be set after sampling */
+	meta->dim = 0;				/* Will be set after sampling */
 	meta->centroidsBlock = InvalidBlockNumber;
 	meta->insertedVectors = 0;
 	buildstate.metaPage = meta;
@@ -560,59 +570,60 @@ ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	UnlockReleaseBuffer(metaBuffer);
 
 	/* Step 1: Sample vectors from heap for KMeans */
-	buildstate.maxSamples = Min(10000, nlists * 100); /* Sample up to 10k or nlists*100 */
-	buildstate.sampleVectors = (float4 **)MemoryContextAlloc(buildstate.tmpCtx,
-		buildstate.maxSamples * sizeof(float4 *));
+	buildstate.maxSamples = Min(10000, nlists * 100);	/* Sample up to 10k or
+														 * nlists*100 */
+	buildstate.sampleVectors = (float4 * *) MemoryContextAlloc(buildstate.tmpCtx,
+															   buildstate.maxSamples * sizeof(float4 *));
 	buildstate.sampleCount = 0;
 
 	/* Scan heap and collect sample vectors */
 	buildstate.indtuples = table_index_build_scan(heap,
-		index,
-		indexInfo,
-		true, /* allow_sync */
-		true, /* progress */
-		ivfBuildCallback,
-		(void *)&buildstate,
-		NULL);
+												  index,
+												  indexInfo,
+												  true, /* allow_sync */
+												  true, /* progress */
+												  ivfBuildCallback,
+												  (void *) &buildstate,
+												  NULL);
 
 	if (buildstate.sampleCount < nlists)
 		ereport(ERROR,
-			(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-				errmsg("ivf: not enough sample vectors (%d < %d)",
-					buildstate.sampleCount,
-					nlists)));
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				 errmsg("ivf: not enough sample vectors (%d < %d)",
+						buildstate.sampleCount,
+						nlists)));
 
 	/* Set dimension in metadata */
 	meta->dim = buildstate.dim;
 
 	/* Step 2: Run KMeans clustering */
 	kmeans = kmeans_init(nlists,
-		buildstate.dim,
-		buildstate.sampleVectors,
-		buildstate.sampleCount);
+						 buildstate.dim,
+						 buildstate.sampleVectors,
+						 buildstate.sampleCount);
 	kmeans_run(kmeans);
 
 	/* Step 3: Store centroids in dedicated page(s) */
 	centroidsBlock = RelationGetNumberOfBlocks(index);
 	centroidsBuf = ReadBuffer(index, P_NEW);
- if (!BufferIsValid(centroidsBuf))
- 	{
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: ReadBuffer failed")));
- 	}
+	if (!BufferIsValid(centroidsBuf))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ReadBuffer failed")));
+	}
 	LockBuffer(centroidsBuf, BUFFER_LOCK_EXCLUSIVE);
 	centroidsPage = BufferGetPage(centroidsBuf);
 	PageInit(centroidsPage,
-		BufferGetPageSize(centroidsBuf),
-		sizeof(IvfCentroidData));
+			 BufferGetPageSize(centroidsBuf),
+			 sizeof(IvfCentroidData));
 
 	centroidSize = MAXALIGN(sizeof(IvfCentroidData) +
-		buildstate.dim * sizeof(float4));
+							buildstate.dim * sizeof(float4));
 
 	for (i = 0; i < nlists; i++)
 	{
-		centroid = (IvfCentroidData *)palloc(centroidSize);
+		centroid = (IvfCentroidData *) palloc(centroidSize);
 		centroid->listId = i;
 		centroid->dim = buildstate.dim;
 		centroid->memberCount = 0;
@@ -620,20 +631,20 @@ ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 
 		/* Copy centroid vector */
 		memcpy(IvfGetCentroidVector(centroid),
-			kmeans->centroids[i],
-			buildstate.dim * sizeof(float4));
+			   kmeans->centroids[i],
+			   buildstate.dim * sizeof(float4));
 
 		/* Add to page */
 		offnum = PageAddItem(centroidsPage,
-			(Item)centroid,
-			centroidSize,
-			InvalidOffsetNumber,
-			false,
-			false);
+							 (Item) centroid,
+							 centroidSize,
+							 InvalidOffsetNumber,
+							 false,
+							 false);
 		if (offnum == InvalidOffsetNumber)
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("ivf: failed to add centroid to page")));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("ivf: failed to add centroid to page")));
 
 		NDB_SAFE_PFREE_AND_NULL(centroid);
 	}
@@ -656,9 +667,9 @@ ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 	MemoryContextDelete(buildstate.tmpCtx);
 
 	/* Create result */
-	result = (IndexBuildResult *)palloc(sizeof(IndexBuildResult));
+	result = (IndexBuildResult *) palloc(sizeof(IndexBuildResult));
 	result->heap_tuples = buildstate.indtuples;
-	result->index_tuples = buildstate.indtuples; /* Simplified */
+	result->index_tuples = buildstate.indtuples;	/* Simplified */
 
 	return result;
 }
@@ -677,30 +688,32 @@ ivfbuildempty(Relation index)
  */
 static bool
 ivfinsert(Relation index,
-	Datum *values,
-	bool *isnull,
-	ItemPointer ht_ctid,
-	Relation heapRel,
-	IndexUniqueCheck checkUnique,
-	bool indexUnchanged,
-	struct IndexInfo *indexInfo)
+		  Datum *values,
+		  bool *isnull,
+		  ItemPointer ht_ctid,
+		  Relation heapRel,
+		  IndexUniqueCheck checkUnique,
+		  bool indexUnchanged,
+		  struct IndexInfo *indexInfo)
 {
-	Vector *input_vec;
+	Vector	   *input_vec;
 	BlockNumber meta_blkno = 0;
-	Buffer meta_buf;
+	Buffer		meta_buf;
 	IvfMetaPageData *meta;
-	int i, min_idx = 0, nlist;
-	float4 min_dist = FLT_MAX;
-	float4 dist;
+	int			i,
+				min_idx = 0,
+				nlist;
+	float4		min_dist = FLT_MAX;
+	float4		dist;
 
 	if (isnull[0])
-		return false; /* don't insert NULLs */
+		return false;			/* don't insert NULLs */
 
 	/* Extract vector data (handles vector, halfvec, sparsevec, bit) */
 	{
-		float4 *vectorData;
-		int dim;
-		Oid keyType;
+		float4	   *vectorData;
+		int			dim;
+		Oid			keyType;
 		MemoryContext oldctx;
 
 		/* Get key type from index */
@@ -715,7 +728,7 @@ ivfinsert(Relation index,
 			return false;
 
 		/* Allocate Vector structure for compatibility */
-		input_vec = (Vector *)palloc(VECTOR_SIZE(dim));
+		input_vec = (Vector *) palloc(VECTOR_SIZE(dim));
 		SET_VARSIZE(input_vec, VECTOR_SIZE(dim));
 		input_vec->dim = dim;
 		memcpy(input_vec->data, vectorData, dim * sizeof(float4));
@@ -726,22 +739,22 @@ ivfinsert(Relation index,
 	 * Step 1: Read IVF metadata and centroids
 	 */
 	meta_buf = ReadBuffer(index, meta_blkno);
- if (!BufferIsValid(meta_buf))
- 	{
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: ReadBuffer failed")));
- 	}
+	if (!BufferIsValid(meta_buf))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ReadBuffer failed")));
+	}
 	LockBuffer(meta_buf, BUFFER_LOCK_SHARE);
-	meta = (IvfMetaPageData *)PageGetContents(BufferGetPage(meta_buf));
+	meta = (IvfMetaPageData *) PageGetContents(BufferGetPage(meta_buf));
 	nlist = meta->nlists;
 
 	if (nlist <= 0)
 	{
 		UnlockReleaseBuffer(meta_buf);
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("IVF index has no centroids or dimension mismatch")));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("IVF index has no centroids or dimension mismatch")));
 		return false;
 	}
 
@@ -750,22 +763,22 @@ ivfinsert(Relation index,
 	 */
 	if (meta->centroidsBlock != InvalidBlockNumber)
 	{
-		Buffer centroidsBuf;
-		Page centroidsPage;
+		Buffer		centroidsBuf;
+		Page		centroidsPage;
 		OffsetNumber maxoff;
 		OffsetNumber offnum;
 		IvfCentroid centroid;
-		float4 *centroidVector;
-		float4 accum;
-		int k;
+		float4	   *centroidVector;
+		float4		accum;
+		int			k;
 
 		centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
-  if (!BufferIsValid(centroidsBuf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed")));
-  	}
+		if (!BufferIsValid(centroidsBuf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed")));
+		}
 		LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
 		centroidsPage = BufferGetPage(centroidsBuf);
 
@@ -774,8 +787,8 @@ ivfinsert(Relation index,
 			UnlockReleaseBuffer(centroidsBuf);
 			UnlockReleaseBuffer(meta_buf);
 			ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-					errmsg("IVF index centroids page is empty")));
+					(errcode(ERRCODE_DATA_EXCEPTION),
+					 errmsg("IVF index centroids page is empty")));
 			return false;
 		}
 
@@ -786,8 +799,8 @@ ivfinsert(Relation index,
 			if (offnum > maxoff)
 				break;
 
-			centroid = (IvfCentroid)PageGetItem(centroidsPage,
-				PageGetItemId(centroidsPage, offnum));
+			centroid = (IvfCentroid) PageGetItem(centroidsPage,
+												 PageGetItemId(centroidsPage, offnum));
 
 			if (centroid->dim != input_vec->dim)
 				continue;
@@ -798,7 +811,8 @@ ivfinsert(Relation index,
 			accum = 0.0f;
 			for (k = 0; k < input_vec->dim; k++)
 			{
-				float4 diff = input_vec->data[k] - centroidVector[k];
+				float4		diff = input_vec->data[k] - centroidVector[k];
+
 				accum += diff * diff;
 			}
 			dist = sqrtf(accum);
@@ -811,13 +825,14 @@ ivfinsert(Relation index,
 		}
 
 		UnlockReleaseBuffer(centroidsBuf);
-	} else
+	}
+	else
 	{
 		/* No centroids block - cannot assign vector */
 		UnlockReleaseBuffer(meta_buf);
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("IVF index has no centroids block")));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("IVF index has no centroids block")));
 		return false;
 	}
 
@@ -827,31 +842,31 @@ ivfinsert(Relation index,
 	 * Step 3: Append to selected inverted list
 	 */
 	{
-		Buffer centroidsBuf;
-		Page centroidsPage;
+		Buffer		centroidsBuf;
+		Page		centroidsPage;
 		IvfCentroid centroid;
 		OffsetNumber offnum;
 		BlockNumber listBlock;
-		Buffer listBuf;
-		Page listPage;
+		Buffer		listBuf;
+		Page		listPage;
 		IvfListPageHeader *listHeader;
-		Size entrySize;
+		Size		entrySize;
 		OffsetNumber newOffnum;
-		bool needNewBlock = false;
+		bool		needNewBlock = false;
 
 		/* Get centroid for selected list */
 		centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
-  if (!BufferIsValid(centroidsBuf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed")));
-  	}
+		if (!BufferIsValid(centroidsBuf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed")));
+		}
 		LockBuffer(centroidsBuf, BUFFER_LOCK_EXCLUSIVE);
 		centroidsPage = BufferGetPage(centroidsBuf);
 		offnum = FirstOffsetNumber + min_idx;
-		centroid = (IvfCentroid)PageGetItem(centroidsPage,
-			PageGetItemId(centroidsPage, offnum));
+		centroid = (IvfCentroid) PageGetItem(centroidsPage,
+											 PageGetItemId(centroidsPage, offnum));
 
 		/* Calculate entry size */
 		entrySize = MAXALIGN(sizeof(IvfListEntryData)) +
@@ -864,20 +879,21 @@ ivfinsert(Relation index,
 			/* Create first block for this list */
 			listBlock = P_NEW;
 			needNewBlock = true;
-		} else
+		}
+		else
 		{
 			/* Traverse to last block in chain */
-			Buffer tempBuf;
-			Page tempPage;
+			Buffer		tempBuf;
+			Page		tempPage;
 			IvfListPageHeader *tempHeader;
 
 			tempBuf = ReadBuffer(index, listBlock);
-   if (!BufferIsValid(tempBuf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed")));
-   	}
+			if (!BufferIsValid(tempBuf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed")));
+			}
 			LockBuffer(tempBuf, BUFFER_LOCK_SHARE);
 			tempPage = BufferGetPage(tempBuf);
 			tempHeader = IvfGetListPageHeader(tempPage);
@@ -885,14 +901,15 @@ ivfinsert(Relation index,
 			while (tempHeader->nextBlock != InvalidBlockNumber)
 			{
 				BlockNumber nextBlock = tempHeader->nextBlock;
+
 				UnlockReleaseBuffer(tempBuf);
 				tempBuf = ReadBuffer(index, nextBlock);
-    if (!BufferIsValid(tempBuf))
-    	{
-    		ereport(ERROR,
-    			(errcode(ERRCODE_INTERNAL_ERROR),
-    			 errmsg("neurondb: ReadBuffer failed")));
-    	}
+				if (!BufferIsValid(tempBuf))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_INTERNAL_ERROR),
+							 errmsg("neurondb: ReadBuffer failed")));
+				}
 				LockBuffer(tempBuf, BUFFER_LOCK_SHARE);
 				tempPage = BufferGetPage(tempBuf);
 				tempHeader = IvfGetListPageHeader(tempPage);
@@ -906,12 +923,12 @@ ivfinsert(Relation index,
 		if (needNewBlock)
 		{
 			listBuf = ReadBuffer(index, listBlock);
-   if (!BufferIsValid(listBuf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed")));
-   	}
+			if (!BufferIsValid(listBuf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed")));
+			}
 			LockBuffer(listBuf, BUFFER_LOCK_EXCLUSIVE);
 			listPage = BufferGetPage(listBuf);
 			PageInit(listPage, BufferGetPageSize(listBuf), sizeof(IvfListPageHeader));
@@ -921,15 +938,16 @@ ivfinsert(Relation index,
 
 			/* Update centroid to point to first block */
 			centroid->firstBlock = BufferGetBlockNumber(listBuf);
-		} else
+		}
+		else
 		{
 			listBuf = ReadBuffer(index, listBlock);
-   if (!BufferIsValid(listBuf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed")));
-   	}
+			if (!BufferIsValid(listBuf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed")));
+			}
 			LockBuffer(listBuf, BUFFER_LOCK_EXCLUSIVE);
 			listPage = BufferGetPage(listBuf);
 			listHeader = IvfGetListPageHeader(listPage);
@@ -939,17 +957,17 @@ ivfinsert(Relation index,
 			{
 				/* Allocate new block and chain it */
 				BlockNumber newBlock = P_NEW;
-				Buffer newBuf;
-				Page newPage;
+				Buffer		newBuf;
+				Page		newPage;
 				IvfListPageHeader *newHeader;
 
 				newBuf = ReadBuffer(index, newBlock);
-    if (!BufferIsValid(newBuf))
-    	{
-    		ereport(ERROR,
-    			(errcode(ERRCODE_INTERNAL_ERROR),
-    			 errmsg("neurondb: ReadBuffer failed")));
-    	}
+				if (!BufferIsValid(newBuf))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_INTERNAL_ERROR),
+							 errmsg("neurondb: ReadBuffer failed")));
+				}
 				LockBuffer(newBuf, BUFFER_LOCK_EXCLUSIVE);
 				newPage = BufferGetPage(newBuf);
 				PageInit(newPage, BufferGetPageSize(newBuf), sizeof(IvfListPageHeader));
@@ -972,22 +990,22 @@ ivfinsert(Relation index,
 
 		/* Construct entry in temporary buffer */
 		{
-			char *entryData = (char *)palloc(entrySize);
-			IvfListEntry tempEntry = (IvfListEntry)entryData;
-			float4 *entryVector;
+			char	   *entryData = (char *) palloc(entrySize);
+			IvfListEntry tempEntry = (IvfListEntry) entryData;
+			float4	   *entryVector;
 
 			ItemPointerCopy(ht_ctid, &tempEntry->heapPtr);
 			tempEntry->dim = input_vec->dim;
-			entryVector = (float4 *)(entryData + MAXALIGN(sizeof(IvfListEntryData)));
+			entryVector = (float4 *) (entryData + MAXALIGN(sizeof(IvfListEntryData)));
 			memcpy(entryVector, input_vec->data, input_vec->dim * sizeof(float4));
 
 			/* Append entry to page */
 			newOffnum = PageAddItem(listPage,
-				entryData,
-				entrySize,
-				InvalidOffsetNumber,
-				0,
-				false);
+									entryData,
+									entrySize,
+									InvalidOffsetNumber,
+									0,
+									false);
 
 			NDB_SAFE_PFREE_AND_NULL(entryData);
 		}
@@ -997,8 +1015,8 @@ ivfinsert(Relation index,
 			UnlockReleaseBuffer(listBuf);
 			UnlockReleaseBuffer(centroidsBuf);
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("ivfinsert: failed to add entry to list page")));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("ivfinsert: failed to add entry to list page")));
 			return false;
 		}
 
@@ -1014,23 +1032,23 @@ ivfinsert(Relation index,
 
 		/* Update metadata */
 		meta_buf = ReadBuffer(index, 0);
-  if (!BufferIsValid(meta_buf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed")));
-  	}
+		if (!BufferIsValid(meta_buf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed")));
+		}
 		LockBuffer(meta_buf, BUFFER_LOCK_EXCLUSIVE);
-		meta = (IvfMetaPageData *)PageGetContents(BufferGetPage(meta_buf));
+		meta = (IvfMetaPageData *) PageGetContents(BufferGetPage(meta_buf));
 		meta->insertedVectors++;
 		MarkBufferDirty(meta_buf);
 		UnlockReleaseBuffer(meta_buf);
 	}
 
 	elog(DEBUG1,
-		"ivfinsert: assigned to centroid %d (L2=%.4f), appended to list",
-		min_idx,
-		min_dist);
+		 "ivfinsert: assigned to centroid %d (L2=%.4f), appended to list",
+		 min_idx,
+		 min_dist);
 
 	NDB_SAFE_PFREE_AND_NULL(input_vec);
 	return true;
@@ -1040,47 +1058,47 @@ ivfinsert(Relation index,
  * Bulk delete: scan all inverted lists and remove entries based on callback
  */
 static IndexBulkDeleteResult *
-ivfbulkdelete(IndexVacuumInfo *info,
-	IndexBulkDeleteResult *stats,
-	IndexBulkDeleteCallback callback,
-	void *callback_state)
+ivfbulkdelete(IndexVacuumInfo * info,
+			  IndexBulkDeleteResult * stats,
+			  IndexBulkDeleteCallback callback,
+			  void *callback_state)
 {
-	Relation index = info->index;
-	Buffer metaBuf;
-	Page metaPage;
+	Relation	index = info->index;
+	Buffer		metaBuf;
+	Page		metaPage;
 	IvfMetaPage meta;
-	Buffer centroidsBuf;
-	Page centroidsPage;
+	Buffer		centroidsBuf;
+	Page		centroidsPage;
 	OffsetNumber maxoff;
 	OffsetNumber offnum;
 	IvfCentroid centroid;
 	BlockNumber listBlock;
-	Buffer listBuf;
-	Page listPage;
+	Buffer		listBuf;
+	Page		listPage;
 	IvfListPageHeader *listHeader;
 	OffsetNumber listMaxoff;
 	OffsetNumber listOffnum;
 	IvfListEntry entry;
-	ItemId itemId;
-	int i;
-	int tuplesRemoved = 0;
-	int tuplesRemovedThisPage = 0;
+	ItemId		itemId;
+	int			i;
+	int			tuplesRemoved = 0;
+	int			tuplesRemovedThisPage = 0;
 
 	if (stats == NULL)
-		stats = (IndexBulkDeleteResult *)palloc0(
-			sizeof(IndexBulkDeleteResult));
+		stats = (IndexBulkDeleteResult *) palloc0(
+												  sizeof(IndexBulkDeleteResult));
 
 	/* Read metadata */
 	metaBuf = ReadBuffer(index, 0);
- if (!BufferIsValid(metaBuf))
- 	{
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: ReadBuffer failed")));
- 	}
+	if (!BufferIsValid(metaBuf))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ReadBuffer failed")));
+	}
 	LockBuffer(metaBuf, BUFFER_LOCK_SHARE);
 	metaPage = BufferGetPage(metaBuf);
-	meta = (IvfMetaPage)PageGetContents(metaPage);
+	meta = (IvfMetaPage) PageGetContents(metaPage);
 
 	if (meta->centroidsBlock == InvalidBlockNumber)
 	{
@@ -1090,12 +1108,12 @@ ivfbulkdelete(IndexVacuumInfo *info,
 
 	/* Read centroids */
 	centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
- if (!BufferIsValid(centroidsBuf))
- 	{
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: ReadBuffer failed")));
- 	}
+	if (!BufferIsValid(centroidsBuf))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ReadBuffer failed")));
+	}
 	LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
 	centroidsPage = BufferGetPage(centroidsBuf);
 	maxoff = PageGetMaxOffsetNumber(centroidsPage);
@@ -1107,8 +1125,8 @@ ivfbulkdelete(IndexVacuumInfo *info,
 		if (offnum > maxoff)
 			break;
 
-		centroid = (IvfCentroid)PageGetItem(centroidsPage,
-			PageGetItemId(centroidsPage, offnum));
+		centroid = (IvfCentroid) PageGetItem(centroidsPage,
+											 PageGetItemId(centroidsPage, offnum));
 
 		if (centroid->firstBlock == InvalidBlockNumber)
 			continue;
@@ -1118,12 +1136,12 @@ ivfbulkdelete(IndexVacuumInfo *info,
 		while (listBlock != InvalidBlockNumber)
 		{
 			listBuf = ReadBuffer(index, listBlock);
-   if (!BufferIsValid(listBuf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed")));
-   	}
+			if (!BufferIsValid(listBuf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed")));
+			}
 			LockBuffer(listBuf, BUFFER_LOCK_EXCLUSIVE);
 			listPage = BufferGetPage(listBuf);
 			listHeader = IvfGetListPageHeader(listPage);
@@ -1139,7 +1157,7 @@ ivfbulkdelete(IndexVacuumInfo *info,
 				if (!ItemIdIsValid(itemId) || ItemIdIsDead(itemId))
 					continue;
 
-				entry = (IvfListEntry)PageGetItem(listPage, itemId);
+				entry = (IvfListEntry) PageGetItem(listPage, itemId);
 
 				/* Check callback to see if this tuple should be deleted */
 				if (callback(&entry->heapPtr, callback_state))
@@ -1168,10 +1186,11 @@ ivfbulkdelete(IndexVacuumInfo *info,
 		/* Update centroid member count if entries were removed from this list */
 		if (tuplesRemovedThisPage > 0)
 		{
-			int removedFromThisList = tuplesRemovedThisPage;
+			int			removedFromThisList = tuplesRemovedThisPage;
+
 			LockBuffer(centroidsBuf, BUFFER_LOCK_EXCLUSIVE);
-			centroid = (IvfCentroid)PageGetItem(centroidsPage,
-				PageGetItemId(centroidsPage, offnum));
+			centroid = (IvfCentroid) PageGetItem(centroidsPage,
+												 PageGetItemId(centroidsPage, offnum));
 			centroid->memberCount -= removedFromThisList;
 			if (centroid->memberCount < 0)
 				centroid->memberCount = 0;
@@ -1184,7 +1203,7 @@ ivfbulkdelete(IndexVacuumInfo *info,
 
 	/* Update metadata */
 	LockBuffer(metaBuf, BUFFER_LOCK_EXCLUSIVE);
-	meta = (IvfMetaPage)PageGetContents(BufferGetPage(metaBuf));
+	meta = (IvfMetaPage) PageGetContents(BufferGetPage(metaBuf));
 	meta->insertedVectors -= tuplesRemoved;
 	if (meta->insertedVectors < 0)
 		meta->insertedVectors = 0;
@@ -1199,23 +1218,23 @@ ivfbulkdelete(IndexVacuumInfo *info,
 }
 
 static IndexBulkDeleteResult *
-ivfvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
+ivfvacuumcleanup(IndexVacuumInfo * info, IndexBulkDeleteResult * stats)
 {
 	if (stats == NULL)
-		stats = (IndexBulkDeleteResult *)palloc0(
-			sizeof(IndexBulkDeleteResult));
+		stats = (IndexBulkDeleteResult *) palloc0(
+												  sizeof(IndexBulkDeleteResult));
 	return stats;
 }
 
 static void
 ivfcostestimate(struct PlannerInfo *root,
-	struct IndexPath *path,
-	double loop_count,
-	Cost *indexStartupCost,
-	Cost *indexTotalCost,
-	Selectivity *indexSelectivity,
-	double *indexCorrelation,
-	double *indexPages)
+				struct IndexPath *path,
+				double loop_count,
+				Cost * indexStartupCost,
+				Cost * indexTotalCost,
+				Selectivity * indexSelectivity,
+				double *indexCorrelation,
+				double *indexPages)
 {
 	*indexStartupCost = 25.0;
 	*indexTotalCost = 50.0;
@@ -1238,11 +1257,11 @@ ivfoptions(Datum reloptions, bool validate)
 
 static bool
 ivfproperty(Oid index_oid,
-	int attno,
-	IndexAMProperty prop,
-	const char *propname,
-	bool *res,
-	bool *isnull)
+			int attno,
+			IndexAMProperty prop,
+			const char *propname,
+			bool *res,
+			bool *isnull)
 {
 	return false;
 }
@@ -1254,10 +1273,10 @@ ivfbeginscan(Relation index, int nkeys, int norderbys)
 	IvfScanOpaque so;
 
 	scan = RelationGetIndexScan(index, nkeys, norderbys);
-	so = (IvfScanOpaque)palloc0(sizeof(IvfScanOpaqueData));
-	so->strategy = 1; /* Default to L2 */
+	so = (IvfScanOpaque) palloc0(sizeof(IvfScanOpaqueData));
+	so->strategy = 1;			/* Default to L2 */
 	so->nprobe = IVF_DEFAULT_NPROBE;
-	so->k = 10; /* Default k */
+	so->k = 10;					/* Default k */
 	so->firstCall = true;
 	so->resultCount = 0;
 	so->currentResult = 0;
@@ -1276,14 +1295,14 @@ ivfbeginscan(Relation index, int nkeys, int norderbys)
 
 static void
 ivfrescan(IndexScanDesc scan,
-	ScanKey keys,
-	int nkeys,
-	ScanKey orderbys,
-	int norderbys)
+		  ScanKey keys,
+		  int nkeys,
+		  ScanKey orderbys,
+		  int norderbys)
 {
-	IvfScanOpaque so = (IvfScanOpaque)scan->opaque;
-	Buffer metaBuffer;
-	Page metaPage;
+	IvfScanOpaque so = (IvfScanOpaque) scan->opaque;
+	Buffer		metaBuffer;
+	Page		metaPage;
 	IvfMetaPage meta;
 	IvfOptions *options;
 
@@ -1322,21 +1341,21 @@ ivfrescan(IndexScanDesc scan,
 		so->strategy = 1;
 
 	/* Get nprobe from index options or metadata */
-	options = (IvfOptions *)scan->indexRelation->rd_options;
+	options = (IvfOptions *) scan->indexRelation->rd_options;
 	if (options)
 		so->nprobe = options->nprobe;
 	else
 	{
 		metaBuffer = ReadBuffer(scan->indexRelation, 0);
-  if (!BufferIsValid(metaBuffer))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed")));
-  	}
+		if (!BufferIsValid(metaBuffer))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed")));
+		}
 		LockBuffer(metaBuffer, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuffer);
-		meta = (IvfMetaPage)PageGetContents(metaPage);
+		meta = (IvfMetaPage) PageGetContents(metaPage);
 		so->nprobe = meta->nprobe;
 		UnlockReleaseBuffer(metaBuffer);
 	}
@@ -1347,33 +1366,36 @@ ivfrescan(IndexScanDesc scan,
 	/* Extract query vector from orderbys */
 	if (norderbys > 0 && orderbys[0].sk_argument != 0)
 	{
-		float4 *vectorData;
-		int dim;
-		Oid queryType;
+		float4	   *vectorData;
+		int			dim;
+		Oid			queryType;
 		MemoryContext oldctx;
 
 		queryType = TupleDescAttr(scan->indexRelation->rd_att, 0)->atttypid;
 		oldctx = MemoryContextSwitchTo(scan->indexRelation->rd_indexcxt);
 		vectorData = ivfExtractVectorData(orderbys[0].sk_argument,
-			queryType,
-			&dim,
-			scan->indexRelation->rd_indexcxt);
+										  queryType,
+										  &dim,
+										  scan->indexRelation->rd_indexcxt);
 		MemoryContextSwitchTo(oldctx);
 
 		if (vectorData != NULL)
 		{
 			if (so->queryVector)
 				NDB_SAFE_PFREE_AND_NULL(so->queryVector);
-			so->queryVector = (Vector *)palloc(VECTOR_SIZE(dim));
+			so->queryVector = (Vector *) palloc(VECTOR_SIZE(dim));
 			SET_VARSIZE(so->queryVector, VECTOR_SIZE(dim));
 			so->queryVector->dim = dim;
 			memcpy(so->queryVector->data, vectorData, dim * sizeof(float4));
 			NDB_SAFE_PFREE_AND_NULL(vectorData);
 		}
 
-		/* Extract k from orderbys if available (stored in sk_flags or similar) */
+		/*
+		 * Extract k from orderbys if available (stored in sk_flags or
+		 * similar)
+		 */
 		/* For now, use default or extract from scan context */
-		so->k = 10; /* Default, could be extracted from plan */
+		so->k = 10;				/* Default, could be extracted from plan */
 	}
 }
 
@@ -1381,25 +1403,26 @@ ivfrescan(IndexScanDesc scan,
  * Helper: Compute distance between two vectors
  */
 static float4
-ivfComputeDistance(const float4 *vec1, const float4 *vec2, int dim, int strategy)
+ivfComputeDistance(const float4 * vec1, const float4 * vec2, int dim, int strategy)
 {
-	int i;
-	float4 sum = 0.0f;
-	float4 dot_product = 0.0f;
-	float4 norm1 = 0.0f;
-	float4 norm2 = 0.0f;
+	int			i;
+	float4		sum = 0.0f;
+	float4		dot_product = 0.0f;
+	float4		norm1 = 0.0f;
+	float4		norm2 = 0.0f;
 
 	switch (strategy)
 	{
-		case 1: /* L2 */
+		case 1:					/* L2 */
 			for (i = 0; i < dim; i++)
 			{
-				float4 diff = vec1[i] - vec2[i];
+				float4		diff = vec1[i] - vec2[i];
+
 				sum += diff * diff;
 			}
 			return sqrtf(sum);
 
-		case 2: /* Cosine */
+		case 2:					/* Cosine */
 			for (i = 0; i < dim; i++)
 			{
 				dot_product += vec1[i] * vec2[i];
@@ -1412,10 +1435,11 @@ ivfComputeDistance(const float4 *vec1, const float4 *vec2, int dim, int strategy
 				return 1.0f;
 			return 1.0f - (dot_product / (norm1 * norm2));
 
-		default: /* Default to L2 */
+		default:				/* Default to L2 */
 			for (i = 0; i < dim; i++)
 			{
-				float4 diff = vec1[i] - vec2[i];
+				float4		diff = vec1[i] - vec2[i];
+
 				sum += diff * diff;
 			}
 			return sqrtf(sum);
@@ -1427,21 +1451,22 @@ ivfComputeDistance(const float4 *vec1, const float4 *vec2, int dim, int strategy
  */
 static void
 ivfSelectClusters(Relation index,
-	IvfMetaPage meta,
-	const float4 *queryVector,
-	int dim,
-	int nprobe,
-	int *selectedClusters)
+				  IvfMetaPage meta,
+				  const float4 * queryVector,
+				  int dim,
+				  int nprobe,
+				  int *selectedClusters)
 {
-	Buffer centroidsBuf;
-	Page centroidsPage;
+	Buffer		centroidsBuf;
+	Page		centroidsPage;
 	OffsetNumber maxoff;
 	OffsetNumber offnum;
 	IvfCentroid centroid;
-	float4 *centroidVector;
-	float4 *clusterDistances;
-	int i, j;
-	int nlists;
+	float4	   *centroidVector;
+	float4	   *clusterDistances;
+	int			i,
+				j;
+	int			nlists;
 
 	if (meta->centroidsBlock == InvalidBlockNumber)
 	{
@@ -1456,15 +1481,15 @@ ivfSelectClusters(Relation index,
 		nprobe = nlists;
 
 	/* Allocate distance array */
-	clusterDistances = (float4 *)palloc(nlists * sizeof(float4));
+	clusterDistances = (float4 *) palloc(nlists * sizeof(float4));
 
 	centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
- if (!BufferIsValid(centroidsBuf))
- 	{
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: ReadBuffer failed")));
- 	}
+	if (!BufferIsValid(centroidsBuf))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ReadBuffer failed")));
+	}
 	LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
 	centroidsPage = BufferGetPage(centroidsBuf);
 
@@ -1486,8 +1511,8 @@ ivfSelectClusters(Relation index,
 		if (offnum > maxoff)
 			break;
 
-		centroid = (IvfCentroid)PageGetItem(centroidsPage,
-			PageGetItemId(centroidsPage, offnum));
+		centroid = (IvfCentroid) PageGetItem(centroidsPage,
+											 PageGetItemId(centroidsPage, offnum));
 
 		if (centroid->dim != dim)
 		{
@@ -1497,9 +1522,10 @@ ivfSelectClusters(Relation index,
 
 		centroidVector = IvfGetCentroidVector(centroid);
 		clusterDistances[i] = ivfComputeDistance(queryVector,
-			centroidVector,
-			dim,
-			1); /* Use L2 for cluster selection */
+												 centroidVector,
+												 dim,
+												 1);	/* Use L2 for cluster
+														 * selection */
 	}
 
 	UnlockReleaseBuffer(centroidsBuf);
@@ -1507,14 +1533,14 @@ ivfSelectClusters(Relation index,
 	/* Select nprobe closest clusters (simple selection sort) */
 	for (i = 0; i < nprobe; i++)
 	{
-		int bestIdx = -1;
-		float4 bestDist = FLT_MAX;
+		int			bestIdx = -1;
+		float4		bestDist = FLT_MAX;
 
 		for (j = 0; j < nlists; j++)
 		{
 			/* Check if already selected */
-			bool alreadySelected = false;
-			int k;
+			bool		alreadySelected = false;
+			int			k;
 
 			for (k = 0; k < i; k++)
 			{
@@ -1543,39 +1569,41 @@ ivfSelectClusters(Relation index,
  */
 static void
 ivfCollectCandidates(Relation index,
-	IvfMetaPage meta,
-	const float4 *queryVector,
-	int dim,
-	int strategy,
-	int *selectedClusters,
-	int nprobe,
-	int k,
-	ItemPointerData **results,
-	float4 **distances,
-	int *resultCount)
+					 IvfMetaPage meta,
+					 const float4 * queryVector,
+					 int dim,
+					 int strategy,
+					 int *selectedClusters,
+					 int nprobe,
+					 int k,
+					 ItemPointerData * *results,
+					 float4 * *distances,
+					 int *resultCount)
 {
-	Buffer centroidsBuf;
-	Page centroidsPage;
+	Buffer		centroidsBuf;
+	Page		centroidsPage;
 	OffsetNumber maxoff;
 	OffsetNumber offnum;
 	IvfCentroid centroid;
 	ItemPointerData *candidates;
-	float4 *candidateDistances;
-	int candidateCount = 0;
-	int maxCandidates = k * 10; /* Collect more than k for better results */
-	int i, j;
+	float4	   *candidateDistances;
+	int			candidateCount = 0;
+	int			maxCandidates = k * 10; /* Collect more than k for better
+										 * results */
+	int			i,
+				j;
 
 	/* Allocate candidate arrays */
-	candidates = (ItemPointerData *)palloc(maxCandidates * sizeof(ItemPointerData));
-	candidateDistances = (float4 *)palloc(maxCandidates * sizeof(float4));
+	candidates = (ItemPointerData *) palloc(maxCandidates * sizeof(ItemPointerData));
+	candidateDistances = (float4 *) palloc(maxCandidates * sizeof(float4));
 
 	centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
- if (!BufferIsValid(centroidsBuf))
- 	{
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: ReadBuffer failed")));
- 	}
+	if (!BufferIsValid(centroidsBuf))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ReadBuffer failed")));
+	}
 	LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
 	centroidsPage = BufferGetPage(centroidsBuf);
 	maxoff = PageGetMaxOffsetNumber(centroidsPage);
@@ -1583,7 +1611,7 @@ ivfCollectCandidates(Relation index,
 	/* Scan each selected cluster */
 	for (i = 0; i < nprobe && candidateCount < maxCandidates; i++)
 	{
-		int clusterId = selectedClusters[i];
+		int			clusterId = selectedClusters[i];
 
 		if (clusterId < 0 || clusterId >= maxoff)
 			continue;
@@ -1592,8 +1620,8 @@ ivfCollectCandidates(Relation index,
 		if (offnum > maxoff)
 			continue;
 
-		centroid = (IvfCentroid)PageGetItem(centroidsPage,
-			PageGetItemId(centroidsPage, offnum));
+		centroid = (IvfCentroid) PageGetItem(centroidsPage,
+											 PageGetItemId(centroidsPage, offnum));
 
 		if (centroid->firstBlock == InvalidBlockNumber)
 			continue;
@@ -1601,24 +1629,24 @@ ivfCollectCandidates(Relation index,
 		/* Scan inverted list for this cluster */
 		{
 			BlockNumber listBlock = centroid->firstBlock;
-			Buffer listBuf;
-			Page listPage;
+			Buffer		listBuf;
+			Page		listPage;
 			IvfListPageHeader *listHeader;
 			OffsetNumber listMaxoff;
 			OffsetNumber listOffnum;
 			IvfListEntry entry;
-			float4 *entryVector;
+			float4	   *entryVector;
 
 			/* Traverse all blocks in chain */
 			while (listBlock != InvalidBlockNumber && candidateCount < maxCandidates)
 			{
 				listBuf = ReadBuffer(index, listBlock);
-    if (!BufferIsValid(listBuf))
-    	{
-    		ereport(ERROR,
-    			(errcode(ERRCODE_INTERNAL_ERROR),
-    			 errmsg("neurondb: ReadBuffer failed")));
-    	}
+				if (!BufferIsValid(listBuf))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_INTERNAL_ERROR),
+							 errmsg("neurondb: ReadBuffer failed")));
+				}
 				LockBuffer(listBuf, BUFFER_LOCK_SHARE);
 				listPage = BufferGetPage(listBuf);
 				listHeader = IvfGetListPageHeader(listPage);
@@ -1631,24 +1659,24 @@ ivfCollectCandidates(Relation index,
 						 listOffnum <= listMaxoff && candidateCount < maxCandidates;
 						 listOffnum = OffsetNumberNext(listOffnum))
 					{
-						ItemId itemId = PageGetItemId(listPage, listOffnum);
+						ItemId		itemId = PageGetItemId(listPage, listOffnum);
 
 						if (!ItemIdIsValid(itemId) || ItemIdIsDead(itemId))
 							continue;
 
-						entry = (IvfListEntry)PageGetItem(listPage, itemId);
+						entry = (IvfListEntry) PageGetItem(listPage, itemId);
 
 						if (entry->dim != dim)
 							continue;
 
-						entryVector = (float4 *)((char *)entry + MAXALIGN(sizeof(IvfListEntryData)));
+						entryVector = (float4 *) ((char *) entry + MAXALIGN(sizeof(IvfListEntryData)));
 
 						/* Compute distance */
 						candidateDistances[candidateCount] =
 							ivfComputeDistance(queryVector,
-								entryVector,
-								dim,
-								strategy);
+											   entryVector,
+											   dim,
+											   strategy);
 						candidates[candidateCount] = entry->heapPtr;
 						candidateCount++;
 					}
@@ -1666,20 +1694,20 @@ ivfCollectCandidates(Relation index,
 	/* Sort candidates by distance and keep top-k */
 	if (candidateCount > 0)
 	{
-		int *indices;
-		int actualK = Min(k, candidateCount);
-		int temp;
+		int		   *indices;
+		int			actualK = Min(k, candidateCount);
+		int			temp;
 
 		/* Create index array for sorting */
-		indices = (int *)palloc(candidateCount * sizeof(int));
+		indices = (int *) palloc(candidateCount * sizeof(int));
 		for (i = 0; i < candidateCount; i++)
 			indices[i] = i;
 
 		/* Simple selection sort (could use qsort for better performance) */
 		for (i = 0; i < actualK; i++)
 		{
-			int bestIdx = i;
-			float4 bestDist = candidateDistances[indices[i]];
+			int			bestIdx = i;
+			float4		bestDist = candidateDistances[indices[i]];
 
 			for (j = i + 1; j < candidateCount; j++)
 			{
@@ -1699,8 +1727,8 @@ ivfCollectCandidates(Relation index,
 		}
 
 		/* Allocate result arrays */
-		*results = (ItemPointerData *)palloc(actualK * sizeof(ItemPointerData));
-		*distances = (float4 *)palloc(actualK * sizeof(float4));
+		*results = (ItemPointerData *) palloc(actualK * sizeof(ItemPointerData));
+		*distances = (float4 *) palloc(actualK * sizeof(float4));
 
 		/* Copy top-k results */
 		for (i = 0; i < actualK; i++)
@@ -1712,7 +1740,8 @@ ivfCollectCandidates(Relation index,
 		*resultCount = actualK;
 
 		NDB_SAFE_PFREE_AND_NULL(indices);
-	} else
+	}
+	else
 	{
 		*results = NULL;
 		*distances = NULL;
@@ -1726,9 +1755,9 @@ ivfCollectCandidates(Relation index,
 static bool
 ivfgettuple(IndexScanDesc scan, ScanDirection dir)
 {
-	IvfScanOpaque so = (IvfScanOpaque)scan->opaque;
-	Buffer metaBuffer;
-	Page metaPage;
+	IvfScanOpaque so = (IvfScanOpaque) scan->opaque;
+	Buffer		metaBuffer;
+	Page		metaPage;
 	IvfMetaPage meta;
 
 	if (so == NULL)
@@ -1745,15 +1774,15 @@ ivfgettuple(IndexScanDesc scan, ScanDirection dir)
 	if (so->firstCall)
 	{
 		metaBuffer = ReadBuffer(scan->indexRelation, 0);
-  if (!BufferIsValid(metaBuffer))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed")));
-  	}
+		if (!BufferIsValid(metaBuffer))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed")));
+		}
 		LockBuffer(metaBuffer, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuffer);
-		meta = (IvfMetaPage)PageGetContents(metaPage);
+		meta = (IvfMetaPage) PageGetContents(metaPage);
 
 		if (meta->magicNumber != IVF_MAGIC_NUMBER)
 		{
@@ -1777,37 +1806,37 @@ ivfgettuple(IndexScanDesc scan, ScanDirection dir)
 		{
 			UnlockReleaseBuffer(metaBuffer);
 			elog(DEBUG1,
-				"ivfgettuple: Query vector dimension %d does not match index dimension %d",
-				so->queryVector->dim,
-				meta->dim);
+				 "ivfgettuple: Query vector dimension %d does not match index dimension %d",
+				 so->queryVector->dim,
+				 meta->dim);
 			so->firstCall = false;
 			so->resultCount = 0;
 			return false;
 		}
 
 		/* Allocate selected clusters array */
-		so->selectedClusters = (int *)palloc(so->nprobe * sizeof(int));
+		so->selectedClusters = (int *) palloc(so->nprobe * sizeof(int));
 
 		/* Select nprobe closest clusters */
 		ivfSelectClusters(scan->indexRelation,
-			meta,
-			so->queryVector->data,
-			so->queryVector->dim,
-			so->nprobe,
-			so->selectedClusters);
+						  meta,
+						  so->queryVector->data,
+						  so->queryVector->dim,
+						  so->nprobe,
+						  so->selectedClusters);
 
 		/* Collect candidates from selected clusters */
 		ivfCollectCandidates(scan->indexRelation,
-			meta,
-			so->queryVector->data,
-			so->queryVector->dim,
-			so->strategy,
-			so->selectedClusters,
-			so->nprobe,
-			so->k,
-			&so->results,
-			&so->distances,
-			&so->resultCount);
+							 meta,
+							 so->queryVector->data,
+							 so->queryVector->dim,
+							 so->strategy,
+							 so->selectedClusters,
+							 so->nprobe,
+							 so->k,
+							 &so->results,
+							 &so->distances,
+							 &so->resultCount);
 
 		/* Check if any results were found */
 		if (so->resultCount == 0)
@@ -1842,7 +1871,7 @@ ivfgettuple(IndexScanDesc scan, ScanDirection dir)
 static void
 ivfendscan(IndexScanDesc scan)
 {
-	IvfScanOpaque so = (IvfScanOpaque)scan->opaque;
+	IvfScanOpaque so = (IvfScanOpaque) scan->opaque;
 
 	if (so == NULL)
 		return;
@@ -1866,12 +1895,13 @@ ivfendscan(IndexScanDesc scan)
  * Initialize KMeans state
  */
 __attribute__((unused)) static KMeansState *
-kmeans_init(int k, int dim, float4 **data, int n)
+kmeans_init(int k, int dim, float4 * *data, int n)
 {
 	KMeansState *state;
-	int i, j;
+	int			i,
+				j;
 
-	state = (KMeansState *)palloc0(sizeof(KMeansState));
+	state = (KMeansState *) palloc0(sizeof(KMeansState));
 	state->k = k;
 	state->dim = dim;
 	state->maxIter = IVF_MAX_ITERATIONS;
@@ -1881,10 +1911,10 @@ kmeans_init(int k, int dim, float4 **data, int n)
 	state->ctx = CurrentMemoryContext;
 
 	/* Allocate centroids */
-	state->centroids = (float4 **)palloc(k * sizeof(float4 *));
+	state->centroids = (float4 * *) palloc(k * sizeof(float4 *));
 	for (i = 0; i < k; i++)
 	{
-		state->centroids[i] = (float4 *)palloc(dim * sizeof(float4));
+		state->centroids[i] = (float4 *) palloc(dim * sizeof(float4));
 
 		/* Initialize with random data points (KMeans++) */
 		if (i < n)
@@ -1894,8 +1924,8 @@ kmeans_init(int k, int dim, float4 **data, int n)
 		}
 	}
 
-	state->assignments = (int *)palloc(n * sizeof(int));
-	state->counts = (int *)palloc0(k * sizeof(int));
+	state->assignments = (int *) palloc(n * sizeof(int));
+	state->counts = (int *) palloc0(k * sizeof(int));
 
 	return state;
 }
@@ -1904,17 +1934,17 @@ kmeans_init(int k, int dim, float4 **data, int n)
  * Run KMeans clustering (Lloyd's algorithm)
  */
 __attribute__((unused)) static void
-kmeans_run(KMeansState *state)
+kmeans_run(KMeansState * state)
 {
-	int iter;
-	float4 prevCost = FLT_MAX;
-	float4 cost;
+	int			iter;
+	float4		prevCost = FLT_MAX;
+	float4		cost;
 
 	elog(DEBUG1,
-		"neurondb: Running KMeans with k=%d, n=%d, dim=%d",
-		state->k,
-		state->n,
-		state->dim);
+		 "neurondb: Running KMeans with k=%d, n=%d, dim=%d",
+		 state->k,
+		 state->n,
+		 state->dim);
 
 	for (iter = 0; iter < state->maxIter; iter++)
 	{
@@ -1930,10 +1960,10 @@ kmeans_run(KMeansState *state)
 		if (fabs(prevCost - cost) < state->threshold)
 		{
 			elog(DEBUG1,
-				"neurondb: KMeans converged at iteration %d "
-				"(cost=%.4f)",
-				iter,
-				cost);
+				 "neurondb: KMeans converged at iteration %d "
+				 "(cost=%.4f)",
+				 iter,
+				 cost);
 			break;
 		}
 
@@ -1941,9 +1971,9 @@ kmeans_run(KMeansState *state)
 
 		if (iter % 10 == 0)
 			elog(DEBUG1,
-				"neurondb: KMeans iteration %d, cost=%.4f",
-				iter,
-				cost);
+				 "neurondb: KMeans iteration %d, cost=%.4f",
+				 iter,
+				 cost);
 	}
 }
 
@@ -1951,9 +1981,9 @@ kmeans_run(KMeansState *state)
  * Assign each vector to nearest centroid
  */
 static void
-kmeans_assign(KMeansState *state)
+kmeans_assign(KMeansState * state)
 {
-	int i;
+	int			i;
 
 	memset(state->counts, 0, state->k * sizeof(int));
 
@@ -1969,9 +1999,11 @@ kmeans_assign(KMeansState *state)
  * Update centroids to mean of assigned vectors
  */
 static void
-kmeans_update_centroids(KMeansState *state)
+kmeans_update_centroids(KMeansState * state)
 {
-	int i, j, c;
+	int			i,
+				j,
+				c;
 
 	/* Zero centroids */
 	for (c = 0; c < state->k; c++)
@@ -2003,16 +2035,17 @@ kmeans_update_centroids(KMeansState *state)
  * Compute total cost (sum of squared distances)
  */
 static float4
-kmeans_compute_cost(KMeansState *state)
+kmeans_compute_cost(KMeansState * state)
 {
-	float4 cost = 0.0;
-	int i, c;
+	float4		cost = 0.0;
+	int			i,
+				c;
 
 	for (i = 0; i < state->n; i++)
 	{
 		c = state->assignments[i];
 		cost += vector_distance_l2(
-			state->data[i], state->centroids[c], state->dim);
+								   state->data[i], state->centroids[c], state->dim);
 	}
 
 	return cost;
@@ -2022,9 +2055,9 @@ kmeans_compute_cost(KMeansState *state)
  * Free KMeans state
  */
 __attribute__((unused)) static void
-kmeans_free(KMeansState *state)
+kmeans_free(KMeansState * state)
 {
-	int i;
+	int			i;
 
 	for (i = 0; i < state->k; i++)
 		NDB_SAFE_PFREE_AND_NULL(state->centroids[i]);
@@ -2039,14 +2072,15 @@ kmeans_free(KMeansState *state)
  * Compute L2 distance (squared)
  */
 static float4
-vector_distance_l2(const float4 *v1, const float4 *v2, int dim)
+vector_distance_l2(const float4 * v1, const float4 * v2, int dim)
 {
-	float4 sum = 0.0;
-	int i;
+	float4		sum = 0.0;
+	int			i;
 
 	for (i = 0; i < dim; i++)
 	{
-		float4 diff = v1[i] - v2[i];
+		float4		diff = v1[i] - v2[i];
+
 		sum += diff * diff;
 	}
 
@@ -2057,16 +2091,17 @@ vector_distance_l2(const float4 *v1, const float4 *v2, int dim)
  * Find nearest centroid to vector
  */
 static int
-find_nearest_centroid(KMeansState *state, const float4 *vector)
+find_nearest_centroid(KMeansState * state, const float4 * vector)
 {
-	int best = 0;
-	float4 bestDist = FLT_MAX;
-	int c;
+	int			best = 0;
+	float4		bestDist = FLT_MAX;
+	int			c;
 
 	for (c = 0; c < state->k; c++)
 	{
-		float4 dist = vector_distance_l2(
-			vector, state->centroids[c], state->dim);
+		float4		dist = vector_distance_l2(
+											  vector, state->centroids[c], state->dim);
+
 		if (dist < bestDist)
 		{
 			bestDist = dist;
@@ -2084,43 +2119,43 @@ find_nearest_centroid(KMeansState *state, const float4 *vector)
  */
 static bool
 ivfdelete(Relation index,
-	ItemPointer tid,
-	Datum *values,
-	bool *isnull,
-	Relation heapRel,
-	struct IndexInfo *indexInfo)
+		  ItemPointer tid,
+		  Datum *values,
+		  bool *isnull,
+		  Relation heapRel,
+		  struct IndexInfo *indexInfo)
 {
-	Buffer metaBuf;
-	Page metaPage;
+	Buffer		metaBuf;
+	Page		metaPage;
 	IvfMetaPage meta;
-	Buffer centroidsBuf;
-	Page centroidsPage;
+	Buffer		centroidsBuf;
+	Page		centroidsPage;
 	IvfCentroid centroid;
-	float4 *centroidVector;
+	float4	   *centroidVector;
 	BlockNumber listBlock;
-	Buffer listBuf;
-	Page listPage;
+	Buffer		listBuf;
+	Page		listPage;
 	OffsetNumber maxoff;
 	OffsetNumber offnum;
 	IvfListEntry entry;
-	bool found = false;
-	int i;
-	int minIdx = -1;
-	float4 minDist = FLT_MAX;
-	Vector *inputVec = NULL;
-	int metaBlkno = 0;
+	bool		found = false;
+	int			i;
+	int			minIdx = -1;
+	float4		minDist = FLT_MAX;
+	Vector	   *inputVec = NULL;
+	int			metaBlkno = 0;
 
 	/* Step 1: Read metadata */
 	metaBuf = ReadBuffer(index, metaBlkno);
- if (!BufferIsValid(metaBuf))
- 	{
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: ReadBuffer failed")));
- 	}
+	if (!BufferIsValid(metaBuf))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ReadBuffer failed")));
+	}
 	LockBuffer(metaBuf, BUFFER_LOCK_EXCLUSIVE);
 	metaPage = BufferGetPage(metaBuf);
-	meta = (IvfMetaPage)PageGetContents(metaPage);
+	meta = (IvfMetaPage) PageGetContents(metaPage);
 
 	if (meta->centroidsBlock == InvalidBlockNumber)
 	{
@@ -2131,9 +2166,9 @@ ivfdelete(Relation index,
 	/* Step 2: Get vector from heap to find which centroid it belongs to */
 	if (values != NULL && !isnull[0])
 	{
-		float4 *vectorData;
-		int dim;
-		Oid keyType;
+		float4	   *vectorData;
+		int			dim;
+		Oid			keyType;
 		MemoryContext oldctx;
 
 		keyType = ivfGetKeyType(index, 1);
@@ -2143,7 +2178,7 @@ ivfdelete(Relation index,
 
 		if (vectorData != NULL)
 		{
-			inputVec = (Vector *)palloc(VECTOR_SIZE(dim));
+			inputVec = (Vector *) palloc(VECTOR_SIZE(dim));
 			SET_VARSIZE(inputVec, VECTOR_SIZE(dim));
 			inputVec->dim = dim;
 			memcpy(inputVec->data, vectorData, dim * sizeof(float4));
@@ -2156,12 +2191,12 @@ ivfdelete(Relation index,
 	{
 		/* Scan all centroids and their lists */
 		centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
-  if (!BufferIsValid(centroidsBuf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed")));
-  	}
+		if (!BufferIsValid(centroidsBuf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed")));
+		}
 		LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
 		centroidsPage = BufferGetPage(centroidsBuf);
 		maxoff = PageGetMaxOffsetNumber(centroidsPage);
@@ -2172,8 +2207,8 @@ ivfdelete(Relation index,
 			if (offnum > maxoff)
 				break;
 
-			centroid = (IvfCentroid)PageGetItem(centroidsPage,
-				PageGetItemId(centroidsPage, offnum));
+			centroid = (IvfCentroid) PageGetItem(centroidsPage,
+												 PageGetItemId(centroidsPage, offnum));
 			listBlock = centroid->firstBlock;
 
 			/* Scan this list for the ItemPointer */
@@ -2183,12 +2218,12 @@ ivfdelete(Relation index,
 				while (listBlock != InvalidBlockNumber && !found)
 				{
 					listBuf = ReadBuffer(index, listBlock);
-     if (!BufferIsValid(listBuf))
-     	{
-     		ereport(ERROR,
-     			(errcode(ERRCODE_INTERNAL_ERROR),
-     			 errmsg("neurondb: ReadBuffer failed")));
-     	}
+					if (!BufferIsValid(listBuf))
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_INTERNAL_ERROR),
+								 errmsg("neurondb: ReadBuffer failed")));
+					}
 					LockBuffer(listBuf, BUFFER_LOCK_EXCLUSIVE);
 					listPage = BufferGetPage(listBuf);
 					listHeader = IvfGetListPageHeader(listPage);
@@ -2196,11 +2231,12 @@ ivfdelete(Relation index,
 
 					for (offnum = FirstOffsetNumber; offnum <= maxoff; offnum++)
 					{
-						ItemId itemId = PageGetItemId(listPage, offnum);
+						ItemId		itemId = PageGetItemId(listPage, offnum);
+
 						if (!ItemIdIsValid(itemId) || ItemIdIsDead(itemId))
 							continue;
 
-						entry = (IvfListEntry)PageGetItem(listPage, itemId);
+						entry = (IvfListEntry) PageGetItem(listPage, itemId);
 						if (ItemPointerEquals(&entry->heapPtr, tid))
 						{
 							/* Found it - mark as deleted */
@@ -2227,32 +2263,33 @@ ivfdelete(Relation index,
 
 		MarkBufferDirty(centroidsBuf);
 		UnlockReleaseBuffer(centroidsBuf);
-	} else
+	}
+	else
 	{
 		/* Step 3: Find nearest centroid */
 		centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
-  if (!BufferIsValid(centroidsBuf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed")));
-  	}
+		if (!BufferIsValid(centroidsBuf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed")));
+		}
 		LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
 		centroidsPage = BufferGetPage(centroidsBuf);
 		maxoff = PageGetMaxOffsetNumber(centroidsPage);
 
 		for (i = 0; i < meta->nlists && i < maxoff; i++)
 		{
-			float4 dist;
-			float4 accum = 0.0f;
-			int k;
+			float4		dist;
+			float4		accum = 0.0f;
+			int			k;
 
 			offnum = FirstOffsetNumber + i;
 			if (offnum > maxoff)
 				break;
 
-			centroid = (IvfCentroid)PageGetItem(centroidsPage,
-				PageGetItemId(centroidsPage, offnum));
+			centroid = (IvfCentroid) PageGetItem(centroidsPage,
+												 PageGetItemId(centroidsPage, offnum));
 
 			if (centroid->dim != inputVec->dim)
 				continue;
@@ -2262,7 +2299,8 @@ ivfdelete(Relation index,
 			/* Compute L2 distance */
 			for (k = 0; k < inputVec->dim; k++)
 			{
-				float4 diff = inputVec->data[k] - centroidVector[k];
+				float4		diff = inputVec->data[k] - centroidVector[k];
+
 				accum += diff * diff;
 			}
 			dist = sqrtf(accum);
@@ -2280,16 +2318,16 @@ ivfdelete(Relation index,
 		if (minIdx >= 0)
 		{
 			centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
-   if (!BufferIsValid(centroidsBuf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed")));
-   	}
+			if (!BufferIsValid(centroidsBuf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed")));
+			}
 			LockBuffer(centroidsBuf, BUFFER_LOCK_EXCLUSIVE);
 			centroidsPage = BufferGetPage(centroidsBuf);
-			centroid = (IvfCentroid)PageGetItem(centroidsPage,
-				PageGetItemId(centroidsPage, FirstOffsetNumber + minIdx));
+			centroid = (IvfCentroid) PageGetItem(centroidsPage,
+												 PageGetItemId(centroidsPage, FirstOffsetNumber + minIdx));
 			listBlock = centroid->firstBlock;
 
 			/* Scan list for the ItemPointer */
@@ -2299,12 +2337,12 @@ ivfdelete(Relation index,
 				while (listBlock != InvalidBlockNumber && !found)
 				{
 					listBuf = ReadBuffer(index, listBlock);
-     if (!BufferIsValid(listBuf))
-     	{
-     		ereport(ERROR,
-     			(errcode(ERRCODE_INTERNAL_ERROR),
-     			 errmsg("neurondb: ReadBuffer failed")));
-     	}
+					if (!BufferIsValid(listBuf))
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_INTERNAL_ERROR),
+								 errmsg("neurondb: ReadBuffer failed")));
+					}
 					LockBuffer(listBuf, BUFFER_LOCK_EXCLUSIVE);
 					listPage = BufferGetPage(listBuf);
 					listHeader = IvfGetListPageHeader(listPage);
@@ -2312,11 +2350,12 @@ ivfdelete(Relation index,
 
 					for (offnum = FirstOffsetNumber; offnum <= maxoff; offnum++)
 					{
-						ItemId itemId = PageGetItemId(listPage, offnum);
+						ItemId		itemId = PageGetItemId(listPage, offnum);
+
 						if (!ItemIdIsValid(itemId) || ItemIdIsDead(itemId))
 							continue;
 
-						entry = (IvfListEntry)PageGetItem(listPage, itemId);
+						entry = (IvfListEntry) PageGetItem(listPage, itemId);
 						if (ItemPointerEquals(&entry->heapPtr, tid))
 						{
 							/* Found it - mark as deleted */
@@ -2359,25 +2398,26 @@ ivfdelete(Relation index,
  */
 static bool
 ivfupdate(Relation index,
-	ItemPointer tid,
-	Datum *values,
-	bool *isnull,
-	ItemPointer otid,
-	Relation heapRel,
-	struct IndexInfo *indexInfo)
+		  ItemPointer tid,
+		  Datum *values,
+		  bool *isnull,
+		  ItemPointer otid,
+		  Relation heapRel,
+		  struct IndexInfo *indexInfo)
 {
-	/* For proper vector updates (including upserts), we need to:
-	 * 1. Find and remove the old vector from its assigned list
-	 * 2. Assign the new vector to the appropriate list and insert it
+	/*
+	 * For proper vector updates (including upserts), we need to: 1. Find and
+	 * remove the old vector from its assigned list 2. Assign the new vector
+	 * to the appropriate list and insert it
 	 */
 	if (!ivfdelete(index, otid, values, isnull, heapRel, indexInfo))
 	{
 		/* If delete failed, still try to insert new value */
 		elog(DEBUG1,
-			"neurondb: IVF update: delete of old value failed, "
-			"proceeding with insert");
+			 "neurondb: IVF update: delete of old value failed, "
+			 "proceeding with insert");
 	}
 
 	return ivfinsert(index, values, isnull, tid, heapRel,
-			 UNIQUE_CHECK_NO, false, indexInfo);
+					 UNIQUE_CHECK_NO, false, indexInfo);
 }

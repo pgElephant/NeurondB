@@ -22,30 +22,30 @@
 #include "neurondb_safe_memory.h"
 
 /* Forward declarations for GPU training functions */
-extern int ndb_gpu_dt_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr);
-extern int ndb_gpu_ridge_train(const float *features,
-	const double *targets,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr);
-extern int ndb_gpu_lasso_train(const float *features,
-	const double *targets,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr);
+extern int	ndb_gpu_dt_train(const float *features,
+							 const double *labels,
+							 int n_samples,
+							 int feature_dim,
+							 const Jsonb * hyperparams,
+							 bytea * *model_data,
+							 Jsonb * *metrics,
+							 char **errstr);
+extern int	ndb_gpu_ridge_train(const float *features,
+								const double *targets,
+								int n_samples,
+								int feature_dim,
+								const Jsonb * hyperparams,
+								bytea * *model_data,
+								Jsonb * *metrics,
+								char **errstr);
+extern int	ndb_gpu_lasso_train(const float *features,
+								const double *targets,
+								int n_samples,
+								int feature_dim,
+								const Jsonb * hyperparams,
+								bytea * *model_data,
+								Jsonb * *metrics,
+								char **errstr);
 
 #include "miscadmin.h"
 #include "utils/builtins.h"
@@ -70,28 +70,28 @@ ndb_gpu_strdup_or_null(const char *src)
 
 bool
 ndb_gpu_try_train_model(const char *algorithm,
-	const char *project_name,
-	const char *model_name,
-	const char *training_table,
-	const char *training_column,
-	const char *const *feature_columns,
-	int feature_count,
-	Jsonb *hyperparameters,
-	const float *feature_matrix,
-	const double *label_vector,
-	int sample_count,
-	int feature_dim,
-	int class_count,
-	MLGpuTrainResult *result,
-	char **errstr)
+						const char *project_name,
+						const char *model_name,
+						const char *training_table,
+						const char *training_column,
+						const char *const *feature_columns,
+						int feature_count,
+						Jsonb * hyperparameters,
+						const float *feature_matrix,
+						const double *label_vector,
+						int sample_count,
+						int feature_dim,
+						int class_count,
+						MLGpuTrainResult *result,
+						char **errstr)
 {
-	const MLGpuModelOps *ops;
-	MLGpuModel model;
+	const		MLGpuModelOps *ops;
+	MLGpuModel	model;
 	MLGpuTrainSpec spec;
 	MLGpuContext ctx;
-	bytea *payload = NULL;
-	Jsonb *metadata = NULL;
-	bool trained = false;
+	bytea	   *payload = NULL;
+	Jsonb	   *metadata = NULL;
+	bool		trained = false;
 
 	if (errstr)
 		*errstr = NULL;
@@ -104,11 +104,11 @@ ndb_gpu_try_train_model(const char *algorithm,
 	if (ops == NULL || ops->train == NULL || ops->serialize == NULL)
 	{
 		ereport(DEBUG1,
-			(errmsg("%s: GPU model ops not found or incomplete (ops=%p, train=%p, serialize=%p)",
-				algorithm ? algorithm : "unknown",
-				(void*)ops,
-				ops ? (void*)ops->train : NULL,
-				ops ? (void*)ops->serialize : NULL)));
+				(errmsg("%s: GPU model ops not found or incomplete (ops=%p, train=%p, serialize=%p)",
+						algorithm ? algorithm : "unknown",
+						(void *) ops,
+						ops ? (void *) ops->train : NULL,
+						ops ? (void *) ops->serialize : NULL)));
 		return false;
 	}
 
@@ -152,11 +152,11 @@ ndb_gpu_try_train_model(const char *algorithm,
 	{
 		TimestampTz train_start = GetCurrentTimestamp();
 		TimestampTz train_end;
-		bool ops_trained = false;
-		bool ops_serialized = false;
-		long secs = 0;
-		int usecs = 0;
-		double elapsed_ms;
+		bool		ops_trained = false;
+		bool		ops_serialized = false;
+		long		secs = 0;
+		int			usecs = 0;
+		double		elapsed_ms;
 
 		if (ops->train(&model, &spec, errstr))
 		{
@@ -170,46 +170,47 @@ ndb_gpu_try_train_model(const char *algorithm,
 			else
 			{
 				ereport(DEBUG1,
-					(errmsg("%s: GPU serialize failed: %s",
-						algorithm ? algorithm : "unknown",
-						(errstr && *errstr) ? *errstr : "no error message")));
+						(errmsg("%s: GPU serialize failed: %s",
+								algorithm ? algorithm : "unknown",
+								(errstr && *errstr) ? *errstr : "no error message")));
 			}
 		}
 		else
 		{
 			ereport(DEBUG1,
-				(errmsg("%s: GPU train failed: %s",
-					algorithm ? algorithm : "unknown",
-					(errstr && *errstr) ? *errstr : "no error message")));
+					(errmsg("%s: GPU train failed: %s",
+							algorithm ? algorithm : "unknown",
+							(errstr && *errstr) ? *errstr : "no error message")));
 		}
 
 		train_end = GetCurrentTimestamp();
 		TimestampDifference(train_start, train_end, &secs, &usecs);
-		elapsed_ms = ((double)secs * 1000.0) + ((double)usecs / 1000.0);
+		elapsed_ms = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
 
 		if (trained)
 		{
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
 			ereport(DEBUG1,
-				(errmsg("%s: GPU training succeeded",
-					 algorithm ? algorithm : "unknown"),
-					errdetail(
-						"Elapsed %.3f ms on backend %s",
-						elapsed_ms,
-						ctx.backend_name
-							? ctx.backend_name
-							: "unknown"),
-					errhidestmt(true)));
-		} else if (ops_trained || ops_serialized)
+					(errmsg("%s: GPU training succeeded",
+							algorithm ? algorithm : "unknown"),
+					 errdetail(
+							   "Elapsed %.3f ms on backend %s",
+							   elapsed_ms,
+							   ctx.backend_name
+							   ? ctx.backend_name
+							   : "unknown"),
+					 errhidestmt(true)));
+		}
+		else if (ops_trained || ops_serialized)
 		{
 			ndb_gpu_stats_record(false, 0.0, elapsed_ms, true);
 			ereport(DEBUG1,
-				(errmsg("%s: GPU training fell back to CPU",
-					 algorithm ? algorithm : "unknown"),
-					errdetail("GPU stage elapsed %.3f ms "
-						  "before fallback",
-						elapsed_ms),
-					errhidestmt(true)));
+					(errmsg("%s: GPU training fell back to CPU",
+							algorithm ? algorithm : "unknown"),
+					 errdetail("GPU stage elapsed %.3f ms "
+							   "before fallback",
+							   elapsed_ms),
+					 errhidestmt(true)));
 		}
 	}
 
@@ -220,50 +221,51 @@ ndb_gpu_try_train_model(const char *algorithm,
 	{
 		TimestampTz train_start = GetCurrentTimestamp();
 		TimestampTz train_end;
-		int gpu_rc = ndb_gpu_rf_train(feature_matrix,
-			label_vector,
-			sample_count,
-			feature_dim,
-			class_count,
-			hyperparameters,
-			&payload,
-			&metadata,
-			errstr);
-		long secs = 0;
-		int usecs = 0;
-		double elapsed_ms;
+		int			gpu_rc = ndb_gpu_rf_train(feature_matrix,
+											  label_vector,
+											  sample_count,
+											  feature_dim,
+											  class_count,
+											  hyperparameters,
+											  &payload,
+											  &metadata,
+											  errstr);
+		long		secs = 0;
+		int			usecs = 0;
+		double		elapsed_ms;
 
 		train_end = GetCurrentTimestamp();
 		TimestampDifference(train_start, train_end, &secs, &usecs);
-		elapsed_ms = ((double)secs * 1000.0) + ((double)usecs / 1000.0);
+		elapsed_ms = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
 
 		if (gpu_rc == 0)
 		{
 			trained = true;
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
 			ereport(DEBUG1,
-				(errmsg("random_forest: GPU training succeeded "
-					"(direct)"),
-					errdetail(
-						"Elapsed %.3f ms on backend %s",
-						elapsed_ms,
-						ctx.backend_name
-							? ctx.backend_name
-							: "unknown"),
-					errhidestmt(true)));
-		} else
+					(errmsg("random_forest: GPU training succeeded "
+							"(direct)"),
+					 errdetail(
+							   "Elapsed %.3f ms on backend %s",
+							   elapsed_ms,
+							   ctx.backend_name
+							   ? ctx.backend_name
+							   : "unknown"),
+					 errhidestmt(true)));
+		}
+		else
 		{
 			ndb_gpu_stats_record(false, 0.0, elapsed_ms, true);
 			ereport(NOTICE,
-				(errmsg("random_forest: GPU training "
-					"unavailable, using CPU"),
-					errdetail("GPU attempt elapsed %.3f ms "
-						  "(%s)",
-						elapsed_ms,
-						(errstr && *errstr)
-							? *errstr
-							: "no error"),
-					errhidestmt(true)));
+					(errmsg("random_forest: GPU training "
+							"unavailable, using CPU"),
+					 errdetail("GPU attempt elapsed %.3f ms "
+							   "(%s)",
+							   elapsed_ms,
+							   (errstr && *errstr)
+							   ? *errstr
+							   : "no error"),
+					 errhidestmt(true)));
 		}
 	}
 
@@ -274,26 +276,26 @@ ndb_gpu_try_train_model(const char *algorithm,
 	{
 		TimestampTz train_start = GetCurrentTimestamp();
 		TimestampTz train_end;
-		const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-		int gpu_rc;
-		long secs = 0;
-		int usecs = 0;
-		double elapsed_ms;
+		const		ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
+		int			gpu_rc;
+		long		secs = 0;
+		int			usecs = 0;
+		double		elapsed_ms;
 
 		elog(DEBUG1,
-			"logistic_regression: attempting direct GPU training: "
-			"backend=%s, lr_train=%p, samples=%d, dim=%d",
-			backend ? (backend->name ? backend->name : "unknown")
-				: "NULL",
-			backend ? (void *)backend->lr_train : NULL,
-			sample_count,
-			feature_dim);
+			 "logistic_regression: attempting direct GPU training: "
+			 "backend=%s, lr_train=%p, samples=%d, dim=%d",
+			 backend ? (backend->name ? backend->name : "unknown")
+			 : "NULL",
+			 backend ? (void *) backend->lr_train : NULL,
+			 sample_count,
+			 feature_dim);
 
 		if (backend == NULL || backend->lr_train == NULL)
 		{
 			elog(DEBUG1,
-				"logistic_regression: backend or lr_train is "
-				"NULL, skipping GPU");
+				 "logistic_regression: backend or lr_train is "
+				 "NULL, skipping GPU");
 			goto lr_fallback;
 		}
 
@@ -303,7 +305,7 @@ ndb_gpu_try_train_model(const char *algorithm,
 			if (errstr)
 				*errstr = pstrdup("logistic_regression: feature_matrix is NULL");
 			elog(WARNING,
-				"logistic_regression: feature_matrix is NULL, skipping GPU");
+				 "logistic_regression: feature_matrix is NULL, skipping GPU");
 			goto lr_fallback;
 		}
 
@@ -312,7 +314,7 @@ ndb_gpu_try_train_model(const char *algorithm,
 			if (errstr)
 				*errstr = pstrdup("logistic_regression: label_vector is NULL");
 			elog(WARNING,
-				"logistic_regression: label_vector is NULL, skipping GPU");
+				 "logistic_regression: label_vector is NULL, skipping GPU");
 			goto lr_fallback;
 		}
 
@@ -320,10 +322,10 @@ ndb_gpu_try_train_model(const char *algorithm,
 		{
 			if (errstr)
 				*errstr = psprintf("logistic_regression: invalid sample_count %d",
-					sample_count);
+								   sample_count);
 			elog(WARNING,
-				"logistic_regression: invalid sample_count %d, skipping GPU",
-				sample_count);
+				 "logistic_regression: invalid sample_count %d, skipping GPU",
+				 sample_count);
 			goto lr_fallback;
 		}
 
@@ -331,10 +333,10 @@ ndb_gpu_try_train_model(const char *algorithm,
 		{
 			if (errstr)
 				*errstr = psprintf("logistic_regression: invalid feature_dim %d",
-					feature_dim);
+								   feature_dim);
 			elog(WARNING,
-				"logistic_regression: invalid feature_dim %d, skipping GPU",
-				feature_dim);
+				 "logistic_regression: invalid feature_dim %d, skipping GPU",
+				 feature_dim);
 			goto lr_fallback;
 		}
 
@@ -342,19 +344,19 @@ ndb_gpu_try_train_model(const char *algorithm,
 		PG_TRY();
 		{
 			gpu_rc = ndb_gpu_lr_train(feature_matrix,
-				label_vector,
-				sample_count,
-				feature_dim,
-				hyperparameters,
-				&payload,
-				&metadata,
-				errstr);
+									  label_vector,
+									  sample_count,
+									  feature_dim,
+									  hyperparameters,
+									  &payload,
+									  &metadata,
+									  errstr);
 		}
 		PG_CATCH();
 		{
 			/* Catch any PostgreSQL-level errors from CUDA code */
 			elog(WARNING,
-				"logistic_regression: exception caught during GPU training, falling back to CPU");
+				 "logistic_regression: exception caught during GPU training, falling back to CPU");
 			gpu_rc = -1;
 			if (errstr && *errstr == NULL)
 				*errstr = pstrdup("Exception during GPU training");
@@ -373,7 +375,7 @@ ndb_gpu_try_train_model(const char *algorithm,
 		PG_END_TRY();
 		train_end = GetCurrentTimestamp();
 		TimestampDifference(train_start, train_end, &secs, &usecs);
-		elapsed_ms = ((double)secs * 1000.0) + ((double)usecs / 1000.0);
+		elapsed_ms = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
 
 		if (gpu_rc == 0)
 		{
@@ -381,45 +383,48 @@ ndb_gpu_try_train_model(const char *algorithm,
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
 			if (metadata != NULL)
 			{
-				char *meta_txt = DatumGetCString(
-					DirectFunctionCall1(jsonb_out,
-						JsonbPGetDatum(metadata)));
+				char	   *meta_txt = DatumGetCString(
+													   DirectFunctionCall1(jsonb_out,
+																		   JsonbPGetDatum(metadata)));
+
 				elog(DEBUG1,
-					"gpu_model_bridge: LR direct path "
-					"metadata: %s",
-					meta_txt);
+					 "gpu_model_bridge: LR direct path "
+					 "metadata: %s",
+					 meta_txt);
 				NDB_SAFE_PFREE_AND_NULL(meta_txt);
-			} else
+			}
+			else
 			{
 				elog(WARNING,
-					"gpu_model_bridge: LR direct path "
-					"metadata is NULL!");
+					 "gpu_model_bridge: LR direct path "
+					 "metadata is NULL!");
 			}
 			ereport(NOTICE,
-				(errmsg("logistic_regression: GPU training "
-					"succeeded (direct)"),
-					errdetail(
-						"Elapsed %.3f ms on backend %s",
-						elapsed_ms,
-						ctx.backend_name
-							? ctx.backend_name
-							: "unknown"),
-					errhidestmt(true)));
-		} else
+					(errmsg("logistic_regression: GPU training "
+							"succeeded (direct)"),
+					 errdetail(
+							   "Elapsed %.3f ms on backend %s",
+							   elapsed_ms,
+							   ctx.backend_name
+							   ? ctx.backend_name
+							   : "unknown"),
+					 errhidestmt(true)));
+		}
+		else
 		{
 			ndb_gpu_stats_record(false, 0.0, elapsed_ms, true);
 			ereport(NOTICE,
-				(errmsg("logistic_regression: GPU training "
-					"unavailable, using CPU"),
-					errdetail("GPU attempt elapsed %.3f ms "
-						  "(%s)",
-						elapsed_ms,
-						(errstr && *errstr)
-							? *errstr
-							: "no error"),
-					errhidestmt(true)));
+					(errmsg("logistic_regression: GPU training "
+							"unavailable, using CPU"),
+					 errdetail("GPU attempt elapsed %.3f ms "
+							   "(%s)",
+							   elapsed_ms,
+							   (errstr && *errstr)
+							   ? *errstr
+							   : "no error"),
+					 errhidestmt(true)));
 		}
-	lr_fallback:;
+lr_fallback:;
 	}
 
 	if (!trained && algorithm != NULL
@@ -429,49 +434,50 @@ ndb_gpu_try_train_model(const char *algorithm,
 	{
 		TimestampTz train_start = GetCurrentTimestamp();
 		TimestampTz train_end;
-		int gpu_rc = ndb_gpu_dt_train(feature_matrix,
-			label_vector,
-			sample_count,
-			feature_dim,
-			hyperparameters,
-			&payload,
-			&metadata,
-			errstr);
-		long secs = 0;
-		int usecs = 0;
-		double elapsed_ms;
+		int			gpu_rc = ndb_gpu_dt_train(feature_matrix,
+											  label_vector,
+											  sample_count,
+											  feature_dim,
+											  hyperparameters,
+											  &payload,
+											  &metadata,
+											  errstr);
+		long		secs = 0;
+		int			usecs = 0;
+		double		elapsed_ms;
 
 		train_end = GetCurrentTimestamp();
 		TimestampDifference(train_start, train_end, &secs, &usecs);
-		elapsed_ms = ((double)secs * 1000.0) + ((double)usecs / 1000.0);
+		elapsed_ms = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
 
 		if (gpu_rc == 0)
 		{
 			trained = true;
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
 			ereport(DEBUG1,
-				(errmsg("decision_tree: GPU training succeeded "
-					"(direct)"),
-					errdetail(
-						"Elapsed %.3f ms on backend %s",
-						elapsed_ms,
-						ctx.backend_name
-							? ctx.backend_name
-							: "unknown"),
-					errhidestmt(true)));
-		} else
+					(errmsg("decision_tree: GPU training succeeded "
+							"(direct)"),
+					 errdetail(
+							   "Elapsed %.3f ms on backend %s",
+							   elapsed_ms,
+							   ctx.backend_name
+							   ? ctx.backend_name
+							   : "unknown"),
+					 errhidestmt(true)));
+		}
+		else
 		{
 			ndb_gpu_stats_record(false, 0.0, elapsed_ms, true);
 			ereport(NOTICE,
-				(errmsg("decision_tree: GPU training "
-					"unavailable, using CPU"),
-					errdetail("GPU attempt elapsed %.3f ms "
-						  "(%s)",
-						elapsed_ms,
-						(errstr && *errstr)
-							? *errstr
-							: "no error"),
-					errhidestmt(true)));
+					(errmsg("decision_tree: GPU training "
+							"unavailable, using CPU"),
+					 errdetail("GPU attempt elapsed %.3f ms "
+							   "(%s)",
+							   elapsed_ms,
+							   (errstr && *errstr)
+							   ? *errstr
+							   : "no error"),
+					 errhidestmt(true)));
 		}
 	}
 
@@ -481,49 +487,50 @@ ndb_gpu_try_train_model(const char *algorithm,
 	{
 		TimestampTz train_start = GetCurrentTimestamp();
 		TimestampTz train_end;
-		int gpu_rc = ndb_gpu_ridge_train(feature_matrix,
-			label_vector,
-			sample_count,
-			feature_dim,
-			hyperparameters,
-			&payload,
-			&metadata,
-			errstr);
-		long secs = 0;
-		int usecs = 0;
-		double elapsed_ms;
+		int			gpu_rc = ndb_gpu_ridge_train(feature_matrix,
+												 label_vector,
+												 sample_count,
+												 feature_dim,
+												 hyperparameters,
+												 &payload,
+												 &metadata,
+												 errstr);
+		long		secs = 0;
+		int			usecs = 0;
+		double		elapsed_ms;
 
 		train_end = GetCurrentTimestamp();
 		TimestampDifference(train_start, train_end, &secs, &usecs);
-		elapsed_ms = ((double)secs * 1000.0) + ((double)usecs / 1000.0);
+		elapsed_ms = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
 
 		if (gpu_rc == 0)
 		{
 			trained = true;
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
 			ereport(DEBUG1,
-				(errmsg("ridge: GPU training succeeded "
-					"(direct)"),
-					errdetail(
-						"Elapsed %.3f ms on backend %s",
-						elapsed_ms,
-						ctx.backend_name
-							? ctx.backend_name
-							: "unknown"),
-					errhidestmt(true)));
-		} else
+					(errmsg("ridge: GPU training succeeded "
+							"(direct)"),
+					 errdetail(
+							   "Elapsed %.3f ms on backend %s",
+							   elapsed_ms,
+							   ctx.backend_name
+							   ? ctx.backend_name
+							   : "unknown"),
+					 errhidestmt(true)));
+		}
+		else
 		{
 			ndb_gpu_stats_record(false, 0.0, elapsed_ms, true);
 			ereport(NOTICE,
-				(errmsg("ridge: GPU training unavailable, "
-					"using CPU"),
-					errdetail("GPU attempt elapsed %.3f ms "
-						  "(%s)",
-						elapsed_ms,
-						(errstr && *errstr)
-							? *errstr
-							: "no error"),
-					errhidestmt(true)));
+					(errmsg("ridge: GPU training unavailable, "
+							"using CPU"),
+					 errdetail("GPU attempt elapsed %.3f ms "
+							   "(%s)",
+							   elapsed_ms,
+							   (errstr && *errstr)
+							   ? *errstr
+							   : "no error"),
+					 errhidestmt(true)));
 		}
 	}
 
@@ -533,49 +540,50 @@ ndb_gpu_try_train_model(const char *algorithm,
 	{
 		TimestampTz train_start = GetCurrentTimestamp();
 		TimestampTz train_end;
-		int gpu_rc = ndb_gpu_lasso_train(feature_matrix,
-			label_vector,
-			sample_count,
-			feature_dim,
-			hyperparameters,
-			&payload,
-			&metadata,
-			errstr);
-		long secs = 0;
-		int usecs = 0;
-		double elapsed_ms;
+		int			gpu_rc = ndb_gpu_lasso_train(feature_matrix,
+												 label_vector,
+												 sample_count,
+												 feature_dim,
+												 hyperparameters,
+												 &payload,
+												 &metadata,
+												 errstr);
+		long		secs = 0;
+		int			usecs = 0;
+		double		elapsed_ms;
 
 		train_end = GetCurrentTimestamp();
 		TimestampDifference(train_start, train_end, &secs, &usecs);
-		elapsed_ms = ((double)secs * 1000.0) + ((double)usecs / 1000.0);
+		elapsed_ms = ((double) secs * 1000.0) + ((double) usecs / 1000.0);
 
 		if (gpu_rc == 0)
 		{
 			trained = true;
 			ndb_gpu_stats_record(true, elapsed_ms, 0.0, false);
 			ereport(DEBUG1,
-				(errmsg("lasso: GPU training succeeded "
-					"(direct)"),
-					errdetail(
-						"Elapsed %.3f ms on backend %s",
-						elapsed_ms,
-						ctx.backend_name
-							? ctx.backend_name
-							: "unknown"),
-					errhidestmt(true)));
-		} else
+					(errmsg("lasso: GPU training succeeded "
+							"(direct)"),
+					 errdetail(
+							   "Elapsed %.3f ms on backend %s",
+							   elapsed_ms,
+							   ctx.backend_name
+							   ? ctx.backend_name
+							   : "unknown"),
+					 errhidestmt(true)));
+		}
+		else
 		{
 			ndb_gpu_stats_record(false, 0.0, elapsed_ms, true);
 			ereport(NOTICE,
-				(errmsg("lasso: GPU training unavailable, "
-					"using CPU"),
-					errdetail("GPU attempt elapsed %.3f ms "
-						  "(%s)",
-						elapsed_ms,
-						(errstr && *errstr)
-							? *errstr
-							: "no error"),
-					errhidestmt(true)));
+					(errmsg("lasso: GPU training unavailable, "
+							"using CPU"),
+					 errdetail("GPU attempt elapsed %.3f ms "
+							   "(%s)",
+							   elapsed_ms,
+							   (errstr && *errstr)
+							   ? *errstr
+							   : "no error"),
+					 errhidestmt(true)));
 		}
 	}
 
@@ -590,28 +598,34 @@ ndb_gpu_try_train_model(const char *algorithm,
 		result->spec.project_name =
 			ndb_gpu_strdup_or_null(project_name);
 		result->spec.model_name = ndb_gpu_strdup_or_null(model_name);
-		/* Note: parameters are handled by caller, don't set here to avoid ownership confusion */
+
+		/*
+		 * Note: parameters are handled by caller, don't set here to avoid
+		 * ownership confusion
+		 */
 
 		/* Ensure metrics Jsonb is in the correct memory context */
 		if (metadata != NULL)
 		{
-			Jsonb *metrics_copy = (Jsonb *)PG_DETOAST_DATUM_COPY(
-				PointerGetDatum(metadata));
+			Jsonb	   *metrics_copy = (Jsonb *) PG_DETOAST_DATUM_COPY(
+																	   PointerGetDatum(metadata));
+
 			result->spec.metrics = metrics_copy;
 			result->metadata = metrics_copy;
 			result->metrics = metrics_copy;
 			elog(DEBUG1,
-				"gpu_model_bridge: copied metrics to "
-				"result->spec.metrics: %p",
-				(void *)result->spec.metrics);
-		} else
+				 "gpu_model_bridge: copied metrics to "
+				 "result->spec.metrics: %p",
+				 (void *) result->spec.metrics);
+		}
+		else
 		{
 			result->spec.metrics = NULL;
 			result->metadata = NULL;
 			result->metrics = NULL;
 			elog(WARNING,
-				"gpu_model_bridge: metadata is NULL, cannot "
-				"set result->spec.metrics!");
+				 "gpu_model_bridge: metadata is NULL, cannot "
+				 "set result->spec.metrics!");
 		}
 
 		result->spec.model_data = payload;
@@ -639,20 +653,21 @@ ndb_gpu_free_train_result(MLGpuTrainResult *result)
 		return;
 
 	{
-		void *ptr;
-		ptr = (void *)result->spec.algorithm;
+		void	   *ptr;
+
+		ptr = (void *) result->spec.algorithm;
 		ndb_safe_pfree(ptr);
 		result->spec.algorithm = NULL;
-		ptr = (void *)result->spec.training_table;
+		ptr = (void *) result->spec.training_table;
 		ndb_safe_pfree(ptr);
 		result->spec.training_table = NULL;
-		ptr = (void *)result->spec.training_column;
+		ptr = (void *) result->spec.training_column;
 		ndb_safe_pfree(ptr);
 		result->spec.training_column = NULL;
-		ptr = (void *)result->spec.project_name;
+		ptr = (void *) result->spec.project_name;
 		ndb_safe_pfree(ptr);
 		result->spec.project_name = NULL;
-		ptr = (void *)result->spec.model_name;
+		ptr = (void *) result->spec.model_name;
 		ndb_safe_pfree(ptr);
 		result->spec.model_name = NULL;
 	}

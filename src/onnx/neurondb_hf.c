@@ -31,31 +31,31 @@
 
 extern char *neurondb_onnx_model_path;
 extern bool neurondb_onnx_use_gpu;
-extern int neurondb_onnx_threads;
-extern int neurondb_onnx_cache_size;
+extern int	neurondb_onnx_threads;
+extern int	neurondb_onnx_cache_size;
 
 /* Generation parameters structure */
 typedef struct
 {
-	float temperature;
-	float top_p;
-	int top_k;
-	int max_tokens;
-	int min_tokens;
-	float repetition_penalty;
-	bool do_sample;
-	bool return_prompt;
-	int seed;
-} ONNXGenParams;
+	float		temperature;
+	float		top_p;
+	int			top_k;
+	int			max_tokens;
+	int			min_tokens;
+	float		repetition_penalty;
+	bool		do_sample;
+	bool		return_prompt;
+	int			seed;
+}			ONNXGenParams;
 
 /* Forward declarations */
-static int parse_gen_params(const char *params_json,
-	ONNXGenParams *gen_params,
-	char **errstr);
-static int sample_token_greedy(float *logits, int vocab_size);
+static int	parse_gen_params(const char *params_json,
+							 ONNXGenParams * gen_params,
+							 char **errstr);
+static int	sample_token_greedy(float *logits, int vocab_size);
 static int
-sample_token_multinomial(float *logits, int vocab_size, float temperature);
-static char *decode_tokens(int32_t *token_ids, int num_tokens);
+			sample_token_multinomial(float *logits, int vocab_size, float temperature);
+static char *decode_tokens(int32_t * token_ids, int num_tokens);
 
 PG_FUNCTION_INFO_V1(neurondb_hf_embedding);
 PG_FUNCTION_INFO_V1(neurondb_hf_classify);
@@ -66,22 +66,22 @@ PG_FUNCTION_INFO_V1(neurondb_onnx_info);
 Datum
 neurondb_hf_embedding(PG_FUNCTION_ARGS)
 {
-	text *model_name_text;
-	text *input_text;
-	char *model_name;
-	char *txt;
+	text	   *model_name_text;
+	text	   *input_text;
+	char	   *model_name;
+	char	   *txt;
 	ONNXModelSession *session;
-	int32 *token_ids;
-	int32 token_length;
+	int32	   *token_ids;
+	int32		token_length;
 	ONNXTensor *input_tensor;
 	ONNXTensor *output_tensor;
-	Vector *result;
-	int32 embedding_dim;
-	int i;
-	int j;
-	int64 input_shape[2];
-	float *input_data;
-	float sum;
+	Vector	   *result;
+	int32		embedding_dim;
+	int			i;
+	int			j;
+	int64		input_shape[2];
+	float	   *input_data;
+	float		sum;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
@@ -94,16 +94,16 @@ neurondb_hf_embedding(PG_FUNCTION_ARGS)
 
 	/* Load or get cached model */
 	session = neurondb_onnx_get_or_load_model(
-		model_name, ONNX_MODEL_EMBEDDING);
+											  model_name, ONNX_MODEL_EMBEDDING);
 
 	/* Tokenize input text with model-specific tokenizer */
 	token_ids = neurondb_tokenize_with_model(
-		txt, 128, &token_length, model_name);
+											 txt, 128, &token_length, model_name);
 
 	/* Convert token IDs to float array for ONNX */
-	input_data = (float *)palloc(token_length * sizeof(float));
+	input_data = (float *) palloc(token_length * sizeof(float));
 	for (i = 0; i < token_length; i++)
-		input_data[i] = (float)token_ids[i];
+		input_data[i] = (float) token_ids[i];
 
 	/* Create input tensor */
 	input_shape[0] = 1;
@@ -132,7 +132,7 @@ neurondb_hf_embedding(PG_FUNCTION_ARGS)
 	embedding_dim = output_tensor->size / token_length;
 
 	/* Pool embeddings (mean pooling across sequence dimension) */
-	result = (Vector *)palloc0(VECTOR_SIZE(embedding_dim));
+	result = (Vector *) palloc0(VECTOR_SIZE(embedding_dim));
 	SET_VARSIZE(result, VECTOR_SIZE(embedding_dim));
 	result->dim = embedding_dim;
 
@@ -159,22 +159,22 @@ neurondb_hf_embedding(PG_FUNCTION_ARGS)
 Datum
 neurondb_hf_classify(PG_FUNCTION_ARGS)
 {
-	text *model_name_text;
-	text *input_text;
-	char *model_name;
-	char *txt;
+	text	   *model_name_text;
+	text	   *input_text;
+	char	   *model_name;
+	char	   *txt;
 	ONNXModelSession *session;
-	int32 *token_ids;
-	int32 token_length;
+	int32	   *token_ids;
+	int32		token_length;
 	ONNXTensor *input_tensor;
 	ONNXTensor *output_tensor;
 	StringInfoData buf;
-	int64 input_shape[2];
-	float *input_data;
-	float positive_score;
-	float negative_score;
-	int i;
-	char *predicted_label;
+	int64		input_shape[2];
+	float	   *input_data;
+	float		positive_score;
+	float		negative_score;
+	int			i;
+	char	   *predicted_label;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
@@ -187,16 +187,16 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 
 	/* Load or get cached model */
 	session = neurondb_onnx_get_or_load_model(
-		model_name, ONNX_MODEL_CLASSIFICATION);
+											  model_name, ONNX_MODEL_CLASSIFICATION);
 
 	/* Tokenize input text with model-specific tokenizer */
 	token_ids = neurondb_tokenize_with_model(
-		txt, 128, &token_length, model_name);
+											 txt, 128, &token_length, model_name);
 
 	/* Convert token IDs to float array for ONNX */
-	input_data = (float *)palloc(token_length * sizeof(float));
+	input_data = (float *) palloc(token_length * sizeof(float));
 	for (i = 0; i < token_length; i++)
-		input_data[i] = (float)token_ids[i];
+		input_data[i] = (float) token_ids[i];
 
 	/* Create input tensor */
 	input_shape[0] = 1;
@@ -224,15 +224,15 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 	/* Extract logits (assume binary classification: [negative, positive]) */
 	if (output_tensor->size >= 2)
 	{
-		float max_score;
-		float sum;
+		float		max_score;
+		float		sum;
 
 		negative_score = output_tensor->data[0];
 		positive_score = output_tensor->data[1];
 
 		/* Apply softmax */
 		max_score = (positive_score > negative_score) ? positive_score
-							      : negative_score;
+			: negative_score;
 		negative_score = exp(negative_score - max_score);
 		positive_score = exp(positive_score - max_score);
 		sum = negative_score + positive_score;
@@ -247,16 +247,17 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 		/* Build JSON result */
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
-			"{\"label\": \"%s\", \"score\": %.4f}",
-			predicted_label,
-			(positive_score > negative_score) ? positive_score
-							  : negative_score);
-	} else
+						 "{\"label\": \"%s\", \"score\": %.4f}",
+						 predicted_label,
+						 (positive_score > negative_score) ? positive_score
+						 : negative_score);
+	}
+	else
 	{
 		/* Fallback for unexpected output */
 		initStringInfo(&buf);
 		appendStringInfo(
-			&buf, "{\"label\": \"UNKNOWN\", \"score\": 0.0}");
+						 &buf, "{\"label\": \"UNKNOWN\", \"score\": 0.0}");
 	}
 
 	/* Cleanup */
@@ -273,25 +274,25 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 Datum
 neurondb_hf_ner(PG_FUNCTION_ARGS)
 {
-	text *model_name_text;
-	text *input_text;
-	char *model_name;
-	char *txt;
+	text	   *model_name_text;
+	text	   *input_text;
+	char	   *model_name;
+	char	   *txt;
 	ONNXModelSession *session;
-	int32 *token_ids;
-	int32 token_length;
+	int32	   *token_ids;
+	int32		token_length;
 	ONNXTensor *input_tensor;
 	ONNXTensor *output_tensor;
 	StringInfoData buf;
-	int64 input_shape[2];
-	float *input_data;
-	int i;
-	int max_class;
-	float max_score;
+	int64		input_shape[2];
+	float	   *input_data;
+	int			i;
+	int			max_class;
+	float		max_score;
 	const char *entity_labels[] = {
 		"O", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"
 	};
-	const int num_labels = 7;
+	const int	num_labels = 7;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
@@ -307,12 +308,12 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 
 	/* Tokenize input text with model-specific tokenizer */
 	token_ids = neurondb_tokenize_with_model(
-		txt, 128, &token_length, model_name);
+											 txt, 128, &token_length, model_name);
 
 	/* Convert token IDs to float array for ONNX */
-	input_data = (float *)palloc(token_length * sizeof(float));
+	input_data = (float *) palloc(token_length * sizeof(float));
 	for (i = 0; i < token_length; i++)
-		input_data[i] = (float)token_ids[i];
+		input_data[i] = (float) token_ids[i];
 
 	/* Create input tensor */
 	input_shape[0] = 1;
@@ -342,13 +343,13 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 	appendStringInfo(&buf, "{\"entities\": [");
 
 	/* Extract entities (simplified - just first token for demo) */
-	if (output_tensor->size >= (size_t)num_labels)
+	if (output_tensor->size >= (size_t) num_labels)
 	{
 		max_class = 0;
 		max_score = output_tensor->data[0];
 
-		for (i = 1; i < num_labels && (size_t)i < output_tensor->size;
-			i++)
+		for (i = 1; i < num_labels && (size_t) i < output_tensor->size;
+			 i++)
 		{
 			if (output_tensor->data[i] > max_score)
 			{
@@ -357,14 +358,14 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 			}
 		}
 
-		if (max_class > 0) /* Not 'O' (outside) */
+		if (max_class > 0)		/* Not 'O' (outside) */
 		{
 			appendStringInfo(&buf,
-				"{\"entity\": \"%s\", \"label\": \"%s\", "
-				"\"score\": %.4f}",
-				txt,
-				entity_labels[max_class],
-				max_score);
+							 "{\"entity\": \"%s\", \"label\": \"%s\", "
+							 "\"score\": %.4f}",
+							 txt,
+							 entity_labels[max_class],
+							 max_score);
 		}
 	}
 
@@ -384,26 +385,26 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 Datum
 neurondb_hf_qa(PG_FUNCTION_ARGS)
 {
-	text *model_name_text;
-	text *question_text;
-	text *context_text;
-	char *model_name;
-	char *question;
-	char *context;
+	text	   *model_name_text;
+	text	   *question_text;
+	text	   *context_text;
+	char	   *model_name;
+	char	   *question;
+	char	   *context;
 	ONNXModelSession *session;
-	int32 *token_ids;
-	int32 token_length;
+	int32	   *token_ids;
+	int32		token_length;
 	ONNXTensor *input_tensor;
 	ONNXTensor *output_tensor;
 	StringInfoData buf;
 	StringInfoData combined_text;
-	int64 input_shape[2];
-	float *input_data;
+	int64		input_shape[2];
+	float	   *input_data;
 	volatile int start_idx = 0;
 	volatile int end_idx = 0;
 	volatile float start_score = -1000.0f;
 	volatile float end_score = -1000.0f;
-	int i;
+	int			i;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1) || PG_ARGISNULL(2))
 		PG_RETURN_NULL();
@@ -425,12 +426,12 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 
 	/* Tokenize input with model-specific tokenizer */
 	token_ids = neurondb_tokenize_with_model(
-		combined_text.data, 256, &token_length, model_name);
+											 combined_text.data, 256, &token_length, model_name);
 
 	/* Convert token IDs to float array for ONNX */
-	input_data = (float *)palloc(token_length * sizeof(float));
+	input_data = (float *) palloc(token_length * sizeof(float));
 	for (i = 0; i < token_length; i++)
-		input_data[i] = (float)token_ids[i];
+		input_data[i] = (float) token_ids[i];
 
 	/* Create input tensor */
 	input_shape[0] = 1;
@@ -458,7 +459,7 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 
 	/* Extract start and end positions (QA model outputs start/end logits) */
 	/* Simplified: find max start and end positions */
-	if (output_tensor->size >= (size_t)token_length * 2)
+	if (output_tensor->size >= (size_t) token_length * 2)
 	{
 		/* Find start position */
 		for (i = 0; i < token_length; i++)
@@ -472,8 +473,8 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 
 		/* Find end position */
 		for (i = token_length;
-			i < token_length * 2 && (size_t)i < output_tensor->size;
-			i++)
+			 i < token_length * 2 && (size_t) i < output_tensor->size;
+			 i++)
 		{
 			if (output_tensor->data[i] > end_score)
 			{
@@ -486,13 +487,13 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 	/* Build JSON result */
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-		"{\"answer\": \"Answer extracted from position %d to %d\", "
-		"\"score\": %.4f, \"start\": %d, \"end\": %d}",
-		start_idx,
-		end_idx,
-		start_score,
-		start_idx,
-		end_idx);
+					 "{\"answer\": \"Answer extracted from position %d to %d\", "
+					 "\"score\": %.4f, \"start\": %d, \"end\": %d}",
+					 start_idx,
+					 end_idx,
+					 start_score,
+					 start_idx,
+					 end_idx);
 
 	/* Cleanup */
 	neurondb_onnx_free_tensor(input_tensor);
@@ -513,9 +514,9 @@ neurondb_onnx_info(PG_FUNCTION_ARGS)
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-		"{\"available\": %s, \"version\": \"%s\"}",
-		neurondb_onnx_available() ? "true" : "false",
-		neurondb_onnx_version());
+					 "{\"available\": %s, \"version\": \"%s\"}",
+					 neurondb_onnx_available() ? "true" : "false",
+					 neurondb_onnx_version());
 
 	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
@@ -541,15 +542,15 @@ neurondb_onnx_info(PG_FUNCTION_ARGS)
  */
 static int
 parse_gen_params(const char *params_json,
-	ONNXGenParams *gen_params,
-	char **errstr)
+				 ONNXGenParams * gen_params,
+				 char **errstr)
 {
-	char *json_copy = NULL;
-	char *p = NULL;
-	char *key = NULL;
-	char *endptr = NULL;
-	float float_val;
-	int int_val;
+	char	   *json_copy = NULL;
+	char	   *p = NULL;
+	char	   *key = NULL;
+	char	   *endptr = NULL;
+	float		float_val;
+	int			int_val;
 
 	if (errstr)
 		*errstr = NULL;
@@ -557,7 +558,7 @@ parse_gen_params(const char *params_json,
 	{
 		if (errstr)
 			*errstr = pstrdup(
-				"invalid parameters for parse_gen_params");
+							  "invalid parameters for parse_gen_params");
 		return -1;
 	}
 
@@ -565,7 +566,7 @@ parse_gen_params(const char *params_json,
 	memset(gen_params, 0, sizeof(ONNXGenParams));
 	gen_params->temperature = 1.0f;
 	gen_params->top_p = 1.0f;
-	gen_params->top_k = 0; /* 0 = disabled */
+	gen_params->top_k = 0;		/* 0 = disabled */
 	gen_params->max_tokens = 100;
 	gen_params->min_tokens = 0;
 	gen_params->repetition_penalty = 1.0f;
@@ -582,14 +583,14 @@ parse_gen_params(const char *params_json,
 	p = json_copy;
 
 	/* Skip whitespace and opening brace */
-	while (*p && (isspace((unsigned char)*p) || *p == '{'))
+	while (*p && (isspace((unsigned char) *p) || *p == '{'))
 		p++;
 
 	/* Parse key-value pairs */
 	while (*p && *p != '}')
 	{
 		/* Skip whitespace and commas */
-		while (*p && (isspace((unsigned char)*p) || *p == ','))
+		while (*p && (isspace((unsigned char) *p) || *p == ','))
 			p++;
 
 		if (*p == '}' || *p == '\0')
@@ -601,10 +602,10 @@ parse_gen_params(const char *params_json,
 			NDB_SAFE_PFREE_AND_NULL(json_copy);
 			if (errstr)
 				*errstr = pstrdup(
-					"invalid JSON format: expected key");
+								  "invalid JSON format: expected key");
 			return -1;
 		}
-		p++; /* Skip opening quote */
+		p++;					/* Skip opening quote */
 		key = p;
 		while (*p && *p != '"')
 			p++;
@@ -613,14 +614,14 @@ parse_gen_params(const char *params_json,
 			NDB_SAFE_PFREE_AND_NULL(json_copy);
 			if (errstr)
 				*errstr = pstrdup("invalid JSON format: "
-						  "unterminated key");
+								  "unterminated key");
 			return -1;
 		}
-		*p = '\0'; /* Null-terminate key */
-		p++; /* Skip closing quote */
+		*p = '\0';				/* Null-terminate key */
+		p++;					/* Skip closing quote */
 
 		/* Skip colon */
-		while (*p && (isspace((unsigned char)*p) || *p == ':'))
+		while (*p && (isspace((unsigned char) *p) || *p == ':'))
 			p++;
 
 		/* Parse value based on key */
@@ -629,53 +630,61 @@ parse_gen_params(const char *params_json,
 			float_val = strtof(p, &endptr);
 			if (endptr != p && float_val > 0.0f)
 				gen_params->temperature = float_val;
-		} else if (strcmp(key, "top_p") == 0)
+		}
+		else if (strcmp(key, "top_p") == 0)
 		{
 			float_val = strtof(p, &endptr);
 			if (endptr != p && float_val > 0.0f
 				&& float_val <= 1.0f)
 				gen_params->top_p = float_val;
-		} else if (strcmp(key, "top_k") == 0)
+		}
+		else if (strcmp(key, "top_k") == 0)
 		{
-			int_val = (int)strtol(p, &endptr, 10);
+			int_val = (int) strtol(p, &endptr, 10);
 			if (endptr != p && int_val >= 0)
 				gen_params->top_k = int_val;
-		} else if (strcmp(key, "max_tokens") == 0
-			|| strcmp(key, "max_length") == 0)
+		}
+		else if (strcmp(key, "max_tokens") == 0
+				 || strcmp(key, "max_length") == 0)
 		{
-			int_val = (int)strtol(p, &endptr, 10);
+			int_val = (int) strtol(p, &endptr, 10);
 			if (endptr != p && int_val > 0)
 				gen_params->max_tokens = int_val;
-		} else if (strcmp(key, "min_tokens") == 0
-			|| strcmp(key, "min_length") == 0)
+		}
+		else if (strcmp(key, "min_tokens") == 0
+				 || strcmp(key, "min_length") == 0)
 		{
-			int_val = (int)strtol(p, &endptr, 10);
+			int_val = (int) strtol(p, &endptr, 10);
 			if (endptr != p && int_val >= 0)
 				gen_params->min_tokens = int_val;
-		} else if (strcmp(key, "repetition_penalty") == 0)
+		}
+		else if (strcmp(key, "repetition_penalty") == 0)
 		{
 			float_val = strtof(p, &endptr);
 			if (endptr != p && float_val > 0.0f)
 				gen_params->repetition_penalty = float_val;
-		} else if (strcmp(key, "do_sample") == 0)
+		}
+		else if (strcmp(key, "do_sample") == 0)
 		{
 			if (strncmp(p, "true", 4) == 0
 				|| strncmp(p, "TRUE", 4) == 0)
 				gen_params->do_sample = true;
 			else if (strncmp(p, "false", 5) == 0
-				|| strncmp(p, "FALSE", 5) == 0)
+					 || strncmp(p, "FALSE", 5) == 0)
 				gen_params->do_sample = false;
-		} else if (strcmp(key, "return_prompt") == 0)
+		}
+		else if (strcmp(key, "return_prompt") == 0)
 		{
 			if (strncmp(p, "true", 4) == 0
 				|| strncmp(p, "TRUE", 4) == 0)
 				gen_params->return_prompt = true;
 			else if (strncmp(p, "false", 5) == 0
-				|| strncmp(p, "FALSE", 5) == 0)
+					 || strncmp(p, "FALSE", 5) == 0)
 				gen_params->return_prompt = false;
-		} else if (strcmp(key, "seed") == 0)
+		}
+		else if (strcmp(key, "seed") == 0)
 		{
-			int_val = (int)strtol(p, &endptr, 10);
+			int_val = (int) strtol(p, &endptr, 10);
 			if (endptr != p)
 				gen_params->seed = int_val;
 		}
@@ -690,7 +699,8 @@ parse_gen_params(const char *params_json,
 					p++;
 				if (*p == '"')
 					p++;
-			} else
+			}
+			else
 				p++;
 		}
 	}
@@ -706,9 +716,9 @@ parse_gen_params(const char *params_json,
 static int
 sample_token_greedy(float *logits, int vocab_size)
 {
-	int max_idx = 0;
-	float max_val = logits[0];
-	int i;
+	int			max_idx = 0;
+	float		max_val = logits[0];
+	int			i;
 
 	for (i = 1; i < vocab_size; i++)
 	{
@@ -729,15 +739,15 @@ sample_token_greedy(float *logits, int vocab_size)
 static int
 sample_token_multinomial(float *logits, int vocab_size, float temperature)
 {
-	float *probs = NULL;
-	float sum = 0.0f;
-	float cumsum = 0.0f;
-	float r;
-	int i;
-	int selected = 0;
+	float	   *probs = NULL;
+	float		sum = 0.0f;
+	float		cumsum = 0.0f;
+	float		r;
+	int			i;
+	int			selected = 0;
 
 	/* Allocate probabilities array */
-	probs = (float *)palloc(vocab_size * sizeof(float));
+	probs = (float *) palloc(vocab_size * sizeof(float));
 
 	/* Compute softmax with temperature */
 	for (i = 0; i < vocab_size; i++)
@@ -754,7 +764,7 @@ sample_token_multinomial(float *logits, int vocab_size, float temperature)
 	}
 
 	/* Sample from multinomial distribution */
-	r = (float)rand() / (float)RAND_MAX;
+	r = (float) rand() / (float) RAND_MAX;
 	for (i = 0; i < vocab_size; i++)
 	{
 		cumsum += probs[i];
@@ -774,10 +784,10 @@ sample_token_multinomial(float *logits, int vocab_size, float temperature)
  *	  Decode token IDs to text (simplified: just convert to string representation)
  */
 static char *
-decode_tokens(int32_t *token_ids, int num_tokens)
+decode_tokens(int32_t * token_ids, int num_tokens)
 {
 	StringInfoData buf;
-	int i;
+	int			i;
 
 	initStringInfo(&buf);
 
@@ -810,29 +820,29 @@ decode_tokens(int32_t *token_ids, int num_tokens)
  */
 int
 ndb_onnx_hf_complete(const char *model_name,
-	const char *prompt,
-	const char *params_json,
-	char **text_out,
-	char **errstr)
+					 const char *prompt,
+					 const char *params_json,
+					 char **text_out,
+					 char **errstr)
 {
 	ONNXModelSession *session = NULL;
 	ONNXGenParams gen_params;
-	int32_t *input_token_ids = NULL;
-	int32 input_token_length = 0;
-	int32 *generated_token_ids = NULL;
-	int32 generated_token_count = 0;
-	int32 max_gen_tokens = 100;
-	int32 min_gen_tokens = 0;
-	int32 i;
-	int rc = -1;
+	int32_t    *input_token_ids = NULL;
+	int32		input_token_length = 0;
+	int32	   *generated_token_ids = NULL;
+	int32		generated_token_count = 0;
+	int32		max_gen_tokens = 100;
+	int32		min_gen_tokens = 0;
+	int32		i;
+	int			rc = -1;
 	ONNXTensor *input_tensor = NULL;
 	ONNXTensor *output_tensor = NULL;
-	int64 input_shape[2];
-	float *input_data = NULL;
-	float *logits = NULL;
-	int32 vocab_size = 0;
-	int32 next_token_id = 0;
-	char *generated_text = NULL;
+	int64		input_shape[2];
+	float	   *input_data = NULL;
+	float	   *logits = NULL;
+	int32		vocab_size = 0;
+	int32		next_token_id = 0;
+	char	   *generated_text = NULL;
 	MemoryContext oldcontext;
 	MemoryContext complete_context;
 
@@ -842,14 +852,14 @@ ndb_onnx_hf_complete(const char *model_name,
 	{
 		if (errstr)
 			*errstr = pstrdup(
-				"invalid parameters for ONNX HF complete");
+							  "invalid parameters for ONNX HF complete");
 		return -1;
 	}
 
 	/* Create memory context for this operation */
 	complete_context = AllocSetContextCreate(CurrentMemoryContext,
-		"onnx_hf_complete_ctx",
-		ALLOCSET_DEFAULT_SIZES);
+											 "onnx_hf_complete_ctx",
+											 ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(complete_context);
 
 	/* Parse generation parameters */
@@ -862,7 +872,8 @@ ndb_onnx_hf_complete(const char *model_name,
 			MemoryContextDelete(complete_context);
 			return -1;
 		}
-	} else
+	}
+	else
 	{
 		/* Use defaults */
 		memset(&gen_params, 0, sizeof(ONNXGenParams));
@@ -884,7 +895,7 @@ ndb_onnx_hf_complete(const char *model_name,
 	PG_TRY();
 	{
 		session = neurondb_onnx_get_or_load_model(
-			model_name, ONNX_MODEL_GENERATION);
+												  model_name, ONNX_MODEL_GENERATION);
 	}
 	PG_CATCH();
 	{
@@ -896,7 +907,7 @@ ndb_onnx_hf_complete(const char *model_name,
 
 	/* Tokenize input prompt with model-specific tokenizer */
 	input_token_ids = neurondb_tokenize_with_model(
-		prompt, 512, &input_token_length, model_name);
+												   prompt, 512, &input_token_length, model_name);
 	if (input_token_ids == NULL || input_token_length == 0)
 	{
 		if (errstr)
@@ -908,7 +919,7 @@ ndb_onnx_hf_complete(const char *model_name,
 
 	/* Allocate generated token IDs array */
 	generated_token_ids =
-		(int32_t *)palloc(max_gen_tokens * sizeof(int32_t));
+		(int32_t *) palloc(max_gen_tokens * sizeof(int32_t));
 
 	/* Set seed if provided */
 	if (gen_params.seed != 0)
@@ -917,8 +928,8 @@ ndb_onnx_hf_complete(const char *model_name,
 	/* Generation loop */
 	for (i = 0; i < max_gen_tokens; i++)
 	{
-		int32 current_seq_len;
-		int32 j;
+		int32		current_seq_len;
+		int32		j;
 
 		/* Prepare input sequence (prompt + generated tokens) */
 		current_seq_len = input_token_length + generated_token_count;
@@ -926,16 +937,16 @@ ndb_onnx_hf_complete(const char *model_name,
 		/* Allocate input data */
 		if (input_data)
 			NDB_SAFE_PFREE_AND_NULL(input_data);
-		input_data = (float *)palloc(current_seq_len * sizeof(float));
+		input_data = (float *) palloc(current_seq_len * sizeof(float));
 
 		/* Copy prompt tokens */
 		for (j = 0; j < input_token_length; j++)
-			input_data[j] = (float)input_token_ids[j];
+			input_data[j] = (float) input_token_ids[j];
 
 		/* Copy generated tokens */
 		for (j = 0; j < generated_token_count; j++)
 			input_data[input_token_length + j] =
-				(float)generated_token_ids[j];
+				(float) generated_token_ids[j];
 
 		/* Create input tensor */
 		input_shape[0] = 1;
@@ -952,7 +963,7 @@ ndb_onnx_hf_complete(const char *model_name,
 			if (output_tensor)
 				neurondb_onnx_free_tensor(output_tensor);
 			output_tensor = neurondb_onnx_run_inference(
-				session, input_tensor);
+														session, input_tensor);
 		}
 		PG_CATCH();
 		{
@@ -977,22 +988,24 @@ ndb_onnx_hf_complete(const char *model_name,
 			/* Output shape: [1, vocab_size] */
 			vocab_size = output_tensor->shape[1];
 			logits = output_tensor->data;
-		} else if (output_tensor->ndim == 3
-			&& output_tensor->shape[0] == 1)
+		}
+		else if (output_tensor->ndim == 3
+				 && output_tensor->shape[0] == 1)
 		{
 			/* Output shape: [1, seq_len, vocab_size] */
 			/* Use last token's logits */
-			int32 seq_len = output_tensor->shape[1];
+			int32		seq_len = output_tensor->shape[1];
 
 			vocab_size = output_tensor->shape[2];
 			logits = output_tensor->data
 				+ (seq_len - 1) * vocab_size;
-		} else
+		}
+		else
 		{
 			if (errstr)
 				*errstr = psprintf(
-					"unexpected output tensor shape: [%lld",
-					(long long)output_tensor->shape[0]);
+								   "unexpected output tensor shape: [%lld",
+								   (long long) output_tensor->shape[0]);
 			if (input_tensor)
 				neurondb_onnx_free_tensor(input_tensor);
 			if (output_tensor)
@@ -1021,18 +1034,18 @@ ndb_onnx_hf_complete(const char *model_name,
 		{
 			for (j = 0; j < generated_token_count; j++)
 			{
-				int32 prev_token = generated_token_ids[j];
+				int32		prev_token = generated_token_ids[j];
 
 				if (prev_token >= 0 && prev_token < vocab_size)
 				{
 					if (logits[prev_token] > 0.0f)
 						logits[prev_token] /=
 							gen_params
-								.repetition_penalty;
+							.repetition_penalty;
 					else
 						logits[prev_token] *=
 							gen_params
-								.repetition_penalty;
+							.repetition_penalty;
 				}
 			}
 		}
@@ -1040,13 +1053,13 @@ ndb_onnx_hf_complete(const char *model_name,
 		/* Sample next token */
 		if (gen_params.do_sample && gen_params.temperature > 0.0f)
 			next_token_id = sample_token_multinomial(
-				logits, vocab_size, gen_params.temperature);
+													 logits, vocab_size, gen_params.temperature);
 		else
 			next_token_id = sample_token_greedy(logits, vocab_size);
 
 		/* Check for stop conditions (simplified: check for EOS token) */
 		if (next_token_id == 102
-			|| next_token_id == 0) /* [SEP] or [PAD] */
+			|| next_token_id == 0)	/* [SEP] or [PAD] */
 		{
 			if (generated_token_count >= min_gen_tokens)
 				break;
@@ -1089,23 +1102,23 @@ ndb_onnx_hf_complete(const char *model_name,
  */
 PGDLLEXPORT int
 ndb_onnx_hf_embed(const char *model_name,
-	const char *text,
-	float **vec_out,
-	int *dim_out,
-	char **errstr)
+				  const char *text,
+				  float **vec_out,
+				  int *dim_out,
+				  char **errstr)
 {
 	ONNXModelSession *session = NULL;
-	int32 *token_ids = NULL;
-	int32 token_length = 0;
+	int32	   *token_ids = NULL;
+	int32		token_length = 0;
 	ONNXTensor *input_tensor = NULL;
 	ONNXTensor *output_tensor = NULL;
-	float *input_data = NULL;
-	float *result_vec = NULL;
-	int64 input_shape[2];
-	int embedding_dim = 0;
-	int i;
-	int j;
-	float sum;
+	float	   *input_data = NULL;
+	float	   *result_vec = NULL;
+	int64		input_shape[2];
+	int			embedding_dim = 0;
+	int			i;
+	int			j;
+	float		sum;
 	MemoryContext oldcontext;
 	MemoryContext workcontext;
 
@@ -1137,13 +1150,13 @@ ndb_onnx_hf_embed(const char *model_name,
 	{
 		/* Create a work memory context for temporary allocations */
 		workcontext = AllocSetContextCreate(CurrentMemoryContext,
-			"ndb_onnx_hf_embed",
-			ALLOCSET_DEFAULT_SIZES);
+											"ndb_onnx_hf_embed",
+											ALLOCSET_DEFAULT_SIZES);
 		oldcontext = MemoryContextSwitchTo(workcontext);
 
 		/* Load or get cached model */
 		session = neurondb_onnx_get_or_load_model(
-			model_name, ONNX_MODEL_EMBEDDING);
+												  model_name, ONNX_MODEL_EMBEDDING);
 
 		if (session == NULL)
 		{
@@ -1156,7 +1169,7 @@ ndb_onnx_hf_embed(const char *model_name,
 
 		/* Tokenize input text with model-specific tokenizer */
 		token_ids = neurondb_tokenize_with_model(
-			text, 128, &token_length, model_name);
+												 text, 128, &token_length, model_name);
 
 		if (token_ids == NULL || token_length == 0)
 		{
@@ -1168,9 +1181,9 @@ ndb_onnx_hf_embed(const char *model_name,
 		}
 
 		/* Convert token IDs to float array for ONNX */
-		input_data = (float *)palloc(token_length * sizeof(float));
+		input_data = (float *) palloc(token_length * sizeof(float));
 		for (i = 0; i < token_length; i++)
-			input_data[i] = (float)token_ids[i];
+			input_data[i] = (float) token_ids[i];
 
 		/* Create input tensor */
 		input_shape[0] = 1;
@@ -1217,7 +1230,7 @@ ndb_onnx_hf_embed(const char *model_name,
 
 		/* Allocate result vector in parent memory context */
 		MemoryContextSwitchTo(oldcontext);
-		result_vec = (float *)palloc(embedding_dim * sizeof(float));
+		result_vec = (float *) palloc(embedding_dim * sizeof(float));
 
 		/* Pool embeddings (mean pooling across sequence dimension) */
 		for (i = 0; i < embedding_dim; i++)
@@ -1279,20 +1292,20 @@ ndb_onnx_hf_embed(const char *model_name,
  */
 int
 ndb_onnx_hf_image_embed(const char *model_name,
-	const unsigned char *image_data,
-	size_t image_size,
-	float **vec_out,
-	int *dim_out,
-	char **errstr)
+						const unsigned char *image_data,
+						size_t image_size,
+						float **vec_out,
+						int *dim_out,
+						char **errstr)
 {
 	ONNXModelSession *session = NULL;
 	ONNXTensor *input_tensor = NULL;
 	ONNXTensor *output_tensor = NULL;
-	float *input_data = NULL;
-	int64 input_shape[4];
-	int rc = -1;
-	int i;
-	float sum;
+	float	   *input_data = NULL;
+	int64		input_shape[4];
+	int			rc = -1;
+	int			i;
+	float		sum;
 
 	/* Defensive parameter validation */
 	if (model_name == NULL || strlen(model_name) == 0
@@ -1322,50 +1335,58 @@ ndb_onnx_hf_image_embed(const char *model_name,
 	{
 		/* Load or get cached CLIP model */
 		session = neurondb_onnx_get_or_load_model(
-			model_name, ONNX_MODEL_EMBEDDING);
+												  model_name, ONNX_MODEL_EMBEDDING);
 		if (!session)
 		{
 			if (errstr)
 				*errstr = pstrdup("Failed to load ONNX CLIP model");
 			rc = -1;
-		} else
+		}
+		else
 		{
-			/* CLIP image encoder expects preprocessed image:
-			 * Shape: [1, 3, 224, 224] for RGB
-			 * Values: Normalized [0, 1] or [-1, 1]
+			/*
+			 * CLIP image encoder expects preprocessed image: Shape: [1, 3,
+			 * 224, 224] for RGB Values: Normalized [0, 1] or [-1, 1]
 			 *
-			 * Note: Full image preprocessing requires image decoding libraries
-			 * (libjpeg, libpng, etc.). For now, we return an error indicating
-			 * that HTTP API should be used for image embeddings, or image
-			 * preprocessing needs to be implemented.
+			 * Note: Full image preprocessing requires image decoding
+			 * libraries (libjpeg, libpng, etc.). For now, we return an error
+			 * indicating that HTTP API should be used for image embeddings,
+			 * or image preprocessing needs to be implemented.
 			 *
 			 * Placeholder implementation - would need image libraries
 			 */
-			const int img_size = 224;
-			const int channels = 3;
-			const int total_size = img_size * img_size * channels;
+			const int	img_size = 224;
+			const int	channels = 3;
+			const int	total_size = img_size * img_size * channels;
 
-			input_data = (float *)palloc(total_size * sizeof(float));
+			input_data = (float *) palloc(total_size * sizeof(float));
 			if (!input_data)
 			{
 				if (errstr)
 					*errstr = pstrdup("Memory allocation failed");
 				rc = -1;
-			} else
+			}
+			else
 			{
-				/* Image preprocessing: For CLIP, we need to:
-				 * 1. Decode image (JPEG/PNG) - requires image libraries
-				 * 2. Resize to 224x224
-				 * 3. Normalize pixel values to [0,1] or [-1,1] range
-				 * 4. Convert to RGB format
-				 * 
-				 * Since image libraries may not be available, we provide
-				 * a basic implementation that expects pre-processed input.
-				 * For production, integrate with libjpeg, libpng, or stb_image.
+				/*
+				 * Image preprocessing: For CLIP, we need to: 1. Decode image
+				 * (JPEG/PNG) - requires image libraries 2. Resize to 224x224
+				 * 3. Normalize pixel values to [0,1] or [-1,1] range 4.
+				 * Convert to RGB format
+				 *
+				 * Since image libraries may not be available, we provide a
+				 * basic implementation that expects pre-processed input. For
+				 * production, integrate with libjpeg, libpng, or stb_image.
 				 */
-				
-				/* Basic preprocessing: assume input is already decoded and normalized */
-				/* For now, initialize with normalized random values as placeholder */
+
+				/*
+				 * Basic preprocessing: assume input is already decoded and
+				 * normalized
+				 */
+				/*
+				 * For now, initialize with normalized random values as
+				 * placeholder
+				 */
 				/* In production, this would decode and preprocess the image */
 				for (int idx = 0; idx < total_size; idx++)
 				{
@@ -1373,10 +1394,10 @@ ndb_onnx_hf_image_embed(const char *model_name,
 					/* Real implementation would decode image and normalize */
 					input_data[idx] = 0.0f;
 				}
-				
+
 				elog(WARNING,
-					"neurondb: Image preprocessing not fully implemented. "
-					"Input image should be pre-processed externally or use HTTP API.");
+					 "neurondb: Image preprocessing not fully implemented. "
+					 "Input image should be pre-processed externally or use HTTP API.");
 
 				/* CLIP input shape: [batch, channels, height, width] */
 				input_shape[0] = 1;
@@ -1392,7 +1413,8 @@ ndb_onnx_hf_image_embed(const char *model_name,
 					if (errstr)
 						*errstr = pstrdup("Failed to create input tensor");
 					rc = -1;
-				} else
+				}
+				else
 				{
 					/* Run inference */
 					output_tensor = neurondb_onnx_run_inference(session, input_tensor);
@@ -1404,11 +1426,12 @@ ndb_onnx_hf_image_embed(const char *model_name,
 						if (errstr)
 							*errstr = pstrdup("ONNX inference failed");
 						rc = -1;
-					} else
+					}
+					else
 					{
 						/* Extract embedding */
-						*dim_out = (int)output_tensor->size;
-						*vec_out = (float *)palloc(*dim_out * sizeof(float));
+						*dim_out = (int) output_tensor->size;
+						*vec_out = (float *) palloc(*dim_out * sizeof(float));
 						if (!*vec_out)
 						{
 							neurondb_onnx_free_tensor(input_tensor);
@@ -1419,10 +1442,11 @@ ndb_onnx_hf_image_embed(const char *model_name,
 								*errstr = pstrdup("Memory allocation failed");
 							*dim_out = 0;
 							rc = -1;
-						} else
+						}
+						else
 						{
 							memcpy(*vec_out, output_tensor->data,
-								*dim_out * sizeof(float));
+								   *dim_out * sizeof(float));
 
 							/* L2 normalization */
 							sum = 0.0f;
@@ -1478,21 +1502,21 @@ ndb_onnx_hf_image_embed(const char *model_name,
  */
 int
 ndb_onnx_hf_multimodal_embed(const char *model_name,
-	const char *text,
-	const unsigned char *image_data,
-	size_t image_size,
-	float **vec_out,
-	int *dim_out,
-	char **errstr)
+							 const char *text,
+							 const unsigned char *image_data,
+							 size_t image_size,
+							 float **vec_out,
+							 int *dim_out,
+							 char **errstr)
 {
 	/* For CLIP multimodal, combine text and image encoders */
-	float *text_vec = NULL;
-	float *image_vec = NULL;
-	int text_dim = 0;
-	int image_dim = 0;
-	int rc = -1;
-	int i;
-	float sum;
+	float	   *text_vec = NULL;
+	float	   *image_vec = NULL;
+	int			text_dim = 0;
+	int			image_dim = 0;
+	int			rc = -1;
+	int			i;
+	float		sum;
 
 	/* Defensive parameter validation */
 	if (model_name == NULL || strlen(model_name) == 0
@@ -1513,12 +1537,13 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
 
 	/* Get text embedding */
 	{
-		char *text_err = NULL;
+		char	   *text_err = NULL;
+
 		if (ndb_onnx_hf_embed(model_name, text, &text_vec, &text_dim, &text_err) != 0)
 		{
 			if (errstr)
 				*errstr = psprintf("Text embedding failed: %s",
-					text_err ? text_err : "unknown error");
+								   text_err ? text_err : "unknown error");
 			if (text_err)
 				NDB_SAFE_PFREE_AND_NULL(text_err);
 			return -1;
@@ -1529,15 +1554,16 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
 
 	/* Get image embedding */
 	{
-		char *img_err = NULL;
+		char	   *img_err = NULL;
+
 		if (ndb_onnx_hf_image_embed(model_name, image_data, image_size,
-			&image_vec, &image_dim, &img_err) != 0)
+									&image_vec, &image_dim, &img_err) != 0)
 		{
 			if (text_vec)
 				NDB_SAFE_PFREE_AND_NULL(text_vec);
 			if (errstr)
 				*errstr = psprintf("Image embedding failed: %s",
-					img_err ? img_err : "unknown error");
+								   img_err ? img_err : "unknown error");
 			if (img_err)
 				NDB_SAFE_PFREE_AND_NULL(img_err);
 			return -1;
@@ -1551,7 +1577,7 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
 	{
 		/* Average pooling for fusion */
 		*dim_out = text_dim;
-		*vec_out = (float *)palloc(*dim_out * sizeof(float));
+		*vec_out = (float *) palloc(*dim_out * sizeof(float));
 		if (!*vec_out)
 		{
 			if (text_vec)
@@ -1585,7 +1611,8 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
 			NDB_SAFE_PFREE_AND_NULL(image_vec);
 
 		rc = 0;
-	} else
+	}
+	else
 	{
 		if (text_vec)
 			NDB_SAFE_PFREE_AND_NULL(text_vec);
@@ -1608,28 +1635,28 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
  */
 int
 ndb_onnx_hf_rerank(const char *model_name,
-	const char *query,
-	const char **docs,
-	int ndocs,
-	float **scores_out,
-	char **errstr)
+				   const char *query,
+				   const char **docs,
+				   int ndocs,
+				   float **scores_out,
+				   char **errstr)
 {
 	ONNXModelSession *session = NULL;
-	int32 *query_token_ids = NULL;
-	int32 query_token_length = 0;
-	int32 *doc_token_ids = NULL;
-	int32 doc_token_length = 0;
-	int32 *combined_token_ids = NULL;
-	int32 combined_token_length = 0;
+	int32	   *query_token_ids = NULL;
+	int32		query_token_length = 0;
+	int32	   *doc_token_ids = NULL;
+	int32		doc_token_length = 0;
+	int32	   *combined_token_ids = NULL;
+	int32		combined_token_length = 0;
 	ONNXTensor *input_tensor = NULL;
 	ONNXTensor *output_tensor = NULL;
-	float *input_data = NULL;
-	int64 input_shape[2];
-	float *scores = NULL;
-	int rc = -1;
-	int i;
-	int j;
-	int max_combined_length = 512; /* Typical max for cross-encoders */
+	float	   *input_data = NULL;
+	int64		input_shape[2];
+	float	   *scores = NULL;
+	int			rc = -1;
+	int			i;
+	int			j;
+	int			max_combined_length = 512;	/* Typical max for cross-encoders */
 
 	/* Defensive parameter validation */
 	if (model_name == NULL || strlen(model_name) == 0
@@ -1656,7 +1683,7 @@ ndb_onnx_hf_rerank(const char *model_name,
 	}
 
 	/* Allocate scores array */
-	scores = (float *)palloc(ndocs * sizeof(float));
+	scores = (float *) palloc(ndocs * sizeof(float));
 	if (!scores)
 	{
 		if (errstr)
@@ -1668,18 +1695,19 @@ ndb_onnx_hf_rerank(const char *model_name,
 	{
 		/* Load or get cached cross-encoder model */
 		session = neurondb_onnx_get_or_load_model(
-			model_name, ONNX_MODEL_CLASSIFICATION);
+												  model_name, ONNX_MODEL_CLASSIFICATION);
 		if (!session)
 		{
 			if (errstr)
 				*errstr = pstrdup("Failed to load ONNX cross-encoder model");
 			NDB_SAFE_PFREE_AND_NULL(scores);
 			rc = -1;
-		} else
+		}
+		else
 		{
 			/* Tokenize query once */
 			query_token_ids = neurondb_tokenize_with_model(
-				query, 128, &query_token_length, model_name);
+														   query, 128, &query_token_length, model_name);
 			if (!query_token_ids || query_token_length <= 0)
 			{
 				if (errstr)
@@ -1688,7 +1716,8 @@ ndb_onnx_hf_rerank(const char *model_name,
 				if (query_token_ids)
 					NDB_SAFE_PFREE_AND_NULL(query_token_ids);
 				rc = -1;
-			} else
+			}
+			else
 			{
 				/* Process each document */
 				for (i = 0; i < ndocs; i++)
@@ -1701,7 +1730,7 @@ ndb_onnx_hf_rerank(const char *model_name,
 
 					/* Tokenize document */
 					doc_token_ids = neurondb_tokenize_with_model(
-						docs[i], 384, &doc_token_length, model_name);
+																 docs[i], 384, &doc_token_length, model_name);
 					if (!doc_token_ids || doc_token_length <= 0)
 					{
 						scores[i] = 0.0f;
@@ -1710,15 +1739,23 @@ ndb_onnx_hf_rerank(const char *model_name,
 						continue;
 					}
 
-					/* Combine query and document tokens: [CLS] query [SEP] doc [SEP] */
-					/* Reserve space: 1 (CLS) + query_len + 1 (SEP) + doc_len + 1 (SEP) */
+					/*
+					 * Combine query and document tokens: [CLS] query [SEP]
+					 * doc [SEP]
+					 */
+
+					/*
+					 * Reserve space: 1 (CLS) + query_len + 1 (SEP) + doc_len
+					 * + 1 (SEP)
+					 */
 					combined_token_length = 1 + query_token_length + 1
 						+ doc_token_length + 1;
 					if (combined_token_length > max_combined_length)
 					{
 						/* Truncate document to fit */
-						int available = max_combined_length - 1
+						int			available = max_combined_length - 1
 							- query_token_length - 1 - 1;
+
 						if (available > 0)
 							doc_token_length = available;
 						else
@@ -1726,8 +1763,8 @@ ndb_onnx_hf_rerank(const char *model_name,
 						combined_token_length = max_combined_length;
 					}
 
-					combined_token_ids = (int32 *)palloc(
-						combined_token_length * sizeof(int32));
+					combined_token_ids = (int32 *) palloc(
+														  combined_token_length * sizeof(int32));
 					if (!combined_token_ids)
 					{
 						scores[i] = 0.0f;
@@ -1738,26 +1775,28 @@ ndb_onnx_hf_rerank(const char *model_name,
 
 					/* Build combined sequence */
 					j = 0;
-					combined_token_ids[j++] = 101; /* [CLS] token ID */
+					combined_token_ids[j++] = 101;	/* [CLS] token ID */
 					/* Copy query tokens */
 					{
-						int k;
+						int			k;
+
 						for (k = 0; k < query_token_length && j < combined_token_length - 2; k++)
 							combined_token_ids[j++] = query_token_ids[k];
 					}
-					combined_token_ids[j++] = 102; /* [SEP] token ID */
+					combined_token_ids[j++] = 102;	/* [SEP] token ID */
 					/* Copy document tokens */
 					{
-						int k;
+						int			k;
+
 						for (k = 0; k < doc_token_length && j < combined_token_length - 1; k++)
 							combined_token_ids[j++] = doc_token_ids[k];
 					}
-					combined_token_ids[j++] = 102; /* [SEP] token ID */
+					combined_token_ids[j++] = 102;	/* [SEP] token ID */
 					combined_token_length = j;
 
 					/* Convert token IDs to float array for ONNX */
-					input_data = (float *)palloc(
-						combined_token_length * sizeof(float));
+					input_data = (float *) palloc(
+												  combined_token_length * sizeof(float));
 					if (!input_data)
 					{
 						scores[i] = 0.0f;
@@ -1769,13 +1808,13 @@ ndb_onnx_hf_rerank(const char *model_name,
 					}
 
 					for (j = 0; j < combined_token_length; j++)
-						input_data[j] = (float)combined_token_ids[j];
+						input_data[j] = (float) combined_token_ids[j];
 
 					/* Create input tensor */
 					input_shape[0] = 1;
 					input_shape[1] = combined_token_length;
 					input_tensor = neurondb_onnx_create_tensor(
-						input_data, input_shape, 2);
+															   input_data, input_shape, 2);
 					if (!input_tensor)
 					{
 						scores[i] = 0.0f;
@@ -1790,7 +1829,7 @@ ndb_onnx_hf_rerank(const char *model_name,
 
 					/* Run inference */
 					output_tensor = neurondb_onnx_run_inference(
-						session, input_tensor);
+																session, input_tensor);
 					if (!output_tensor || output_tensor->size <= 0)
 					{
 						scores[i] = 0.0f;
@@ -1804,15 +1843,20 @@ ndb_onnx_hf_rerank(const char *model_name,
 						continue;
 					}
 
-					/* Extract score (cross-encoder outputs single logit/score) */
+					/*
+					 * Extract score (cross-encoder outputs single
+					 * logit/score)
+					 */
 					/* For binary classification, use first output */
 					if (output_tensor->size >= 1)
 					{
 						/* Apply sigmoid if needed, or use raw logit */
-						float logit = output_tensor->data[0];
+						float		logit = output_tensor->data[0];
+
 						/* Convert logit to probability using sigmoid */
 						scores[i] = 1.0f / (1.0f + expf(-logit));
-					} else
+					}
+					else
 					{
 						scores[i] = 0.0f;
 					}
@@ -1869,7 +1913,7 @@ ndb_onnx_hf_rerank(const char *model_name,
 	return rc;
 }
 
-#else /* !HAVE_ONNX_RUNTIME */
+#else							/* !HAVE_ONNX_RUNTIME */
 
 /*
  * Intentional conditional compilation stub when ONNX Runtime is not available.
@@ -1877,10 +1921,10 @@ ndb_onnx_hf_rerank(const char *model_name,
  */
 int
 ndb_onnx_hf_complete(const char *model_name,
-	const char *prompt,
-	const char *params_json,
-	char **text_out,
-	char **errstr)
+					 const char *prompt,
+					 const char *params_json,
+					 char **text_out,
+					 char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("ONNX Runtime support not compiled in");
@@ -1889,10 +1933,10 @@ ndb_onnx_hf_complete(const char *model_name,
 
 int
 ndb_onnx_hf_embed(const char *model_name,
-	const char *text,
-	float **vec_out,
-	int *dim_out,
-	char **errstr)
+				  const char *text,
+				  float **vec_out,
+				  int *dim_out,
+				  char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("ONNX Runtime support not compiled in");
@@ -1901,11 +1945,11 @@ ndb_onnx_hf_embed(const char *model_name,
 
 int
 ndb_onnx_hf_image_embed(const char *model_name,
-	const unsigned char *image_data,
-	size_t image_size,
-	float **vec_out,
-	int *dim_out,
-	char **errstr)
+						const unsigned char *image_data,
+						size_t image_size,
+						float **vec_out,
+						int *dim_out,
+						char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("ONNX Runtime support not compiled in");
@@ -1914,12 +1958,12 @@ ndb_onnx_hf_image_embed(const char *model_name,
 
 int
 ndb_onnx_hf_multimodal_embed(const char *model_name,
-	const char *text,
-	const unsigned char *image_data,
-	size_t image_size,
-	float **vec_out,
-	int *dim_out,
-	char **errstr)
+							 const char *text,
+							 const unsigned char *image_data,
+							 size_t image_size,
+							 float **vec_out,
+							 int *dim_out,
+							 char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("ONNX Runtime support not compiled in");
@@ -1928,15 +1972,15 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
 
 int
 ndb_onnx_hf_rerank(const char *model_name,
-	const char *query,
-	const char **docs,
-	int ndocs,
-	float **scores_out,
-	char **errstr)
+				   const char *query,
+				   const char **docs,
+				   int ndocs,
+				   float **scores_out,
+				   char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("ONNX Runtime support not compiled in");
 	return -1;
 }
 
-#endif /* HAVE_ONNX_RUNTIME */
+#endif							/* HAVE_ONNX_RUNTIME */

@@ -41,32 +41,32 @@ PG_FUNCTION_INFO_V1(create_ab_test);
 Datum
 create_ab_test(PG_FUNCTION_ARGS)
 {
-	text *experiment_name = PG_GETARG_TEXT_PP(0);
-	ArrayType *model_ids = PG_GETARG_ARRAYTYPE_P(1);
-	ArrayType *traffic_split = PG_GETARG_ARRAYTYPE_P(2);
+	text	   *experiment_name = PG_GETARG_TEXT_PP(0);
+	ArrayType  *model_ids = PG_GETARG_ARRAYTYPE_P(1);
+	ArrayType  *traffic_split = PG_GETARG_ARRAYTYPE_P(2);
 
-	char *name = text_to_cstring(experiment_name);
-	int n_models;
-	int n_splits;
+	char	   *name = text_to_cstring(experiment_name);
+	int			n_models;
+	int			n_splits;
 	StringInfoData result;
-	int experiment_id;
+	int			experiment_id;
 
 	/* Get array sizes */
 	n_models = ArrayGetNItems(ARR_NDIM(model_ids), ARR_DIMS(model_ids));
 	n_splits = ArrayGetNItems(
-		ARR_NDIM(traffic_split), ARR_DIMS(traffic_split));
+							  ARR_NDIM(traffic_split), ARR_DIMS(traffic_split));
 
 	/* Validate */
 	if (n_models < 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("A/B test requires at least 2 models")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("A/B test requires at least 2 models")));
 
 	if (n_models != n_splits)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("traffic_split must match number of "
-				       "models")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("traffic_split must match number of "
+						"models")));
 
 	/* Defensive: validate model IDs and traffic splits */
 	{
@@ -80,22 +80,22 @@ create_ab_test(PG_FUNCTION_ARGS)
 		int			i;
 
 		deconstruct_array(model_ids,
-						 INT4OID,
-						 sizeof(int32),
-						 true,
-						 'i',
-						 &model_elems,
-						 &model_nulls,
-						 &model_nelems);
+						  INT4OID,
+						  sizeof(int32),
+						  true,
+						  'i',
+						  &model_elems,
+						  &model_nulls,
+						  &model_nelems);
 
 		deconstruct_array(traffic_split,
-						 FLOAT8OID,
-						 sizeof(float8),
-						 true,
-						 'd',
-						 &split_elems,
-						 &split_nulls,
-						 &split_nelems);
+						  FLOAT8OID,
+						  sizeof(float8),
+						  true,
+						  'd',
+						  &split_elems,
+						  &split_nulls,
+						  &split_nelems);
 
 		for (i = 0; i < split_nelems; i++)
 		{
@@ -160,13 +160,13 @@ create_ab_test(PG_FUNCTION_ARGS)
 			int			i;
 
 			deconstruct_array(model_ids,
-							 INT4OID,
-							 sizeof(int32),
-							 true,
-							 'i',
-							 &elems,
-							 &nulls,
-							 &nelems);
+							  INT4OID,
+							  sizeof(int32),
+							  true,
+							  'i',
+							  &elems,
+							  &nulls,
+							  &nelems);
 
 			for (i = 0; i < nelems; i++)
 			{
@@ -183,13 +183,13 @@ create_ab_test(PG_FUNCTION_ARGS)
 			int			i;
 
 			deconstruct_array(traffic_split,
-							 FLOAT8OID,
-							 sizeof(float8),
-							 true,
-							 'd',
-							 &elems,
-							 &nulls,
-							 &nelems);
+							  FLOAT8OID,
+							  sizeof(float8),
+							  true,
+							  'd',
+							  &elems,
+							  &nulls,
+							  &nelems);
 
 			for (i = 0; i < nelems; i++)
 			{
@@ -225,7 +225,7 @@ create_ab_test(PG_FUNCTION_ARGS)
 		}
 
 		ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		NDB_SAFE_PFREE_AND_NULL(sql.data);
 		NDB_SAFE_PFREE_AND_NULL(config_json.data);
 
@@ -234,9 +234,9 @@ create_ab_test(PG_FUNCTION_ARGS)
 			bool		isnull;
 
 			experiment_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-													   SPI_tuptable->tupdesc,
-													   1,
-													   &isnull));
+														SPI_tuptable->tupdesc,
+														1,
+														&isnull));
 			if (isnull || experiment_id <= 0)
 			{
 				SPI_finish();
@@ -250,7 +250,7 @@ create_ab_test(PG_FUNCTION_ARGS)
 		{
 			/* Table might not exist, use fallback ID generation */
 			SPI_finish();
-			experiment_id = 10000 + (int)(random() % 90000);
+			experiment_id = 10000 + (int) (random() % 90000);
 		}
 
 		SPI_finish();
@@ -258,10 +258,10 @@ create_ab_test(PG_FUNCTION_ARGS)
 
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"A/B test '%s' created with ID %d, testing %d models",
-		name,
-		experiment_id,
-		n_models);
+					 "A/B test '%s' created with ID %d, testing %d models",
+					 name,
+					 experiment_id,
+					 n_models);
 
 	NDB_SAFE_PFREE_AND_NULL(name);
 
@@ -276,11 +276,11 @@ PG_FUNCTION_INFO_V1(log_prediction);
 Datum
 log_prediction(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	text *input_data = PG_GETARG_TEXT_PP(1);
-	text *prediction = PG_GETARG_TEXT_PP(2);
-	float8 confidence = PG_ARGISNULL(3) ? 1.0 : PG_GETARG_FLOAT8(3);
-	int32 latency_ms = PG_ARGISNULL(4) ? 0 : PG_GETARG_INT32(4);
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *input_data = PG_GETARG_TEXT_PP(1);
+	text	   *prediction = PG_GETARG_TEXT_PP(2);
+	float8		confidence = PG_ARGISNULL(3) ? 1.0 : PG_GETARG_FLOAT8(3);
+	int32		latency_ms = PG_ARGISNULL(4) ? 0 : PG_GETARG_INT32(4);
 
 	char	   *input_str;
 	char	   *pred_str;
@@ -342,8 +342,8 @@ log_prediction(PG_FUNCTION_ARGS)
 						 input_quoted_str, confidence, latency_ms);
 		NDB_SAFE_PFREE_AND_NULL(input_quoted_str);
 	}
-		input_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(input_json.data)));
-	/* silence unused */ (void) input_jsonb;
+	input_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(input_json.data)));
+	 /* silence unused */ (void) input_jsonb;
 	/* Insert prediction log */
 	initStringInfo(&sql);
 	{
@@ -374,8 +374,8 @@ log_prediction(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(input_str);
 		NDB_SAFE_PFREE_AND_NULL(pred_str);
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("log_prediction: failed to insert prediction log")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("log_prediction: failed to insert prediction log")));
 	}
 
 	SPI_finish();
@@ -393,8 +393,8 @@ PG_FUNCTION_INFO_V1(monitor_model_performance);
 Datum
 monitor_model_performance(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	text *time_window = PG_ARGISNULL(1) ? NULL : PG_GETARG_TEXT_PP(1);
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *time_window = PG_ARGISNULL(1) ? NULL : PG_GETARG_TEXT_PP(1);
 
 	char	   *window;
 	StringInfoData result;
@@ -436,7 +436,7 @@ monitor_model_performance(PG_FUNCTION_ARGS)
 						 model_id, window);
 
 		ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		NDB_SAFE_PFREE_AND_NULL(sql.data);
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
@@ -444,10 +444,10 @@ monitor_model_performance(PG_FUNCTION_ARGS)
 			bool		isnull;
 
 			predictions_count = DatumGetInt64(
-				SPI_getbinval(SPI_tuptable->vals[0],
-							  SPI_tuptable->tupdesc,
-							  1,
-							  &isnull));
+											  SPI_getbinval(SPI_tuptable->vals[0],
+															SPI_tuptable->tupdesc,
+															1,
+															&isnull));
 		}
 
 		/* Query latency metrics from prediction logs */
@@ -458,16 +458,20 @@ monitor_model_performance(PG_FUNCTION_ARGS)
 						 "FROM neurondb.ml_predictions WHERE model_id = %d AND predicted_at >= NOW() - INTERVAL '%s'",
 						 model_id, window);
 		ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		NDB_SAFE_PFREE_AND_NULL(sql.data);
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
-			bool isnull;
+			bool		isnull;
+
 			avg_latency = (float) DatumGetFloat8(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
-			if (isnull) avg_latency = 0.0f;
+			if (isnull)
+				avg_latency = 0.0f;
 			{
-				float p95 = (float) DatumGetFloat8(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull));
-				if (!isnull) p95_latency = p95;
+				float		p95 = (float) DatumGetFloat8(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull));
+
+				if (!isnull)
+					p95_latency = p95;
 			}
 		}
 
@@ -491,15 +495,15 @@ monitor_model_performance(PG_FUNCTION_ARGS)
 					{
 						if (r == WJB_KEY)
 						{
-							char   *key = pnstrdup(v.val.string.val,
-												   v.val.string.len);
+							char	   *key = pnstrdup(v.val.string.val,
+													   v.val.string.len);
 
 							r = JsonbIteratorNext(&it, &v, false);
 							if (strcmp(key, "accuracy") == 0 && v.type == jbvNumeric)
 							{
-								accuracy = (float)DatumGetFloat8(
-									DirectFunctionCall1(numeric_float8,
-													  NumericGetDatum(v.val.numeric)));
+								accuracy = (float) DatumGetFloat8(
+																  DirectFunctionCall1(numeric_float8,
+																					  NumericGetDatum(v.val.numeric)));
 							}
 							NDB_SAFE_PFREE_AND_NULL(key);
 						}
@@ -511,19 +515,19 @@ monitor_model_performance(PG_FUNCTION_ARGS)
 		SPI_finish();
 
 		/* Use queried values */
-		p95_latency = avg_latency * 2.0f; /* Estimate */
+		p95_latency = avg_latency * 2.0f;	/* Estimate */
 		error_rate = 1.0f - accuracy;
 	}
 
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"{\"window\": \"%s\", "
-		"\"predictions\": %d, "
-		"\"accuracy\": %.4f, "
-		"\"avg_latency_ms\": %.2f, "
-		"\"p95_latency_ms\": %.2f, "
-		"\"error_rate\": %.4f}",
-		window, predictions_count, accuracy, avg_latency, p95_latency, error_rate);
+					 "{\"window\": \"%s\", "
+					 "\"predictions\": %d, "
+					 "\"accuracy\": %.4f, "
+					 "\"avg_latency_ms\": %.2f, "
+					 "\"p95_latency_ms\": %.2f, "
+					 "\"error_rate\": %.4f}",
+					 window, predictions_count, accuracy, avg_latency, p95_latency, error_rate);
 
 	NDB_SAFE_PFREE_AND_NULL(window);
 
@@ -538,15 +542,15 @@ PG_FUNCTION_INFO_V1(detect_model_drift);
 Datum
 detect_model_drift(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	text *baseline_period = PG_GETARG_TEXT_PP(1);
-	text *current_period = PG_GETARG_TEXT_PP(2);
-	float8 threshold = PG_ARGISNULL(3) ? 0.05 : PG_GETARG_FLOAT8(3);
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *baseline_period = PG_GETARG_TEXT_PP(1);
+	text	   *current_period = PG_GETARG_TEXT_PP(2);
+	float8		threshold = PG_ARGISNULL(3) ? 0.05 : PG_GETARG_FLOAT8(3);
 
-	char *baseline = text_to_cstring(baseline_period);
-	char *current = text_to_cstring(current_period);
-	float drift_score;
-	bool drift_detected;
+	char	   *baseline = text_to_cstring(baseline_period);
+	char	   *current = text_to_cstring(current_period);
+	float		drift_score;
+	bool		drift_detected;
 	StringInfoData result;
 
 	/* Defensive: validate model_id */
@@ -602,18 +606,18 @@ detect_model_drift(PG_FUNCTION_ARGS)
 		}
 
 		ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		NDB_SAFE_PFREE_AND_NULL(sql.data);
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
 			bool		isnull;
 
-			baseline_accuracy = (float)DatumGetFloat8(
-				SPI_getbinval(SPI_tuptable->vals[0],
-							  SPI_tuptable->tupdesc,
-							  1,
-							  &isnull));
+			baseline_accuracy = (float) DatumGetFloat8(
+													   SPI_getbinval(SPI_tuptable->vals[0],
+																	 SPI_tuptable->tupdesc,
+																	 1,
+																	 &isnull));
 			if (isnull)
 				baseline_accuracy = 0.0f;
 		}
@@ -635,18 +639,18 @@ detect_model_drift(PG_FUNCTION_ARGS)
 		}
 
 		ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		NDB_SAFE_PFREE_AND_NULL(sql.data);
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
 			bool		isnull;
 
-			current_accuracy = (float)DatumGetFloat8(
-				SPI_getbinval(SPI_tuptable->vals[0],
-							  SPI_tuptable->tupdesc,
-							  1,
-							  &isnull));
+			current_accuracy = (float) DatumGetFloat8(
+													  SPI_getbinval(SPI_tuptable->vals[0],
+																	SPI_tuptable->tupdesc,
+																	1,
+																	&isnull));
 			if (isnull)
 				current_accuracy = 0.0f;
 		}
@@ -664,11 +668,11 @@ detect_model_drift(PG_FUNCTION_ARGS)
 
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"{\"drift_detected\": %s, \"drift_score\": %.4f, "
-		"\"threshold\": %.4f}",
-		drift_detected ? "true" : "false",
-		drift_score,
-		threshold);
+					 "{\"drift_detected\": %s, \"drift_score\": %.4f, "
+					 "\"threshold\": %.4f}",
+					 drift_detected ? "true" : "false",
+					 drift_score,
+					 threshold);
 
 	NDB_SAFE_PFREE_AND_NULL(baseline);
 	NDB_SAFE_PFREE_AND_NULL(current);
@@ -684,14 +688,14 @@ PG_FUNCTION_INFO_V1(create_model_version);
 Datum
 create_model_version(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	text *version_tag = PG_GETARG_TEXT_PP(1);
-	text *description = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *version_tag = PG_GETARG_TEXT_PP(1);
+	text	   *description = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
 
-	char *tag = text_to_cstring(version_tag);
-	char *desc = description ? text_to_cstring(description) : pstrdup("");
+	char	   *tag = text_to_cstring(version_tag);
+	char	   *desc = description ? text_to_cstring(description) : pstrdup("");
 	StringInfoData result;
-	int version_id;
+	int			version_id;
 
 	/* Defensive: validate model_id */
 	if (model_id <= 0)
@@ -742,7 +746,7 @@ create_model_version(PG_FUNCTION_ARGS)
 				NDB_SAFE_PFREE_AND_NULL(desc_str);
 			}
 			version_params = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-															   CStringGetDatum(params_json.data)));
+																CStringGetDatum(params_json.data)));
 
 			memset(&spec, 0, sizeof(spec));
 			spec.algorithm = "versioned";
@@ -765,10 +769,10 @@ create_model_version(PG_FUNCTION_ARGS)
 
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"Model version '%s' created with ID %d: %s",
-		tag,
-		version_id,
-		desc);
+					 "Model version '%s' created with ID %d: %s",
+					 tag,
+					 version_id,
+					 desc);
 
 	NDB_SAFE_PFREE_AND_NULL(tag);
 	NDB_SAFE_PFREE_AND_NULL(desc);
@@ -784,20 +788,20 @@ PG_FUNCTION_INFO_V1(rollback_model);
 Datum
 rollback_model(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	int32 target_version = PG_GETARG_INT32(1);
+	int32		model_id = PG_GETARG_INT32(0);
+	int32		target_version = PG_GETARG_INT32(1);
 
 	StringInfoData result;
 
 	/* Rollback model (production would restore from version) */
-	(void)model_id;
-	(void)target_version;
+	(void) model_id;
+	(void) target_version;
 
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"Model %d rolled back to version %d",
-		model_id,
-		target_version);
+					 "Model %d rolled back to version %d",
+					 model_id,
+					 target_version);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -810,28 +814,28 @@ PG_FUNCTION_INFO_V1(set_feature_flag);
 Datum
 set_feature_flag(PG_FUNCTION_ARGS)
 {
-	text *flag_name = PG_GETARG_TEXT_PP(0);
-	bool enabled = PG_GETARG_BOOL(1);
-	float8 rollout_percentage =
+	text	   *flag_name = PG_GETARG_TEXT_PP(0);
+	bool		enabled = PG_GETARG_BOOL(1);
+	float8		rollout_percentage =
 		PG_ARGISNULL(2) ? 100.0 : PG_GETARG_FLOAT8(2);
 
-	char *name = text_to_cstring(flag_name);
+	char	   *name = text_to_cstring(flag_name);
 	StringInfoData result;
 
 	/* Validate */
 	if (rollout_percentage < 0.0 || rollout_percentage > 100.0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("rollout_percentage must be between 0 "
-				       "and 100")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("rollout_percentage must be between 0 "
+						"and 100")));
 
 	/* Set feature flag (production would update configuration) */
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"Feature flag '%s' set to %s with %.1f%% rollout",
-		name,
-		enabled ? "enabled" : "disabled",
-		rollout_percentage);
+					 "Feature flag '%s' set to %s with %.1f%% rollout",
+					 name,
+					 enabled ? "enabled" : "disabled",
+					 rollout_percentage);
 
 	NDB_SAFE_PFREE_AND_NULL(name);
 
@@ -846,19 +850,19 @@ PG_FUNCTION_INFO_V1(track_experiment_metric);
 Datum
 track_experiment_metric(PG_FUNCTION_ARGS)
 {
-	int32 experiment_id = PG_GETARG_INT32(0);
-	text *metric_name = PG_GETARG_TEXT_PP(1);
-	float8 value = PG_GETARG_FLOAT8(2);
-	text *variant = PG_ARGISNULL(3) ? NULL : PG_GETARG_TEXT_PP(3);
+	int32		experiment_id = PG_GETARG_INT32(0);
+	text	   *metric_name = PG_GETARG_TEXT_PP(1);
+	float8		value = PG_GETARG_FLOAT8(2);
+	text	   *variant = PG_ARGISNULL(3) ? NULL : PG_GETARG_TEXT_PP(3);
 
-	char *metric = text_to_cstring(metric_name);
-	char *var = variant ? text_to_cstring(variant) : pstrdup("control");
+	char	   *metric = text_to_cstring(metric_name);
+	char	   *var = variant ? text_to_cstring(variant) : pstrdup("control");
 
 	/* Track metric (production would insert into metrics table) */
-	(void)experiment_id;
-	(void)metric;
-	(void)value;
-	(void)var;
+	(void) experiment_id;
+	(void) metric;
+	(void) value;
+	(void) var;
 
 	NDB_SAFE_PFREE_AND_NULL(metric);
 	NDB_SAFE_PFREE_AND_NULL(var);
@@ -874,23 +878,23 @@ PG_FUNCTION_INFO_V1(get_experiment_results);
 Datum
 get_experiment_results(PG_FUNCTION_ARGS)
 {
-	int32 experiment_id = PG_GETARG_INT32(0);
+	int32		experiment_id = PG_GETARG_INT32(0);
 	StringInfoData result;
 
 	/* Get results (production would aggregate metrics) */
-	(void)experiment_id;
+	(void) experiment_id;
 
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"{\"experiment_id\": %d, "
-		"\"variants\": ["
-		"{\"name\": \"control\", \"accuracy\": 0.85, \"samples\": "
-		"5000}, "
-		"{\"name\": \"treatment\", \"accuracy\": 0.88, \"samples\": "
-		"5000}"
-		"], "
-		"\"winner\": \"treatment\", \"confidence\": 0.95}",
-		experiment_id);
+					 "{\"experiment_id\": %d, "
+					 "\"variants\": ["
+					 "{\"name\": \"control\", \"accuracy\": 0.85, \"samples\": "
+					 "5000}, "
+					 "{\"name\": \"treatment\", \"accuracy\": 0.88, \"samples\": "
+					 "5000}"
+					 "], "
+					 "\"winner\": \"treatment\", \"confidence\": 0.95}",
+					 experiment_id);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -903,17 +907,17 @@ PG_FUNCTION_INFO_V1(audit_model_access);
 Datum
 audit_model_access(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	text *action = PG_GETARG_TEXT_PP(1);
-	text *user_id = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *action = PG_GETARG_TEXT_PP(1);
+	text	   *user_id = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
 
-	char *action_str = text_to_cstring(action);
-	char *user = user_id ? text_to_cstring(user_id) : pstrdup("unknown");
+	char	   *action_str = text_to_cstring(action);
+	char	   *user = user_id ? text_to_cstring(user_id) : pstrdup("unknown");
 
 	/* Log audit event (production would insert into audit log) */
-	(void)model_id;
-	(void)action_str;
-	(void)user;
+	(void) model_id;
+	(void) action_str;
+	(void) user;
 
 	NDB_SAFE_PFREE_AND_NULL(action_str);
 	NDB_SAFE_PFREE_AND_NULL(user);

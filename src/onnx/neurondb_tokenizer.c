@@ -45,11 +45,11 @@
 extern char *neurondb_onnx_model_path;
 
 /* ---- SPECIAL TOKEN IDs (BERT standard) ---- */
-#define TOKEN_PAD_ID 0 /* [PAD] */
-#define TOKEN_UNK_ID 100 /* [UNK] */
-#define TOKEN_CLS_ID 101 /* [CLS] */
-#define TOKEN_SEP_ID 102 /* [SEP] */
-#define TOKEN_MASK_ID 103 /* [MASK] */
+#define TOKEN_PAD_ID 0			/* [PAD] */
+#define TOKEN_UNK_ID 100		/* [UNK] */
+#define TOKEN_CLS_ID 101		/* [CLS] */
+#define TOKEN_SEP_ID 102		/* [SEP] */
+#define TOKEN_MASK_ID 103		/* [MASK] */
 
 /* ---- Sequence length limits ---- */
 #define MAX_SEQ_LENGTH 512
@@ -57,33 +57,36 @@ extern char *neurondb_onnx_model_path;
 /* ---- Vocabulary table implementation ---- */
 typedef struct VocabEntry
 {
-	char *token; /* Owned string in TopMemoryContext */
-	int32 token_id; /* Vocabulary index */
-	struct VocabEntry *next; /* For chaining on hash collision */
-} VocabEntry;
+	char	   *token;			/* Owned string in TopMemoryContext */
+	int32		token_id;		/* Vocabulary index */
+	struct VocabEntry *next;	/* For chaining on hash collision */
+}			VocabEntry;
 
 /* ---- Tokenizer cache entry ---- */
 typedef struct TokenizerCacheEntry
 {
-	char *model_name; /* Model identifier */
-	VocabEntry **vocab_table; /* Vocabulary hash table */
-	bool vocab_loaded; /* Whether vocabulary is loaded */
-	int32 vocab_size; /* Vocabulary size */
-	char *vocab_path; /* Path to vocabulary file */
-	time_t last_used; /* Last access time for LRU */
-	struct TokenizerCacheEntry *next; /* Linked list pointer */
-} TokenizerCacheEntry;
+	char	   *model_name;		/* Model identifier */
+	VocabEntry **vocab_table;	/* Vocabulary hash table */
+	bool		vocab_loaded;	/* Whether vocabulary is loaded */
+	int32		vocab_size;		/* Vocabulary size */
+	char	   *vocab_path;		/* Path to vocabulary file */
+	time_t		last_used;		/* Last access time for LRU */
+	struct TokenizerCacheEntry *next;	/* Linked list pointer */
+}			TokenizerCacheEntry;
 
 #define VOCAB_HASH_SIZE 65536
 #define MAX_MODEL_NAME 256
 #define MAX_TOKENIZER_CACHE 10
 
 /* Global tokenizer cache */
-static TokenizerCacheEntry *g_tokenizer_cache_head = NULL;
-static int g_tokenizer_cache_count = 0;
+static TokenizerCacheEntry * g_tokenizer_cache_head = NULL;
+static int	g_tokenizer_cache_count = 0;
 
 /* Default vocabulary (used when no model-specific vocab is loaded) */
-static VocabEntry *g_default_vocab_table[VOCAB_HASH_SIZE] = { 0 };
+static VocabEntry * g_default_vocab_table[VOCAB_HASH_SIZE] =
+{
+	0
+};
 static bool g_default_vocab_loaded = false;
 
 /**
@@ -94,9 +97,10 @@ static bool g_default_vocab_loaded = false;
 static uint32
 hash_token(const char *token)
 {
-	uint32 hash = 0;
+	uint32		hash = 0;
+
 	for (const char *p = token; *p != '\0'; ++p)
-		hash = hash * 31 + (unsigned char)*p;
+		hash = hash * 31 + (unsigned char) *p;
 	return hash % VOCAB_HASH_SIZE;
 }
 
@@ -105,11 +109,11 @@ hash_token(const char *token)
  *    Safely adds a token and its associated token_id to a vocabulary table.
  */
 static void
-vocab_add_token(VocabEntry **vocab_table, const char *token, int32 token_id)
+vocab_add_token(VocabEntry * *vocab_table, const char *token, int32 token_id)
 {
-	uint32 hash = hash_token(token);
-	VocabEntry *entry = (VocabEntry *)MemoryContextAlloc(
-		TopMemoryContext, sizeof(VocabEntry));
+	uint32		hash = hash_token(token);
+	VocabEntry *entry = (VocabEntry *) MemoryContextAlloc(
+														  TopMemoryContext, sizeof(VocabEntry));
 
 	/* Copy the token string into TopMemoryContext as well */
 	entry->token = MemoryContextStrdup(TopMemoryContext, token);
@@ -124,11 +128,12 @@ vocab_add_token(VocabEntry **vocab_table, const char *token, int32 token_id)
  *    If not found, RETURN TOKEN_UNK_ID.
  */
 static int32
-vocab_lookup_token(VocabEntry **vocab_table, const char *token)
+vocab_lookup_token(VocabEntry * *vocab_table, const char *token)
 {
-	uint32 hash = hash_token(token);
-	for (VocabEntry *entry = vocab_table[hash]; entry != NULL;
-		entry = entry->next)
+	uint32		hash = hash_token(token);
+
+	for (VocabEntry * entry = vocab_table[hash]; entry != NULL;
+		 entry = entry->next)
 	{
 		if (strcmp(entry->token, token) == 0)
 			return entry->token_id;
@@ -145,15 +150,18 @@ vocab_lookup_token(VocabEntry **vocab_table, const char *token)
  *       For better performance, consider using a reverse mapping (token_id -> token string).
  */
 static const char *
-vocab_lookup_id(VocabEntry **vocab_table, int32 token_id)
+vocab_lookup_id(VocabEntry * *vocab_table, int32 token_id)
 {
-	int32 i;
+	int32		i;
 
-	/* Linear search through all entries (could be optimized with reverse mapping) */
+	/*
+	 * Linear search through all entries (could be optimized with reverse
+	 * mapping)
+	 */
 	for (i = 0; i < VOCAB_HASH_SIZE; i++)
 	{
-		for (VocabEntry *entry = vocab_table[i]; entry != NULL;
-			entry = entry->next)
+		for (VocabEntry * entry = vocab_table[i]; entry != NULL;
+			 entry = entry->next)
 		{
 			if (entry->token_id == token_id)
 				return entry->token;
@@ -168,27 +176,28 @@ vocab_lookup_id(VocabEntry **vocab_table, int32 token_id)
  *    Each line is a token. Line number = token_id.
  */
 static int32
-load_vocab_file(VocabEntry **vocab_table, const char *vocab_path)
+load_vocab_file(VocabEntry * *vocab_table, const char *vocab_path)
 {
-	FILE *fp;
-	char line[512];
-	int32 token_id = 0;
+	FILE	   *fp;
+	char		line[512];
+	int32		token_id = 0;
 
 	fp = fopen(vocab_path, "r");
 	if (fp == NULL)
 	{
-		int save_errno = errno;
+		int			save_errno = errno;
+
 		ereport(ERROR,
-			(errcode_for_file_access(),
-				errmsg("could not open vocabulary file: %s "
-				       "(%s)",
-					vocab_path,
-					strerror(save_errno))));
+				(errcode_for_file_access(),
+				 errmsg("could not open vocabulary file: %s "
+						"(%s)",
+						vocab_path,
+						strerror(save_errno))));
 	}
 
 	while (fgets(line, sizeof(line), fp) != NULL)
 	{
-		size_t len = strlen(line);
+		size_t		len = strlen(line);
 
 		/* Trim trailing newline and possible carriage return */
 		if (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
@@ -205,17 +214,18 @@ load_vocab_file(VocabEntry **vocab_table, const char *vocab_path)
 
 	if (fclose(fp) != 0)
 	{
-		int saved_errno = errno;
+		int			saved_errno = errno;
+
 		ereport(WARNING,
-			(errcode_for_file_access(),
-			 errmsg("could not close vocabulary file \"%s\" (%s)",
-				vocab_path, strerror(saved_errno))));
+				(errcode_for_file_access(),
+				 errmsg("could not close vocabulary file \"%s\" (%s)",
+						vocab_path, strerror(saved_errno))));
 	}
 
 	elog(LOG,
-		"loaded vocabulary with %d tokens from \"%s\"",
-		token_id,
-		vocab_path);
+		 "loaded vocabulary with %d tokens from \"%s\"",
+		 token_id,
+		 vocab_path);
 	return token_id;
 }
 
@@ -246,8 +256,11 @@ find_tokenizer_cache_entry(const char *model_name)
 static void
 evict_lru_tokenizer(void)
 {
-	TokenizerCacheEntry *entry, *prev, *lru_entry, *lru_prev;
-	time_t oldest;
+	TokenizerCacheEntry *entry,
+			   *prev,
+			   *lru_entry,
+			   *lru_prev;
+	time_t		oldest;
 
 	if (!g_tokenizer_cache_head)
 		return;
@@ -258,7 +271,7 @@ evict_lru_tokenizer(void)
 	oldest = lru_entry->last_used;
 	prev = NULL;
 	for (entry = g_tokenizer_cache_head; entry;
-		prev = entry, entry = entry->next)
+		 prev = entry, entry = entry->next)
 	{
 		if (entry->last_used < oldest)
 		{
@@ -278,13 +291,16 @@ evict_lru_tokenizer(void)
 	if (lru_entry->vocab_table
 		&& lru_entry->vocab_table != g_default_vocab_table)
 	{
-		int32 i;
+		int32		i;
+
 		for (i = 0; i < VOCAB_HASH_SIZE; i++)
 		{
-			VocabEntry *vocab_entry, *next;
+			VocabEntry *vocab_entry,
+					   *next;
+
 			for (vocab_entry = lru_entry->vocab_table[i];
-				vocab_entry;
-				vocab_entry = next)
+				 vocab_entry;
+				 vocab_entry = next)
 			{
 				next = vocab_entry->next;
 				if (vocab_entry->token)
@@ -313,8 +329,8 @@ static TokenizerCacheEntry *
 get_or_load_tokenizer(const char *model_name)
 {
 	TokenizerCacheEntry *entry;
-	char vocab_path[MAXPGPATH];
-	int32 vocab_size;
+	char		vocab_path[MAXPGPATH];
+	int32		vocab_size;
 
 	/* Check cache first */
 	entry = find_tokenizer_cache_entry(model_name);
@@ -326,39 +342,41 @@ get_or_load_tokenizer(const char *model_name)
 		evict_lru_tokenizer();
 
 	/* Create new cache entry */
-	entry = (TokenizerCacheEntry *)MemoryContextAllocZero(
-		TopMemoryContext, sizeof(TokenizerCacheEntry));
+	entry = (TokenizerCacheEntry *) MemoryContextAllocZero(
+														   TopMemoryContext, sizeof(TokenizerCacheEntry));
 	entry->model_name = MemoryContextStrdup(TopMemoryContext, model_name);
-	entry->vocab_table = (VocabEntry **)MemoryContextAllocZero(
-		TopMemoryContext, VOCAB_HASH_SIZE * sizeof(VocabEntry *));
+	entry->vocab_table = (VocabEntry * *) MemoryContextAllocZero(
+																 TopMemoryContext, VOCAB_HASH_SIZE * sizeof(VocabEntry *));
 	entry->last_used = time(NULL);
 
 	/* Try to load vocabulary from model directory */
 	if (neurondb_onnx_model_path)
 	{
 		snprintf(vocab_path,
-			MAXPGPATH,
-			"%s/%s/vocab.txt",
-			neurondb_onnx_model_path,
-			model_name);
+				 MAXPGPATH,
+				 "%s/%s/vocab.txt",
+				 neurondb_onnx_model_path,
+				 model_name);
 
 		/* Check if vocab file exists */
 		if (access(vocab_path, R_OK) == 0)
 		{
 			entry->vocab_path = MemoryContextStrdup(
-				TopMemoryContext, vocab_path);
+													TopMemoryContext, vocab_path);
 			vocab_size =
 				load_vocab_file(entry->vocab_table, vocab_path);
 			entry->vocab_size = vocab_size;
 			entry->vocab_loaded = true;
-		} else
+		}
+		else
 		{
 			/* Use default vocabulary if model-specific vocab not found */
 			entry->vocab_table = g_default_vocab_table;
 			entry->vocab_loaded = g_default_vocab_loaded;
 			entry->vocab_size = 0;
 		}
-	} else
+	}
+	else
 	{
 		/* Use default vocabulary if model path not set */
 		entry->vocab_table = g_default_vocab_table;
@@ -402,12 +420,12 @@ _to_lower_case(char *src)
 static char **
 tokenize_text(const char *text, int *num_tokens)
 {
-	char *text_copy;
-	char *token;
-	char **tokens; /* Array of pointers to token strings */
-	int count = 0;
-	int capacity = 128;
-	char *saveptr = NULL;
+	char	   *text_copy;
+	char	   *token;
+	char	  **tokens;			/* Array of pointers to token strings */
+	int			count = 0;
+	int			capacity = 128;
+	char	   *saveptr = NULL;
 
 	Assert(text != NULL);
 	Assert(num_tokens != NULL);
@@ -419,7 +437,7 @@ tokenize_text(const char *text, int *num_tokens)
 	_to_lower_case(text_copy);
 
 	/* Preallocate token pointer array */
-	tokens = (char **)palloc(capacity * sizeof(char *));
+	tokens = (char **) palloc(capacity * sizeof(char *));
 	count = 0;
 
 	/* Tokenize by whitespace: space, tab, newline, and carriage return */
@@ -430,8 +448,8 @@ tokenize_text(const char *text, int *num_tokens)
 		if (count >= capacity)
 		{
 			capacity *= 2;
-			tokens = (char **)repalloc(
-				tokens, capacity * sizeof(char *));
+			tokens = (char **) repalloc(
+										tokens, capacity * sizeof(char *));
 		}
 		tokens[count++] = pstrdup(token);
 		token = strtok_r(NULL, " \t\n\r", &saveptr);
@@ -460,10 +478,10 @@ tokenize_text(const char *text, int *num_tokens)
  *    - output_length: pointer to int32 for returning the length written (== max_length)
  */
 int32 *
-neurondb_tokenize(const char *text, int32 max_length, int32 *output_length)
+neurondb_tokenize(const char *text, int32 max_length, int32 * output_length)
 {
 	return neurondb_tokenize_with_model(
-		text, max_length, output_length, NULL);
+										text, max_length, output_length, NULL);
 }
 
 /**
@@ -473,22 +491,22 @@ neurondb_tokenize(const char *text, int32 max_length, int32 *output_length)
  */
 int32 *
 neurondb_tokenize_with_model(const char *text,
-	int32 max_length,
-	int32 *output_length,
-	const char *model_name)
+							 int32 max_length,
+							 int32 * output_length,
+							 const char *model_name)
 {
-	char **tokens = NULL; /* Array of palloc'd char* */
-	int32 *token_ids = NULL; /* Output array */
-	int num_tokens = 0;
-	int output_idx = 0;
-	int i;
+	char	  **tokens = NULL;	/* Array of palloc'd char* */
+	int32	   *token_ids = NULL;	/* Output array */
+	int			num_tokens = 0;
+	int			output_idx = 0;
+	int			i;
 	TokenizerCacheEntry *tokenizer = NULL;
 	VocabEntry **vocab_table = NULL;
-	bool vocab_loaded = false;
+	bool		vocab_loaded = false;
 
 	Assert(text != NULL);
 	Assert(output_length != NULL);
-	Assert(max_length > 1); /* Provide at least space for [CLS], [SEP] */
+	Assert(max_length > 1);		/* Provide at least space for [CLS], [SEP] */
 
 	/* Get or load tokenizer for model */
 	if (model_name != NULL && strlen(model_name) > 0)
@@ -509,31 +527,34 @@ neurondb_tokenize_with_model(const char *text,
 	}
 
 	/*
-     * Tokenize text. tokens is a palloc'd array of palloc'd strings.
-     * num_tokens: number of tokens in the result.
-     */
+	 * Tokenize text. tokens is a palloc'd array of palloc'd strings.
+	 * num_tokens: number of tokens in the result.
+	 */
 	tokens = tokenize_text(text, &num_tokens);
 
 	/*
-     * Allocate output array, zeroed (so all trailing positions are [PAD]).
-     * We always write max_length elements, zero-initialized.
-     */
-	token_ids = (int32 *)palloc0(max_length * sizeof(int32));
+	 * Allocate output array, zeroed (so all trailing positions are [PAD]). We
+	 * always write max_length elements, zero-initialized.
+	 */
+	token_ids = (int32 *) palloc0(max_length * sizeof(int32));
 
 	/* Add [CLS] at beginning */
 	output_idx = 0;
 	token_ids[output_idx++] = TOKEN_CLS_ID;
 
-	/* Add as many content tokens as fit, but reserve one slot for [SEP].
-     * If tokens don't fit, silently truncate.
-     */
+	/*
+	 * Add as many content tokens as fit, but reserve one slot for [SEP]. If
+	 * tokens don't fit, silently truncate.
+	 */
 	for (i = 0; i < num_tokens && output_idx < max_length - 1; ++i)
 	{
-		int32 token_id;
+		int32		token_id;
+
 		if (vocab_loaded)
 		{
 			token_id = vocab_lookup_token(vocab_table, tokens[i]);
-		} else
+		}
+		else
 		{
 			token_id = TOKEN_UNK_ID;
 		}
@@ -559,15 +580,15 @@ neurondb_tokenize_with_model(const char *text,
  *    Uses model-specific tokenizer if provided, otherwise uses default vocabulary.
  */
 char *
-neurondb_detokenize(const int32 *token_ids,
-	int32 length,
-	const char *model_name)
+neurondb_detokenize(const int32 * token_ids,
+					int32 length,
+					const char *model_name)
 {
 	StringInfoData buf;
-	int32 i;
+	int32		i;
 	TokenizerCacheEntry *tokenizer = NULL;
 	VocabEntry **vocab_table = NULL;
-	bool vocab_loaded = false;
+	bool		vocab_loaded = false;
 	const char *token_str;
 
 	Assert(token_ids != NULL);
@@ -596,7 +617,7 @@ neurondb_detokenize(const int32 *token_ids,
 	/* Convert token IDs to text */
 	for (i = 0; i < length; i++)
 	{
-		int32 token_id = token_ids[i];
+		int32		token_id = token_ids[i];
 
 		/* Skip special tokens */
 		if (token_id == TOKEN_PAD_ID || token_id == TOKEN_CLS_ID
@@ -615,14 +636,16 @@ neurondb_detokenize(const int32 *token_ids,
 				if (buf.len > 0)
 					appendStringInfoChar(&buf, ' ');
 				appendStringInfoString(&buf, token_str);
-			} else
+			}
+			else
 			{
 				/* Unknown token - use [UNK] */
 				if (buf.len > 0)
 					appendStringInfoChar(&buf, ' ');
 				appendStringInfoString(&buf, "[UNK]");
 			}
-		} else
+		}
+		else
 		{
 			/* No vocabulary loaded - just use token ID */
 			if (buf.len > 0)
@@ -641,15 +664,15 @@ neurondb_detokenize(const int32 *token_ids,
  *    Used during inference to tell model which positions are valid tokens.
  */
 int32 *
-neurondb_create_attention_mask(int32 *token_ids, int32 length)
+neurondb_create_attention_mask(int32 * token_ids, int32 length)
 {
-	int32 *mask;
-	int i;
+	int32	   *mask;
+	int			i;
 
 	Assert(token_ids != NULL);
 	Assert(length > 0);
 
-	mask = (int32 *)palloc(length * sizeof(int32));
+	mask = (int32 *) palloc(length * sizeof(int32));
 	for (i = 0; i < length; ++i)
 	{
 		/* If not a [PAD] ID, mask value = 1, else 0. */
@@ -676,18 +699,18 @@ PG_FUNCTION_INFO_V1(neurondb_hf_tokenize);
 Datum
 neurondb_hf_tokenize(PG_FUNCTION_ARGS)
 {
-	text *model_name_text = NULL;
-	text *input_text = NULL;
-	int32 max_length = 512;
-	char *model_name = NULL;
-	char *text_str = NULL;
-	int32 *token_ids = NULL;
-	int32 output_length = 0;
-	Datum *dvalues = NULL;
-	bool *dnulls = NULL;
-	ArrayType *result;
-	int i;
-	Oid arg1_type = InvalidOid;
+	text	   *model_name_text = NULL;
+	text	   *input_text = NULL;
+	int32		max_length = 512;
+	char	   *model_name = NULL;
+	char	   *text_str = NULL;
+	int32	   *token_ids = NULL;
+	int32		output_length = 0;
+	Datum	   *dvalues = NULL;
+	bool	   *dnulls = NULL;
+	ArrayType  *result;
+	int			i;
+	Oid			arg1_type = InvalidOid;
 
 	/* Determine which overloaded version based on argument types and count */
 	if (PG_NARGS() == 3)
@@ -696,7 +719,8 @@ neurondb_hf_tokenize(PG_FUNCTION_ARGS)
 		model_name_text = PG_ARGISNULL(0) ? NULL : PG_GETARG_TEXT_P(0);
 		input_text = PG_GETARG_TEXT_P(1);
 		max_length = PG_ARGISNULL(2) ? 512 : PG_GETARG_INT32(2);
-	} else if (PG_NARGS() == 2)
+	}
+	else if (PG_NARGS() == 2)
 	{
 		arg1_type = get_fn_expr_argtype(fcinfo->flinfo, 1);
 
@@ -706,7 +730,8 @@ neurondb_hf_tokenize(PG_FUNCTION_ARGS)
 			input_text = PG_GETARG_TEXT_P(0);
 			max_length = PG_GETARG_INT32(1);
 			model_name_text = NULL;
-		} else
+		}
+		else
 		{
 			/* Version 3: neurondb_hf_tokenize(model_name, text) */
 			model_name_text =
@@ -714,18 +739,20 @@ neurondb_hf_tokenize(PG_FUNCTION_ARGS)
 			input_text = PG_GETARG_TEXT_P(1);
 			max_length = 512;
 		}
-	} else if (PG_NARGS() == 1)
+	}
+	else if (PG_NARGS() == 1)
 	{
 		/* Version 4: neurondb_hf_tokenize(text) */
 		input_text = PG_GETARG_TEXT_P(0);
 		max_length = 512;
 		model_name_text = NULL;
-	} else
+	}
+	else
 	{
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_hf_tokenize: invalid number "
-				       "of arguments")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb_hf_tokenize: invalid number "
+						"of arguments")));
 	}
 
 	/* Check if input_text is NULL */
@@ -733,18 +760,21 @@ neurondb_hf_tokenize(PG_FUNCTION_ARGS)
 	{
 		if (PG_ARGISNULL(1))
 			PG_RETURN_NULL();
-	} else if (PG_NARGS() == 2)
+	}
+	else if (PG_NARGS() == 2)
 	{
 		if (arg1_type == INT4OID)
 		{
 			if (PG_ARGISNULL(0))
 				PG_RETURN_NULL();
-		} else
+		}
+		else
 		{
 			if (PG_ARGISNULL(1))
 				PG_RETURN_NULL();
 		}
-	} else if (PG_NARGS() == 1)
+	}
+	else if (PG_NARGS() == 1)
 	{
 		if (PG_ARGISNULL(0))
 			PG_RETURN_NULL();
@@ -758,17 +788,17 @@ neurondb_hf_tokenize(PG_FUNCTION_ARGS)
 	/* Validate max_length */
 	if (max_length < 2 || max_length > MAX_SEQ_LENGTH)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("max_length must be between 2 and %d",
-					MAX_SEQ_LENGTH)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("max_length must be between 2 and %d",
+						MAX_SEQ_LENGTH)));
 
 	/* Tokenize text */
 	token_ids = neurondb_tokenize_with_model(
-		text_str, max_length, &output_length, model_name);
+											 text_str, max_length, &output_length, model_name);
 
 	/* Allocate arrays for result */
-	dvalues = (Datum *)palloc(output_length * sizeof(Datum));
-	dnulls = (bool *)palloc(output_length * sizeof(bool));
+	dvalues = (Datum *) palloc(output_length * sizeof(Datum));
+	dnulls = (bool *) palloc(output_length * sizeof(bool));
 
 	/* Fill arrays */
 	for (i = 0; i < output_length; i++)
@@ -779,7 +809,7 @@ neurondb_hf_tokenize(PG_FUNCTION_ARGS)
 
 	/* Create array result */
 	result = construct_array(
-		dvalues, output_length, INT4OID, sizeof(int32), true, 'i');
+							 dvalues, output_length, INT4OID, sizeof(int32), true, 'i');
 
 	/* Cleanup */
 	NDB_SAFE_PFREE_AND_NULL(token_ids);
@@ -806,16 +836,16 @@ PG_FUNCTION_INFO_V1(neurondb_hf_detokenize);
 Datum
 neurondb_hf_detokenize(PG_FUNCTION_ARGS)
 {
-	text *model_name_text = NULL;
-	ArrayType *token_ids_array = NULL;
-	char *model_name = NULL;
-	int32 *token_ids = NULL;
-	int32 length = 0;
-	char *text_str = NULL;
-	int i;
-	Datum *dvalues = NULL;
-	bool *dnulls = NULL;
-	int ndims;
+	text	   *model_name_text = NULL;
+	ArrayType  *token_ids_array = NULL;
+	char	   *model_name = NULL;
+	int32	   *token_ids = NULL;
+	int32		length = 0;
+	char	   *text_str = NULL;
+	int			i;
+	Datum	   *dvalues = NULL;
+	bool	   *dnulls = NULL;
+	int			ndims;
 
 	/* Handle two overloaded versions */
 	if (PG_NARGS() == 2)
@@ -823,17 +853,19 @@ neurondb_hf_detokenize(PG_FUNCTION_ARGS)
 		/* Version 1: neurondb_hf_detokenize(model_name, token_ids) */
 		model_name_text = PG_ARGISNULL(0) ? NULL : PG_GETARG_TEXT_P(0);
 		token_ids_array = PG_GETARG_ARRAYTYPE_P(1);
-	} else if (PG_NARGS() == 1)
+	}
+	else if (PG_NARGS() == 1)
 	{
 		/* Version 2: neurondb_hf_detokenize(token_ids) */
 		model_name_text = NULL;
 		token_ids_array = PG_GETARG_ARRAYTYPE_P(0);
-	} else
+	}
+	else
 	{
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_hf_detokenize: invalid number "
-				       "of arguments")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb_hf_detokenize: invalid number "
+						"of arguments")));
 	}
 
 	if (token_ids_array == NULL || PG_ARGISNULL(PG_NARGS() == 2 ? 1 : 0))
@@ -847,36 +879,36 @@ neurondb_hf_detokenize(PG_FUNCTION_ARGS)
 	ndims = ARR_NDIM(token_ids_array);
 	if (ndims != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("token_ids must be a one-dimensional "
-				       "array")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("token_ids must be a one-dimensional "
+						"array")));
 
 	if (ARR_ELEMTYPE(token_ids_array) != INT4OID)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("token_ids must be an array of "
-				       "integers")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("token_ids must be an array of "
+						"integers")));
 
 	length = ARR_DIMS(token_ids_array)[0];
 	if (length < 0 || length > MAX_SEQ_LENGTH)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("token_ids array length must be between "
-				       "0 and %d",
-					MAX_SEQ_LENGTH)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("token_ids array length must be between "
+						"0 and %d",
+						MAX_SEQ_LENGTH)));
 
 	/* Extract array values */
 	deconstruct_array(token_ids_array,
-		INT4OID,
-		sizeof(int32),
-		true,
-		'i',
-		&dvalues,
-		&dnulls,
-		&length);
+					  INT4OID,
+					  sizeof(int32),
+					  true,
+					  'i',
+					  &dvalues,
+					  &dnulls,
+					  &length);
 
 	/* Allocate token IDs array */
-	token_ids = (int32 *)palloc(length * sizeof(int32));
+	token_ids = (int32 *) palloc(length * sizeof(int32));
 
 	/* Copy token IDs */
 	for (i = 0; i < length; i++)

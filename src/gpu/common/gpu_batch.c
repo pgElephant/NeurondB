@@ -25,15 +25,18 @@
 
 void
 neurondb_gpu_batch_l2_distance(const float *queries,
-	const float *vectors,
-	float *results,
-	int num_queries,
-	int num_vectors,
-	int dim)
+							   const float *vectors,
+							   float *results,
+							   int num_queries,
+							   int num_vectors,
+							   int dim)
 {
-	const ndb_gpu_backend *backend;
-	int q, v, d;
-	float diff, sum;
+	const		ndb_gpu_backend *backend;
+	int			q,
+				v,
+				d;
+	float		diff,
+				sum;
 
 	if (!neurondb_gpu_is_available())
 	{
@@ -50,8 +53,8 @@ neurondb_gpu_batch_l2_distance(const float *queries,
 	/* Try to use backend batch operation if available */
 	/* For now, use CPU fallback until backend batch functions are added */
 	elog(DEBUG1,
-		"neurondb: GPU batch L2 distance using CPU fallback (backend: %s)",
-		backend->name ? backend->name : "unknown");
+		 "neurondb: GPU batch L2 distance using CPU fallback (backend: %s)",
+		 backend->name ? backend->name : "unknown");
 	goto cpu_fallback;
 
 cpu_fallback:
@@ -63,6 +66,7 @@ cpu_fallback:
 		for (v = 0; v < num_vectors; v++)
 		{
 			const float *vector = vectors + v * dim;
+
 			sum = 0.0f;
 
 			for (d = 0; d < dim; d++)
@@ -78,15 +82,20 @@ cpu_fallback:
 
 void
 neurondb_gpu_batch_cosine_distance(const float *queries,
-	const float *vectors,
-	float *results,
-	int num_queries,
-	int num_vectors,
-	int dim)
+								   const float *vectors,
+								   float *results,
+								   int num_queries,
+								   int num_vectors,
+								   int dim)
 {
-	const ndb_gpu_backend *backend;
-	int q, v, d;
-	float dot_product, norm_query, norm_vector, similarity;
+	const		ndb_gpu_backend *backend;
+	int			q,
+				v,
+				d;
+	float		dot_product,
+				norm_query,
+				norm_vector,
+				similarity;
 
 	if (!neurondb_gpu_is_available())
 	{
@@ -103,8 +112,8 @@ neurondb_gpu_batch_cosine_distance(const float *queries,
 	/* Try to use backend batch operation if available */
 	/* For now, use CPU fallback until backend batch functions are added */
 	elog(DEBUG1,
-		"neurondb: GPU batch cosine distance using CPU fallback (backend: %s)",
-		backend->name ? backend->name : "unknown");
+		 "neurondb: GPU batch cosine distance using CPU fallback (backend: %s)",
+		 backend->name ? backend->name : "unknown");
 	goto cpu_fallback;
 
 cpu_fallback:
@@ -121,7 +130,10 @@ cpu_fallback:
 
 		if (norm_query == 0.0f)
 		{
-			/* Zero vector - set all distances to 1.0 (maximum cosine distance) */
+			/*
+			 * Zero vector - set all distances to 1.0 (maximum cosine
+			 * distance)
+			 */
 			for (v = 0; v < num_vectors; v++)
 				results[q * num_vectors + v] = 1.0f;
 			continue;
@@ -145,7 +157,8 @@ cpu_fallback:
 			if (norm_vector == 0.0f)
 			{
 				results[q * num_vectors + v] = 1.0f;
-			} else
+			}
+			else
 			{
 				similarity = dot_product / (norm_query * norm_vector);
 				results[q * num_vectors + v] = 1.0f - similarity;

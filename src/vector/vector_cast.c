@@ -34,10 +34,10 @@ PGDLLEXPORT float fp16_to_float(uint16 h);
 static inline uint16
 float_to_fp16_local(float f)
 {
-	uint32 u;
-	uint16 sign;
-	uint32 mantissa;
-	int16 exp;
+	uint32		u;
+	uint16		sign;
+	uint32		mantissa;
+	int16		exp;
 
 	memcpy(&u, &f, sizeof(uint32));
 	sign = (u >> 16) & 0x8000;
@@ -61,54 +61,54 @@ PG_FUNCTION_INFO_V1(array_to_vector_float4);
 Datum
 array_to_vector_float4(PG_FUNCTION_ARGS)
 {
-	ArrayType *arr;
-	Vector *result;
-	float4 *data;
-	int dim;
-	int i;
+	ArrayType  *arr;
+	Vector	   *result;
+	float4	   *data;
+	int			dim;
+	int			i;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("array_to_vector_float4 requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("array_to_vector_float4 requires 1 argument, got %d",
+						PG_NARGS())));
 
 	arr = PG_GETARG_ARRAYTYPE_P(0);
 
 	if (arr == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("array must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("array must not be NULL")));
 
 	if (ARR_NDIM(arr) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("array must be one-dimensional")));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("array must be one-dimensional")));
 
 	dim = ARR_DIMS(arr)[0];
 	if (dim <= 0 || dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array dimension: %d (max: %d)",
-					dim,
-					VECTOR_MAX_DIM)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array dimension: %d (max: %d)",
+						dim,
+						VECTOR_MAX_DIM)));
 
 	if (ARR_HASNULL(arr))
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("array must not contain NULL values")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("array must not contain NULL values")));
 
-	data = (float4 *)ARR_DATA_PTR(arr);
+	data = (float4 *) ARR_DATA_PTR(arr);
 	if (data == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array data")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array data")));
 
 	result = new_vector(dim);
 	if (result == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 	for (i = 0; i < dim; i++)
 		result->data[i] = data[i];
 
@@ -124,56 +124,56 @@ PG_FUNCTION_INFO_V1(array_to_vector_float8);
 Datum
 array_to_vector_float8(PG_FUNCTION_ARGS)
 {
-	ArrayType *arr;
-	Vector *result;
-	float8 *data;
-	int dim;
-	int i;
+	ArrayType  *arr;
+	Vector	   *result;
+	float8	   *data;
+	int			dim;
+	int			i;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("array_to_vector_float8 requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("array_to_vector_float8 requires 1 argument, got %d",
+						PG_NARGS())));
 
 	arr = PG_GETARG_ARRAYTYPE_P(0);
 
 	if (arr == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("array must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("array must not be NULL")));
 
 	if (ARR_NDIM(arr) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("array must be one-dimensional")));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("array must be one-dimensional")));
 
 	dim = ARR_DIMS(arr)[0];
 	if (dim <= 0 || dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array dimension: %d (max: %d)",
-					dim,
-					VECTOR_MAX_DIM)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array dimension: %d (max: %d)",
+						dim,
+						VECTOR_MAX_DIM)));
 
 	if (ARR_HASNULL(arr))
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("array must not contain NULL values")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("array must not contain NULL values")));
 
-	data = (float8 *)ARR_DATA_PTR(arr);
+	data = (float8 *) ARR_DATA_PTR(arr);
 	if (data == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array data")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array data")));
 
 	result = new_vector(dim);
 	if (result == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 	for (i = 0; i < dim; i++)
-		result->data[i] = (float4)data[i];
+		result->data[i] = (float4) data[i];
 
 	PG_RETURN_VECTOR_P(result);
 }
@@ -187,56 +187,56 @@ PG_FUNCTION_INFO_V1(array_to_vector_integer);
 Datum
 array_to_vector_integer(PG_FUNCTION_ARGS)
 {
-	ArrayType *arr;
-	Vector *result;
-	int32 *data;
-	int dim;
-	int i;
+	ArrayType  *arr;
+	Vector	   *result;
+	int32	   *data;
+	int			dim;
+	int			i;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("array_to_vector_integer requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("array_to_vector_integer requires 1 argument, got %d",
+						PG_NARGS())));
 
 	arr = PG_GETARG_ARRAYTYPE_P(0);
 
 	if (arr == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("array must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("array must not be NULL")));
 
 	if (ARR_NDIM(arr) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("array must be one-dimensional")));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("array must be one-dimensional")));
 
 	dim = ARR_DIMS(arr)[0];
 	if (dim <= 0 || dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array dimension: %d (max: %d)",
-					dim,
-					VECTOR_MAX_DIM)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array dimension: %d (max: %d)",
+						dim,
+						VECTOR_MAX_DIM)));
 
 	if (ARR_HASNULL(arr))
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("array must not contain NULL values")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("array must not contain NULL values")));
 
-	data = (int32 *)ARR_DATA_PTR(arr);
+	data = (int32 *) ARR_DATA_PTR(arr);
 	if (data == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array data")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array data")));
 
 	result = new_vector(dim);
 	if (result == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 	for (i = 0; i < dim; i++)
-		result->data[i] = (float4)data[i];
+		result->data[i] = (float4) data[i];
 
 	PG_RETURN_VECTOR_P(result);
 }
@@ -250,38 +250,38 @@ PG_FUNCTION_INFO_V1(vector_to_array_float4);
 Datum
 vector_to_array_float4(PG_FUNCTION_ARGS)
 {
-	Vector *vec;
-	ArrayType *result;
-	Datum *elems;
-	bool *nulls;
-	int i;
+	Vector	   *vec;
+	ArrayType  *result;
+	Datum	   *elems;
+	bool	   *nulls;
+	int			i;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_to_array_float4 requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_to_array_float4 requires 1 argument, got %d",
+						PG_NARGS())));
 
 	vec = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(vec);
+	NDB_CHECK_VECTOR_VALID(vec);
 
 	if (vec == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vector must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vector must not be NULL")));
 
 	if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid vector dimension: %d",
-					vec->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid vector dimension: %d",
+						vec->dim)));
 
-	elems = (Datum *)palloc(sizeof(Datum) * vec->dim);
-	nulls = (bool *)palloc(sizeof(bool) * vec->dim);
+	elems = (Datum *) palloc(sizeof(Datum) * vec->dim);
+	nulls = (bool *) palloc(sizeof(bool) * vec->dim);
 	if (elems == NULL || nulls == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 
 	for (i = 0; i < vec->dim; i++)
 	{
@@ -290,11 +290,11 @@ vector_to_array_float4(PG_FUNCTION_ARGS)
 	}
 
 	result = construct_array(elems,
-		vec->dim,
-		FLOAT4OID,
-		sizeof(float4),
-		true,
-		'i');
+							 vec->dim,
+							 FLOAT4OID,
+							 sizeof(float4),
+							 true,
+							 'i');
 	NDB_SAFE_PFREE_AND_NULL(elems);
 	NDB_SAFE_PFREE_AND_NULL(nulls);
 
@@ -310,51 +310,51 @@ PG_FUNCTION_INFO_V1(vector_to_array_float8);
 Datum
 vector_to_array_float8(PG_FUNCTION_ARGS)
 {
-	Vector *vec;
-	ArrayType *result;
-	Datum *elems;
-	bool *nulls;
-	int i;
+	Vector	   *vec;
+	ArrayType  *result;
+	Datum	   *elems;
+	bool	   *nulls;
+	int			i;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_to_array_float8 requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_to_array_float8 requires 1 argument, got %d",
+						PG_NARGS())));
 
 	vec = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(vec);
+	NDB_CHECK_VECTOR_VALID(vec);
 
 	if (vec == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vector must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vector must not be NULL")));
 
 	if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid vector dimension: %d",
-					vec->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid vector dimension: %d",
+						vec->dim)));
 
-	elems = (Datum *)palloc(sizeof(Datum) * vec->dim);
-	nulls = (bool *)palloc(sizeof(bool) * vec->dim);
+	elems = (Datum *) palloc(sizeof(Datum) * vec->dim);
+	nulls = (bool *) palloc(sizeof(bool) * vec->dim);
 	if (elems == NULL || nulls == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 
 	for (i = 0; i < vec->dim; i++)
 	{
-		elems[i] = Float8GetDatum((float8)vec->data[i]);
+		elems[i] = Float8GetDatum((float8) vec->data[i]);
 		nulls[i] = false;
 	}
 
 	result = construct_array(elems,
-		vec->dim,
-		FLOAT8OID,
-		sizeof(float8),
-		true,
-		'd');
+							 vec->dim,
+							 FLOAT8OID,
+							 sizeof(float8),
+							 true,
+							 'd');
 	NDB_SAFE_PFREE_AND_NULL(elems);
 	NDB_SAFE_PFREE_AND_NULL(nulls);
 
@@ -370,44 +370,44 @@ PG_FUNCTION_INFO_V1(vector_cast_dimension);
 Datum
 vector_cast_dimension(PG_FUNCTION_ARGS)
 {
-	Vector *vec;
-	int32 new_dim;
-	Vector *result;
-	int i;
+	Vector	   *vec;
+	int32		new_dim;
+	Vector	   *result;
+	int			i;
 
 	if (PG_NARGS() != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_cast_dimension requires 2 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_cast_dimension requires 2 arguments, got %d",
+						PG_NARGS())));
 
 	vec = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(vec);
+	NDB_CHECK_VECTOR_VALID(vec);
 	new_dim = PG_GETARG_INT32(1);
 
 	if (vec == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vector must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vector must not be NULL")));
 
 	if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid vector dimension: %d",
-					vec->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid vector dimension: %d",
+						vec->dim)));
 
 	if (new_dim <= 0 || new_dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid dimension: %d (max: %d)",
-					new_dim,
-					VECTOR_MAX_DIM)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid dimension: %d (max: %d)",
+						new_dim,
+						VECTOR_MAX_DIM)));
 
 	result = new_vector(new_dim);
 	if (result == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 
 	if (new_dim <= vec->dim)
 	{
@@ -434,10 +434,10 @@ PG_FUNCTION_INFO_V1(vector_to_halfvec);
 Datum
 vector_to_halfvec(PG_FUNCTION_ARGS)
 {
-	Vector *v;
-	VectorF16 *result;
-	int size;
-	int i;
+	Vector	   *v;
+	VectorF16  *result;
+	int			size;
+	int			i;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
@@ -447,12 +447,12 @@ vector_to_halfvec(PG_FUNCTION_ARGS)
 
 	if (v->dim > 4000)
 		ereport(ERROR,
-			(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-				errmsg("halfvec dimension %d exceeds maximum of 4000",
-					v->dim)));
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("halfvec dimension %d exceeds maximum of 4000",
+						v->dim)));
 
 	size = offsetof(VectorF16, data) + sizeof(uint16) * v->dim;
-	result = (VectorF16 *)palloc0(size);
+	result = (VectorF16 *) palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = v->dim;
 
@@ -470,9 +470,9 @@ PG_FUNCTION_INFO_V1(halfvec_to_vector);
 Datum
 halfvec_to_vector(PG_FUNCTION_ARGS)
 {
-	VectorF16 *vf16 = (VectorF16 *)PG_GETARG_POINTER(0);
-	Vector *result;
-	int i;
+	VectorF16  *vf16 = (VectorF16 *) PG_GETARG_POINTER(0);
+	Vector	   *result;
+	int			i;
 
 	if (vf16 == NULL)
 		PG_RETURN_NULL();
@@ -494,14 +494,14 @@ PG_FUNCTION_INFO_V1(vector_to_sparsevec);
 Datum
 vector_to_sparsevec(PG_FUNCTION_ARGS)
 {
-	Vector *v;
-	VectorMap *result;
-	int32 *indices;
-	float4 *values;
-	int32 nnz = 0;
-	int capacity;
-	int i;
-	int size;
+	Vector	   *v;
+	VectorMap  *result;
+	int32	   *indices;
+	float4	   *values;
+	int32		nnz = 0;
+	int			capacity;
+	int			i;
+	int			size;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
@@ -511,8 +511,8 @@ vector_to_sparsevec(PG_FUNCTION_ARGS)
 
 	/* Count non-zero values */
 	capacity = 16;
-	indices = (int32 *)palloc(sizeof(int32) * capacity);
-	values = (float4 *)palloc(sizeof(float4) * capacity);
+	indices = (int32 *) palloc(sizeof(int32) * capacity);
+	values = (float4 *) palloc(sizeof(float4) * capacity);
 
 	for (i = 0; i < v->dim; i++)
 	{
@@ -521,8 +521,8 @@ vector_to_sparsevec(PG_FUNCTION_ARGS)
 			if (nnz >= capacity)
 			{
 				capacity *= 2;
-				indices = (int32 *)repalloc(indices, sizeof(int32) * capacity);
-				values = (float4 *)repalloc(values, sizeof(float4) * capacity);
+				indices = (int32 *) repalloc(indices, sizeof(int32) * capacity);
+				values = (float4 *) repalloc(values, sizeof(float4) * capacity);
 			}
 			indices[nnz] = i;
 			values[nnz] = v->data[i];
@@ -532,11 +532,11 @@ vector_to_sparsevec(PG_FUNCTION_ARGS)
 
 	if (nnz > 1000)
 		ereport(ERROR,
-			(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-				errmsg("sparsevec cannot have more than 1000 nonzero entries")));
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("sparsevec cannot have more than 1000 nonzero entries")));
 
 	size = sizeof(VectorMap) + sizeof(int32) * nnz + sizeof(float4) * nnz;
-	result = (VectorMap *)palloc0(size);
+	result = (VectorMap *) palloc0(size);
 	SET_VARSIZE(result, size);
 	result->total_dim = v->dim;
 	result->nnz = nnz;
@@ -557,11 +557,11 @@ PG_FUNCTION_INFO_V1(sparsevec_to_vector);
 Datum
 sparsevec_to_vector(PG_FUNCTION_ARGS)
 {
-	VectorMap *sv = (VectorMap *)PG_GETARG_POINTER(0);
-	Vector *result;
-	int32 *indices;
-	float4 *values;
-	int i;
+	VectorMap  *sv = (VectorMap *) PG_GETARG_POINTER(0);
+	Vector	   *result;
+	int32	   *indices;
+	float4	   *values;
+	int			i;
 
 	if (sv == NULL)
 		PG_RETURN_NULL();
@@ -577,15 +577,14 @@ sparsevec_to_vector(PG_FUNCTION_ARGS)
 	for (i = 0; i < sv->nnz; i++)
 	{
 		if (indices[i] < 0 || indices[i] >= result->dim)
-			{
-				ereport(ERROR,
+		{
+			ereport(ERROR,
 					(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
 					 errmsg("neurondb: array index %d out of bounds (dim=%d)",
-						indices[i], result->dim)));
-			}
+							indices[i], result->dim)));
+		}
 		result->data[indices[i]] = values[i];
 	}
 
 	PG_RETURN_VECTOR_P(result);
 }
-

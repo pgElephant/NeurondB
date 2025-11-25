@@ -9,16 +9,16 @@
  * it can hold at least (count + need_extra) nodes.
  */
 static void
-gtree_grow(GTree *t, int need_extra)
+gtree_grow(GTree * t, int need_extra)
 {
-	int32 need;
-	int32 newcap;
+	int32		need;
+	int32		newcap;
 
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_grow: NULL tree")));
 	if (need_extra <= 0)
 		ereport(ERROR,
-			(errmsg("gtree_grow: need_extra must be positive")));
+				(errmsg("gtree_grow: need_extra must be positive")));
 
 	if (t->count < 0 || t->count > GTREE_MAX_NODES)
 		ereport(ERROR, (errmsg("gtree_grow: tree node count corrupt")));
@@ -39,8 +39,8 @@ gtree_grow(GTree *t, int need_extra)
 	if (newcap < t->count || newcap > GTREE_MAX_NODES)
 		ereport(ERROR, (errmsg("gtree_grow: node cap overflow")));
 
-	t->nodes = (GTreeNode *)repalloc(
-		t->nodes, (Size)newcap * sizeof(GTreeNode));
+	t->nodes = (GTreeNode *) repalloc(
+									  t->nodes, (Size) newcap * sizeof(GTreeNode));
 	if (!t->nodes)
 		ereport(ERROR, (errmsg("gtree_grow: out of memory")));
 
@@ -55,7 +55,7 @@ gtree_create(const char *name, Size initial_cap)
 {
 	MemoryContext parent = CurrentMemoryContext;
 	MemoryContext ctx;
-	GTree *t;
+	GTree	   *t;
 
 	ctx = AllocSetContextCreate(parent, "gtree", ALLOCSET_DEFAULT_SIZES);
 	if (name != NULL)
@@ -65,7 +65,7 @@ gtree_create(const char *name, Size initial_cap)
 
 	MemoryContextSwitchTo(ctx);
 
-	t = (GTree *)palloc0(sizeof(GTree));
+	t = (GTree *) palloc0(sizeof(GTree));
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_create: out of memory")));
 
@@ -78,15 +78,15 @@ gtree_create(const char *name, Size initial_cap)
 
 	if (initial_cap > 0)
 	{
-		if (initial_cap > (Size)GTREE_MAX_NODES)
+		if (initial_cap > (Size) GTREE_MAX_NODES)
 			ereport(ERROR,
-				(errmsg("gtree: initial cap too large")));
+					(errmsg("gtree: initial cap too large")));
 		t->nodes =
-			(GTreeNode *)palloc0(initial_cap * sizeof(GTreeNode));
+			(GTreeNode *) palloc0(initial_cap * sizeof(GTreeNode));
 		if (!t->nodes)
 			ereport(ERROR,
-				(errmsg("gtree_create: node array OOM")));
-		t->capacity = (int32)initial_cap;
+					(errmsg("gtree_create: node array OOM")));
+		t->capacity = (int32) initial_cap;
 	}
 
 	MemoryContextSwitchTo(parent);
@@ -97,7 +97,7 @@ gtree_create(const char *name, Size initial_cap)
  * Free all memory associated with a GTree (including context).
  */
 void
-gtree_free(GTree *t)
+gtree_free(GTree * t)
 {
 	if (!t)
 		return;
@@ -109,9 +109,9 @@ gtree_free(GTree *t)
  * Add a new leaf node to the tree with the given value.
  */
 int
-gtree_add_leaf(GTree *t, double value)
+gtree_add_leaf(GTree * t, double value)
 {
-	int idx;
+	int			idx;
 
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_add_leaf: NULL tree")));
@@ -136,9 +136,9 @@ gtree_add_leaf(GTree *t, double value)
  * Add a new split (internal) node to the tree for the given feature and threshold.
  */
 int
-gtree_add_split(GTree *t, int feature_idx, double threshold)
+gtree_add_split(GTree * t, int feature_idx, double threshold)
 {
-	int idx;
+	int			idx;
 
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_add_split: NULL tree")));
@@ -162,12 +162,12 @@ gtree_add_split(GTree *t, int feature_idx, double threshold)
 }
 
 static int
-gtree_depth_dfs(const GTree *t, int node, int depth, bool *seen)
+gtree_depth_dfs(const GTree * t, int node, int depth, bool *seen)
 {
-	int l;
-	int r;
-	int dl;
-	int dr;
+	int			l;
+	int			r;
+	int			dl;
+	int			dr;
 
 	if (!t || !seen)
 		ereport(ERROR, (errmsg("gtree_depth_dfs: NULL input")));
@@ -190,8 +190,8 @@ gtree_depth_dfs(const GTree *t, int node, int depth, bool *seen)
 
 	if (l < 0 || r < 0)
 		ereport(ERROR,
-			(errmsg("gtree: internal node %d missing child",
-				node)));
+				(errmsg("gtree: internal node %d missing child",
+						node)));
 	if (l >= t->count || r >= t->count)
 		ereport(ERROR, (errmsg("gtree: child index OOB")));
 
@@ -204,7 +204,7 @@ gtree_depth_dfs(const GTree *t, int node, int depth, bool *seen)
  * Set either left or right child for the parent node.
  */
 void
-gtree_set_child(GTree *t, int parent, int child, bool is_left)
+gtree_set_child(GTree * t, int parent, int child, bool is_left)
 {
 	if (!t)
 		ereport(ERROR, (errmsg("gtree: NULL tree")));
@@ -225,7 +225,7 @@ gtree_set_child(GTree *t, int parent, int child, bool is_left)
  * Set both left and right children for this parent node.
  */
 void
-gtree_set_children(GTree *t, int parent, int left, int right)
+gtree_set_children(GTree * t, int parent, int left, int right)
 {
 	gtree_set_child(t, parent, left, true);
 	gtree_set_child(t, parent, right, false);
@@ -235,7 +235,7 @@ gtree_set_children(GTree *t, int parent, int left, int right)
  * Set the root node index of the tree.
  */
 void
-gtree_set_root(GTree *t, int node_idx)
+gtree_set_root(GTree * t, int node_idx)
 {
 	if (!t)
 		ereport(ERROR, (errmsg("gtree: NULL tree")));
@@ -249,10 +249,10 @@ gtree_set_root(GTree *t, int node_idx)
  * missing root, and excessive depth.
  */
 void
-gtree_validate(const GTree *t)
+gtree_validate(const GTree * t)
 {
-	bool *seen;
-	int depth;
+	bool	   *seen;
+	int			depth;
 
 	if (!t)
 		ereport(ERROR, (errmsg("gtree_validate: NULL tree")));
@@ -261,24 +261,24 @@ gtree_validate(const GTree *t)
 	if (t->root < 0 || t->root >= t->count)
 		ereport(ERROR, (errmsg("gtree: invalid root")));
 
-	seen = (bool *)palloc0((Size)t->count);
+	seen = (bool *) palloc0((Size) t->count);
 	if (!seen)
 		ereport(ERROR,
-			(errmsg("gtree_validate: out of memory for seen "
-				"array")));
+				(errmsg("gtree_validate: out of memory for seen "
+						"array")));
 	depth = gtree_depth_dfs(t, t->root, 0, seen);
 	NDB_SAFE_PFREE_AND_NULL(seen);
 
 	if (depth > GTREE_MAX_DEPTH)
 		ereport(ERROR,
-			(errmsg("gtree: depth %d exceeds limit", depth)));
+				(errmsg("gtree: depth %d exceeds limit", depth)));
 }
 
 /*
  * Reset the tree to empty. Memory stays allocated.
  */
 void
-gtree_reset(GTree *t)
+gtree_reset(GTree * t)
 {
 	if (!t)
 		return;
@@ -290,8 +290,8 @@ gtree_reset(GTree *t)
 /*
  * Return the pointer to the node array, or NULL on NULL tree.
  */
-const GTreeNode *
-gtree_nodes(const GTree *t)
+const		GTreeNode *
+gtree_nodes(const GTree * t)
 {
 	if (!t)
 		return NULL;
@@ -302,7 +302,7 @@ gtree_nodes(const GTree *t)
  * Return the number of nodes in the tree.
  */
 int
-gtree_count(const GTree *t)
+gtree_count(const GTree * t)
 {
 	if (!t)
 		return 0;

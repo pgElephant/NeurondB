@@ -41,30 +41,31 @@
 /* GMM model structure (matches ml_gmm.c) */
 typedef struct GMMModel
 {
-	int		k;				/* Number of components */
-	int		dim;			/* Dimensionality */
-	double	*mixing_coeffs;	/* π_k: mixing coefficients [k] */
-	double	**means;		/* μ_k: component means [k][dim] */
-	double	**variances;	/* Σ_k: diagonal variances [k][dim] */
-} GMMModel;
+	int			k;				/* Number of components */
+	int			dim;			/* Dimensionality */
+	double	   *mixing_coeffs;	/* π_k: mixing coefficients [k] */
+	double	  **means;			/* μ_k: component means [k][dim] */
+	double	  **variances;		/* Σ_k: diagonal variances [k][dim] */
+}			GMMModel;
 
 int
 ndb_cuda_gmm_pack_model(const struct GMMModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+						bytea * *model_data,
+						Jsonb * *metrics,
+						char **errstr)
 {
-	size_t payload_bytes;
-	size_t mixing_bytes;
-	size_t means_bytes;
-	size_t variances_bytes;
-	bytea *blob;
-	char *base;
+	size_t		payload_bytes;
+	size_t		mixing_bytes;
+	size_t		means_bytes;
+	size_t		variances_bytes;
+	bytea	   *blob;
+	char	   *base;
 	NdbCudaGmmModelHeader *hdr;
-	double *mixing_dest;
-	double *means_dest;
-	double *variances_dest;
-	int i, j;
+	double	   *mixing_dest;
+	double	   *means_dest;
+	double	   *variances_dest;
+	int			i,
+				j;
 
 	if (errstr)
 		*errstr = NULL;
@@ -90,12 +91,12 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 	}
 
 	/* Check for integer overflow in size calculations */
-	mixing_bytes = sizeof(double) * (size_t)model->k;
-	means_bytes = sizeof(double) * (size_t)model->k * (size_t)model->dim;
-	variances_bytes = sizeof(double) * (size_t)model->k * (size_t)model->dim;
+	mixing_bytes = sizeof(double) * (size_t) model->k;
+	means_bytes = sizeof(double) * (size_t) model->k * (size_t) model->dim;
+	variances_bytes = sizeof(double) * (size_t) model->k * (size_t) model->dim;
 
-	if (means_bytes / sizeof(double) / (size_t)model->k != (size_t)model->dim ||
-		variances_bytes / sizeof(double) / (size_t)model->k != (size_t)model->dim)
+	if (means_bytes / sizeof(double) / (size_t) model->k != (size_t) model->dim ||
+		variances_bytes / sizeof(double) / (size_t) model->k != (size_t) model->dim)
 	{
 		if (errstr)
 			*errstr = pstrdup("invalid GMM model: integer overflow in size calculation");
@@ -118,7 +119,7 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 		return -1;
 	}
 
-	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
+	blob = (bytea *) palloc(VARHDRSZ + payload_bytes);
 	if (blob == NULL)
 	{
 		if (errstr)
@@ -129,23 +130,25 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 	SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
 	base = VARDATA(blob);
 
-	hdr = (NdbCudaGmmModelHeader *)base;
+	hdr = (NdbCudaGmmModelHeader *) base;
 	hdr->n_components = model->k;
 	hdr->n_features = model->dim;
-	hdr->n_samples = 0;  /* Not stored in model */
-	hdr->max_iters = 100;  /* Default */
+	hdr->n_samples = 0;			/* Not stored in model */
+	hdr->max_iters = 100;		/* Default */
 	hdr->tolerance = 1e-6;
 
-	mixing_dest = (double *)(base + sizeof(NdbCudaGmmModelHeader));
-	means_dest = (double *)(base + sizeof(NdbCudaGmmModelHeader) + sizeof(double) * (size_t)model->k);
-	variances_dest = (double *)(base + sizeof(NdbCudaGmmModelHeader) + sizeof(double) * (size_t)model->k + sizeof(double) * (size_t)model->k * (size_t)model->dim);
+	mixing_dest = (double *) (base + sizeof(NdbCudaGmmModelHeader));
+	means_dest = (double *) (base + sizeof(NdbCudaGmmModelHeader) + sizeof(double) * (size_t) model->k);
+	variances_dest = (double *) (base + sizeof(NdbCudaGmmModelHeader) + sizeof(double) * (size_t) model->k + sizeof(double) * (size_t) model->k * (size_t) model->dim);
 
 	if (model->mixing_coeffs != NULL)
 	{
-		double sum = 0.0;
+		double		sum = 0.0;
+
 		for (i = 0; i < model->k; i++)
 		{
-			double coeff = model->mixing_coeffs[i];
+			double		coeff = model->mixing_coeffs[i];
+
 			/* Validate mixing coefficient: must be finite and non-negative */
 			if (!isfinite(coeff) || coeff < 0.0)
 			{
@@ -169,7 +172,8 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 	else
 	{
 		/* Initialize with equal mixing coefficients if NULL */
-		double default_coeff = 1.0 / model->k;
+		double		default_coeff = 1.0 / model->k;
+
 		for (i = 0; i < model->k; i++)
 			mixing_dest[i] = default_coeff;
 	}
@@ -182,7 +186,8 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 			{
 				for (j = 0; j < model->dim; j++)
 				{
-					double mean_val = model->means[i][j];
+					double		mean_val = model->means[i][j];
+
 					/* Validate mean: must be finite */
 					if (!isfinite(mean_val))
 					{
@@ -216,7 +221,8 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 			{
 				for (j = 0; j < model->dim; j++)
 				{
-					double var_val = model->variances[i][j];
+					double		var_val = model->variances[i][j];
+
 					/* Validate variance: must be finite and positive */
 					if (!isfinite(var_val) || var_val < 0.0)
 					{
@@ -249,21 +255,21 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 	if (metrics != NULL)
 	{
 		StringInfoData buf;
-		Jsonb *metrics_json = NULL;
+		Jsonb	   *metrics_json = NULL;
 
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
-			"{\"algorithm\":\"gmm\","
-			"\"storage\":\"gpu\","
-			"\"n_components\":%d,"
-			"\"n_features\":%d}",
-			model->k,
-			model->dim);
+						 "{\"algorithm\":\"gmm\","
+						 "\"storage\":\"gpu\","
+						 "\"n_components\":%d,"
+						 "\"n_features\":%d}",
+						 model->k,
+						 model->dim);
 
 		PG_TRY();
 		{
 			metrics_json = DatumGetJsonbP(
-				DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+										  DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
 		}
 		PG_CATCH();
 		{
@@ -283,30 +289,32 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 
 int
 ndb_cuda_gmm_train(const float *features,
-	int n_samples,
-	int feature_dim,
-	int n_components,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				   int n_samples,
+				   int feature_dim,
+				   int n_components,
+				   const Jsonb * hyperparams,
+				   bytea * *model_data,
+				   Jsonb * *metrics,
+				   char **errstr)
 {
-	int max_iters = 100;
-	double tolerance = 1e-6;
-	double *mixing_coeffs = NULL;
-	double *means = NULL;
-	double *variances = NULL;
-	double **means_2d = NULL;
-	double **variances_2d = NULL;
-	double *responsibilities = NULL;
-	double log_likelihood = 0.0;
-	double prev_log_likelihood = -DBL_MAX;
+	int			max_iters = 100;
+	double		tolerance = 1e-6;
+	double	   *mixing_coeffs = NULL;
+	double	   *means = NULL;
+	double	   *variances = NULL;
+	double	  **means_2d = NULL;
+	double	  **variances_2d = NULL;
+	double	   *responsibilities = NULL;
+	double		log_likelihood = 0.0;
+	double		prev_log_likelihood = -DBL_MAX;
 	struct GMMModel model;
-	bytea *blob = NULL;
-	Jsonb *metrics_json = NULL;
-	int iter;
-	int i, k, d;
-	int rc = -1;
+	bytea	   *blob = NULL;
+	Jsonb	   *metrics_json = NULL;
+	int			iter;
+	int			i,
+				k,
+				d;
+	int			rc = -1;
 
 	if (errstr)
 		*errstr = NULL;
@@ -350,19 +358,19 @@ ndb_cuda_gmm_train(const float *features,
 	}
 
 	/* Check for integer overflow in memory allocation */
-	if (feature_dim > 0 && (size_t)n_samples > MaxAllocSize / sizeof(float) / (size_t)feature_dim)
+	if (feature_dim > 0 && (size_t) n_samples > MaxAllocSize / sizeof(float) / (size_t) feature_dim)
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA GMM train: feature array size exceeds MaxAllocSize");
 		return -1;
 	}
-	if (feature_dim > 0 && (size_t)n_components > MaxAllocSize / sizeof(double) / (size_t)feature_dim)
+	if (feature_dim > 0 && (size_t) n_components > MaxAllocSize / sizeof(double) / (size_t) feature_dim)
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA GMM train: means array size exceeds MaxAllocSize");
 		return -1;
 	}
-	if ((size_t)n_samples > MaxAllocSize / sizeof(double) / (size_t)n_components)
+	if ((size_t) n_samples > MaxAllocSize / sizeof(double) / (size_t) n_components)
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA GMM train: responsibilities array size exceeds MaxAllocSize");
@@ -370,7 +378,7 @@ ndb_cuda_gmm_train(const float *features,
 	}
 
 	elog(DEBUG1, "ndb_cuda_gmm_train: entry: n_samples=%d, feature_dim=%d, n_components=%d",
-		n_samples, feature_dim, n_components);
+		 n_samples, feature_dim, n_components);
 
 	/* Validate input data for NaN/Inf before processing */
 	for (i = 0; i < n_samples; i++)
@@ -389,44 +397,44 @@ ndb_cuda_gmm_train(const float *features,
 	/* Extract hyperparameters from JSONB */
 	if (hyperparams != NULL)
 	{
-		Datum max_iters_datum;
-		Datum tolerance_datum;
-		Datum numeric_datum;
-		Numeric num;
+		Datum		max_iters_datum;
+		Datum		tolerance_datum;
+		Datum		numeric_datum;
+		Numeric		num;
 
 		max_iters_datum = DirectFunctionCall2(
-			jsonb_object_field,
-			JsonbPGetDatum(hyperparams),
-			CStringGetTextDatum("max_iters"));
+											  jsonb_object_field,
+											  JsonbPGetDatum(hyperparams),
+											  CStringGetTextDatum("max_iters"));
 		if (DatumGetPointer(max_iters_datum) != NULL)
 		{
 			numeric_datum = DirectFunctionCall1(
-				jsonb_numeric, max_iters_datum);
+												jsonb_numeric, max_iters_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
 				max_iters = DatumGetInt32(
-					DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(num)));
+										  DirectFunctionCall1(numeric_int4,
+															  NumericGetDatum(num)));
 				if (max_iters <= 0)
 					max_iters = 100;
 			}
 		}
 
 		tolerance_datum = DirectFunctionCall2(
-			jsonb_object_field,
-			JsonbPGetDatum(hyperparams),
-			CStringGetTextDatum("tolerance"));
+											  jsonb_object_field,
+											  JsonbPGetDatum(hyperparams),
+											  CStringGetTextDatum("tolerance"));
 		if (DatumGetPointer(tolerance_datum) != NULL)
 		{
 			numeric_datum = DirectFunctionCall1(
-				jsonb_numeric, tolerance_datum);
+												jsonb_numeric, tolerance_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
 				tolerance = DatumGetFloat8(
-					DirectFunctionCall1(numeric_float8,
-						NumericGetDatum(num)));
+										   DirectFunctionCall1(numeric_float8,
+															   NumericGetDatum(num)));
 				if (tolerance <= 0.0)
 					tolerance = 1e-6;
 			}
@@ -434,7 +442,7 @@ ndb_cuda_gmm_train(const float *features,
 	}
 
 	/* Allocate host memory with overflow checks */
-	mixing_coeffs = (double *)palloc(sizeof(double) * n_components);
+	mixing_coeffs = (double *) palloc(sizeof(double) * n_components);
 	if (mixing_coeffs == NULL)
 	{
 		if (errstr)
@@ -442,13 +450,13 @@ ndb_cuda_gmm_train(const float *features,
 		return -1;
 	}
 
-	if (feature_dim > 0 && (size_t)n_components > MaxAllocSize / sizeof(double) / (size_t)feature_dim)
+	if (feature_dim > 0 && (size_t) n_components > MaxAllocSize / sizeof(double) / (size_t) feature_dim)
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA GMM train: means array size exceeds MaxAllocSize");
 		goto cleanup;
 	}
-	means = (double *)palloc0(sizeof(double) * (size_t)n_components * (size_t)feature_dim);
+	means = (double *) palloc0(sizeof(double) * (size_t) n_components * (size_t) feature_dim);
 	if (means == NULL)
 	{
 		if (errstr)
@@ -456,7 +464,7 @@ ndb_cuda_gmm_train(const float *features,
 		goto cleanup;
 	}
 
-	variances = (double *)palloc0(sizeof(double) * (size_t)n_components * (size_t)feature_dim);
+	variances = (double *) palloc0(sizeof(double) * (size_t) n_components * (size_t) feature_dim);
 	if (variances == NULL)
 	{
 		if (errstr)
@@ -464,7 +472,7 @@ ndb_cuda_gmm_train(const float *features,
 		goto cleanup;
 	}
 
-	means_2d = (double **)palloc(sizeof(double *) * n_components);
+	means_2d = (double **) palloc(sizeof(double *) * n_components);
 	if (means_2d == NULL)
 	{
 		if (errstr)
@@ -472,7 +480,7 @@ ndb_cuda_gmm_train(const float *features,
 		goto cleanup;
 	}
 
-	variances_2d = (double **)palloc(sizeof(double *) * n_components);
+	variances_2d = (double **) palloc(sizeof(double *) * n_components);
 	if (variances_2d == NULL)
 	{
 		if (errstr)
@@ -480,13 +488,13 @@ ndb_cuda_gmm_train(const float *features,
 		goto cleanup;
 	}
 
-	if ((size_t)n_samples > MaxAllocSize / sizeof(double) / (size_t)n_components)
+	if ((size_t) n_samples > MaxAllocSize / sizeof(double) / (size_t) n_components)
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA GMM train: responsibilities array size exceeds MaxAllocSize");
 		goto cleanup;
 	}
-	responsibilities = (double *)palloc(sizeof(double) * (size_t)n_samples * (size_t)n_components);
+	responsibilities = (double *) palloc(sizeof(double) * (size_t) n_samples * (size_t) n_components);
 	if (responsibilities == NULL)
 	{
 		if (errstr)
@@ -503,7 +511,8 @@ ndb_cuda_gmm_train(const float *features,
 	}
 	for (k = 0; k < n_components; k++)
 	{
-		int idx = (k * n_samples) / n_components;  /* Spread initial means */
+		int			idx = (k * n_samples) / n_components;	/* Spread initial means */
+
 		if (idx < 0 || idx >= n_samples)
 		{
 			if (errstr)
@@ -515,7 +524,8 @@ ndb_cuda_gmm_train(const float *features,
 
 		for (d = 0; d < feature_dim; d++)
 		{
-			double val = (double)features[idx * feature_dim + d];
+			double		val = (double) features[idx * feature_dim + d];
+
 			if (!isfinite(val))
 			{
 				if (errstr)
@@ -530,7 +540,7 @@ ndb_cuda_gmm_train(const float *features,
 			variances[k * feature_dim + d] = 1.0;
 
 		/* Equal mixing coefficients initially */
-		mixing_coeffs[k] = 1.0 / (double)n_components;
+		mixing_coeffs[k] = 1.0 / (double) n_components;
 		if (!isfinite(mixing_coeffs[k]))
 		{
 			if (errstr)
@@ -560,10 +570,12 @@ ndb_cuda_gmm_train(const float *features,
 		}
 		for (i = 0; i < n_samples; i++)
 		{
-			double sum = 0.0;
+			double		sum = 0.0;
+
 			for (k = 0; k < n_components; k++)
 			{
-				double resp = responsibilities[i * n_components + k];
+				double		resp = responsibilities[i * n_components + k];
+
 				if (!isfinite(resp))
 				{
 					if (errstr)
@@ -574,7 +586,8 @@ ndb_cuda_gmm_train(const float *features,
 			}
 			if (sum > GMM_MIN_PROB)
 			{
-				double log_sum = log(sum);
+				double		log_sum = log(sum);
+
 				if (!isfinite(log_sum))
 				{
 					if (errstr)
@@ -584,7 +597,7 @@ ndb_cuda_gmm_train(const float *features,
 				log_likelihood += log_sum;
 			}
 		}
-		log_likelihood /= (double)n_samples;
+		log_likelihood /= (double) n_samples;
 		if (!isfinite(log_likelihood))
 		{
 			if (errstr)
@@ -625,7 +638,10 @@ ndb_cuda_gmm_train(const float *features,
 	model.means = means_2d;
 	model.variances = variances_2d;
 
-	/* Pack model - pass NULL for metrics if caller doesn't want them to avoid DirectFunctionCall issues */
+	/*
+	 * Pack model - pass NULL for metrics if caller doesn't want them to avoid
+	 * DirectFunctionCall issues
+	 */
 	if (ndb_cuda_gmm_pack_model(&model, &blob, metrics ? &metrics_json : NULL, errstr) != 0)
 	{
 		if (errstr && *errstr == NULL)
@@ -660,31 +676,32 @@ cleanup:
 }
 
 int
-ndb_cuda_gmm_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	int *cluster_out,
-	double *probability_out,
-	char **errstr)
+ndb_cuda_gmm_predict(const bytea * model_data,
+					 const float *input,
+					 int feature_dim,
+					 int *cluster_out,
+					 double *probability_out,
+					 char **errstr)
 {
 	const char *base;
 	NdbCudaGmmModelHeader *hdr;
 	const double *mixing;
 	const double *means;
 	const double *variances;
-	double *component_probs;
-	double max_prob;
-	int best_component;
-	int i, j;
-	size_t expected_size;
-	double log_likelihood;
-	double log_det;
-	double diff;
-	double var;
-	double log_var;
-	double log_lik_contrib;
-	double exp_val;
-	double final_prob;
+	double	   *component_probs;
+	double		max_prob;
+	int			best_component;
+	int			i,
+				j;
+	size_t		expected_size;
+	double		log_likelihood;
+	double		log_det;
+	double		diff;
+	double		var;
+	double		log_var;
+	double		log_lik_contrib;
+	double		exp_val;
+	double		final_prob;
 
 	if (errstr)
 		*errstr = NULL;
@@ -724,7 +741,7 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 	}
 
 	base = VARDATA_ANY(model_data);
-	hdr = (NdbCudaGmmModelHeader *)base;
+	hdr = (NdbCudaGmmModelHeader *) base;
 
 	/* Validate model header */
 	if (hdr->n_components <= 0 || hdr->n_components > 1000000)
@@ -743,7 +760,8 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 	{
 		if (errstr)
 		{
-			char *msg = psprintf("CUDA GMM predict: feature dimension mismatch (expected %d, got %d)", hdr->n_features, feature_dim);
+			char	   *msg = psprintf("CUDA GMM predict: feature dimension mismatch (expected %d, got %d)", hdr->n_features, feature_dim);
+
 			*errstr = pstrdup(msg);
 			NDB_SAFE_PFREE_AND_NULL(msg);
 		}
@@ -752,9 +770,9 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 
 	/* Validate bytea size matches expected payload */
 	expected_size = sizeof(NdbCudaGmmModelHeader)
-		+ sizeof(double) * (size_t)hdr->n_components
-		+ sizeof(double) * (size_t)hdr->n_components * (size_t)hdr->n_features
-		+ sizeof(double) * (size_t)hdr->n_components * (size_t)hdr->n_features;
+		+ sizeof(double) * (size_t) hdr->n_components
+		+ sizeof(double) * (size_t) hdr->n_components * (size_t) hdr->n_features
+		+ sizeof(double) * (size_t) hdr->n_components * (size_t) hdr->n_features;
 	if (VARSIZE_ANY_EXHDR(model_data) < expected_size)
 	{
 		if (errstr)
@@ -773,9 +791,9 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 		}
 	}
 
-	mixing = (const double *)(base + sizeof(NdbCudaGmmModelHeader));
-	means = (const double *)(base + sizeof(NdbCudaGmmModelHeader) + sizeof(double) * (size_t)hdr->n_components);
-	variances = (const double *)(base + sizeof(NdbCudaGmmModelHeader) + sizeof(double) * (size_t)hdr->n_components + sizeof(double) * (size_t)hdr->n_components * (size_t)hdr->n_features);
+	mixing = (const double *) (base + sizeof(NdbCudaGmmModelHeader));
+	means = (const double *) (base + sizeof(NdbCudaGmmModelHeader) + sizeof(double) * (size_t) hdr->n_components);
+	variances = (const double *) (base + sizeof(NdbCudaGmmModelHeader) + sizeof(double) * (size_t) hdr->n_components + sizeof(double) * (size_t) hdr->n_components * (size_t) hdr->n_features);
 
 	/* Validate model data pointers */
 	if (mixing == NULL || means == NULL || variances == NULL)
@@ -785,7 +803,7 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 		return -1;
 	}
 
-	component_probs = (double *)palloc(sizeof(double) * hdr->n_components);
+	component_probs = (double *) palloc(sizeof(double) * hdr->n_components);
 	if (component_probs == NULL)
 	{
 		if (errstr)
@@ -796,77 +814,78 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 	/* Compute probability for each component */
 	for (i = 0; i < hdr->n_components; i++)
 	{
-		double mix_coeff = mixing[i];
+		double		mix_coeff = mixing[i];
+
 		/* Validate mixing coefficient */
 		if (!isfinite(mix_coeff) || mix_coeff < 0.0 || mix_coeff > 1.0)
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA GMM predict: invalid mixing coefficient in model");
-		NDB_SAFE_PFREE_AND_NULL(component_probs);
-		return -1;
-	}
-
-	log_likelihood = 0.0;
-	log_det = 0.0;
-
-	for (j = 0; j < feature_dim; j++)
-	{
-		double mean_val = means[i * feature_dim + j];
-		double var_val = variances[i * feature_dim + j];
-
-		/* Validate model parameters */
-		if (!isfinite(mean_val) || !isfinite(var_val) || var_val < 0.0)
-		{
-			if (errstr)
-				*errstr = pstrdup("CUDA GMM predict: invalid mean or variance in model");
 			NDB_SAFE_PFREE_AND_NULL(component_probs);
 			return -1;
 		}
 
-		diff = (double)input[j] - mean_val;
-		var = var_val + GMM_EPSILON;
+		log_likelihood = 0.0;
+		log_det = 0.0;
 
-		/* Check for division by zero */
-		if (var <= 0.0)
+		for (j = 0; j < feature_dim; j++)
+		{
+			double		mean_val = means[i * feature_dim + j];
+			double		var_val = variances[i * feature_dim + j];
+
+			/* Validate model parameters */
+			if (!isfinite(mean_val) || !isfinite(var_val) || var_val < 0.0)
+			{
+				if (errstr)
+					*errstr = pstrdup("CUDA GMM predict: invalid mean or variance in model");
+				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				return -1;
+			}
+
+			diff = (double) input[j] - mean_val;
+			var = var_val + GMM_EPSILON;
+
+			/* Check for division by zero */
+			if (var <= 0.0)
+			{
+				if (errstr)
+					*errstr = pstrdup("CUDA GMM predict: variance is zero or negative");
+				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				return -1;
+			}
+
+			log_var = log(var);
+			if (!isfinite(log_var))
+			{
+				if (errstr)
+					*errstr = pstrdup("CUDA GMM predict: computed non-finite log variance");
+				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				return -1;
+			}
+
+			log_lik_contrib = -0.5 * (diff * diff) / var;
+			if (!isfinite(log_lik_contrib))
+			{
+				if (errstr)
+					*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood contribution");
+				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				return -1;
+			}
+
+			log_likelihood += log_lik_contrib;
+			log_det += log_var;
+		}
+
+		log_likelihood -= 0.5 * (feature_dim * log(2.0 * M_PI) + log_det);
+		if (!isfinite(log_likelihood))
 		{
 			if (errstr)
-				*errstr = pstrdup("CUDA GMM predict: variance is zero or negative");
+				*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood");
 			NDB_SAFE_PFREE_AND_NULL(component_probs);
 			return -1;
 		}
 
-		log_var = log(var);
-		if (!isfinite(log_var))
-		{
-			if (errstr)
-				*errstr = pstrdup("CUDA GMM predict: computed non-finite log variance");
-			NDB_SAFE_PFREE_AND_NULL(component_probs);
-			return -1;
-		}
-
-		log_lik_contrib = -0.5 * (diff * diff) / var;
-		if (!isfinite(log_lik_contrib))
-		{
-			if (errstr)
-				*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood contribution");
-			NDB_SAFE_PFREE_AND_NULL(component_probs);
-			return -1;
-		}
-
-		log_likelihood += log_lik_contrib;
-		log_det += log_var;
-	}
-
-	log_likelihood -= 0.5 * (feature_dim * log(2.0 * M_PI) + log_det);
-	if (!isfinite(log_likelihood))
-	{
-		if (errstr)
-			*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood");
-		NDB_SAFE_PFREE_AND_NULL(component_probs);
-		return -1;
-	}
-
-	exp_val = exp(log_likelihood);
+		exp_val = exp(log_likelihood);
 		if (!isfinite(exp_val) || exp_val < 0.0)
 		{
 			if (errstr)
@@ -914,8 +933,8 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 
 	/* Normalize probabilities */
 	{
-		double sum = 0.0;
-		int k;
+		double		sum = 0.0;
+		int			k;
 
 		for (k = 0; k < hdr->n_components; k++)
 		{
@@ -963,7 +982,8 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 		else
 		{
 			/* All probabilities are zero - use uniform distribution */
-			double uniform_prob = 1.0 / (double)hdr->n_components;
+			double		uniform_prob = 1.0 / (double) hdr->n_components;
+
 			for (k = 0; k < hdr->n_components; k++)
 				component_probs[k] = uniform_prob;
 			best_component = 0;
@@ -998,11 +1018,16 @@ ndb_cuda_gmm_predict(const bytea *model_data,
 #else
 
 void
-ndb_cuda_gmm_train(void) { }
+ndb_cuda_gmm_train(void)
+{
+}
 void
-ndb_cuda_gmm_predict(void) { }
+ndb_cuda_gmm_predict(void)
+{
+}
 void
-ndb_cuda_gmm_pack_model(void) { }
+ndb_cuda_gmm_pack_model(void)
+{
+}
 
-#endif /* NDB_GPU_CUDA */
-
+#endif							/* NDB_GPU_CUDA */

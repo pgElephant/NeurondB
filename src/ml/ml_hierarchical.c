@@ -35,7 +35,7 @@
 #include <float.h>
 
 /* Forward declaration */
-static int hierarchical_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int *n_clusters_out, int *dim_out, char *linkage_out, int linkage_max);
+static int	hierarchical_model_deserialize_from_bytea(const bytea * data, float ***centers_out, int *n_clusters_out, int *dim_out, char *linkage_out, int linkage_max);
 
 /*--------------------
  * ClusterNode - Represents a cluster in the hierarchy.
@@ -43,11 +43,11 @@ static int hierarchical_model_deserialize_from_bytea(const bytea *data, float **
  */
 typedef struct ClusterNode
 {
-	int			id;			/* Cluster ID */
-	int		   *members;	/* Indices of data points in this cluster */
-	int			size;		/* Number of points */
-	double	   *centroid;	/* Centroid coordinates */
-} ClusterNode;
+	int			id;				/* Cluster ID */
+	int		   *members;		/* Indices of data points in this cluster */
+	int			size;			/* Number of points */
+	double	   *centroid;		/* Centroid coordinates */
+}			ClusterNode;
 
 static inline double
 euclidean_dist(const float *a, const float *b, int dim)
@@ -57,7 +57,8 @@ euclidean_dist(const float *a, const float *b, int dim)
 
 	for (i = 0; i < dim; i++)
 	{
-		double	diff = (double) a[i] - (double) b[i];
+		double		diff = (double) a[i] - (double) b[i];
+
 		sum += diff * diff;
 	}
 	return sqrt(sum);
@@ -83,7 +84,7 @@ compute_centroid(float **data, int *members, int size, int dim, double *centroid
 }
 
 static double
-cluster_distance_average(float **data, ClusterNode *c1, ClusterNode *c2, int dim)
+cluster_distance_average(float **data, ClusterNode * c1, ClusterNode * c2, int dim)
 {
 	double		sum = 0.0;
 	int			i;
@@ -100,7 +101,7 @@ cluster_distance_average(float **data, ClusterNode *c1, ClusterNode *c2, int dim
 }
 
 static double
-cluster_distance_complete(float **data, ClusterNode *c1, ClusterNode *c2, int dim)
+cluster_distance_complete(float **data, ClusterNode * c1, ClusterNode * c2, int dim)
 {
 	double		max_dist = 0.0;
 	int			i;
@@ -110,9 +111,10 @@ cluster_distance_complete(float **data, ClusterNode *c1, ClusterNode *c2, int di
 	{
 		for (j = 0; j < c2->size; j++)
 		{
-			double	dist = euclidean_dist(data[c1->members[i]],
-										 data[c2->members[j]],
-										 dim);
+			double		dist = euclidean_dist(data[c1->members[i]],
+											  data[c2->members[j]],
+											  dim);
+
 			if (dist > max_dist)
 				max_dist = dist;
 		}
@@ -121,7 +123,7 @@ cluster_distance_complete(float **data, ClusterNode *c1, ClusterNode *c2, int di
 }
 
 static double
-cluster_distance_single(float **data, ClusterNode *c1, ClusterNode *c2, int dim)
+cluster_distance_single(float **data, ClusterNode * c1, ClusterNode * c2, int dim)
 {
 	double		min_dist = DBL_MAX;
 	int			i;
@@ -131,9 +133,10 @@ cluster_distance_single(float **data, ClusterNode *c1, ClusterNode *c2, int dim)
 	{
 		for (j = 0; j < c2->size; j++)
 		{
-			double	dist = euclidean_dist(data[c1->members[i]],
-										 data[c2->members[j]],
-										 dim);
+			double		dist = euclidean_dist(data[c1->members[i]],
+											  data[c2->members[j]],
+											  dim);
+
 			if (dist < min_dist)
 				min_dist = dist;
 		}
@@ -161,7 +164,11 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 	ClusterNode *clusters;
 	int		   *cluster_assignments;
 	int			n_active_clusters;
-	int			iter, i, j, k, d;
+	int			iter,
+				i,
+				j,
+				k,
+				d;
 	ArrayType  *result;
 	Datum	   *result_datums;
 	int16		typlen;
@@ -173,7 +180,7 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 	vector_column = PG_GETARG_TEXT_PP(1);
 	num_clusters = PG_GETARG_INT32(2);
 	linkage_text = PG_ARGISNULL(3) ? cstring_to_text("average")
-								   : PG_GETARG_TEXT_PP(3);
+		: PG_GETARG_TEXT_PP(3);
 
 	if (num_clusters < 1)
 		ereport(ERROR,
@@ -192,8 +199,8 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("linkage must be 'average', 'complete', or 'single'")));
 
-		 elog(DEBUG1,
-		 	"neurondb: hierarchical clustering (k=%d, linkage=%s)",
+	elog(DEBUG1,
+		 "neurondb: hierarchical clustering (k=%d, linkage=%s)",
 		 num_clusters, linkage);
 
 	/* Fetch data from table */
@@ -205,49 +212,54 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 				 errmsg("not enough vectors (%d) for %d clusters",
 						nvec, num_clusters)));
 
-	/* Hierarchical clustering has O(n²) complexity - limit to reasonable size */
+	/*
+	 * Hierarchical clustering has O(n²) complexity - limit to reasonable
+	 * size
+	 */
 	{
-		int max_hierarchical_points = 10000; /* Hard limit for hierarchical clustering */
-		int original_nvec = nvec;
-		
+		int			max_hierarchical_points = 10000;	/* Hard limit for
+														 * hierarchical
+														 * clustering */
+		int			original_nvec = nvec;
+
 		if (nvec > max_hierarchical_points)
 		{
 			elog(WARNING,
-				"hierarchical clustering on %d points is computationally infeasible (O(n²) complexity), limiting to %d points. Consider using K-means or Mini-batch K-means for large datasets",
-				nvec, max_hierarchical_points);
-			
+				 "hierarchical clustering on %d points is computationally infeasible (O(n²) complexity), limiting to %d points. Consider using K-means or Mini-batch K-means for large datasets",
+				 nvec, max_hierarchical_points);
+
 			/* Sample the data */
 			{
-				float **sampled_data = (float **)palloc(sizeof(float *) * max_hierarchical_points);
-				int sample_step = original_nvec / max_hierarchical_points;
-				int sampled_idx = 0;
-				int sample_j;
-				
+				float	  **sampled_data = (float **) palloc(sizeof(float *) * max_hierarchical_points);
+				int			sample_step = original_nvec / max_hierarchical_points;
+				int			sampled_idx = 0;
+				int			sample_j;
+
 				for (sample_j = 0; sample_j < original_nvec && sampled_idx < max_hierarchical_points; sample_j += sample_step)
 				{
-					sampled_data[sampled_idx] = (float *)palloc(sizeof(float) * dim);
+					sampled_data[sampled_idx] = (float *) palloc(sizeof(float) * dim);
 					memcpy(sampled_data[sampled_idx], data[sample_j], sizeof(float) * dim);
 					sampled_idx++;
 				}
-				
+
 				/* Free original data */
 				for (sample_j = 0; sample_j < original_nvec; sample_j++)
 					NDB_SAFE_PFREE_AND_NULL(data[sample_j]);
 				NDB_SAFE_PFREE_AND_NULL(data);
-				
+
 				/* Use sampled data */
 				data = sampled_data;
 				nvec = sampled_idx;
 			}
-			
+
 			elog(INFO,
-				"hierarchical clustering: using %d sampled points from %d total points",
-				nvec, original_nvec);
+				 "hierarchical clustering: using %d sampled points from %d total points",
+				 nvec, original_nvec);
 		}
 		else if (nvec > 5000)
 		{
 			elog(WARNING,
-				"hierarchical clustering on %d points may be slow, consider K-means", nvec);
+				 "hierarchical clustering on %d points may be slow, consider K-means", nvec);
 		}
 	}
 
@@ -275,7 +287,7 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 
 		for (i = 0; i < nvec; i++)
 		{
-			double	dist;
+			double		dist;
 
 			if (clusters[i].size == 0)
 				continue;
@@ -305,8 +317,8 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 			break;
 
 		{
-			int		new_size;
-			int	   *new_members;
+			int			new_size;
+			int		   *new_members;
 
 			new_size = clusters[merge_i].size + clusters[merge_j].size;
 			new_members = (int *) palloc(sizeof(int) * new_size);
@@ -336,15 +348,15 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 		}
 
 		if ((iter + 1) % 100 == 0)
-				 elog(DEBUG1,
-				 	"neurondb: hierarchical merge iteration %d (%d clusters remain)",
+			elog(DEBUG1,
+				 "neurondb: hierarchical merge iteration %d (%d clusters remain)",
 				 iter + 1, n_active_clusters);
 	}
 
 	/* Assign cluster labels: 1-based */
 	cluster_assignments = (int *) palloc(sizeof(int) * nvec);
 	{
-		int		cluster_id = 1;
+		int			cluster_id = 1;
 
 		for (i = 0; i < nvec; i++)
 		{
@@ -395,34 +407,34 @@ cluster_hierarchical(PG_FUNCTION_ARGS)
 Datum
 predict_hierarchical_cluster(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	ArrayType *features_array;
-	float *features;
-	int n_features;
-	int cluster_id = -1;
+	int32		model_id;
+	ArrayType  *features_array;
+	float	   *features;
+	int			n_features;
+	int			cluster_id = -1;
 
 	model_id = PG_GETARG_INT32(0);
 	features_array = PG_GETARG_ARRAYTYPE_P(1);
-	(void) model_id; /* Not used in simplified implementation */
+	(void) model_id;			/* Not used in simplified implementation */
 
 	/* Extract features from array */
 	{
-		Oid elmtype = ARR_ELEMTYPE(features_array);
-		int16 typlen;
-		bool typbyval;
-		char typalign;
-		Datum *elems;
-		bool *nulls;
-		int n_elems;
-		int i;
+		Oid			elmtype = ARR_ELEMTYPE(features_array);
+		int16		typlen;
+		bool		typbyval;
+		char		typalign;
+		Datum	   *elems;
+		bool	   *nulls;
+		int			n_elems;
+		int			i;
 
 		get_typlenbyvalalign(elmtype, &typlen, &typbyval, &typalign);
 		deconstruct_array(features_array, elmtype, typlen, typbyval, typalign,
-						 &elems, &nulls, &n_elems);
+						  &elems, &nulls, &n_elems);
 
 		features = palloc(sizeof(float) * n_elems);
 		n_features = n_elems;
-		(void) n_features; /* Not used in simplified implementation */
+		(void) n_features;		/* Not used in simplified implementation */
 
 		for (i = 0; i < n_elems; i++)
 			features[i] = DatumGetFloat4(elems[i]);
@@ -430,46 +442,46 @@ predict_hierarchical_cluster(PG_FUNCTION_ARGS)
 
 	/* Load model from catalog and find closest cluster */
 	{
-		bytea *model_data = NULL;
-		Jsonb *parameters = NULL;
-		Jsonb *metrics = NULL;
-		float **cluster_centers = NULL;
-		int n_clusters = 0;
-		int model_dim = 0;
-		char linkage[16] = "average";
-		double min_distance = DBL_MAX;
-		int closest_cluster = 0;
-		int c;
+		bytea	   *model_data = NULL;
+		Jsonb	   *parameters = NULL;
+		Jsonb	   *metrics = NULL;
+		float	  **cluster_centers = NULL;
+		int			n_clusters = 0;
+		int			model_dim = 0;
+		char		linkage[16] = "average";
+		double		min_distance = DBL_MAX;
+		int			closest_cluster = 0;
+		int			c;
 
 		/* Fetch model from catalog */
 		if (!ml_catalog_fetch_model_payload(model_id, &model_data, &parameters, &metrics))
 		{
 			NDB_SAFE_PFREE_AND_NULL(features);
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("neurondb: predict_hierarchical_by_model_id: model %d not found", model_id)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: predict_hierarchical_by_model_id: model %d not found", model_id)));
 		}
 
 		if (model_data == NULL)
 		{
 			NDB_SAFE_PFREE_AND_NULL(features);
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("neurondb: predict_hierarchical_by_model_id: model %d has no data", model_id)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: predict_hierarchical_by_model_id: model %d has no data", model_id)));
 		}
 
 		/* Deserialize model to get cluster centers */
 		if (hierarchical_model_deserialize_from_bytea(model_data,
-			&cluster_centers,
-			&n_clusters,
-			&model_dim,
-			linkage,
-			sizeof(linkage)) != 0)
+													  &cluster_centers,
+													  &n_clusters,
+													  &model_dim,
+													  linkage,
+													  sizeof(linkage)) != 0)
 		{
 			NDB_SAFE_PFREE_AND_NULL(features);
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("neurondb: predict_hierarchical_by_model_id: failed to deserialize model %d", model_id)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: predict_hierarchical_by_model_id: failed to deserialize model %d", model_id)));
 		}
 
 		/* Validate dimension match */
@@ -484,15 +496,15 @@ predict_hierarchical_cluster(PG_FUNCTION_ARGS)
 			}
 			NDB_SAFE_PFREE_AND_NULL(features);
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("neurondb: predict_hierarchical_by_model_id: feature dimension mismatch: model expects %d, got %d",
-						model_dim, n_features)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: predict_hierarchical_by_model_id: feature dimension mismatch: model expects %d, got %d",
+							model_dim, n_features)));
 		}
 
 		/* Find closest cluster center */
 		for (c = 0; c < n_clusters; c++)
 		{
-			double distance = euclidean_dist(features, cluster_centers[c], n_features);
+			double		distance = euclidean_dist(features, cluster_centers[c], n_features);
 
 			if (distance < min_distance)
 			{
@@ -526,40 +538,40 @@ predict_hierarchical_cluster(PG_FUNCTION_ARGS)
 Datum
 evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	text *table_name;
-	text *feature_col;
-	int32 n_clusters;
-	char *tbl_str;
-	char *feat_str;
+	int32		model_id;
+	text	   *table_name;
+	text	   *feature_col;
+	int32		n_clusters;
+	char	   *tbl_str;
+	char	   *feat_str;
 	StringInfoData query;
-	int ret;
-	int n_points = 0;
+	int			ret;
+	int			n_points = 0;
 	StringInfoData jsonbuf;
-	Jsonb *result;
+	Jsonb	   *result;
 	MemoryContext oldcontext;
-	double silhouette_score;
-	double calinski_harabasz;
-	int n_clusters_found;
+	double		silhouette_score;
+	double		calinski_harabasz;
+	int			n_clusters_found;
 
 	/* Validate arguments */
 	if (PG_NARGS() != 4)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_hierarchical_by_model_id: 4 arguments are required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_hierarchical_by_model_id: 4 arguments are required")));
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_hierarchical_by_model_id: model_id is required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_hierarchical_by_model_id: model_id is required")));
 
 	model_id = PG_GETARG_INT32(0);
-	(void) model_id; /* Not used in simplified implementation */
+	(void) model_id;			/* Not used in simplified implementation */
 
 	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_hierarchical_by_model_id: table_name, feature_col, and n_clusters are required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_hierarchical_by_model_id: table_name, feature_col, and n_clusters are required")));
 
 	table_name = PG_GETARG_TEXT_PP(1);
 	feature_col = PG_GETARG_TEXT_PP(2);
@@ -567,8 +579,8 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 
 	if (n_clusters < 2 || n_clusters > 100)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("n_clusters must be between 2 and 100")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("n_clusters must be between 2 and 100")));
 
 	tbl_str = text_to_cstring(table_name);
 	feat_str = text_to_cstring(feature_col);
@@ -580,22 +592,22 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 	{
 		SPI_finish();
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: evaluate_hierarchical_by_model_id: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_hierarchical_by_model_id: SPI_connect failed")));
 	}
 
 	/* Build query */
 	initStringInfo(&query);
 	appendStringInfo(&query,
-		"SELECT %s FROM %s WHERE %s IS NOT NULL",
-		feat_str, tbl_str, feat_str);
+					 "SELECT %s FROM %s WHERE %s IS NOT NULL",
+					 feat_str, tbl_str, feat_str);
 
 	ret = ndb_spi_execute_safe(query.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: evaluate_hierarchical_by_model_id: query failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_hierarchical_by_model_id: query failed")));
 
 	n_points = SPI_processed;
 	if (n_points < n_clusters)
@@ -604,31 +616,34 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(tbl_str);
 		NDB_SAFE_PFREE_AND_NULL(feat_str);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_hierarchical_by_model_id: need at least %d points for %d clusters, got %d",
-					n_clusters, n_clusters, n_points)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_hierarchical_by_model_id: need at least %d points for %d clusters, got %d",
+						n_clusters, n_clusters, n_points)));
 	}
 
 	/* Load model to get centroids */
 	{
-		bytea *model_payload = NULL;
-		Jsonb *model_parameters = NULL;
-		float **centers = NULL;
-		int model_dim = 0;
-		char linkage_str[16] = "average";
-		float **data = NULL;
-		int *assignments = NULL;
-		int *cluster_sizes = NULL;
-		double *a_scores = NULL;
-		double *b_scores = NULL;
-		int i, j, c, d;
-		int dim;
-		double global_mean[1000]; /* Max dim support */
-		double *cluster_means = NULL;
-		double wss = 0.0; /* Within-cluster sum of squares */
-		double bss = 0.0; /* Between-cluster sum of squares */
-		int valid_count = 0;
-		double sum_silhouette = 0.0;
+		bytea	   *model_payload = NULL;
+		Jsonb	   *model_parameters = NULL;
+		float	  **centers = NULL;
+		int			model_dim = 0;
+		char		linkage_str[16] = "average";
+		float	  **data = NULL;
+		int		   *assignments = NULL;
+		int		   *cluster_sizes = NULL;
+		double	   *a_scores = NULL;
+		double	   *b_scores = NULL;
+		int			i,
+					j,
+					c,
+					d;
+		int			dim;
+		double		global_mean[1000];	/* Max dim support */
+		double	   *cluster_means = NULL;
+		double		wss = 0.0;	/* Within-cluster sum of squares */
+		double		bss = 0.0;	/* Between-cluster sum of squares */
+		int			valid_count = 0;
+		double		sum_silhouette = 0.0;
 
 		/* Load model from catalog */
 		if (ml_catalog_fetch_model_payload(model_id, &model_payload, &model_parameters, NULL))
@@ -636,11 +651,11 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 			if (model_payload != NULL && VARSIZE(model_payload) > VARHDRSZ)
 			{
 				if (hierarchical_model_deserialize_from_bytea(model_payload,
-					&centers,
-					&n_clusters_found,
-					&model_dim,
-					linkage_str,
-					sizeof(linkage_str)) == 0)
+															  &centers,
+															  &n_clusters_found,
+															  &model_dim,
+															  linkage_str,
+															  sizeof(linkage_str)) == 0)
 				{
 					/* Fetch data points */
 					data = neurondb_fetch_vectors_from_table(tbl_str, feat_str, &n_points, &dim);
@@ -648,21 +663,22 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 					if (data != NULL && n_points > 0 && dim == model_dim)
 					{
 						/* Allocate arrays */
-						assignments = (int *)palloc(sizeof(int) * n_points);
-						cluster_sizes = (int *)palloc0(sizeof(int) * n_clusters_found);
-						a_scores = (double *)palloc0(sizeof(double) * n_points);
-						b_scores = (double *)palloc0(sizeof(double) * n_points);
-						cluster_means = (double *)palloc0(sizeof(double) * n_clusters_found * dim);
+						assignments = (int *) palloc(sizeof(int) * n_points);
+						cluster_sizes = (int *) palloc0(sizeof(int) * n_clusters_found);
+						a_scores = (double *) palloc0(sizeof(double) * n_points);
+						b_scores = (double *) palloc0(sizeof(double) * n_points);
+						cluster_means = (double *) palloc0(sizeof(double) * n_clusters_found * dim);
 
 						/* Assign points to nearest centroids */
 						for (i = 0; i < n_points; i++)
 						{
-							double min_dist = DBL_MAX;
-							int best = 0;
+							double		min_dist = DBL_MAX;
+							int			best = 0;
 
 							for (c = 0; c < n_clusters_found; c++)
 							{
-								double dist = euclidean_dist(data[i], centers[c], dim);
+								double		dist = euclidean_dist(data[i], centers[c], dim);
+
 								if (dist < min_dist)
 								{
 									min_dist = dist;
@@ -671,7 +687,8 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 							}
 							assignments[i] = best;
 							cluster_sizes[best]++;
-							wss += min_dist * min_dist; /* Sum of squared distances */
+							wss += min_dist * min_dist; /* Sum of squared
+														 * distances */
 						}
 
 						/* Compute global mean */
@@ -679,8 +696,8 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 						{
 							global_mean[d] = 0.0;
 							for (i = 0; i < n_points; i++)
-								global_mean[d] += (double)data[i][d];
-							global_mean[d] /= (double)n_points;
+								global_mean[d] += (double) data[i][d];
+							global_mean[d] /= (double) n_points;
 						}
 
 						/* Compute cluster means */
@@ -694,9 +711,9 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 									for (i = 0; i < n_points; i++)
 									{
 										if (assignments[i] == c)
-											cluster_means[c * dim + d] += (double)data[i][d];
+											cluster_means[c * dim + d] += (double) data[i][d];
 									}
-									cluster_means[c * dim + d] /= (double)cluster_sizes[c];
+									cluster_means[c * dim + d] /= (double) cluster_sizes[c];
 								}
 							}
 						}
@@ -706,23 +723,25 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 						{
 							if (cluster_sizes[c] > 0)
 							{
-								double cluster_ss = 0.0;
+								double		cluster_ss = 0.0;
+
 								for (d = 0; d < dim; d++)
 								{
-									double diff = cluster_means[c * dim + d] - global_mean[d];
+									double		diff = cluster_means[c * dim + d] - global_mean[d];
+
 									cluster_ss += diff * diff;
 								}
-								bss += (double)cluster_sizes[c] * cluster_ss;
+								bss += (double) cluster_sizes[c] * cluster_ss;
 							}
 						}
 
 						/* Compute silhouette score */
 						for (i = 0; i < n_points; i++)
 						{
-							int my_cluster = assignments[i];
-							int same_count = 0;
-							double same_dist = 0.0;
-							double min_other_dist = DBL_MAX;
+							int			my_cluster = assignments[i];
+							int			same_count = 0;
+							double		same_dist = 0.0;
+							double		min_other_dist = DBL_MAX;
 
 							if (cluster_sizes[my_cluster] <= 1)
 							{
@@ -743,7 +762,7 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 								}
 							}
 							if (same_count > 0)
-								a_scores[i] = same_dist / (double)same_count;
+								a_scores[i] = same_dist / (double) same_count;
 							else
 								a_scores[i] = 0.0;
 
@@ -752,50 +771,56 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 							{
 								if (c == my_cluster || cluster_sizes[c] == 0)
 									continue;
-							{
-								double other_dist = 0.0;
-								int other_count = 0;
-
-								for (j = 0; j < n_points; j++)
 								{
-									if (assignments[j] == c)
+									double		other_dist = 0.0;
+									int			other_count = 0;
+
+									for (j = 0; j < n_points; j++)
 									{
-										other_dist += euclidean_dist(data[i], data[j], dim);
-										other_count++;
+										if (assignments[j] == c)
+										{
+											other_dist += euclidean_dist(data[i], data[j], dim);
+											other_count++;
+										}
+									}
+									if (other_count > 0)
+									{
+										other_dist /= (double) other_count;
+										if (other_dist < min_other_dist)
+											min_other_dist = other_dist;
 									}
 								}
-								if (other_count > 0)
-								{
-									other_dist /= (double)other_count;
-									if (other_dist < min_other_dist)
-										min_other_dist = other_dist;
-								}
 							}
-						}
 							b_scores[i] = min_other_dist;
 						}
 
 						/* Compute average silhouette */
 						for (i = 0; i < n_points; i++)
 						{
-							double max_ab = (a_scores[i] > b_scores[i]) ? a_scores[i] : b_scores[i];
+							double		max_ab = (a_scores[i] > b_scores[i]) ? a_scores[i] : b_scores[i];
+
 							if (max_ab > 0.0)
 							{
-								double s = (b_scores[i] - a_scores[i]) / max_ab;
+								double		s = (b_scores[i] - a_scores[i]) / max_ab;
+
 								sum_silhouette += s;
 								valid_count++;
 							}
 						}
 						if (valid_count > 0)
-							silhouette_score = sum_silhouette / (double)valid_count;
+							silhouette_score = sum_silhouette / (double) valid_count;
 						else
 							silhouette_score = 0.0;
 
-						/* Compute Calinski-Harabasz index: CH = (BSS/(k-1)) / (WSS/(n-k)) */
+						/*
+						 * Compute Calinski-Harabasz index: CH = (BSS/(k-1)) /
+						 * (WSS/(n-k))
+						 */
 						if (n_clusters_found > 1 && n_points > n_clusters_found && wss > 0.0)
 						{
-							double bss_norm = bss / (double)(n_clusters_found - 1);
-							double wss_norm = wss / (double)(n_points - n_clusters_found);
+							double		bss_norm = bss / (double) (n_clusters_found - 1);
+							double		wss_norm = wss / (double) (n_points - n_clusters_found);
+
 							calinski_harabasz = bss_norm / wss_norm;
 						}
 						else
@@ -866,8 +891,8 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldcontext);
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
-		"{\"silhouette_score\":%.6f,\"calinski_harabasz\":%.6f,\"n_clusters\":%d,\"n_points\":%d}",
-		silhouette_score, calinski_harabasz, n_clusters_found, n_points);
+					 "{\"silhouette_score\":%.6f,\"calinski_harabasz\":%.6f,\"n_clusters\":%d,\"n_points\":%d}",
+					 silhouette_score, calinski_harabasz, n_clusters_found, n_points);
 
 	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
 	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
@@ -888,36 +913,37 @@ evaluate_hierarchical_by_model_id(PG_FUNCTION_ARGS)
 
 typedef struct HierarchicalGpuModelState
 {
-	bytea *model_blob;
-	Jsonb *metrics;
-	int n_clusters;
-	int dim;
-	int n_samples;
-	char linkage[16];
-} HierarchicalGpuModelState;
+	bytea	   *model_blob;
+	Jsonb	   *metrics;
+	int			n_clusters;
+	int			dim;
+	int			n_samples;
+	char		linkage[16];
+}			HierarchicalGpuModelState;
 
 static bytea *
 hierarchical_model_serialize_to_bytea(float **cluster_centers, int n_clusters, int dim, const char *linkage)
 {
 	StringInfoData buf;
-	int i, j;
-	int total_size;
-	bytea *result;
-	int linkage_len;
+	int			i,
+				j;
+	int			total_size;
+	bytea	   *result;
+	int			linkage_len;
 
 	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf, (char *)&n_clusters, sizeof(int));
-	appendBinaryStringInfo(&buf, (char *)&dim, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &n_clusters, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &dim, sizeof(int));
 	linkage_len = strlen(linkage);
-	appendBinaryStringInfo(&buf, (char *)&linkage_len, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &linkage_len, sizeof(int));
 	appendBinaryStringInfo(&buf, linkage, linkage_len);
 
 	for (i = 0; i < n_clusters; i++)
 		for (j = 0; j < dim; j++)
-			appendBinaryStringInfo(&buf, (char *)&cluster_centers[i][j], sizeof(float));
+			appendBinaryStringInfo(&buf, (char *) &cluster_centers[i][j], sizeof(float));
 
 	total_size = VARHDRSZ + buf.len;
-	result = (bytea *)palloc(total_size);
+	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
@@ -926,13 +952,14 @@ hierarchical_model_serialize_to_bytea(float **cluster_centers, int n_clusters, i
 }
 
 static int
-hierarchical_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int *n_clusters_out, int *dim_out, char *linkage_out, int linkage_max)
+hierarchical_model_deserialize_from_bytea(const bytea * data, float ***centers_out, int *n_clusters_out, int *dim_out, char *linkage_out, int linkage_max)
 {
 	const char *buf;
-	int offset = 0;
-	int i, j;
-	float **centers;
-	int linkage_len;
+	int			offset = 0;
+	int			i,
+				j;
+	float	  **centers;
+	int			linkage_len;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 3)
 		return -1;
@@ -954,10 +981,10 @@ hierarchical_model_deserialize_from_bytea(const bytea *data, float ***centers_ou
 	if (*n_clusters_out < 0 || *n_clusters_out > 10000 || *dim_out <= 0 || *dim_out > 100000)
 		return -1;
 
-	centers = (float **)palloc(sizeof(float *) * *n_clusters_out);
+	centers = (float **) palloc(sizeof(float *) * *n_clusters_out);
 	for (i = 0; i < *n_clusters_out; i++)
 	{
-		centers[i] = (float *)palloc(sizeof(float) * *dim_out);
+		centers[i] = (float *) palloc(sizeof(float) * *dim_out);
 		for (j = 0; j < *dim_out; j++)
 		{
 			memcpy(&centers[i][j], buf + offset, sizeof(float));
@@ -970,27 +997,31 @@ hierarchical_model_deserialize_from_bytea(const bytea *data, float ***centers_ou
 }
 
 static bool
-hierarchical_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
+hierarchical_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 {
 	HierarchicalGpuModelState *state;
-	float **data = NULL;
-	int *cluster_assignments = NULL;
-	float **cluster_centers = NULL;
-	int *cluster_sizes = NULL;
-	int num_clusters = 8;
-	char linkage[16] = "average";
-	int nvec = 0;
-	int dim = 0;
-	int i, c, d;
+	float	  **data = NULL;
+	int		   *cluster_assignments = NULL;
+	float	  **cluster_centers = NULL;
+	int		   *cluster_sizes = NULL;
+	int			num_clusters = 8;
+	char		linkage[16] = "average";
+	int			nvec = 0;
+	int			dim = 0;
+	int			i,
+				c,
+				d;
 	ClusterNode *clusters = NULL;
-	int n_active_clusters = 0;
-	int iter, j, k;
-	bytea *model_data = NULL;
-	Jsonb *metrics = NULL;
+	int			n_active_clusters = 0;
+	int			iter,
+				j,
+				k;
+	bytea	   *model_data = NULL;
+	Jsonb	   *metrics = NULL;
 	StringInfoData metrics_json;
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1004,16 +1035,17 @@ hierarchical_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **err
 	/* Extract hyperparameters */
 	if (spec->hyperparameters != NULL)
 	{
-		it = JsonbIteratorInit((JsonbContainer *)&spec->hyperparameters->root);
+		it = JsonbIteratorInit((JsonbContainer *) & spec->hyperparameters->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "n_clusters") == 0 && v.type == jbvNumeric)
 					num_clusters = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																	 NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "linkage") == 0 && v.type == jbvString)
 					strncpy(linkage, v.val.string.val, sizeof(linkage) - 1);
 				NDB_SAFE_PFREE_AND_NULL(key);
@@ -1049,24 +1081,24 @@ hierarchical_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **err
 	if (nvec > 10000)
 		nvec = 10000;
 
-	data = (float **)palloc(sizeof(float *) * nvec);
+	data = (float **) palloc(sizeof(float *) * nvec);
 	for (i = 0; i < nvec; i++)
 	{
-		data[i] = (float *)palloc(sizeof(float) * dim);
+		data[i] = (float *) palloc(sizeof(float) * dim);
 		memcpy(data[i], &spec->feature_matrix[i * dim], sizeof(float) * dim);
 	}
 
 	/* Initialize clusters: each point as singleton */
-	clusters = (ClusterNode *)palloc(sizeof(ClusterNode) * nvec);
+	clusters = (ClusterNode *) palloc(sizeof(ClusterNode) * nvec);
 	for (i = 0; i < nvec; i++)
 	{
 		clusters[i].id = i;
 		clusters[i].size = 1;
-		clusters[i].members = (int *)palloc(sizeof(int));
+		clusters[i].members = (int *) palloc(sizeof(int));
 		clusters[i].members[0] = i;
-		clusters[i].centroid = (double *)palloc(sizeof(double) * dim);
+		clusters[i].centroid = (double *) palloc(sizeof(double) * dim);
 		for (d = 0; d < dim; d++)
-			clusters[i].centroid[d] = (double)data[i][d];
+			clusters[i].centroid[d] = (double) data[i][d];
 	}
 
 	n_active_clusters = nvec;
@@ -1074,9 +1106,9 @@ hierarchical_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **err
 	/* Agglomerative merge */
 	for (iter = 0; iter < nvec - num_clusters && n_active_clusters > num_clusters; iter++)
 	{
-		double min_dist = DBL_MAX;
-		int merge_i = -1;
-		int merge_j = -1;
+		double		min_dist = DBL_MAX;
+		int			merge_i = -1;
+		int			merge_j = -1;
 
 		for (i = 0; i < nvec; i++)
 		{
@@ -1085,7 +1117,7 @@ hierarchical_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **err
 
 			for (j = i + 1; j < nvec; j++)
 			{
-				double dist;
+				double		dist;
 
 				if (clusters[j].size == 0)
 					continue;
@@ -1110,8 +1142,8 @@ hierarchical_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **err
 			break;
 
 		{
-			int new_size = clusters[merge_i].size + clusters[merge_j].size;
-			int *new_members = (int *)palloc(sizeof(int) * new_size);
+			int			new_size = clusters[merge_i].size + clusters[merge_j].size;
+			int		   *new_members = (int *) palloc(sizeof(int) * new_size);
 
 			for (k = 0; k < clusters[merge_i].size; k++)
 				new_members[k] = clusters[merge_i].members[k];
@@ -1135,22 +1167,23 @@ hierarchical_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **err
 	}
 
 	/* Extract cluster centroids */
-	cluster_assignments = (int *)palloc0(sizeof(int) * nvec);
-	cluster_centers = (float **)palloc(sizeof(float *) * num_clusters);
-	cluster_sizes = (int *)palloc0(sizeof(int) * num_clusters);
+	cluster_assignments = (int *) palloc0(sizeof(int) * nvec);
+	cluster_centers = (float **) palloc(sizeof(float *) * num_clusters);
+	cluster_sizes = (int *) palloc0(sizeof(int) * num_clusters);
 
 	c = 0;
 	for (i = 0; i < nvec && c < num_clusters; i++)
 	{
 		if (clusters[i].size > 0)
 		{
-			cluster_centers[c] = (float *)palloc(sizeof(float) * dim);
+			cluster_centers[c] = (float *) palloc(sizeof(float) * dim);
 			for (d = 0; d < dim; d++)
-				cluster_centers[c][d] = (float)clusters[i].centroid[d];
+				cluster_centers[c][d] = (float) clusters[i].centroid[d];
 
 			for (j = 0; j < clusters[i].size; j++)
 			{
-				int point_idx = clusters[i].members[j];
+				int			point_idx = clusters[i].members[j];
+
 				cluster_assignments[point_idx] = c;
 				cluster_sizes[c]++;
 			}
@@ -1164,13 +1197,13 @@ hierarchical_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **err
 	/* Build metrics */
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json,
-		"{\"storage\":\"cpu\",\"n_clusters\":%d,\"linkage\":\"%s\",\"dim\":%d,\"n_samples\":%d}",
-		num_clusters, linkage, dim, nvec);
+					 "{\"storage\":\"cpu\",\"n_clusters\":%d,\"linkage\":\"%s\",\"dim\":%d,\"n_samples\":%d}",
+					 num_clusters, linkage, dim, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(metrics_json.data)));
+												 CStringGetDatum(metrics_json.data)));
 	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
 
-	state = (HierarchicalGpuModelState *)palloc0(sizeof(HierarchicalGpuModelState));
+	state = (HierarchicalGpuModelState *) palloc0(sizeof(HierarchicalGpuModelState));
 	state->model_blob = model_data;
 	state->metrics = metrics;
 	state->n_clusters = num_clusters;
@@ -1206,17 +1239,17 @@ hierarchical_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **err
 }
 
 static bool
-hierarchical_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
-	float *output, int output_dim, char **errstr)
+hierarchical_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
+						 float *output, int output_dim, char **errstr)
 {
-	const HierarchicalGpuModelState *state;
-	float **centers = NULL;
-	int n_clusters = 0;
-	int dim = 0;
-	char linkage[16];
-	int c;
-	double min_dist = DBL_MAX;
-	int best_cluster = -1;
+	const		HierarchicalGpuModelState *state;
+	float	  **centers = NULL;
+	int			n_clusters = 0;
+	int			dim = 0;
+	char		linkage[16];
+	int			c;
+	double		min_dist = DBL_MAX;
+	int			best_cluster = -1;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1241,7 +1274,7 @@ hierarchical_gpu_predict(const MLGpuModel *model, const float *input, int input_
 		return false;
 	}
 
-	state = (const HierarchicalGpuModelState *)model->backend_state;
+	state = (const HierarchicalGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 	{
 		if (errstr != NULL)
@@ -1250,7 +1283,7 @@ hierarchical_gpu_predict(const MLGpuModel *model, const float *input, int input_
 	}
 
 	if (hierarchical_model_deserialize_from_bytea(state->model_blob,
-		&centers, &n_clusters, &dim, linkage, sizeof(linkage)) != 0)
+												  &centers, &n_clusters, &dim, linkage, sizeof(linkage)) != 0)
 	{
 		if (errstr != NULL)
 			*errstr = pstrdup("hierarchical_gpu_predict: failed to deserialize");
@@ -1269,7 +1302,8 @@ hierarchical_gpu_predict(const MLGpuModel *model, const float *input, int input_
 
 	for (c = 0; c < n_clusters; c++)
 	{
-		double dist = sqrt(neurondb_l2_distance_squared(input, centers[c], dim));
+		double		dist = sqrt(neurondb_l2_distance_squared(input, centers[c], dim));
+
 		if (dist < min_dist)
 		{
 			min_dist = dist;
@@ -1277,7 +1311,7 @@ hierarchical_gpu_predict(const MLGpuModel *model, const float *input, int input_
 		}
 	}
 
-	output[0] = (float)best_cluster;
+	output[0] = (float) best_cluster;
 
 	for (c = 0; c < n_clusters; c++)
 		NDB_SAFE_PFREE_AND_NULL(centers[c]);
@@ -1287,11 +1321,11 @@ hierarchical_gpu_predict(const MLGpuModel *model, const float *input, int input_
 }
 
 static bool
-hierarchical_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
-	MLGpuMetrics *out, char **errstr)
+hierarchical_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
+						  MLGpuMetrics * out, char **errstr)
 {
-	const HierarchicalGpuModelState *state;
-	Jsonb *metrics_json;
+	const		HierarchicalGpuModelState *state;
+	Jsonb	   *metrics_json;
 	StringInfoData buf;
 
 	if (errstr != NULL)
@@ -1305,19 +1339,19 @@ hierarchical_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 		return false;
 	}
 
-	state = (const HierarchicalGpuModelState *)model->backend_state;
+	state = (const HierarchicalGpuModelState *) model->backend_state;
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-		"{\"algorithm\":\"hierarchical\",\"storage\":\"cpu\","
-		"\"n_clusters\":%d,\"linkage\":\"%s\",\"dim\":%d,\"n_samples\":%d}",
-		state->n_clusters > 0 ? state->n_clusters : 0,
-		state->linkage[0] ? state->linkage : "average",
-		state->dim > 0 ? state->dim : 0,
-		state->n_samples > 0 ? state->n_samples : 0);
+					 "{\"algorithm\":\"hierarchical\",\"storage\":\"cpu\","
+					 "\"n_clusters\":%d,\"linkage\":\"%s\",\"dim\":%d,\"n_samples\":%d}",
+					 state->n_clusters > 0 ? state->n_clusters : 0,
+					 state->linkage[0] ? state->linkage : "average",
+					 state->dim > 0 ? state->dim : 0,
+					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(buf.data)));
+													  CStringGetDatum(buf.data)));
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
 
 	if (out != NULL)
@@ -1327,12 +1361,12 @@ hierarchical_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 }
 
 static bool
-hierarchical_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
-	Jsonb **metadata_out, char **errstr)
+hierarchical_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
+						   Jsonb * *metadata_out, char **errstr)
 {
-	const HierarchicalGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
+	const		HierarchicalGpuModelState *state;
+	bytea	   *payload_copy;
+	int			payload_size;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1347,7 +1381,7 @@ hierarchical_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		return false;
 	}
 
-	state = (const HierarchicalGpuModelState *)model->backend_state;
+	state = (const HierarchicalGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 	{
 		if (errstr != NULL)
@@ -1356,7 +1390,7 @@ hierarchical_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 	}
 
 	payload_size = VARSIZE(state->model_blob);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, state->model_blob, payload_size);
 
 	if (payload_out != NULL)
@@ -1365,26 +1399,26 @@ hierarchical_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		NDB_SAFE_PFREE_AND_NULL(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
-		*metadata_out = (Jsonb *)PG_DETOAST_DATUM_COPY(
-			PointerGetDatum(state->metrics));
+		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
+														PointerGetDatum(state->metrics));
 
 	return true;
 }
 
 static bool
-hierarchical_gpu_deserialize(MLGpuModel *model, const bytea *payload,
-	const Jsonb *metadata, char **errstr)
+hierarchical_gpu_deserialize(MLGpuModel * model, const bytea * payload,
+							 const Jsonb * metadata, char **errstr)
 {
 	HierarchicalGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
-	float **centers = NULL;
-	int n_clusters = 0;
-	int dim = 0;
-	char linkage[16];
+	bytea	   *payload_copy;
+	int			payload_size;
+	float	  **centers = NULL;
+	int			n_clusters = 0;
+	int			dim = 0;
+	char		linkage[16];
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1396,11 +1430,11 @@ hierarchical_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 	}
 
 	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, payload, payload_size);
 
 	if (hierarchical_model_deserialize_from_bytea(payload_copy,
-		&centers, &n_clusters, &dim, linkage, sizeof(linkage)) != 0)
+												  &centers, &n_clusters, &dim, linkage, sizeof(linkage)) != 0)
 	{
 		NDB_SAFE_PFREE_AND_NULL(payload_copy);
 		if (errstr != NULL)
@@ -1412,7 +1446,7 @@ hierarchical_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 		NDB_SAFE_PFREE_AND_NULL(centers[c]);
 	NDB_SAFE_PFREE_AND_NULL(centers);
 
-	state = (HierarchicalGpuModelState *)palloc0(sizeof(HierarchicalGpuModelState));
+	state = (HierarchicalGpuModelState *) palloc0(sizeof(HierarchicalGpuModelState));
 	state->model_blob = payload_copy;
 	state->n_clusters = n_clusters;
 	state->dim = dim;
@@ -1421,25 +1455,28 @@ hierarchical_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 
 	if (metadata != NULL)
 	{
-		int metadata_size = VARSIZE(metadata);
-		Jsonb *metadata_copy = (Jsonb *)palloc(metadata_size);
+		int			metadata_size = VARSIZE(metadata);
+		Jsonb	   *metadata_copy = (Jsonb *) palloc(metadata_size);
+
 		memcpy(metadata_copy, metadata, metadata_size);
 		state->metrics = metadata_copy;
 
-		it = JsonbIteratorInit((JsonbContainer *)&metadata_copy->root);
+		it = JsonbIteratorInit((JsonbContainer *) & metadata_copy->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																		 NumericGetDatum(v.val.numeric)));
 				NDB_SAFE_PFREE_AND_NULL(key);
 			}
 		}
-	} else
+	}
+	else
 	{
 		state->metrics = NULL;
 	}
@@ -1455,7 +1492,7 @@ hierarchical_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 }
 
 static void
-hierarchical_gpu_destroy(MLGpuModel *model)
+hierarchical_gpu_destroy(MLGpuModel * model)
 {
 	HierarchicalGpuModelState *state;
 
@@ -1464,7 +1501,7 @@ hierarchical_gpu_destroy(MLGpuModel *model)
 
 	if (model->backend_state != NULL)
 	{
-		state = (HierarchicalGpuModelState *)model->backend_state;
+		state = (HierarchicalGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
 			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
 		if (state->metrics != NULL)
@@ -1494,6 +1531,7 @@ void
 neurondb_gpu_register_hierarchical_model(void)
 {
 	static bool registered = false;
+
 	if (registered)
 		return;
 	ndb_gpu_register_model_ops(&hierarchical_gpu_model_ops);

@@ -38,33 +38,33 @@
 
 typedef struct HnswMetaPageData
 {
-	uint32 magicNumber;
-	uint32 version;
+	uint32		magicNumber;
+	uint32		version;
 	BlockNumber entryPoint;
-	int entryLevel;
-	int maxLevel;
-	int16 m;
-	int16 efConstruction;
-	int16 efSearch;
-	float4 ml;
-	int64 insertedVectors;
-} HnswMetaPageData;
+	int			entryLevel;
+	int			maxLevel;
+	int16		m;
+	int16		efConstruction;
+	int16		efSearch;
+	float4		ml;
+	int64		insertedVectors;
+}			HnswMetaPageData;
 
-typedef HnswMetaPageData *HnswMetaPage;
+typedef HnswMetaPageData * HnswMetaPage;
 
 typedef struct HnswNodeData
 {
 	ItemPointerData heapPtr;
-	int level;
-	int16 dim;
-	int16 neighborCount[HNSW_MAX_LEVEL];
-	/* Followed by:
-	 *	float4 vector[dim];
-	 *	BlockNumber neighbors[level+1][M*2];
-	 */
-} HnswNodeData;
+	int			level;
+	int16		dim;
+	int16		neighborCount[HNSW_MAX_LEVEL];
 
-typedef HnswNodeData *HnswNode;
+	/*
+	 * Followed by: float4 vector[dim]; BlockNumber neighbors[level+1][M*2];
+	 */
+}			HnswNodeData;
+
+typedef HnswNodeData * HnswNode;
 
 #define HnswGetVector(node) \
 	((float4 *)((char *)(node) + MAXALIGN(sizeof(HnswNodeData))))
@@ -76,30 +76,31 @@ typedef HnswNodeData *HnswNode;
 
 /* Forward declarations */
 static BlockNumber hnswSearchLayerGreedy(Relation index,
-	BlockNumber entryPoint,
-	const float4 *query,
-	int dim,
-	int layer);
+										 BlockNumber entryPoint,
+										 const float4 * query,
+										 int dim,
+										 int layer);
 static void hnswSearchLayer0(Relation index,
-	BlockNumber entryPoint,
-	const float4 *query,
-	int dim,
-	int efSearch,
-	int k,
-	BlockNumber **results,
-	float4 **distances,
-	int *resultCount);
+							 BlockNumber entryPoint,
+							 const float4 * query,
+							 int dim,
+							 int efSearch,
+							 int k,
+							 BlockNumber * *results,
+							 float4 * *distances,
+							 int *resultCount);
 
 /* Compute L2 distance between two vectors */
 static float4
-compute_l2_distance(const float4 *vec1, const float4 *vec2, int dim)
+compute_l2_distance(const float4 * vec1, const float4 * vec2, int dim)
 {
-	float4 sum = 0.0f;
-	int i;
+	float4		sum = 0.0f;
+	int			i;
 
 	for (i = 0; i < dim; i++)
 	{
-		float4 diff = vec1[i] - vec2[i];
+		float4		diff = vec1[i] - vec2[i];
+
 		sum += diff * diff;
 	}
 	return sqrtf(sum);
@@ -111,8 +112,8 @@ compute_l2_distance(const float4 *vec1, const float4 *vec2, int dim)
 typedef struct HnswSearchElement
 {
 	BlockNumber block;
-	float4 distance;
-} HnswSearchElement;
+	float4		distance;
+}			HnswSearchElement;
 
 /*
  * Search state for HNSW traversal
@@ -120,34 +121,34 @@ typedef struct HnswSearchElement
 typedef struct HnswSearchState
 {
 	/* Search parameters */
-	const float4 *query;
-	int dim;
-	int efSearch;
-	int k;
+	const		float4 *query;
+	int			dim;
+	int			efSearch;
+	int			k;
 
 	/* Candidate sets */
-	HnswSearchElement *candidates; /* Min-heap of candidates */
-	int candidateCount;
-	int candidateCapacity;
+	HnswSearchElement *candidates;	/* Min-heap of candidates */
+	int			candidateCount;
+	int			candidateCapacity;
 
 	HnswSearchElement *visited; /* Visited nodes */
-	int visitedCount;
-	int visitedCapacity;
+	int			visitedCount;
+	int			visitedCapacity;
 
 	/* Result set */
 	HnswSearchElement *results; /* Top-k results */
-	int resultCount;
-} HnswSearchState;
+	int			resultCount;
+}			HnswSearchState;
 
 /*
  * Initialize search state
  */
 static HnswSearchState *
-hnswInitSearchState(const float4 *query, int dim, int efSearch, int k)
+hnswInitSearchState(const float4 * query, int dim, int efSearch, int k)
 {
 	HnswSearchState *state;
 
-	state = (HnswSearchState *)palloc0(sizeof(HnswSearchState));
+	state = (HnswSearchState *) palloc0(sizeof(HnswSearchState));
 	NDB_CHECK_ALLOC(state, "state");
 	state->query = query;
 	state->dim = dim;
@@ -155,19 +156,19 @@ hnswInitSearchState(const float4 *query, int dim, int efSearch, int k)
 	state->k = k;
 
 	state->candidateCapacity = efSearch * 2;
-	state->candidates = (HnswSearchElement *)palloc(
-		state->candidateCapacity * sizeof(HnswSearchElement));
+	state->candidates = (HnswSearchElement *) palloc(
+													 state->candidateCapacity * sizeof(HnswSearchElement));
 	NDB_CHECK_ALLOC(state->candidates, "state->candidates");
 	state->candidateCount = 0;
 
 	state->visitedCapacity = efSearch * 4;
-	state->visited = (HnswSearchElement *)palloc(
-		state->visitedCapacity * sizeof(HnswSearchElement));
+	state->visited = (HnswSearchElement *) palloc(
+												  state->visitedCapacity * sizeof(HnswSearchElement));
 	NDB_CHECK_ALLOC(state->visited, "state->visited");
 	state->visitedCount = 0;
 
 	state->results =
-		(HnswSearchElement *)palloc(k * sizeof(HnswSearchElement));
+		(HnswSearchElement *) palloc(k * sizeof(HnswSearchElement));
 	NDB_CHECK_ALLOC(state->results, "state->results");
 	state->resultCount = 0;
 
@@ -178,7 +179,7 @@ hnswInitSearchState(const float4 *query, int dim, int efSearch, int k)
  * Free search state
  */
 static void
-hnswFreeSearchState(HnswSearchState *state)
+hnswFreeSearchState(HnswSearchState * state)
 {
 	NDB_SAFE_PFREE_AND_NULL(state->candidates);
 	NDB_SAFE_PFREE_AND_NULL(state->visited);
@@ -190,9 +191,9 @@ hnswFreeSearchState(HnswSearchState *state)
  * Check if node has been visited
  */
 static bool
-hnswIsVisited(HnswSearchState *state, BlockNumber block)
+hnswIsVisited(HnswSearchState * state, BlockNumber block)
 {
-	int i;
+	int			i;
 
 	for (i = 0; i < state->visitedCount; i++)
 	{
@@ -206,13 +207,13 @@ hnswIsVisited(HnswSearchState *state, BlockNumber block)
  * Mark node as visited
  */
 static void
-hnswMarkVisited(HnswSearchState *state, BlockNumber block, float4 distance)
+hnswMarkVisited(HnswSearchState * state, BlockNumber block, float4 distance)
 {
 	if (state->visitedCount >= state->visitedCapacity)
 	{
 		state->visitedCapacity *= 2;
-		state->visited = (HnswSearchElement *)repalloc(state->visited,
-			state->visitedCapacity * sizeof(HnswSearchElement));
+		state->visited = (HnswSearchElement *) repalloc(state->visited,
+														state->visitedCapacity * sizeof(HnswSearchElement));
 	}
 
 	state->visited[state->visitedCount].block = block;
@@ -224,13 +225,13 @@ hnswMarkVisited(HnswSearchState *state, BlockNumber block, float4 distance)
  * Insert candidate into priority queue (min-heap by distance)
  */
 static void
-hnswInsertCandidate(HnswSearchState *state, BlockNumber block, float4 distance)
+hnswInsertCandidate(HnswSearchState * state, BlockNumber block, float4 distance)
 {
-	int i;
-	int parent;
+	int			i;
+	int			parent;
 
 	if (state->candidateCount >= state->candidateCapacity)
-		return; /* Queue full */
+		return;					/* Queue full */
 
 	/* Insert at end and bubble up */
 	i = state->candidateCount;
@@ -248,6 +249,7 @@ hnswInsertCandidate(HnswSearchState *state, BlockNumber block, float4 distance)
 		/* Swap with parent */
 		{
 			HnswSearchElement temp = state->candidates[i];
+
 			state->candidates[i] = state->candidates[parent];
 			state->candidates[parent] = temp;
 		}
@@ -259,12 +261,14 @@ hnswInsertCandidate(HnswSearchState *state, BlockNumber block, float4 distance)
  * Extract minimum candidate from priority queue
  */
 static bool
-hnswExtractMinCandidate(HnswSearchState *state,
-	BlockNumber *block,
-	float4 *distance)
+hnswExtractMinCandidate(HnswSearchState * state,
+						BlockNumber * block,
+						float4 * distance)
 {
-	int i;
-	int left, right, smallest;
+	int			i;
+	int			left,
+				right,
+				smallest;
 
 	if (state->candidateCount == 0)
 		return false;
@@ -288,12 +292,12 @@ hnswExtractMinCandidate(HnswSearchState *state,
 
 			if (left < state->candidateCount
 				&& state->candidates[left].distance
-					< state->candidates[smallest].distance)
+				< state->candidates[smallest].distance)
 				smallest = left;
 
 			if (right < state->candidateCount
 				&& state->candidates[right].distance
-					< state->candidates[smallest].distance)
+				< state->candidates[smallest].distance)
 				smallest = right;
 
 			if (smallest == i)
@@ -302,6 +306,7 @@ hnswExtractMinCandidate(HnswSearchState *state,
 			/* Swap with smallest child */
 			{
 				HnswSearchElement temp = state->candidates[i];
+
 				state->candidates[i] =
 					state->candidates[smallest];
 				state->candidates[smallest] = temp;
@@ -317,11 +322,11 @@ hnswExtractMinCandidate(HnswSearchState *state,
  * Add result to result set (maintains top-k by distance)
  */
 static void
-hnswAddResult(HnswSearchState *state, BlockNumber block, float4 distance)
+hnswAddResult(HnswSearchState * state, BlockNumber block, float4 distance)
 {
-	int i;
-	int worstIdx = 0;
-	float4 worstDist;
+	int			i;
+	int			worstIdx = 0;
+	float4		worstDist;
 
 	/* If result set not full, just add */
 	if (state->resultCount < state->k)
@@ -356,7 +361,7 @@ hnswAddResult(HnswSearchState *state, BlockNumber block, float4 distance)
  *
  * Implements the search_layer algorithm from the HNSW paper.
  * This is an internal helper function that performs multi-layer search.
- * 
+ *
  * Algorithm:
  * 1. Start at entry point at highest layer
  * 2. Greedy search through upper layers to find entry point for layer 0
@@ -364,21 +369,21 @@ hnswAddResult(HnswSearchState *state, BlockNumber block, float4 distance)
  */
 void
 hnsw_search_layer(Relation index,
-	BlockNumber entryPoint,
-	int entryLevel,
-	const float4 *query,
-	int dim,
-	int strategy,
-	int efSearch,
-	int k,
-	BlockNumber **results,
-	float4 **distances,
-	int *resultCount)
+				  BlockNumber entryPoint,
+				  int entryLevel,
+				  const float4 * query,
+				  int dim,
+				  int strategy,
+				  int efSearch,
+				  int k,
+				  BlockNumber * *results,
+				  float4 * *distances,
+				  int *resultCount)
 {
 	BlockNumber currentEntry = entryPoint;
-	int currentLevel = entryLevel;
-	Buffer metaBuffer;
-	Page metaPage;
+	int			currentLevel = entryLevel;
+	Buffer		metaBuffer;
+	Page		metaPage;
 	HnswMetaPage meta;
 
 	if (entryPoint == InvalidBlockNumber || entryLevel < 0)
@@ -393,15 +398,15 @@ hnsw_search_layer(Relation index,
 	if (entryPoint == InvalidBlockNumber)
 	{
 		metaBuffer = ReadBuffer(index, 0);
-  if (!BufferIsValid(metaBuffer))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(metaBuffer))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(metaBuffer, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuffer);
-		meta = (HnswMetaPage)PageGetContents(metaPage);
+		meta = (HnswMetaPage) PageGetContents(metaPage);
 
 		if (meta->entryPoint == InvalidBlockNumber)
 		{
@@ -421,29 +426,29 @@ hnsw_search_layer(Relation index,
 	while (currentLevel > 0)
 	{
 		currentEntry = hnswSearchLayerGreedy(index,
-			currentEntry,
-			query,
-			dim,
-			currentLevel);
+											 currentEntry,
+											 query,
+											 dim,
+											 currentLevel);
 		currentLevel--;
 	}
 
 	/* Step 2: Search at layer 0 with ef_search */
 	hnswSearchLayer0(index,
-		currentEntry,
-		query,
-		dim,
-		efSearch,
-		k,
-		results,
-		distances,
-		resultCount);
+					 currentEntry,
+					 query,
+					 dim,
+					 efSearch,
+					 k,
+					 results,
+					 distances,
+					 resultCount);
 
 	elog(DEBUG1,
-		"neurondb: HNSW search_layer completed: entry=%u, level=%d, results=%d",
-		currentEntry,
-		currentLevel,
-		*resultCount);
+		 "neurondb: HNSW search_layer completed: entry=%u, level=%d, results=%d",
+		 currentEntry,
+		 currentLevel,
+		 *resultCount);
 }
 
 /*
@@ -453,36 +458,36 @@ hnsw_search_layer(Relation index,
  */
 static BlockNumber
 hnswSearchLayerGreedy(Relation index,
-	BlockNumber entryPoint,
-	const float4 *query,
-	int dim,
-	int layer)
+					  BlockNumber entryPoint,
+					  const float4 * query,
+					  int dim,
+					  int layer)
 {
 	BlockNumber best = entryPoint;
-	bool changed = true;
+	bool		changed = true;
 
 	/* Greedy hill climbing */
 	while (changed)
 	{
-		Buffer buf;
-		Page page;
-		HnswNode node;
+		Buffer		buf;
+		Page		page;
+		HnswNode	node;
 		BlockNumber *neighbors;
-		int16 neighborCount;
-		float4 *nodeVector;
-		float4 bestDist;
-		int i;
+		int16		neighborCount;
+		float4	   *nodeVector;
+		float4		bestDist;
+		int			i;
 
 		changed = false;
 
 		/* Read current best node */
 		buf = ReadBuffer(index, best);
-  if (!BufferIsValid(buf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(buf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(buf, BUFFER_LOCK_SHARE);
 		page = BufferGetPage(buf);
 
@@ -492,8 +497,8 @@ hnswSearchLayerGreedy(Relation index,
 			break;
 		}
 
-		node = (HnswNode)PageGetItem(page,
-			PageGetItemId(page, FirstOffsetNumber));
+		node = (HnswNode) PageGetItem(page,
+									  PageGetItemId(page, FirstOffsetNumber));
 		nodeVector = HnswGetVector(node);
 		neighbors = HnswGetNeighbors(node, layer);
 		neighborCount = node->neighborCount[layer];
@@ -507,19 +512,19 @@ hnswSearchLayerGreedy(Relation index,
 
 			/* Read neighbor node */
 			{
-				Buffer neighborBuf;
-				Page neighborPage;
-				HnswNode neighborNode;
-				float4 *neighborVector;
-				float4 neighborDist;
+				Buffer		neighborBuf;
+				Page		neighborPage;
+				HnswNode	neighborNode;
+				float4	   *neighborVector;
+				float4		neighborDist;
 
 				neighborBuf = ReadBuffer(index, neighbors[i]);
-    if (!BufferIsValid(neighborBuf))
-    	{
-    		ereport(ERROR,
-    			(errcode(ERRCODE_INTERNAL_ERROR),
-    			 errmsg("neurondb: ReadBuffer failed for buffer")));
-    	}
+				if (!BufferIsValid(neighborBuf))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_INTERNAL_ERROR),
+							 errmsg("neurondb: ReadBuffer failed for buffer")));
+				}
 				LockBuffer(neighborBuf, BUFFER_LOCK_SHARE);
 				neighborPage = BufferGetPage(neighborBuf);
 
@@ -529,8 +534,8 @@ hnswSearchLayerGreedy(Relation index,
 					continue;
 				}
 
-				neighborNode = (HnswNode)PageGetItem(neighborPage,
-					PageGetItemId(neighborPage, FirstOffsetNumber));
+				neighborNode = (HnswNode) PageGetItem(neighborPage,
+													  PageGetItemId(neighborPage, FirstOffsetNumber));
 				neighborVector = HnswGetVector(neighborNode);
 				neighborDist = compute_l2_distance(query, neighborVector, dim);
 
@@ -550,9 +555,9 @@ hnswSearchLayerGreedy(Relation index,
 	}
 
 	elog(DEBUG1,
-		"neurondb: Greedy search at layer %d found block %u",
-		layer,
-		best);
+		 "neurondb: Greedy search at layer %d found block %u",
+		 layer,
+		 best);
 	return best;
 }
 
@@ -564,39 +569,40 @@ hnswSearchLayerGreedy(Relation index,
  */
 void
 hnswSearchLayer0(Relation index,
-	BlockNumber entryPoint,
-	const float4 *query,
-	int dim,
-	int efSearch,
-	int k,
-	BlockNumber **results,
-	float4 **distances,
-	int *resultCount)
+				 BlockNumber entryPoint,
+				 const float4 * query,
+				 int dim,
+				 int efSearch,
+				 int k,
+				 BlockNumber * *results,
+				 float4 * *distances,
+				 int *resultCount)
 {
 	HnswSearchState *state;
 	BlockNumber block;
-	float4 distance;
-	int i;
+	float4		distance;
+	int			i;
 
 	state = hnswInitSearchState(query, dim, efSearch, k);
 
 	/* Start with entry point */
 	hnswInsertCandidate(
-		state, entryPoint, 0.0); /* Distance would be computed */
+						state, entryPoint, 0.0);	/* Distance would be
+													 * computed */
 	hnswMarkVisited(state, entryPoint, 0.0);
 
 	/* Process candidates */
 	while (hnswExtractMinCandidate(state, &block, &distance))
 	{
-		Buffer buf;
-		Page page;
-		HnswNode node;
+		Buffer		buf;
+		Page		page;
+		HnswNode	node;
 		BlockNumber *neighbors;
-		int16 neighborCount;
-		float4 *nodeVector;
-		float4 neighborDist;
-		float4 furthestDist;
-		int j;
+		int16		neighborCount;
+		float4	   *nodeVector;
+		float4		neighborDist;
+		float4		furthestDist;
+		int			j;
 
 		/* Skip if distance already worse than kth result */
 		if (state->resultCount >= k
@@ -605,12 +611,12 @@ hnswSearchLayer0(Relation index,
 
 		/* Read current node */
 		buf = ReadBuffer(index, block);
-  if (!BufferIsValid(buf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(buf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(buf, BUFFER_LOCK_SHARE);
 		page = BufferGetPage(buf);
 
@@ -620,8 +626,8 @@ hnswSearchLayer0(Relation index,
 			continue;
 		}
 
-		node = (HnswNode)PageGetItem(page,
-			PageGetItemId(page, FirstOffsetNumber));
+		node = (HnswNode) PageGetItem(page,
+									  PageGetItemId(page, FirstOffsetNumber));
 		nodeVector = HnswGetVector(node);
 		neighbors = HnswGetNeighbors(node, 0);
 		neighborCount = node->neighborCount[0];
@@ -648,12 +654,12 @@ hnswSearchLayer0(Relation index,
 
 			/* Read neighbor node */
 			buf = ReadBuffer(index, neighbors[j]);
-   if (!BufferIsValid(buf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed for buffer")));
-   	}
+			if (!BufferIsValid(buf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed for buffer")));
+			}
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
 			page = BufferGetPage(buf);
 
@@ -663,8 +669,8 @@ hnswSearchLayer0(Relation index,
 				continue;
 			}
 
-			node = (HnswNode)PageGetItem(page,
-				PageGetItemId(page, FirstOffsetNumber));
+			node = (HnswNode) PageGetItem(page,
+										  PageGetItemId(page, FirstOffsetNumber));
 			nodeVector = HnswGetVector(node);
 			neighborDist = compute_l2_distance(query, nodeVector, dim);
 
@@ -687,10 +693,10 @@ hnswSearchLayer0(Relation index,
 	*resultCount = state->resultCount;
 	if (*resultCount > 0)
 	{
-		*results = (BlockNumber *)palloc(
-			*resultCount * sizeof(BlockNumber));
+		*results = (BlockNumber *) palloc(
+										  *resultCount * sizeof(BlockNumber));
 		NDB_CHECK_ALLOC(*results, "*results");
-		*distances = (float4 *)palloc(*resultCount * sizeof(float4));
+		*distances = (float4 *) palloc(*resultCount * sizeof(float4));
 		NDB_CHECK_ALLOC(*distances, "*distances");
 
 		for (i = 0; i < *resultCount; i++)
@@ -698,7 +704,8 @@ hnswSearchLayer0(Relation index,
 			(*results)[i] = state->results[i].block;
 			(*distances)[i] = state->results[i].distance;
 		}
-	} else
+	}
+	else
 	{
 		*results = NULL;
 		*distances = NULL;
@@ -707,6 +714,6 @@ hnswSearchLayer0(Relation index,
 	hnswFreeSearchState(state);
 
 	elog(DEBUG1,
-		"neurondb: HNSW layer-0 search returned %d results",
-		*resultCount);
+		 "neurondb: HNSW layer-0 search returned %d results",
+		 *resultCount);
 }

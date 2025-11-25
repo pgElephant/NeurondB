@@ -67,13 +67,13 @@ datumCopy(Datum value, int typlen, bool typbyval)
 int
 ndb_spi_execute_safe(const char *query, bool read_only, long tcount)
 {
-	int ret;
+	int			ret;
 	MemoryContext save_context;
 
 	if (query == NULL)
 	{
 		elog(ERROR,
-			"neurondb: ndb_spi_execute_safe: query cannot be NULL");
+			 "neurondb: ndb_spi_execute_safe: query cannot be NULL");
 		return -1;
 	}
 
@@ -81,12 +81,13 @@ ndb_spi_execute_safe(const char *query, bool read_only, long tcount)
 	/* If not connected, try to connect automatically */
 	if (SPI_processed == -1)
 	{
-		int connect_ret = SPI_connect();
+		int			connect_ret = SPI_connect();
+
 		if (connect_ret != SPI_OK_CONNECT)
 		{
 			elog(ERROR,
-				"neurondb: SPI not connected and SPI_connect() failed with return code %d",
-				connect_ret);
+				 "neurondb: SPI not connected and SPI_connect() failed with return code %d",
+				 connect_ret);
 			return -1;
 		}
 		elog(DEBUG1, "neurondb: ndb_spi_execute_safe auto-connected SPI");
@@ -99,8 +100,11 @@ ndb_spi_execute_safe(const char *query, bool read_only, long tcount)
 	PG_TRY();
 	{
 		ret = SPI_execute(query, read_only ? 1 : 0, tcount);
-		
-		/* If SPI_execute returns SPI_ERROR_UNCONNECTED, try to connect and retry once */
+
+		/*
+		 * If SPI_execute returns SPI_ERROR_UNCONNECTED, try to connect and
+		 * retry once
+		 */
 		if (ret == SPI_ERROR_UNCONNECTED)
 		{
 			elog(DEBUG1, "neurondb: SPI_execute returned SPI_ERROR_UNCONNECTED, attempting to connect and retry");
@@ -118,7 +122,7 @@ ndb_spi_execute_safe(const char *query, bool read_only, long tcount)
 						 errdetail("Query: %s", query ? query : "(NULL)")));
 			}
 		}
-		
+
 		/* Only check SPI_tuptable for SELECT queries that return result sets */
 		if (ret == SPI_OK_SELECT || ret == SPI_OK_SELINTO ||
 			ret == SPI_OK_INSERT_RETURNING || ret == SPI_OK_UPDATE_RETURNING ||
@@ -130,6 +134,7 @@ ndb_spi_execute_safe(const char *query, bool read_only, long tcount)
 		if (ret < 0)
 		{
 			const char *error_msg = "unknown SPI error";
+
 			switch (ret)
 			{
 				case SPI_ERROR_UNCONNECTED:
@@ -157,17 +162,18 @@ ndb_spi_execute_safe(const char *query, bool read_only, long tcount)
 	PG_CATCH();
 	{
 		/* Preserve the original error message instead of discarding it */
-		ErrorData *edata;
-		
+		ErrorData  *edata;
+
 		/*
-		 * Switch OUT of ErrorContext before CopyErrorData().
-		 * CopyErrorData() allocates memory and must NOT be called while
-		 * in ErrorContext, as that context is only for error reporting
-		 * and will be reset, causing memory leaks or corruption.
+		 * Switch OUT of ErrorContext before CopyErrorData(). CopyErrorData()
+		 * allocates memory and must NOT be called while in ErrorContext, as
+		 * that context is only for error reporting and will be reset, causing
+		 * memory leaks or corruption.
 		 */
 
 		/* Choose a safe context to switch to */
 		MemoryContext safe_context = save_context;
+
 		if (safe_context == ErrorContext || safe_context == NULL)
 		{
 			safe_context = TopMemoryContext;
@@ -184,9 +190,9 @@ ndb_spi_execute_safe(const char *query, bool read_only, long tcount)
 			ereport(ERROR,
 					(errcode(edata->sqlerrcode),
 					 errmsg("%s", edata->message ? edata->message : "SPI_execute failed"),
-					 errdetail("Query: %s%s", 
-						query ? query : "(NULL)",
-						edata->detail ? edata->detail : ""),
+					 errdetail("Query: %s%s",
+							   query ? query : "(NULL)",
+							   edata->detail ? edata->detail : ""),
 					 errhint("%s", edata->hint ? edata->hint : "")));
 			FreeErrorData(edata);
 		}
@@ -215,12 +221,12 @@ ndb_spi_execute_safe(const char *query, bool read_only, long tcount)
  */
 bool
 ndb_spi_execute_and_validate(const char *query,
-							  bool read_only,
-							  long tcount,
-							  int expected_ret,
-							  long min_rows)
+							 bool read_only,
+							 long tcount,
+							 int expected_ret,
+							 long min_rows)
 {
-	int ret;
+	int			ret;
 
 	ret = ndb_spi_execute_safe(query, read_only, tcount);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -254,19 +260,19 @@ ndb_spi_execute_and_validate(const char *query,
 		}
 
 		elog(ERROR,
-			"neurondb: SPI operation failed: %s (got %d, expected %d)",
-			err_msg,
-			ret,
-			expected_ret);
+			 "neurondb: SPI operation failed: %s (got %d, expected %d)",
+			 err_msg,
+			 ret,
+			 expected_ret);
 		return false;
 	}
 
 	if (min_rows >= 0 && SPI_processed < min_rows)
 	{
 		elog(ERROR,
-			"neurondb: query returned %ld rows, expected at least %ld",
-			(long)SPI_processed,
-			min_rows);
+			 "neurondb: query returned %ld rows, expected at least %ld",
+			 (long) SPI_processed,
+			 min_rows);
 		return false;
 	}
 
@@ -296,24 +302,24 @@ ndb_spi_execute_and_validate(const char *query,
  */
 bool
 ndb_spi_exec_select_one_row_safe(const char *query,
-								  bool read_only,
-								  MemoryContext dest_context,
-								  TupleDesc *out_tupdesc,
-								  Datum **out_datum,
-								  bool **out_isnull,
-								  int *out_natts)
+								 bool read_only,
+								 MemoryContext dest_context,
+								 TupleDesc *out_tupdesc,
+								 Datum **out_datum,
+								 bool **out_isnull,
+								 int *out_natts)
 {
 	MemoryContext oldcontext;
-	int ret;
-	int i;
-	TupleDesc temp_tupdesc;
-	int natts;
+	int			ret;
+	int			i;
+	TupleDesc	temp_tupdesc;
+	int			natts;
 
 	if (query == NULL)
 	{
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("neurondb: query cannot be NULL")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: query cannot be NULL")));
 		return false;
 	}
 
@@ -321,8 +327,8 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 	if (SPI_processed == -1)
 	{
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: SPI not connected - call SPI_connect() first")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI not connected - call SPI_connect() first")));
 		return false;
 	}
 
@@ -336,7 +342,7 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 	PG_TRY();
 	{
 		ret = ndb_spi_execute_safe(query, read_only, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 	}
 	PG_CATCH();
 	{
@@ -344,8 +350,8 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 			MemoryContextSwitchTo(oldcontext);
 		FlushErrorState();
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: SPI_execute failed for query: %s", query)));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_execute failed for query: %s", query)));
 		return false;
 	}
 	PG_END_TRY();
@@ -356,8 +362,8 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 		if (dest_context != CurrentMemoryContext)
 			MemoryContextSwitchTo(oldcontext);
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: SPI query did not return SPI_OK_SELECT (got %d)", ret)));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI query did not return SPI_OK_SELECT (got %d)", ret)));
 		return false;
 	}
 
@@ -367,9 +373,9 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 		if (dest_context != CurrentMemoryContext)
 			MemoryContextSwitchTo(oldcontext);
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-			 errmsg("neurondb: query returned %ld rows, expected exactly 1",
-				(long)SPI_processed)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("neurondb: query returned %ld rows, expected exactly 1",
+						(long) SPI_processed)));
 		return false;
 	}
 
@@ -380,8 +386,8 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 		if (dest_context != CurrentMemoryContext)
 			MemoryContextSwitchTo(oldcontext);
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: SPI_tuptable is NULL or invalid")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: SPI_tuptable is NULL or invalid")));
 		return false;
 	}
 
@@ -400,21 +406,21 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 	if (out_datum != NULL || out_isnull != NULL)
 	{
 		if (out_datum != NULL)
-			*out_datum = (Datum *)palloc(sizeof(Datum) * natts);
+			*out_datum = (Datum *) palloc(sizeof(Datum) * natts);
 		if (out_isnull != NULL)
-			*out_isnull = (bool *)palloc(sizeof(bool) * natts);
+			*out_isnull = (bool *) palloc(sizeof(bool) * natts);
 
 		for (i = 0; i < natts; i++)
 		{
-			Datum temp_datum;
-			bool temp_isnull;
-			Oid type;
+			Datum		temp_datum;
+			bool		temp_isnull;
+			Oid			type;
 
 			/* Get datum from SPI result (still in SPI context) */
 			temp_datum = SPI_getbinval(SPI_tuptable->vals[0],
-				temp_tupdesc,
-				i + 1, /* column numbers are 1-based */
-				&temp_isnull);
+									   temp_tupdesc,
+									   i + 1,	/* column numbers are 1-based */
+									   &temp_isnull);
 
 			/* Copy datum to destination context */
 			if (!temp_isnull)
@@ -422,13 +428,13 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 				type = SPI_gettypeid(temp_tupdesc, i + 1);
 				if (out_datum != NULL)
 					(*out_datum)[i] = datumCopy(temp_datum,
-						get_typlen(type),
-						get_typbyval(type));
+												get_typlen(type),
+												get_typbyval(type));
 			}
 			else
 			{
 				if (out_datum != NULL)
-					(*out_datum)[i] = (Datum)0;
+					(*out_datum)[i] = (Datum) 0;
 			}
 			if (out_isnull != NULL)
 				(*out_isnull)[i] = temp_isnull;
@@ -464,40 +470,40 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 bool
 ndb_spi_get_result_safe(int row_idx,
 						int col_idx,
-						Oid *out_type,
+						Oid * out_type,
 						Datum *out_datum,
 						bool *out_isnull)
 {
 	if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL)
 	{
 		elog(ERROR,
-			"neurondb: SPI_tuptable is NULL or invalid");
+			 "neurondb: SPI_tuptable is NULL or invalid");
 		return false;
 	}
 
 	if (row_idx < 0 || row_idx >= SPI_processed)
 	{
 		elog(ERROR,
-			"neurondb: row index %d out of bounds (SPI_processed=%ld)",
-			row_idx,
-			(long)SPI_processed);
+			 "neurondb: row index %d out of bounds (SPI_processed=%ld)",
+			 row_idx,
+			 (long) SPI_processed);
 		return false;
 	}
 
 	if (col_idx < 1 || col_idx > SPI_tuptable->tupdesc->natts)
 	{
 		elog(ERROR,
-			"neurondb: column index %d out of bounds (natts=%d)",
-			col_idx,
-			SPI_tuptable->tupdesc->natts);
+			 "neurondb: column index %d out of bounds (natts=%d)",
+			 col_idx,
+			 SPI_tuptable->tupdesc->natts);
 		return false;
 	}
 
 	if (SPI_tuptable->vals[row_idx] == NULL)
 	{
 		elog(ERROR,
-			"neurondb: SPI_tuptable->vals[%d] is NULL",
-			row_idx);
+			 "neurondb: SPI_tuptable->vals[%d] is NULL",
+			 row_idx);
 		return false;
 	}
 
@@ -507,9 +513,9 @@ ndb_spi_get_result_safe(int row_idx,
 	if (out_datum != NULL && out_isnull != NULL)
 	{
 		*out_datum = SPI_getbinval(SPI_tuptable->vals[row_idx],
-			SPI_tuptable->tupdesc,
-			col_idx,
-			out_isnull);
+								   SPI_tuptable->tupdesc,
+								   col_idx,
+								   out_isnull);
 	}
 
 	return true;
@@ -527,11 +533,11 @@ Jsonb *
 ndb_spi_get_jsonb_safe(int row_idx, int col_idx, MemoryContext dest_context)
 {
 	MemoryContext oldcontext;
-	Datum result_datum;
-	bool result_isnull;
-	Jsonb *temp_jsonb;
-	Jsonb *result = NULL;
-	bool success;
+	Datum		result_datum;
+	bool		result_isnull;
+	Jsonb	   *temp_jsonb;
+	Jsonb	   *result = NULL;
+	bool		success;
 
 	if (dest_context == NULL)
 		dest_context = CurrentMemoryContext;
@@ -557,7 +563,7 @@ ndb_spi_get_jsonb_safe(int row_idx, int col_idx, MemoryContext dest_context)
 	{
 		MemoryContextSwitchTo(oldcontext);
 		elog(ERROR,
-			"neurondb: SPI result datum pointer is NULL");
+			 "neurondb: SPI result datum pointer is NULL");
 		return NULL;
 	}
 
@@ -569,17 +575,16 @@ ndb_spi_get_jsonb_safe(int row_idx, int col_idx, MemoryContext dest_context)
 	{
 		MemoryContextSwitchTo(oldcontext);
 		elog(ERROR,
-			"neurondb: invalid JSONB structure in SPI result");
+			 "neurondb: invalid JSONB structure in SPI result");
 		return NULL;
 	}
 
 	/*
-	 * Copy JSONB to caller's context before SPI context cleanup.
-	 * SPI_finish() will delete the SPI memory context, so we must
-	 * copy the data out first.
+	 * Copy JSONB to caller's context before SPI context cleanup. SPI_finish()
+	 * will delete the SPI memory context, so we must copy the data out first.
 	 */
 	MemoryContextSwitchTo(dest_context);
-	result = (Jsonb *)PG_DETOAST_DATUM_COPY((Datum)temp_jsonb);
+	result = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
 
 	/* Validate copy */
 	if (result == NULL || VARSIZE(result) < sizeof(Jsonb))
@@ -588,7 +593,7 @@ ndb_spi_get_jsonb_safe(int row_idx, int col_idx, MemoryContext dest_context)
 			NDB_SAFE_PFREE_AND_NULL(result);
 		MemoryContextSwitchTo(oldcontext);
 		elog(ERROR,
-			"neurondb: JSONB copy validation failed");
+			 "neurondb: JSONB copy validation failed");
 		return NULL;
 	}
 
@@ -607,11 +612,11 @@ text *
 ndb_spi_get_text_safe(int row_idx, int col_idx, MemoryContext dest_context)
 {
 	MemoryContext oldcontext;
-	Datum result_datum;
-	bool result_isnull;
-	text *temp_text;
-	text *result = NULL;
-	bool success;
+	Datum		result_datum;
+	bool		result_isnull;
+	text	   *temp_text;
+	text	   *result = NULL;
+	bool		success;
 
 	if (dest_context == NULL)
 		dest_context = CurrentMemoryContext;
@@ -640,7 +645,7 @@ ndb_spi_get_text_safe(int row_idx, int col_idx, MemoryContext dest_context)
 	{
 		MemoryContextSwitchTo(oldcontext);
 		elog(ERROR,
-			"neurondb: text pointer is NULL in SPI result");
+			 "neurondb: text pointer is NULL in SPI result");
 		return NULL;
 	}
 
@@ -648,14 +653,14 @@ ndb_spi_get_text_safe(int row_idx, int col_idx, MemoryContext dest_context)
 	 * Copy text to caller's context before SPI context cleanup.
 	 */
 	MemoryContextSwitchTo(dest_context);
-	result = (text *)PG_DETOAST_DATUM_COPY((Datum)temp_text);
+	result = (text *) PG_DETOAST_DATUM_COPY((Datum) temp_text);
 
 	/* Validate copy */
 	if (result == NULL)
 	{
 		MemoryContextSwitchTo(oldcontext);
 		elog(ERROR,
-			"neurondb: text copy failed");
+			 "neurondb: text copy failed");
 		return NULL;
 	}
 
@@ -724,23 +729,23 @@ ndb_spi_cleanup_safe(MemoryContext oldcontext, MemoryContext callcontext, bool f
  * Returns number of rows processed, or -1 on error.
  */
 int
-ndb_spi_iterate_safe(bool (*callback)(int row_idx, HeapTuple tuple, TupleDesc tupdesc, void *userdata),
+ndb_spi_iterate_safe(bool (*callback) (int row_idx, HeapTuple tuple, TupleDesc tupdesc, void *userdata),
 					 void *userdata)
 {
-	int i;
-	int processed = 0;
+	int			i;
+	int			processed = 0;
 
 	if (callback == NULL)
 	{
 		elog(ERROR,
-			"neurondb: ndb_spi_iterate_safe: callback cannot be NULL");
+			 "neurondb: ndb_spi_iterate_safe: callback cannot be NULL");
 		return -1;
 	}
 
 	if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL)
 	{
 		elog(ERROR,
-			"neurondb: SPI_tuptable is NULL or invalid");
+			 "neurondb: SPI_tuptable is NULL or invalid");
 		return -1;
 	}
 
@@ -749,8 +754,8 @@ ndb_spi_iterate_safe(bool (*callback)(int row_idx, HeapTuple tuple, TupleDesc tu
 		if (SPI_tuptable->vals[i] == NULL)
 		{
 			elog(WARNING,
-				"neurondb: SPI_tuptable->vals[%d] is NULL, skipping",
-				i);
+				 "neurondb: SPI_tuptable->vals[%d] is NULL, skipping",
+				 i);
 			continue;
 		}
 
@@ -762,4 +767,3 @@ ndb_spi_iterate_safe(bool (*callback)(int row_idx, HeapTuple tuple, TupleDesc tu
 
 	return processed;
 }
-

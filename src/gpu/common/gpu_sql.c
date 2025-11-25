@@ -60,10 +60,10 @@ PG_FUNCTION_INFO_V1(vector_l2_distance_gpu);
 Datum
 vector_l2_distance_gpu(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	float4 result = -1.0f;
-	extern float4 l2_distance(Vector * a, Vector * b);
+	Vector	   *a;
+	Vector	   *b;
+	float4		result = -1.0f;
+	extern float4 l2_distance(Vector *a, Vector *b);
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -91,10 +91,10 @@ PG_FUNCTION_INFO_V1(vector_cosine_distance_gpu);
 Datum
 vector_cosine_distance_gpu(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	float4 result = -1.0f;
-	extern float4 cosine_distance(Vector * a, Vector * b);
+	Vector	   *a;
+	Vector	   *b;
+	float4		result = -1.0f;
+	extern float4 cosine_distance(Vector *a, Vector *b);
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -120,10 +120,10 @@ PG_FUNCTION_INFO_V1(vector_inner_product_gpu);
 Datum
 vector_inner_product_gpu(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	float4 result = -1.0f;
-	extern float4 inner_product_distance(Vector * a, Vector * b);
+	Vector	   *a;
+	Vector	   *b;
+	float4		result = -1.0f;
+	extern float4 inner_product_distance(Vector *a, Vector *b);
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -147,33 +147,35 @@ vector_inner_product_gpu(PG_FUNCTION_ARGS)
  */
 PG_FUNCTION_INFO_V1(vector_to_int8_gpu);
 Datum
-	vector_to_int8_gpu(PG_FUNCTION_ARGS)
+vector_to_int8_gpu(PG_FUNCTION_ARGS)
 {
-	Vector *v;
-	int count;
-	bytea *out;
+	Vector	   *v;
+	int			count;
+	bytea	   *out;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
 	count = v->dim;
 
-	out = (bytea *)palloc(VARHDRSZ + count);
+	out = (bytea *) palloc(VARHDRSZ + count);
 	SET_VARSIZE(out, VARHDRSZ + count);
 
 	if (ndb_gpu_can_run("quantize"))
 	{
 		neurondb_gpu_quantize_int8(
-			v->data, (int8 *)VARDATA(out), count);
-	} else
+								   v->data, (int8 *) VARDATA(out), count);
+	}
+	else
 	{
-		int i;
-		float maxv = 0.0f;
-		float scale;
-		int8 *quantized = (int8 *)VARDATA(out);
+		int			i;
+		float		maxv = 0.0f;
+		float		scale;
+		int8	   *quantized = (int8 *) VARDATA(out);
 
 		for (i = 0; i < count; i++)
 		{
-			float val = fabsf(v->data[i]);
+			float		val = fabsf(v->data[i]);
+
 			if (val > maxv)
 				maxv = val;
 		}
@@ -182,14 +184,14 @@ Datum
 
 		for (i = 0; i < count; i++)
 		{
-			float scaled = v->data[i] * scale;
+			float		scaled = v->data[i] * scale;
 
 			if (scaled > 127.0f)
 				scaled = 127.0f;
 			else if (scaled < -128.0f)
 				scaled = -128.0f;
 
-			quantized[i] = (int8)lrintf(scaled);
+			quantized[i] = (int8) lrintf(scaled);
 		}
 	}
 
@@ -203,42 +205,44 @@ Datum
  */
 PG_FUNCTION_INFO_V1(vector_to_fp16_gpu);
 Datum
-	vector_to_fp16_gpu(PG_FUNCTION_ARGS)
+vector_to_fp16_gpu(PG_FUNCTION_ARGS)
 {
-	Vector *v;
-	int count;
-	int out_bytes;
-	bytea *out;
+	Vector	   *v;
+	int			count;
+	int			out_bytes;
+	bytea	   *out;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
 	count = v->dim;
-	out_bytes = count * 2; /* 2 bytes per fp16 */
+	out_bytes = count * 2;		/* 2 bytes per fp16 */
 
-	out = (bytea *)palloc(VARHDRSZ + out_bytes);
+	out = (bytea *) palloc(VARHDRSZ + out_bytes);
 	SET_VARSIZE(out, VARHDRSZ + out_bytes);
 
 	if (ndb_gpu_can_run("quantize"))
 	{
 		neurondb_gpu_quantize_fp16(
-			v->data, (void *)VARDATA(out), count);
-	} else
+								   v->data, (void *) VARDATA(out), count);
+	}
+	else
 	{
-		int i;
-		uint16 *dst = (uint16 *)VARDATA(out);
+		int			i;
+		uint16	   *dst = (uint16 *) VARDATA(out);
 
 		for (i = 0; i < count; i++)
 		{
-			float f = v->data[i];
-			union {
-				float f;
-				uint32 u;
-			} in;
-			uint32 f32;
-			uint32 sign;
-			int32 exp;
-			uint32 mant;
-			uint16 out_fp16;
+			float		f = v->data[i];
+			union
+			{
+				float		f;
+				uint32		u;
+			}			in;
+			uint32		f32;
+			uint32		sign;
+			int32		exp;
+			uint32		mant;
+			uint16		out_fp16;
 
 			in.f = f;
 			f32 = in.u;
@@ -252,26 +256,30 @@ Datum
 			{
 				/* Signed zero */
 				out_fp16 = sign << 15;
-			} else if ((f32 & 0x7F800000) == 0x7F800000)
+			}
+			else if ((f32 & 0x7F800000) == 0x7F800000)
 			{
 				/* NaN or Inf */
 				if ((f32 & 0x007FFFFF) == 0)
 				{
 					out_fp16 = (sign << 15) | (0x1F << 10);
-				} else
+				}
+				else
 				{
 					out_fp16 = (sign << 15) | (0x1F << 10)
 						| ((mant >> 13) ? (mant >> 13)
-								: 1);
+						   : 1);
 				}
-			} else if (exp > 15)
+			}
+			else if (exp > 15)
 			{
 				/* Overflow => Inf */
 				out_fp16 = (sign << 15) | (0x1F << 10);
-			} else if (exp >= -14)
+			}
+			else if (exp >= -14)
 			{
-				uint32 new_exp = exp + 15;
-				uint32 mant_fp16 = mant >> 13;
+				uint32		new_exp = exp + 15;
+				uint32		mant_fp16 = mant >> 13;
 
 				/* Round-to-nearest/evens. */
 				if (((mant >> 12) & 1)
@@ -295,10 +303,12 @@ Datum
 				out_fp16 = (sign << 15)
 					| ((new_exp & 0x1F) << 10)
 					| (mant_fp16 & 0x3FF);
-			} else if (exp >= -24)
+			}
+			else if (exp >= -24)
 			{
-				uint32 shift = (uint32)(-14 - exp);
-				uint32 mantissa;
+				uint32		shift = (uint32) (-14 - exp);
+				uint32		mantissa;
+
 				if (shift > 24)
 					shift = 24;
 				mantissa = (mant | 0x800000) >> (shift + 13);
@@ -306,7 +316,8 @@ Datum
 				if (((mant | 0x800000) >> (shift + 12)) & 1)
 					mantissa += 1;
 				out_fp16 = (sign << 15) | mantissa;
-			} else
+			}
+			else
 			{
 				out_fp16 = (sign << 15);
 			}
@@ -325,19 +336,19 @@ Datum
  */
 PG_FUNCTION_INFO_V1(vector_to_binary_gpu);
 Datum
-	vector_to_binary_gpu(PG_FUNCTION_ARGS)
+vector_to_binary_gpu(PG_FUNCTION_ARGS)
 {
-	Vector *v;
-	int count;
-	int out_bytes;
-	bytea *out;
+	Vector	   *v;
+	int			count;
+	int			out_bytes;
+	bytea	   *out;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
 	count = v->dim;
 	out_bytes = (count + 7) / 8;
 
-	out = (bytea *)palloc(VARHDRSZ + out_bytes);
+	out = (bytea *) palloc(VARHDRSZ + out_bytes);
 	SET_VARSIZE(out, VARHDRSZ + out_bytes);
 
 	/* Clear all bits (avoid garbage bits in final bytes). */
@@ -346,11 +357,12 @@ Datum
 	if (ndb_gpu_can_run("quantize"))
 	{
 		neurondb_gpu_quantize_binary(
-			v->data, (uint8 *)VARDATA(out), count);
-	} else
+									 v->data, (uint8 *) VARDATA(out), count);
+	}
+	else
 	{
-		int i;
-		uint8 *dst = (uint8 *)VARDATA(out);
+		int			i;
+		uint8	   *dst = (uint8 *) VARDATA(out);
 
 		for (i = 0; i < count; i++)
 		{
@@ -372,16 +384,16 @@ PG_FUNCTION_INFO_V1(vector_to_uint8_gpu);
 Datum
 vector_to_uint8_gpu(PG_FUNCTION_ARGS)
 {
-	Vector *v;
-	VectorU8 *result;
-	bytea *out;
+	Vector	   *v;
+	VectorU8   *result;
+	bytea	   *out;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
 
 	/* For now, use CPU implementation (GPU kernels can be added later) */
 	result = quantize_vector_uint8(v);
-	out = (bytea *)result;
+	out = (bytea *) result;
 
 	PG_RETURN_BYTEA_P(out);
 }
@@ -395,16 +407,16 @@ PG_FUNCTION_INFO_V1(vector_to_ternary_gpu);
 Datum
 vector_to_ternary_gpu(PG_FUNCTION_ARGS)
 {
-	Vector *v;
+	Vector	   *v;
 	VectorTernary *result;
-	bytea *out;
+	bytea	   *out;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
 
 	/* For now, use CPU implementation (GPU kernels can be added later) */
 	result = quantize_vector_ternary(v);
-	out = (bytea *)result;
+	out = (bytea *) result;
 
 	PG_RETURN_BYTEA_P(out);
 }
@@ -418,16 +430,16 @@ PG_FUNCTION_INFO_V1(vector_to_int4_gpu);
 Datum
 vector_to_int4_gpu(PG_FUNCTION_ARGS)
 {
-	Vector *v;
-	VectorI4 *result;
-	bytea *out;
+	Vector	   *v;
+	VectorI4   *result;
+	bytea	   *out;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
 
 	/* For now, use CPU implementation (GPU kernels can be added later) */
 	result = quantize_vector_int4(v);
-	out = (bytea *)result;
+	out = (bytea *) result;
 
 	PG_RETURN_BYTEA_P(out);
 }
@@ -438,14 +450,14 @@ vector_to_int4_gpu(PG_FUNCTION_ARGS)
 static Oid
 get_index_oid_from_name(const char *index_name)
 {
-	Oid index_oid;
+	Oid			index_oid;
 
 	if (index_name == NULL || strlen(index_name) == 0)
 		return InvalidOid;
 
 	/* Use to_regclass to resolve index name */
 	index_oid = DatumGetObjectId(
-		DirectFunctionCall1(to_regclass, CStringGetDatum(index_name)));
+								 DirectFunctionCall1(to_regclass, CStringGetDatum(index_name)));
 
 	return index_oid;
 }
@@ -463,81 +475,81 @@ Datum
 hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *funcctx;
-	TupleDesc tupdesc;
+	TupleDesc	tupdesc;
 	MemoryContext oldcontext;
-	text *index_name_text;
-	char *index_name;
-	Vector *query;
-	int32 k;
-	int32 ef_search;
-	const ndb_gpu_backend *backend;
-	Relation indexRel = NULL;
-	Oid index_oid;
-	Buffer metaBuffer;
-	Page metaPage;
+	text	   *index_name_text;
+	char	   *index_name;
+	Vector	   *query;
+	int32		k;
+	int32		ef_search;
+	const		ndb_gpu_backend *backend;
+	Relation	indexRel = NULL;
+	Oid			index_oid;
+	Buffer		metaBuffer;
+	Page		metaPage;
 	typedef struct
 	{
-		uint32 magicNumber;
-		uint32 version;
+		uint32		magicNumber;
+		uint32		version;
 		BlockNumber entryPoint;
-		int entryLevel;
-		int maxLevel;
-		int16 m;
-		int16 efConstruction;
-		int16 efSearch;
-		float4 ml;
-		int64 insertedVectors;
-	} HnswMetaPageData;
+		int			entryLevel;
+		int			maxLevel;
+		int16		m;
+		int16		efConstruction;
+		int16		efSearch;
+		float4		ml;
+		int64		insertedVectors;
+	}			HnswMetaPageData;
 	typedef struct
 	{
 		ItemPointerData heapPtr;
-		int level;
-		int16 dim;
-		int16 neighborCount[16]; /* HNSW_MAX_LEVEL */
+		int			level;
+		int16		dim;
+		int16		neighborCount[16];	/* HNSW_MAX_LEVEL */
 		/* Followed by vector and neighbors, but we only need heapPtr */
-	} HnswNodeData;
-	typedef HnswNodeData *HnswNode;
+	}			HnswNodeData;
+	typedef HnswNodeData * HnswNode;
 	HnswMetaPageData *meta;
 	ItemPointerData *results = NULL;
-	float4 *distances = NULL;
-	int resultCount = 0;
+	float4	   *distances = NULL;
+	int			resultCount = 0;
 
 	if (SRF_IS_FIRSTCALL())
 	{
 		index_name_text = PG_GETARG_TEXT_P(0);
 		query = PG_GETARG_VECTOR_P(1);
-  NDB_CHECK_VECTOR_VALID(query);
+		NDB_CHECK_VECTOR_VALID(query);
 		k = PG_GETARG_INT32(2);
 		ef_search = PG_NARGS() > 3 ? PG_GETARG_INT32(3) : 100;
 
 		/* Validate inputs */
 		if (index_name_text == NULL)
 			ereport(ERROR,
-				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				 errmsg("hnsw_knn_search_gpu: index name cannot be NULL")));
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("hnsw_knn_search_gpu: index name cannot be NULL")));
 
 		index_name = text_to_cstring(index_name_text);
 
 		if (query == NULL)
 			ereport(ERROR,
-				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				 errmsg("hnsw_knn_search_gpu: query vector cannot be NULL")));
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("hnsw_knn_search_gpu: query vector cannot be NULL")));
 
 		if (k <= 0 || k > 10000)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("hnsw_knn_search_gpu: k must be between 1 and 10000")));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("hnsw_knn_search_gpu: k must be between 1 and 10000")));
 
 		if (ef_search <= 0 || ef_search > 10000)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("hnsw_knn_search_gpu: ef_search must be between 1 and 10000")));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("hnsw_knn_search_gpu: ef_search must be between 1 and 10000")));
 
 		if (query->dim <= 0 || query->dim > 10000)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("hnsw_knn_search_gpu: invalid query dimension %d",
-					query->dim)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("hnsw_knn_search_gpu: invalid query dimension %d",
+							query->dim)));
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
@@ -552,9 +564,9 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 		index_oid = get_index_oid_from_name(index_name);
 		if (!OidIsValid(index_oid))
 			ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("hnsw_knn_search_gpu: index \"%s\" does not exist",
-					index_name)));
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("hnsw_knn_search_gpu: index \"%s\" does not exist",
+							index_name)));
 
 		/* Open index relation */
 		indexRel = index_open(index_oid, AccessShareLock);
@@ -564,15 +576,15 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 
 		/* Read metadata page */
 		metaBuffer = ReadBuffer(indexRel, 0);
-  if (!BufferIsValid(metaBuffer))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(metaBuffer))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(metaBuffer, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuffer);
-		meta = (HnswMetaPageData *)PageGetContents(metaPage);
+		meta = (HnswMetaPageData *) PageGetContents(metaPage);
 
 		/* Validate magic number (HNSW uses 0x484E5357 = "HNSW") */
 		if (meta->magicNumber != 0x484E5357)
@@ -580,9 +592,9 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 			UnlockReleaseBuffer(metaBuffer);
 			index_close(indexRel, AccessShareLock);
 			ereport(ERROR,
-				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("hnsw_knn_search_gpu: \"%s\" is not an HNSW index",
-					index_name)));
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("hnsw_knn_search_gpu: \"%s\" is not an HNSW index",
+							index_name)));
 		}
 
 		/* Check GPU availability for distance calculations */
@@ -593,9 +605,9 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 			if (backend && backend->launch_l2_distance)
 			{
 				elog(DEBUG1,
-					"hnsw_knn_search_gpu: GPU acceleration available "
-					"for distance calculations (k=%d, ef_search=%d, dim=%d)",
-					k, ef_search, query->dim);
+					 "hnsw_knn_search_gpu: GPU acceleration available "
+					 "for distance calculations (k=%d, ef_search=%d, dim=%d)",
+					 k, ef_search, query->dim);
 			}
 		}
 
@@ -605,40 +617,44 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 		if (meta->entryPoint != InvalidBlockNumber)
 		{
 			/* Basic HNSW search: traverse graph from entry point */
-			/* This is a simplified implementation - full version would do multi-layer search */
+			/*
+			 * This is a simplified implementation - full version would do
+			 * multi-layer search
+			 */
 			BlockNumber current = meta->entryPoint;
 			BlockNumber *candidates = NULL;
-			float4 *candidateDists = NULL;
-			int candidateCount = 0;
-			int maxCandidates = ef_search > k ? ef_search : k * 2;
-			bool *visited = NULL;
-			int visitedSize = RelationGetNumberOfBlocks(indexRel);
-			int i, j;
+			float4	   *candidateDists = NULL;
+			int			candidateCount = 0;
+			int			maxCandidates = ef_search > k ? ef_search : k * 2;
+			bool	   *visited = NULL;
+			int			visitedSize = RelationGetNumberOfBlocks(indexRel);
+			int			i,
+						j;
 			extern float4 l2_distance(Vector *a, Vector *b);
 
-			candidates = (BlockNumber *)palloc(sizeof(BlockNumber) * maxCandidates);
-			candidateDists = (float4 *)palloc(sizeof(float4) * maxCandidates);
-			visited = (bool *)palloc0(sizeof(bool) * visitedSize);
+			candidates = (BlockNumber *) palloc(sizeof(BlockNumber) * maxCandidates);
+			candidateDists = (float4 *) palloc(sizeof(float4) * maxCandidates);
+			visited = (bool *) palloc0(sizeof(bool) * visitedSize);
 
 			/* Start from entry point */
 			{
-				Buffer nodeBuf;
-				Page nodePage;
-				HnswNode node;
-				float4 *nodeVector;
-				Vector *nodeVec;
-				float4 dist;
+				Buffer		nodeBuf;
+				Page		nodePage;
+				HnswNode	node;
+				float4	   *nodeVector;
+				Vector	   *nodeVec;
+				float4		dist;
 
 				nodeBuf = ReadBuffer(indexRel, current);
 				LockBuffer(nodeBuf, BUFFER_LOCK_SHARE);
 				nodePage = BufferGetPage(nodeBuf);
 				if (!PageIsEmpty(nodePage))
 				{
-					node = (HnswNode)PageGetItem(nodePage,
-						PageGetItemId(nodePage, FirstOffsetNumber));
-					nodeVector = (float4 *)((char *)(node) + MAXALIGN(sizeof(HnswNodeData)));
+					node = (HnswNode) PageGetItem(nodePage,
+												  PageGetItemId(nodePage, FirstOffsetNumber));
+					nodeVector = (float4 *) ((char *) (node) + MAXALIGN(sizeof(HnswNodeData)));
 
-					nodeVec = (Vector *)palloc(VARHDRSZ + sizeof(int16) * 2 + sizeof(float4) * node->dim);
+					nodeVec = (Vector *) palloc(VARHDRSZ + sizeof(int16) * 2 + sizeof(float4) * node->dim);
 					SET_VARSIZE(nodeVec, VARHDRSZ + sizeof(int16) * 2 + sizeof(float4) * node->dim);
 					nodeVec->dim = node->dim;
 					nodeVec->unused = 0;
@@ -655,47 +671,50 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 				UnlockReleaseBuffer(nodeBuf);
 			}
 
-			/* Expand candidates by following neighbors (simplified - only level 0) */
+			/*
+			 * Expand candidates by following neighbors (simplified - only
+			 * level 0)
+			 */
 			for (i = 0; i < candidateCount && candidateCount < maxCandidates; i++)
 			{
-				Buffer nodeBuf;
-				Page nodePage;
-				HnswNode node;
+				Buffer		nodeBuf;
+				Page		nodePage;
+				HnswNode	node;
 				BlockNumber *neighbors;
-				int16 neighborCount;
+				int16		neighborCount;
 
 				nodeBuf = ReadBuffer(indexRel, candidates[i]);
 				LockBuffer(nodeBuf, BUFFER_LOCK_SHARE);
 				nodePage = BufferGetPage(nodeBuf);
 				if (!PageIsEmpty(nodePage))
 				{
-					node = (HnswNode)PageGetItem(nodePage,
-						PageGetItemId(nodePage, FirstOffsetNumber));
-					neighbors = (BlockNumber *)((char *)(node) + MAXALIGN(sizeof(HnswNodeData))
-						+ node->dim * sizeof(float4));
+					node = (HnswNode) PageGetItem(nodePage,
+												  PageGetItemId(nodePage, FirstOffsetNumber));
+					neighbors = (BlockNumber *) ((char *) (node) + MAXALIGN(sizeof(HnswNodeData))
+												 + node->dim * sizeof(float4));
 					neighborCount = node->neighborCount[0];
 
 					for (j = 0; j < neighborCount && candidateCount < maxCandidates; j++)
 					{
 						if (neighbors[j] != InvalidBlockNumber && neighbors[j] < visitedSize && !visited[neighbors[j]])
 						{
-							Buffer neighborBuf;
-							Page neighborPage;
-							HnswNode neighbor;
-							float4 *neighborVector;
-							Vector *neighborVec;
-							float4 dist;
+							Buffer		neighborBuf;
+							Page		neighborPage;
+							HnswNode	neighbor;
+							float4	   *neighborVector;
+							Vector	   *neighborVec;
+							float4		dist;
 
 							neighborBuf = ReadBuffer(indexRel, neighbors[j]);
 							LockBuffer(neighborBuf, BUFFER_LOCK_SHARE);
 							neighborPage = BufferGetPage(neighborBuf);
 							if (!PageIsEmpty(neighborPage))
 							{
-								neighbor = (HnswNode)PageGetItem(neighborPage,
-									PageGetItemId(neighborPage, FirstOffsetNumber));
-								neighborVector = (float4 *)((char *)(neighbor) + MAXALIGN(sizeof(HnswNodeData)));
+								neighbor = (HnswNode) PageGetItem(neighborPage,
+																  PageGetItemId(neighborPage, FirstOffsetNumber));
+								neighborVector = (float4 *) ((char *) (neighbor) + MAXALIGN(sizeof(HnswNodeData)));
 
-								neighborVec = (Vector *)palloc(VARHDRSZ + sizeof(int16) * 2 + sizeof(float4) * neighbor->dim);
+								neighborVec = (Vector *) palloc(VARHDRSZ + sizeof(int16) * 2 + sizeof(float4) * neighbor->dim);
 								SET_VARSIZE(neighborVec, VARHDRSZ + sizeof(int16) * 2 + sizeof(float4) * neighbor->dim);
 								neighborVec->dim = neighbor->dim;
 								neighborVec->unused = 0;
@@ -720,10 +739,12 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 			if (candidateCount > 0)
 			{
 				/* Simple selection sort for top-k */
-				int *topKIndices = (int *)palloc(sizeof(int) * k);
-				int topKCount = candidateCount < k ? candidateCount : k;
-				int l, m, minIdx;
-				float4 minDist;
+				int		   *topKIndices = (int *) palloc(sizeof(int) * k);
+				int			topKCount = candidateCount < k ? candidateCount : k;
+				int			l,
+							m,
+							minIdx;
+				float4		minDist;
 
 				for (l = 0; l < topKCount; l++)
 				{
@@ -740,7 +761,8 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 					if (minIdx != l)
 					{
 						BlockNumber tempBlk = candidates[l];
-						float4 tempDist = candidateDists[l];
+						float4		tempDist = candidateDists[l];
+
 						candidates[l] = candidates[minIdx];
 						candidateDists[l] = candidateDists[minIdx];
 						candidates[minIdx] = tempBlk;
@@ -751,22 +773,22 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 
 				/* Convert to results */
 				resultCount = topKCount;
-				results = (ItemPointerData *)palloc(sizeof(ItemPointerData) * resultCount);
-				distances = (float4 *)palloc(sizeof(float4) * resultCount);
+				results = (ItemPointerData *) palloc(sizeof(ItemPointerData) * resultCount);
+				distances = (float4 *) palloc(sizeof(float4) * resultCount);
 
 				for (i = 0; i < resultCount; i++)
 				{
-					Buffer resultBuf;
-					Page resultPage;
-					HnswNode resultNode;
+					Buffer		resultBuf;
+					Page		resultPage;
+					HnswNode	resultNode;
 
 					resultBuf = ReadBuffer(indexRel, candidates[topKIndices[i]]);
 					LockBuffer(resultBuf, BUFFER_LOCK_SHARE);
 					resultPage = BufferGetPage(resultBuf);
 					if (!PageIsEmpty(resultPage))
 					{
-						resultNode = (HnswNode)PageGetItem(resultPage,
-							PageGetItemId(resultPage, FirstOffsetNumber));
+						resultNode = (HnswNode) PageGetItem(resultPage,
+															PageGetItemId(resultPage, FirstOffsetNumber));
 						results[i] = resultNode->heapPtr;
 						distances[i] = candidateDists[topKIndices[i]];
 					}
@@ -781,9 +803,10 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 			NDB_SAFE_PFREE_AND_NULL(visited);
 
 			elog(DEBUG1,
-				"hnsw_knn_search_gpu: Completed graph traversal, returning %d result(s)",
-				resultCount);
-		} else
+				 "hnsw_knn_search_gpu: Completed graph traversal, returning %d result(s)",
+				 resultCount);
+		}
+		else
 		{
 			results = NULL;
 			distances = NULL;
@@ -800,20 +823,21 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 			typedef struct
 			{
 				ItemPointerData *results;
-				float4 *distances;
-				int count;
-			} HnswSearchResults;
+				float4	   *distances;
+				int			count;
+			}			HnswSearchResults;
 			HnswSearchResults *searchResults;
 
 			funcctx->max_calls = resultCount;
 			if (resultCount > 0)
 			{
-				searchResults = (HnswSearchResults *)palloc(sizeof(HnswSearchResults));
+				searchResults = (HnswSearchResults *) palloc(sizeof(HnswSearchResults));
 				searchResults->results = results;
 				searchResults->distances = distances;
 				searchResults->count = resultCount;
 				funcctx->user_fctx = searchResults;
-			} else
+			}
+			else
 			{
 				funcctx->user_fctx = NULL;
 				if (results)
@@ -832,21 +856,24 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 		typedef struct
 		{
 			ItemPointerData *results;
-			float4 *distances;
-			int count;
-		} HnswSearchResults;
-		HnswSearchResults *searchResults = (HnswSearchResults *)funcctx->user_fctx;
+			float4	   *distances;
+			int			count;
+		}			HnswSearchResults;
+		HnswSearchResults *searchResults = (HnswSearchResults *) funcctx->user_fctx;
 
 		if (searchResults != NULL)
 		{
 			/* Return next result */
-			HeapTuple tuple;
-			Datum values[2];
-			bool nulls[2] = { false, false };
+			HeapTuple	tuple;
+			Datum		values[2];
+			bool		nulls[2] = {false, false};
 			ItemPointerData *tid = &searchResults->results[funcctx->call_cntr];
 
-			/* Return heap TID block number as ID (could also return offset or full TID) */
-			values[0] = Int64GetDatum((int64)ItemPointerGetBlockNumber(tid));
+			/*
+			 * Return heap TID block number as ID (could also return offset or
+			 * full TID)
+			 */
+			values[0] = Int64GetDatum((int64) ItemPointerGetBlockNumber(tid));
 			values[1] = Float4GetDatum(searchResults->distances[funcctx->call_cntr]);
 			tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
 
@@ -871,68 +898,69 @@ ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *funcctx;
 	ItemPointerData *results = NULL;
-	float4 *distances = NULL;
-	int resultCount = 0;
+	float4	   *distances = NULL;
+	int			resultCount = 0;
 
 	if (SRF_IS_FIRSTCALL())
 	{
-		TupleDesc tupdesc;
+		TupleDesc	tupdesc;
 		MemoryContext oldcontext;
-		text *index_name_text;
-		char *index_name;
-		Vector *query;
-		int32 k;
-		int32 nprobe;
-		const ndb_gpu_backend *backend;
-		Relation indexRel = NULL;
-		Oid index_oid;
-		Buffer metaBuffer = InvalidBuffer;
-		Page metaPage;
+		text	   *index_name_text;
+		char	   *index_name;
+		Vector	   *query;
+		int32		k;
+		int32		nprobe;
+		const		ndb_gpu_backend *backend;
+		Relation	indexRel = NULL;
+		Oid			index_oid;
+		Buffer		metaBuffer = InvalidBuffer;
+		Page		metaPage;
 		typedef struct
 		{
-			uint32 magicNumber;
-			uint32 version;
-			int nlists;
-			int nprobe;
-			int dim;
+			uint32		magicNumber;
+			uint32		version;
+			int			nlists;
+			int			nprobe;
+			int			dim;
 			BlockNumber centroidsBlock;
-			int64 insertedVectors;
-		} IvfMetaPageData;
+			int64		insertedVectors;
+		}			IvfMetaPageData;
 		IvfMetaPageData *meta;
+
 		index_name_text = PG_GETARG_TEXT_P(0);
 		query = PG_GETARG_VECTOR_P(1);
-  NDB_CHECK_VECTOR_VALID(query);
+		NDB_CHECK_VECTOR_VALID(query);
 		k = PG_GETARG_INT32(2);
 		nprobe = PG_NARGS() > 3 ? PG_GETARG_INT32(3) : 10;
 
 		/* Validate inputs */
 		if (index_name_text == NULL)
 			ereport(ERROR,
-				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				 errmsg("ivf_knn_search_gpu: index name cannot be NULL")));
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("ivf_knn_search_gpu: index name cannot be NULL")));
 
 		index_name = text_to_cstring(index_name_text);
 
 		if (query == NULL)
 			ereport(ERROR,
-				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				 errmsg("ivf_knn_search_gpu: query vector cannot be NULL")));
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("ivf_knn_search_gpu: query vector cannot be NULL")));
 
 		if (k <= 0 || k > 10000)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("ivf_knn_search_gpu: k must be between 1 and 10000")));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("ivf_knn_search_gpu: k must be between 1 and 10000")));
 
 		if (nprobe <= 0 || nprobe > 1000)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("ivf_knn_search_gpu: nprobe must be between 1 and 1000")));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("ivf_knn_search_gpu: nprobe must be between 1 and 1000")));
 
 		if (query->dim <= 0 || query->dim > 10000)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("ivf_knn_search_gpu: invalid query dimension %d",
-					query->dim)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("ivf_knn_search_gpu: invalid query dimension %d",
+							query->dim)));
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
@@ -947,24 +975,24 @@ ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 		index_oid = get_index_oid_from_name(index_name);
 		if (!OidIsValid(index_oid))
 			ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("ivf_knn_search_gpu: index \"%s\" does not exist",
-					index_name)));
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("ivf_knn_search_gpu: index \"%s\" does not exist",
+							index_name)));
 
 		/* Open index relation */
 		indexRel = index_open(index_oid, AccessShareLock);
 
 		/* Read metadata page */
 		metaBuffer = ReadBuffer(indexRel, 0);
-  if (!BufferIsValid(metaBuffer))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(metaBuffer))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(metaBuffer, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuffer);
-		meta = (IvfMetaPageData *)PageGetContents(metaPage);
+		meta = (IvfMetaPageData *) PageGetContents(metaPage);
 
 		/* Validate magic number (IVF uses 0x49564646 = "IVFF") */
 		if (meta->magicNumber != 0x49564646)
@@ -972,9 +1000,9 @@ ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 			UnlockReleaseBuffer(metaBuffer);
 			index_close(indexRel, AccessShareLock);
 			ereport(ERROR,
-				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("ivf_knn_search_gpu: \"%s\" is not an IVF index",
-					index_name)));
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("ivf_knn_search_gpu: \"%s\" is not an IVF index",
+							index_name)));
 		}
 
 		/* Check GPU availability for distance calculations */
@@ -985,19 +1013,19 @@ ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 			if (backend && backend->launch_l2_distance)
 			{
 				elog(DEBUG1,
-					"ivf_knn_search_gpu: GPU acceleration available "
-					"for distance calculations (k=%d, nprobe=%d, dim=%d)",
-					k, nprobe, query->dim);
+					 "ivf_knn_search_gpu: GPU acceleration available "
+					 "for distance calculations (k=%d, nprobe=%d, dim=%d)",
+					 k, nprobe, query->dim);
 			}
 		}
 
 		/* Perform IVF search */
-		/* Full implementation would:
-		 * 1. Load cluster centroids to GPU memory
-		 * 2. Select nprobe closest clusters on GPU (or CPU fallback)
-		 * 3. Load candidate vectors from selected clusters to GPU
-		 * 4. Compute distances on GPU for all candidates
-		 * 5. Return top-k results
+
+		/*
+		 * Full implementation would: 1. Load cluster centroids to GPU memory
+		 * 2. Select nprobe closest clusters on GPU (or CPU fallback) 3. Load
+		 * candidate vectors from selected clusters to GPU 4. Compute
+		 * distances on GPU for all candidates 5. Return top-k results
 		 *
 		 * For now, return error indicating full implementation needed.
 		 */
@@ -1006,11 +1034,11 @@ ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 			UnlockReleaseBuffer(metaBuffer);
 			index_close(indexRel, AccessShareLock);
 			ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("ivf_knn_search_gpu: Full IVF GPU search "
-						"implementation not yet available"),
-					errhint("Use CPU-based IVF search or implement full "
-						"GPU cluster selection and distance computation")));
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("ivf_knn_search_gpu: Full IVF GPU search "
+							"implementation not yet available"),
+					 errhint("Use CPU-based IVF search or implement full "
+							 "GPU cluster selection and distance computation")));
 		}
 		else
 		{
@@ -1031,20 +1059,21 @@ ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 			typedef struct
 			{
 				ItemPointerData *results;
-				float4 *distances;
-				int count;
-			} IvfSearchResults;
+				float4	   *distances;
+				int			count;
+			}			IvfSearchResults;
 			IvfSearchResults *searchResults;
 
 			funcctx->max_calls = resultCount;
 			if (resultCount > 0)
 			{
-				searchResults = (IvfSearchResults *)palloc(sizeof(IvfSearchResults));
+				searchResults = (IvfSearchResults *) palloc(sizeof(IvfSearchResults));
 				searchResults->results = results;
 				searchResults->distances = distances;
 				searchResults->count = resultCount;
 				funcctx->user_fctx = searchResults;
-			} else
+			}
+			else
 			{
 				funcctx->user_fctx = NULL;
 				if (results)
@@ -1062,22 +1091,25 @@ ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 		typedef struct
 		{
 			ItemPointerData *results;
-			float4 *distances;
-			int count;
-		} IvfSearchResults;
-		IvfSearchResults *searchResults = (IvfSearchResults *)funcctx->user_fctx;
+			float4	   *distances;
+			int			count;
+		}			IvfSearchResults;
+		IvfSearchResults *searchResults = (IvfSearchResults *) funcctx->user_fctx;
 
 		if (searchResults != NULL)
 		{
 			/* Return next result */
-			HeapTuple tuple;
-			Datum values[2];
-			bool nulls[2] = { false, false };
+			HeapTuple	tuple;
+			Datum		values[2];
+			bool		nulls[2] = {false, false};
 			ItemPointerData *tid = &searchResults->results[funcctx->call_cntr];
 
-			/* Return heap TID block number as ID (could also return offset or full TID) */
+			/*
+			 * Return heap TID block number as ID (could also return offset or
+			 * full TID)
+			 */
 			if (ItemPointerIsValid(tid))
-				values[0] = Int64GetDatum((int64)ItemPointerGetBlockNumber(tid));
+				values[0] = Int64GetDatum((int64) ItemPointerGetBlockNumber(tid));
 			else
 				values[0] = Int64GetDatum(0);
 			values[1] = Float4GetDatum(searchResults->distances[funcctx->call_cntr]);

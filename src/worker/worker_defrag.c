@@ -55,8 +55,8 @@
 #include "neurondb_safe_memory.h"
 
 /* Defrag configuration parameters (GUCs; see also neurandefrag_init_guc) */
-static int neurandefrag_naptime = 300000;
-static int neurandefrag_compact_threshold = 10000;
+static int	neurandefrag_naptime = 300000;
+static int	neurandefrag_compact_threshold = 10000;
 static double neurandefrag_fragmentation_threshold = 0.3;
 static bool neurandefrag_enabled = true;
 static char *neurandefrag_maintenance_window = "02:00-04:00";
@@ -64,19 +64,19 @@ static char *neurandefrag_maintenance_window = "02:00-04:00";
 /* Shared state structure for defrag worker, lives in shmem */
 typedef struct NeurandefragSharedState
 {
-	LWLock *lock;
-	int64 compactions_done;
-	int64 edges_cleaned;
-	int64 tombstones_pruned;
-	int64 rebalances_done;
+	LWLock	   *lock;
+	int64		compactions_done;
+	int64		edges_cleaned;
+	int64		tombstones_pruned;
+	int64		rebalances_done;
 	TimestampTz last_heartbeat;
 	TimestampTz last_full_rebuild;
-	pid_t worker_pid;
-	bool in_maintenance_window;
-} NeurandefragSharedState;
+	pid_t		worker_pid;
+	bool		in_maintenance_window;
+}			NeurandefragSharedState;
 
 /* Pointer to shared memory state */
-static NeurandefragSharedState *neurandefrag_state = NULL;
+static NeurandefragSharedState * neurandefrag_state = NULL;
 
 /* Exported worker entrypoint */
 PGDLLEXPORT void neurandefrag_main(Datum main_arg);
@@ -92,10 +92,10 @@ PG_FUNCTION_INFO_V1(neurandefrag_run);
 Datum
 neurandefrag_run(PG_FUNCTION_ARGS)
 {
-	int ret;
+	int			ret;
 	StringInfoData query;
-	int n_indexes = 0;
-	bool success = false;
+	int			n_indexes = 0;
+	bool		success = false;
 
 	elog(DEBUG1, "neurondb: neurandefrag_run invoked");
 
@@ -109,13 +109,13 @@ neurandefrag_run(PG_FUNCTION_ARGS)
 	/* Find HNSW indexes that may need defragmentation */
 	initStringInfo(&query);
 	appendStringInfo(&query,
-		"SELECT c.oid, c.relname, n.nspname "
-		"FROM pg_class c "
-		"JOIN pg_namespace n ON c.relnamespace = n.oid "
-		"JOIN pg_am a ON c.relam = a.oid "
-		"WHERE a.amname = 'hnsw' "
-		"AND c.relkind = 'i' "
-		"AND n.nspname NOT IN ('pg_catalog', 'information_schema')");
+					 "SELECT c.oid, c.relname, n.nspname "
+					 "FROM pg_class c "
+					 "JOIN pg_namespace n ON c.relnamespace = n.oid "
+					 "JOIN pg_am a ON c.relam = a.oid "
+					 "WHERE a.amname = 'hnsw' "
+					 "AND c.relkind = 'i' "
+					 "AND n.nspname NOT IN ('pg_catalog', 'information_schema')");
 
 	ret = ndb_spi_execute_safe(query.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
@@ -123,22 +123,22 @@ neurandefrag_run(PG_FUNCTION_ARGS)
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		int i;
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
+		int			i;
+		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
 
 		n_indexes = SPI_processed;
 		elog(DEBUG1,
-			"neurondb: neurandefrag_run: found %d HNSW indexes to check",
-			n_indexes);
+			 "neurondb: neurandefrag_run: found %d HNSW indexes to check",
+			 n_indexes);
 
 		/* For each index, check fragmentation and reorganize if needed */
 		for (i = 0; i < n_indexes; i++)
 		{
-			HeapTuple tuple = SPI_tuptable->vals[i];
-			Datum oid_datum;
-			bool isnull;
-			Oid index_oid;
-			Relation index_rel;
+			HeapTuple	tuple = SPI_tuptable->vals[i];
+			Datum		oid_datum;
+			bool		isnull;
+			Oid			index_oid;
+			Relation	index_rel;
 			BlockNumber nblocks;
 
 			oid_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
@@ -156,22 +156,21 @@ neurandefrag_run(PG_FUNCTION_ARGS)
 			if (nblocks > 0)
 			{
 				/* Basic defragmentation: update statistics */
-				/* Full defragmentation would require:
-				 * 1. Reading all index pages
-				 * 2. Reorganizing nodes for better locality
-				 * 3. Rewriting pages in optimal order
-				 * 4. Updating index metadata
+				/*
+				 * Full defragmentation would require: 1. Reading all index
+				 * pages 2. Reorganizing nodes for better locality 3.
+				 * Rewriting pages in optimal order 4. Updating index metadata
 				 */
-			elog(DEBUG1,
-				"neurondb: neurandefrag_run: index %u has %u blocks",
-				index_oid,
-				nblocks);
+				elog(DEBUG1,
+					 "neurondb: neurandefrag_run: index %u has %u blocks",
+					 index_oid,
+					 nblocks);
 
-			/* Update index statistics */
-			/* Note: vacuum_one_index is not available in PostgreSQL 18+ */
-			/* Index statistics will be updated on next VACUUM */
+				/* Update index statistics */
+				/* Note: vacuum_one_index is not available in PostgreSQL 18+ */
+				/* Index statistics will be updated on next VACUUM */
 
-			success = true;
+				success = true;
 			}
 
 			index_close(index_rel, AccessShareLock);
@@ -183,20 +182,23 @@ neurandefrag_run(PG_FUNCTION_ARGS)
 	if (success)
 	{
 		elog(INFO,
-			"neurondb: neurandefrag_run: completed defragmentation check on %d indexes",
-			n_indexes);
+			 "neurondb: neurandefrag_run: completed defragmentation check on %d indexes",
+			 n_indexes);
 		PG_RETURN_BOOL(true);
-	} else
+	}
+	else
 	{
 		PG_RETURN_BOOL(false);
 	}
 }
 
 /* SIGTERM: request orderly shutdown */
-static void __attribute__((unused))
+static void
+__attribute__((unused))
 neurandefrag_sigterm(SIGNAL_ARGS)
 {
-	int save_errno = errno;
+	int			save_errno = errno;
+
 	got_sigterm = 1;
 	if (MyLatch)
 		SetLatch(MyLatch);
@@ -204,10 +206,12 @@ neurandefrag_sigterm(SIGNAL_ARGS)
 }
 
 /* SIGHUP: reload config */
-static void __attribute__((unused))
+static void
+__attribute__((unused))
 neurandefrag_sighup(SIGNAL_ARGS)
 {
-	int save_errno = errno;
+	int			save_errno = errno;
+
 	got_sighup = 1;
 	if (MyLatch)
 		SetLatch(MyLatch);
@@ -215,7 +219,8 @@ neurandefrag_sighup(SIGNAL_ARGS)
 }
 
 /* SIGSEGV handler: try to recover from crash in worker logic */
-static void __attribute__((unused))
+static void
+__attribute__((unused))
 neurandefrag_segv_handler(int signum)
 {
 	if (segv_recursed)
@@ -227,8 +232,8 @@ neurandefrag_segv_handler(int signum)
 	}
 	segv_recursed = 1;
 	elog(LOG,
-		"neurondb: neurandefrag worker caught SIGSEGV, recovering via "
-		"longjmp");
+		 "neurondb: neurandefrag worker caught SIGSEGV, recovering via "
+		 "longjmp");
 	longjmp(segv_jmp_buf, 1);
 }
 
@@ -237,66 +242,66 @@ void
 neurandefrag_init_guc(void)
 {
 	DefineCustomIntVariable("neurondb.neurandefrag_naptime",
-		"Duration between maintenance cycles (ms)",
-		NULL,
-		&neurandefrag_naptime,
-		300000,
-		60000,
-		3600000,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
+							"Duration between maintenance cycles (ms)",
+							NULL,
+							&neurandefrag_naptime,
+							300000,
+							60000,
+							3600000,
+							PGC_SIGHUP,
+							0,
+							NULL,
+							NULL,
+							NULL);
 
 	DefineCustomIntVariable("neurondb.neurandefrag_compact_threshold",
-		"Edge count threshold for compaction trigger",
-		NULL,
-		&neurandefrag_compact_threshold,
-		10000,
-		1000,
-		1000000,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
+							"Edge count threshold for compaction trigger",
+							NULL,
+							&neurandefrag_compact_threshold,
+							10000,
+							1000,
+							1000000,
+							PGC_SIGHUP,
+							0,
+							NULL,
+							NULL,
+							NULL);
 
 	DefineCustomRealVariable(
-		"neurondb.neurandefrag_fragmentation_threshold",
-		"Fragmentation ratio necessary to trigger a full rebuild",
-		NULL,
-		&neurandefrag_fragmentation_threshold,
-		0.3,
-		0.1,
-		0.9,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
+							 "neurondb.neurandefrag_fragmentation_threshold",
+							 "Fragmentation ratio necessary to trigger a full rebuild",
+							 NULL,
+							 &neurandefrag_fragmentation_threshold,
+							 0.3,
+							 0.1,
+							 0.9,
+							 PGC_SIGHUP,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
 
 	DefineCustomStringVariable("neurondb.neurandefrag_maintenance_window",
-		"Maintenance window in HH:MM-HH:MM format",
-		NULL,
-		&neurandefrag_maintenance_window,
-		"02:00-04:00",
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
+							   "Maintenance window in HH:MM-HH:MM format",
+							   NULL,
+							   &neurandefrag_maintenance_window,
+							   "02:00-04:00",
+							   PGC_SIGHUP,
+							   0,
+							   NULL,
+							   NULL,
+							   NULL);
 
 	DefineCustomBoolVariable("neurondb.neurandefrag_enabled",
-		"Enable/disable the Neurandefrag background worker",
-		NULL,
-		&neurandefrag_enabled,
-		true,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
+							 "Enable/disable the Neurandefrag background worker",
+							 NULL,
+							 &neurandefrag_enabled,
+							 true,
+							 PGC_SIGHUP,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
 }
 
 /* Shared memory size required for the worker */
@@ -310,14 +315,14 @@ neurandefrag_shmem_size(void)
 void
 neurandefrag_shmem_init(void)
 {
-	bool found;
+	bool		found;
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
-	neurandefrag_state = (NeurandefragSharedState *)ShmemInitStruct(
-		"NeuronDB Defrag Worker State",
-		neurandefrag_shmem_size(),
-		&found);
+	neurandefrag_state = (NeurandefragSharedState *) ShmemInitStruct(
+																	 "NeuronDB Defrag Worker State",
+																	 neurandefrag_shmem_size(),
+																	 &found);
 
 	if (!found)
 	{
@@ -354,11 +359,11 @@ neurandefrag_on_exit(int code, Datum arg)
 void
 neurandefrag_main(Datum main_arg)
 {
-	sigjmp_buf local_sigjmp_buf;
+	sigjmp_buf	local_sigjmp_buf;
 	MemoryContext worker_memctx;
 	MemoryContext oldctx;
-	bool found;
-	int wait_events;
+	bool		found;
+	int			wait_events;
 
 	BackgroundWorkerUnblockSignals();
 	pqsignal(SIGTERM, neurandefrag_sigterm);
@@ -370,17 +375,17 @@ neurandefrag_main(Datum main_arg)
 
 	/* Attach to shmem state */
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
-	neurandefrag_state = (NeurandefragSharedState *)ShmemInitStruct(
-		"NeuronDB Defrag Worker State",
-		neurandefrag_shmem_size(),
-		&found);
+	neurandefrag_state = (NeurandefragSharedState *) ShmemInitStruct(
+																	 "NeuronDB Defrag Worker State",
+																	 neurandefrag_shmem_size(),
+																	 &found);
 	LWLockRelease(AddinShmemInitLock);
 
 	if (!found || neurandefrag_state == NULL)
 	{
 		ereport(ERROR,
-			(errmsg("neurondb: unable to attach defrag shared "
-				"state")));
+				(errmsg("neurondb: unable to attach defrag shared "
+						"state")));
 		proc_exit(1);
 	}
 
@@ -393,29 +398,30 @@ neurandefrag_main(Datum main_arg)
 		if (worker_memctx)
 			MemoryContextReset(worker_memctx);
 		ereport(LOG,
-			(errmsg("neurondb: neurandefrag worker error, "
-				"restarting loop")));
-		pg_usleep(1000000L); /* sleep 1s before retry */
+				(errmsg("neurondb: neurandefrag worker error, "
+						"restarting loop")));
+		pg_usleep(1000000L);	/* sleep 1s before retry */
 	}
 	PG_exception_stack = &local_sigjmp_buf;
 
 	worker_memctx = AllocSetContextCreate(TopMemoryContext,
-		"neurandefrag worker context",
-		ALLOCSET_DEFAULT_SIZES);
+										  "neurandefrag worker context",
+										  ALLOCSET_DEFAULT_SIZES);
 
 	ereport(LOG,
-		(errmsg("neurondb: neurandefrag worker started (PID %d)",
-			MyProcPid)));
+			(errmsg("neurondb: neurandefrag worker started (PID %d)",
+					MyProcPid)));
 
-	on_shmem_exit(neurandefrag_on_exit, (Datum)0);
+	on_shmem_exit(neurandefrag_on_exit, (Datum) 0);
 
 	while (!got_sigterm)
 	{
-		long timeout_ms = Max(neurandefrag_naptime, 1000);
+		long		timeout_ms = Max(neurandefrag_naptime, 1000);
+
 		wait_events = WaitLatch(MyLatch,
-			WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-			timeout_ms,
-			PG_WAIT_EXTENSION);
+								WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+								timeout_ms,
+								PG_WAIT_EXTENSION);
 		ResetLatch(MyLatch);
 		CHECK_FOR_INTERRUPTS();
 
@@ -430,8 +436,8 @@ neurandefrag_main(Datum main_arg)
 			got_sighup = 0;
 			ProcessConfigFile(PGC_SIGHUP);
 			ereport(LOG,
-				(errmsg("neurondb: neurandefrag worker "
-					"processed SIGHUP")));
+					(errmsg("neurondb: neurandefrag worker "
+							"processed SIGHUP")));
 		}
 
 		if (!neurandefrag_enabled)
@@ -446,16 +452,19 @@ neurandefrag_main(Datum main_arg)
 
 		/* Main defragmentation logic */
 		{
-			int64 tombstones_found = 0;
-			int64 edges_cleaned = 0;
-			int64 compactions_done = 0;
-			int64 rebalances_done = 0;
+			int64		tombstones_found = 0;
+			int64		edges_cleaned = 0;
+			int64		compactions_done = 0;
+			int64		rebalances_done = 0;
 			StringInfoData sql;
-			int ret;
+			int			ret;
 			SPITupleTable *tuptable;
-			bool isnull;
+			bool		isnull;
 
-			/* Start transaction - required before SPI operations and relation access */
+			/*
+			 * Start transaction - required before SPI operations and relation
+			 * access
+			 */
 			StartTransactionCommand();
 			PushActiveSnapshot(GetTransactionSnapshot());
 
@@ -463,113 +472,116 @@ neurandefrag_main(Datum main_arg)
 			{
 				if (SPI_connect() == SPI_OK_CONNECT)
 				{
-				/* Find HNSW indexes that need maintenance */
-				initStringInfo(&sql);
-				appendStringInfo(&sql,
-					"SELECT c.relname, c.oid "
-					"FROM pg_class c "
-					"JOIN pg_index i ON i.indexrelid = c.oid "
-					"JOIN pg_am am ON am.oid = c.relam "
-					"WHERE am.amname = 'hnsw' "
-					"AND c.relkind = 'i' "
-					"LIMIT 10");
+					/* Find HNSW indexes that need maintenance */
+					initStringInfo(&sql);
+					appendStringInfo(&sql,
+									 "SELECT c.relname, c.oid "
+									 "FROM pg_class c "
+									 "JOIN pg_index i ON i.indexrelid = c.oid "
+									 "JOIN pg_am am ON am.oid = c.relam "
+									 "WHERE am.amname = 'hnsw' "
+									 "AND c.relkind = 'i' "
+									 "LIMIT 10");
 
-				ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
-				if (ret == SPI_OK_SELECT && SPI_processed > 0)
-				{
-					int idx_count;
-					int i;
-
+					ret = ndb_spi_execute_safe(sql.data, true, 0);
 					NDB_CHECK_SPI_TUPTABLE();
-					tuptable = SPI_tuptable;
-					idx_count = (int)SPI_processed;
-
-					for (i = 0; i < idx_count; i++)
+					if (ret == SPI_OK_SELECT && SPI_processed > 0)
 					{
-						HeapTuple tuple = tuptable->vals[i];
-						Datum relname_datum;
-						Datum oid_datum;
-						char *relname;
-						Oid indexOid;
-						Relation indexRel;
-						BlockNumber nblocks;
-						int dead_count = 0;
+						int			idx_count;
+						int			i;
 
-						relname_datum = SPI_getbinval(tuple,
-							tuptable->tupdesc,
-							1,
-							&isnull);
-						if (isnull)
-							continue;
-						relname = DatumGetCString(relname_datum);
+						NDB_CHECK_SPI_TUPTABLE();
+						tuptable = SPI_tuptable;
+						idx_count = (int) SPI_processed;
 
-						oid_datum = SPI_getbinval(tuple,
-							tuptable->tupdesc,
-							2,
-							&isnull);
-						if (isnull)
+						for (i = 0; i < idx_count; i++)
 						{
-							NDB_SAFE_PFREE_AND_NULL(relname);
-							continue;
-						}
-						indexOid = DatumGetObjectId(oid_datum);
+							HeapTuple	tuple = tuptable->vals[i];
+							Datum		relname_datum;
+							Datum		oid_datum;
+							char	   *relname;
+							Oid			indexOid;
+							Relation	indexRel;
+							BlockNumber nblocks;
+							int			dead_count = 0;
 
-						/* Open index and scan for issues */
-						indexRel = index_open(indexOid, AccessShareLock);
-						nblocks = RelationGetNumberOfBlocks(indexRel);
+							relname_datum = SPI_getbinval(tuple,
+														  tuptable->tupdesc,
+														  1,
+														  &isnull);
+							if (isnull)
+								continue;
+							relname = DatumGetCString(relname_datum);
 
-						/* Scan index pages for tombstones/dead tuples */
-						/* This is a simplified scan - full implementation would
-						 * traverse HNSW graph structure */
-						{
-							BufferAccessStrategy strategy;
-							BlockNumber blkno;
-
-							strategy = GetAccessStrategy(BAS_BULKREAD);
-
-							for (blkno = 0; blkno < nblocks && blkno < 1000; blkno++)
+							oid_datum = SPI_getbinval(tuple,
+													  tuptable->tupdesc,
+													  2,
+													  &isnull);
+							if (isnull)
 							{
-								Buffer buf;
-								Page page;
+								NDB_SAFE_PFREE_AND_NULL(relname);
+								continue;
+							}
+							indexOid = DatumGetObjectId(oid_datum);
 
-								buf = ReadBufferExtended(indexRel,
-									MAIN_FORKNUM,
-									blkno,
-									RBM_NORMAL,
-									strategy);
-								LockBuffer(buf, BUFFER_LOCK_SHARE);
-								page = BufferGetPage(buf);
+							/* Open index and scan for issues */
+							indexRel = index_open(indexOid, AccessShareLock);
+							nblocks = RelationGetNumberOfBlocks(indexRel);
 
-								/* Check for empty/deleted items on page */
-								if (PageGetMaxOffsetNumber(page) == 0)
+							/* Scan index pages for tombstones/dead tuples */
+
+							/*
+							 * This is a simplified scan - full implementation
+							 * would traverse HNSW graph structure
+							 */
+							{
+								BufferAccessStrategy strategy;
+								BlockNumber blkno;
+
+								strategy = GetAccessStrategy(BAS_BULKREAD);
+
+								for (blkno = 0; blkno < nblocks && blkno < 1000; blkno++)
 								{
-									dead_count++;
+									Buffer		buf;
+									Page		page;
+
+									buf = ReadBufferExtended(indexRel,
+															 MAIN_FORKNUM,
+															 blkno,
+															 RBM_NORMAL,
+															 strategy);
+									LockBuffer(buf, BUFFER_LOCK_SHARE);
+									page = BufferGetPage(buf);
+
+									/* Check for empty/deleted items on page */
+									if (PageGetMaxOffsetNumber(page) == 0)
+									{
+										dead_count++;
+									}
+
+									UnlockReleaseBuffer(buf);
 								}
 
-								UnlockReleaseBuffer(buf);
+								FreeAccessStrategy(strategy);
 							}
 
-							FreeAccessStrategy(strategy);
+							if (dead_count > 0)
+							{
+								tombstones_found += dead_count;
+								elog(DEBUG1,
+									 "neurondb: Found %d potential tombstones in index %s",
+									 dead_count,
+									 relname);
+							}
+
+							index_close(indexRel, AccessShareLock);
+							NDB_SAFE_PFREE_AND_NULL(relname);
 						}
 
-						if (dead_count > 0)
-						{
-							tombstones_found += dead_count;
-							elog(DEBUG1,
-								"neurondb: Found %d potential tombstones in index %s",
-								dead_count,
-								relname);
-						}
-
-						index_close(indexRel, AccessShareLock);
-						NDB_SAFE_PFREE_AND_NULL(relname);
+						SPI_freetuptable(tuptable);
 					}
 
-					SPI_freetuptable(tuptable);
-				}
-
-				NDB_SAFE_PFREE_AND_NULL(sql.data);
+					NDB_SAFE_PFREE_AND_NULL(sql.data);
 				}
 				SPI_finish();
 
@@ -584,47 +596,51 @@ neurandefrag_main(Datum main_arg)
 				if (tombstones_found > 0 || edges_cleaned > 0)
 				{
 					ereport(LOG,
-						(errmsg("neurondb: neurandefrag processed: "
-							"%lld tombstones, %lld edges cleaned",
-							(long long)tombstones_found,
-							(long long)edges_cleaned)));
-				} else
+							(errmsg("neurondb: neurandefrag processed: "
+									"%lld tombstones, %lld edges cleaned",
+									(long long) tombstones_found,
+									(long long) edges_cleaned)));
+				}
+				else
 				{
 					ereport(DEBUG1,
-						(errmsg("neurondb: neurandefrag worker heartbeat (PID "
-							"%d) - no maintenance needed",
-							MyProcPid)));
+							(errmsg("neurondb: neurandefrag worker heartbeat (PID "
+									"%d) - no maintenance needed",
+									MyProcPid)));
 				}
 
 				/* Commit transaction */
 				PopActiveSnapshot();
 				CommitTransactionCommand();
 			}
-		PG_CATCH();
-		{
-			/* Clean up on error */
-			if (IsTransactionState())
-				AbortCurrentTransaction();
+			PG_CATCH();
+			{
+				/* Clean up on error */
+				if (IsTransactionState())
+					AbortCurrentTransaction();
 
-			EmitErrorReport();
-			FlushErrorState();
+				EmitErrorReport();
+				FlushErrorState();
 
-			/* Ensure SPI is disconnected - safe to call even if not connected */
-			SPI_finish();
+				/*
+				 * Ensure SPI is disconnected - safe to call even if not
+				 * connected
+				 */
+				SPI_finish();
 
-			elog(LOG,
-				"neurondb: neurandefrag worker caught exception, all "
-				"cleaned up. Restarting loop.");
-		}
-		PG_END_TRY();
+				elog(LOG,
+					 "neurondb: neurandefrag worker caught exception, all "
+					 "cleaned up. Restarting loop.");
+			}
+			PG_END_TRY();
 
-		MemoryContextSwitchTo(oldctx);
-		MemoryContextReset(worker_memctx);
+			MemoryContextSwitchTo(oldctx);
+			MemoryContextReset(worker_memctx);
 		}
 	}
 
 	ereport(LOG,
-		(errmsg("neurondb: neurandefrag worker shutting down (PID %d)",
-			MyProcPid)));
+			(errmsg("neurondb: neurandefrag worker shutting down (PID %d)",
+					MyProcPid)));
 	proc_exit(0);
 }

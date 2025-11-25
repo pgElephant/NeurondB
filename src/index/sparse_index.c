@@ -41,20 +41,20 @@
  */
 typedef struct SparseIndexOptions
 {
-	int32 min_token_freq; /* Minimum token frequency to index */
-	int32 max_postings; /* Maximum postings per token */
-	bool enable_compression; /* Enable posting list compression */
-} SparseIndexOptions;
+	int32		min_token_freq; /* Minimum token frequency to index */
+	int32		max_postings;	/* Maximum postings per token */
+	bool		enable_compression; /* Enable posting list compression */
+}			SparseIndexOptions;
 
 /*
  * PostingList: Inverted index posting list for a token
  */
 typedef struct PostingList
 {
-	int32 token_id; /* Vocabulary token ID */
-	int32 num_docs; /* Number of documents containing this token */
+	int32		token_id;		/* Vocabulary token ID */
+	int32		num_docs;		/* Number of documents containing this token */
 	/* Followed by: int32 doc_ids[], float4 weights[] */
-} PostingList;
+}			PostingList;
 
 #define POSTING_DOC_IDS(pl) \
 	((int32 *)(((char *)(pl)) + sizeof(PostingList)))
@@ -68,22 +68,22 @@ PG_FUNCTION_INFO_V1(sparse_index_create);
 Datum
 sparse_index_create(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_PP(0);
-	text *sparse_col = PG_GETARG_TEXT_PP(1);
-	text *index_name = PG_GETARG_TEXT_PP(2);
-	int32 min_freq = PG_ARGISNULL(3) ? 1 : PG_GETARG_INT32(3);
-	char *tbl_str = text_to_cstring(table_name);
-	char *col_str = text_to_cstring(sparse_col);
-	char *idx_str = text_to_cstring(index_name);
+	text	   *table_name = PG_GETARG_TEXT_PP(0);
+	text	   *sparse_col = PG_GETARG_TEXT_PP(1);
+	text	   *index_name = PG_GETARG_TEXT_PP(2);
+	int32		min_freq = PG_ARGISNULL(3) ? 1 : PG_GETARG_INT32(3);
+	char	   *tbl_str = text_to_cstring(table_name);
+	char	   *col_str = text_to_cstring(sparse_col);
+	char	   *idx_str = text_to_cstring(index_name);
 	StringInfoData sql;
-	int ret;
+	int			ret;
 
 	elog(INFO,
-		"neurondb: Creating sparse index %s on %s.%s (min_freq=%d)",
-		idx_str,
-		tbl_str,
-		col_str,
-		min_freq);
+		 "neurondb: Creating sparse index %s on %s.%s (min_freq=%d)",
+		 idx_str,
+		 tbl_str,
+		 col_str,
+		 min_freq);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed: %d", ret);
@@ -91,43 +91,43 @@ sparse_index_create(PG_FUNCTION_ARGS)
 	/* Create metadata table for sparse index */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"CREATE TABLE IF NOT EXISTS %s_metadata ("
-		"token_id int4 PRIMARY KEY, "
-		"num_docs int4, "
-		"posting_list bytea"
-		")",
-		idx_str);
+					 "CREATE TABLE IF NOT EXISTS %s_metadata ("
+					 "token_id int4 PRIMARY KEY, "
+					 "num_docs int4, "
+					 "posting_list bytea"
+					 ")",
+					 idx_str);
 
 	ret = ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_UTILITY)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("Failed to create sparse index metadata table")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("Failed to create sparse index metadata table")));
 
 	/* Build inverted index by scanning table */
 	/* Use safe free/reinit to handle potential memory context changes */
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT ctid, %s FROM %s WHERE %s IS NOT NULL",
-		col_str,
-		tbl_str,
-		col_str);
+					 "SELECT ctid, %s FROM %s WHERE %s IS NOT NULL",
+					 col_str,
+					 tbl_str,
+					 col_str);
 
 	ret = ndb_spi_execute_safe(sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("Failed to scan table for sparse index")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("Failed to scan table for sparse index")));
 
 	/* Process results and build posting lists */
-	/* In a full implementation, this would:
-	 * 1. Extract token IDs and weights from each sparse vector
-	 * 2. Group by token_id
-	 * 3. Build posting lists with doc IDs and weights
-	 * 4. Store in metadata table
+
+	/*
+	 * In a full implementation, this would: 1. Extract token IDs and weights
+	 * from each sparse vector 2. Group by token_id 3. Build posting lists
+	 * with doc IDs and weights 4. Store in metadata table
 	 */
 
 	SPI_finish();
@@ -144,37 +144,38 @@ PG_FUNCTION_INFO_V1(sparse_index_search);
 Datum
 sparse_index_search(PG_FUNCTION_ARGS)
 {
-	ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
-	TupleDesc tupdesc;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	TupleDesc	tupdesc;
 	Tuplestorestate *tupstore;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
-	int ret;
+	int			ret;
 
-	PG_GETARG_TEXT_PP(0); /* index_name - reserved for future use */
+	PG_GETARG_TEXT_PP(0);		/* index_name - reserved for future use */
 
 	/* Check if we're being called as a table function */
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("sparse_index_search must be called as table function")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("sparse_index_search must be called as table function")));
 
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("sparse_index_search requires Materialize mode")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("sparse_index_search requires Materialize mode")));
 
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
 	oldcontext = MemoryContextSwitchTo(per_query_ctx);
 
 	tupdesc = CreateTemplateTupleDesc(2);
-	TupleDescInitEntry(tupdesc, (AttrNumber)1, "doc_id", INT4OID, -1, 0);
-	TupleDescInitEntry(tupdesc, (AttrNumber)2, "score", FLOAT4OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "doc_id", INT4OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "score", FLOAT4OID, -1, 0);
 
 	/* Get work_mem GUC setting */
 	{
 		const char *work_mem_str = GetConfigOption("work_mem", true, false);
-		int work_mem_kb = 262144; /* Default 256MB */
+		int			work_mem_kb = 262144;	/* Default 256MB */
+
 		if (work_mem_str)
 		{
 			work_mem_kb = atoi(work_mem_str);
@@ -192,14 +193,13 @@ sparse_index_search(PG_FUNCTION_ARGS)
 	/* Connect to SPI and perform search */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("SPI_connect failed: %d", ret)));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("SPI_connect failed: %d", ret)));
 
-	/* In a full implementation, this would:
-	 * 1. Extract tokens from query sparse vector
-	 * 2. Look up posting lists for each token
-	 * 3. Compute scores (dot product or BM25)
-	 * 4. Return top-k results
+	/*
+	 * In a full implementation, this would: 1. Extract tokens from query
+	 * sparse vector 2. Look up posting lists for each token 3. Compute scores
+	 * (dot product or BM25) 4. Return top-k results
 	 */
 
 	SPI_finish();
@@ -215,17 +215,16 @@ PG_FUNCTION_INFO_V1(sparse_index_update);
 Datum
 sparse_index_update(PG_FUNCTION_ARGS)
 {
-	PG_GETARG_TEXT_PP(0); /* index_name - reserved for future use */
+	PG_GETARG_TEXT_PP(0);		/* index_name - reserved for future use */
 	PG_GETARG_INT32(1);
 	/* datum parameter reserved for future use */
 	(void) PG_GETARG_DATUM(2);
 
-	/* In a full implementation, this would:
-	 * 1. Extract tokens from sparse vector
-	 * 2. Update posting lists for each token
-	 * 3. Add/update document entry
+	/*
+	 * In a full implementation, this would: 1. Extract tokens from sparse
+	 * vector 2. Update posting lists for each token 3. Add/update document
+	 * entry
 	 */
 
 	PG_RETURN_BOOL(true);
 }
-

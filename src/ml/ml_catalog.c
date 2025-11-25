@@ -39,7 +39,7 @@ ml_catalog_default_project(const char *algorithm, const char *training_table)
  * Returns the model_id of the inserted/updated row.
  */
 int32
-ml_catalog_register_model(const MLCatalogModelSpec *spec)
+ml_catalog_register_model(const MLCatalogModelSpec * spec)
 {
 	const char *project_name;
 	const char *model_type;
@@ -53,12 +53,12 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	int32		model_id = 0;
 	int32		ret;
 	StringInfoData sql;
-	MemoryContext	oldcontext;
-	NDB_DECLARE(NdbSpiSession *, spi_session);
-	NDB_DECLARE(char *, algorithm_copy);
-	NDB_DECLARE(char *, training_table_copy);
-	NDB_DECLARE(char *, training_column_copy);
-	NDB_DECLARE(char *, project_name_copy);
+	MemoryContext oldcontext;
+	NDB_DECLARE (NdbSpiSession *, spi_session);
+	NDB_DECLARE (char *, algorithm_copy);
+	NDB_DECLARE (char *, training_table_copy);
+	NDB_DECLARE (char *, training_column_copy);
+	NDB_DECLARE (char *, project_name_copy);
 
 	if (spec == NULL)
 		elog(ERROR, "ml_catalog_register_model: invalid spec (NULL)");
@@ -113,8 +113,8 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	{
 		project_name_copy = pstrdup(project_name);
 		{
-			char *temp = (char *) project_name;
-			NDB_FREE(temp);
+			char	   *temp = (char *) project_name;
+			NDB_FREE	(temp);
 		}
 		project_name = project_name_copy;
 	}
@@ -130,12 +130,12 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	/* Debug: log metrics JSON if present */
 	if (metrics != NULL)
 	{
-		NDB_DECLARE(char *, meta_txt);
+		NDB_DECLARE (char *, meta_txt);
 
 		meta_txt = DatumGetCString(
-					DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metrics)));
+								   DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metrics)));
 		elog(DEBUG1, "neurondb: ml_catalog_store_metrics: stored metrics: %s", meta_txt);
-		NDB_FREE(meta_txt);
+		NDB_FREE	(meta_txt);
 	}
 
 	elog(DEBUG1, "ml_catalog_register_model: project_name='%s', model_type='%s'",
@@ -230,96 +230,96 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 	/* Insert model row */
 	{
 		StringInfoData insert_sql;
-		NDB_DECLARE(char *, params_txt);
-		NDB_DECLARE(char *, metrics_txt);
-		NDB_DECLARE(char *, params_quoted);
-		NDB_DECLARE(char *, metrics_quoted);
-		NDB_DECLARE(char *, algorithm_quoted);
-		NDB_DECLARE(char *, table_quoted);
-		NDB_DECLARE(char *, column_quoted);
+		NDB_DECLARE (char *, params_txt);
+		NDB_DECLARE (char *, metrics_txt);
+		NDB_DECLARE (char *, params_quoted);
+		NDB_DECLARE (char *, metrics_quoted);
+		NDB_DECLARE (char *, algorithm_quoted);
+		NDB_DECLARE (char *, table_quoted);
+		NDB_DECLARE (char *, column_quoted);
 
 		ndb_spi_stringinfo_init(spi_session, &insert_sql);
 
 		/* Quote string literals */
 		{
-			NDB_DECLARE(text *, algorithm_text);
-			NDB_DECLARE(text *, quoted_algorithm);
+			NDB_DECLARE (text *, algorithm_text);
+			NDB_DECLARE (text *, quoted_algorithm);
 
 			algorithm_text = cstring_to_text(algorithm);
 			quoted_algorithm = DatumGetTextP(
-				DirectFunctionCall1(quote_literal,
-									PointerGetDatum(algorithm_text)));
+											 DirectFunctionCall1(quote_literal,
+																 PointerGetDatum(algorithm_text)));
 			algorithm_quoted = text_to_cstring(quoted_algorithm);
-			NDB_FREE(algorithm_text);
-			NDB_FREE(quoted_algorithm);
+			NDB_FREE	(algorithm_text);
+			NDB_FREE	(quoted_algorithm);
 		}
 		{
-			NDB_DECLARE(text *, table_text);
-			NDB_DECLARE(text *, quoted_table);
+			NDB_DECLARE (text *, table_text);
+			NDB_DECLARE (text *, quoted_table);
 
 			table_text = cstring_to_text(training_table);
 			quoted_table = DatumGetTextP(
-				DirectFunctionCall1(quote_literal,
-									PointerGetDatum(table_text)));
+										 DirectFunctionCall1(quote_literal,
+															 PointerGetDatum(table_text)));
 			table_quoted = text_to_cstring(quoted_table);
-			NDB_FREE(table_text);
-			NDB_FREE(quoted_table);
+			NDB_FREE	(table_text);
+			NDB_FREE	(quoted_table);
 		}
 		column_quoted = NULL;
 		if (training_column != NULL)
 		{
-			NDB_DECLARE(text *, column_text);
-			NDB_DECLARE(text *, quoted_column);
+			NDB_DECLARE (text *, column_text);
+			NDB_DECLARE (text *, quoted_column);
 
 			column_text = cstring_to_text(training_column);
 			quoted_column = DatumGetTextP(
-				DirectFunctionCall1(quote_literal,
-									PointerGetDatum(column_text)));
+										  DirectFunctionCall1(quote_literal,
+															  PointerGetDatum(column_text)));
 			column_quoted = text_to_cstring(quoted_column);
-			NDB_FREE(column_text);
-			NDB_FREE(quoted_column);
+			NDB_FREE	(column_text);
+			NDB_FREE	(quoted_column);
 		}
 
 		params_txt = NULL;
 		params_quoted = NULL;
 		if (parameters != NULL)
 		{
-			NDB_DECLARE(text *, params_text);
-			NDB_DECLARE(text *, quoted_params);
+			NDB_DECLARE (text *, params_text);
+			NDB_DECLARE (text *, quoted_params);
 
 			params_txt = DatumGetCString(
-				DirectFunctionCall1(jsonb_out, JsonbPGetDatum(parameters)));
+										 DirectFunctionCall1(jsonb_out, JsonbPGetDatum(parameters)));
 			params_text = cstring_to_text(params_txt);
 			quoted_params = DatumGetTextP(
-				DirectFunctionCall1(quote_literal,
-									PointerGetDatum(params_text)));
+										  DirectFunctionCall1(quote_literal,
+															  PointerGetDatum(params_text)));
 			params_quoted = text_to_cstring(quoted_params);
-			NDB_FREE(params_text);
-			NDB_FREE(quoted_params);
+			NDB_FREE	(params_text);
+			NDB_FREE	(quoted_params);
 		}
 
 		metrics_txt = NULL;
 		metrics_quoted = NULL;
 		if (metrics != NULL)
 		{
-			NDB_DECLARE(text *, metrics_text);
-			NDB_DECLARE(text *, quoted_metrics);
+			NDB_DECLARE (text *, metrics_text);
+			NDB_DECLARE (text *, quoted_metrics);
 
 			metrics_txt = DatumGetCString(
-				DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metrics)));
+										  DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metrics)));
 			metrics_text = cstring_to_text(metrics_txt);
 			quoted_metrics = DatumGetTextP(
-				DirectFunctionCall1(quote_literal,
-									PointerGetDatum(metrics_text)));
+										   DirectFunctionCall1(quote_literal,
+															   PointerGetDatum(metrics_text)));
 			metrics_quoted = text_to_cstring(quoted_metrics);
-			NDB_FREE(metrics_text);
-			NDB_FREE(quoted_metrics);
+			NDB_FREE	(metrics_text);
+			NDB_FREE	(quoted_metrics);
 		}
 
 		{
-			NDB_DECLARE(char *, time_ms_str);
-			NDB_DECLARE(char *, num_samples_str);
-			NDB_DECLARE(char *, num_features_str);
+			NDB_DECLARE (char *, time_ms_str);
+			NDB_DECLARE (char *, num_samples_str);
+			NDB_DECLARE (char *, num_features_str);
 
 			time_ms_str = (spec->training_time_ms >= 0) ? psprintf("%d", spec->training_time_ms) : NULL;
 			num_samples_str = (spec->num_samples > 0) ? psprintf("%d", spec->num_samples) : NULL;
@@ -359,9 +359,9 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 							 num_features_str != NULL ? num_features_str : "NULL");
 
 			/* Free temporary strings allocated in SPI context */
-			NDB_FREE(time_ms_str);
-			NDB_FREE(num_samples_str);
-			NDB_FREE(num_features_str);
+			NDB_FREE	(time_ms_str);
+			NDB_FREE	(num_samples_str);
+			NDB_FREE	(num_features_str);
 		}
 
 		ret = ndb_spi_execute(spi_session, insert_sql.data, false, 0);
@@ -370,57 +370,75 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			SPI_processed == 0)
 		{
 			ndb_spi_stringinfo_free(spi_session, &insert_sql);
-			NDB_FREE(algorithm_quoted);
-			NDB_FREE(table_quoted);
+			NDB_FREE	(algorithm_quoted);
+			NDB_FREE	(table_quoted);
+
 			if (column_quoted)
-				NDB_FREE(column_quoted);
+				NDB_FREE	(column_quoted);
+
 			if (params_txt)
-				NDB_FREE(params_txt);
+				NDB_FREE	(params_txt);
+
 			if (params_quoted)
-				NDB_FREE(params_quoted);
+				NDB_FREE	(params_quoted);
+
 			if (metrics_txt)
-				NDB_FREE(metrics_txt);
+				NDB_FREE	(metrics_txt);
+
 			if (metrics_quoted)
-				NDB_FREE(metrics_quoted);
+				NDB_FREE	(metrics_quoted);
+
 			NDB_SPI_SESSION_END(spi_session);
 			elog(ERROR,
 				 "ml_catalog_register_model: failed to insert/update ml_models row "
-			     "(ret=%d, processed=%lu)", ret, (unsigned long)SPI_processed);
+				 "(ret=%d, processed=%lu)", ret, (unsigned long) SPI_processed);
 		}
 
 		if (!ndb_spi_get_int32(spi_session, 0, 0, &model_id))
 		{
 			ndb_spi_stringinfo_free(spi_session, &insert_sql);
-			NDB_FREE(algorithm_quoted);
-			NDB_FREE(table_quoted);
+			NDB_FREE	(algorithm_quoted);
+			NDB_FREE	(table_quoted);
+
 			if (column_quoted)
-				NDB_FREE(column_quoted);
+				NDB_FREE	(column_quoted);
+
 			if (params_txt)
-				NDB_FREE(params_txt);
+				NDB_FREE	(params_txt);
+
 			if (params_quoted)
-				NDB_FREE(params_quoted);
+				NDB_FREE	(params_quoted);
+
 			if (metrics_txt)
-				NDB_FREE(metrics_txt);
+				NDB_FREE	(metrics_txt);
+
 			if (metrics_quoted)
-				NDB_FREE(metrics_quoted);
+				NDB_FREE	(metrics_quoted);
+
 			NDB_SPI_SESSION_END(spi_session);
 			elog(ERROR, "ml_catalog_register_model: model_id NULL after insert/update");
 		}
 		if (model_id <= 0)
 		{
 			ndb_spi_stringinfo_free(spi_session, &insert_sql);
-			NDB_FREE(algorithm_quoted);
-			NDB_FREE(table_quoted);
+			NDB_FREE	(algorithm_quoted);
+			NDB_FREE	(table_quoted);
+
 			if (column_quoted)
-				NDB_FREE(column_quoted);
+				NDB_FREE	(column_quoted);
+
 			if (params_txt)
-				NDB_FREE(params_txt);
+				NDB_FREE	(params_txt);
+
 			if (params_quoted)
-				NDB_FREE(params_quoted);
+				NDB_FREE	(params_quoted);
+
 			if (metrics_txt)
-				NDB_FREE(metrics_txt);
+				NDB_FREE	(metrics_txt);
+
 			if (metrics_quoted)
-				NDB_FREE(metrics_quoted);
+				NDB_FREE	(metrics_quoted);
+
 			NDB_SPI_SESSION_END(spi_session);
 			elog(ERROR,
 				 "ml_catalog_register_model: model_id=%d is invalid (should be > 0)",
@@ -429,9 +447,9 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 
 		if (spec->model_data != NULL && model_id > 0)
 		{
-			Oid		argtypes[2];
-			Datum	values[2];
-			char	nulls[2];
+			Oid			argtypes[2];
+			Datum		values[2];
+			char		nulls[2];
 
 			ndb_spi_stringinfo_reset(spi_session, &sql);
 			appendStringInfo(&sql,
@@ -449,37 +467,45 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
 			{
 				elog(WARNING,
 					 "ml_catalog_register_model: failed to update model_data (ret=%d, processed=%lu)",
-					 ret, (unsigned long)SPI_processed);
+					 ret, (unsigned long) SPI_processed);
 			}
 			ndb_spi_stringinfo_free(spi_session, &sql);
 		}
 
 		ndb_spi_stringinfo_free(spi_session, &insert_sql);
-		NDB_FREE(algorithm_quoted);
-		NDB_FREE(table_quoted);
+		NDB_FREE	(algorithm_quoted);
+		NDB_FREE	(table_quoted);
+
 		if (column_quoted)
-			NDB_FREE(column_quoted);
+			NDB_FREE	(column_quoted);
+
 		if (params_txt)
-			NDB_FREE(params_txt);
+			NDB_FREE	(params_txt);
+
 		if (params_quoted)
-			NDB_FREE(params_quoted);
+			NDB_FREE	(params_quoted);
+
 		if (metrics_txt)
-			NDB_FREE(metrics_txt);
+			NDB_FREE	(metrics_txt);
+
 		if (metrics_quoted)
-			NDB_FREE(metrics_quoted);
+			NDB_FREE	(metrics_quoted);
 	}
 
 	NDB_SPI_SESSION_END(spi_session);
 
 	/* Free persistent strings. These are allocated in the current context. */
 	if (project_name_copy)
-		NDB_FREE(project_name_copy);
+		NDB_FREE	(project_name_copy);
+
 	if (algorithm_copy)
-		NDB_FREE(algorithm_copy);
+		NDB_FREE	(algorithm_copy);
+
 	if (training_table_copy)
-		NDB_FREE(training_table_copy);
+		NDB_FREE	(training_table_copy);
+
 	if (training_column_copy)
-		NDB_FREE(training_column_copy);
+		NDB_FREE	(training_column_copy);
 
 	return model_id;
 }
@@ -491,15 +517,15 @@ ml_catalog_register_model(const MLCatalogModelSpec *spec)
  */
 bool
 ml_catalog_fetch_model_payload(int32 model_id,
-							  bytea **model_data_out,
-							  Jsonb **parameters_out,
-							  Jsonb **metrics_out)
+							   bytea * *model_data_out,
+							   Jsonb * *parameters_out,
+							   Jsonb * *metrics_out)
 {
-	int				ret;
-	StringInfoData	sql;
-	bool			found = false;
-	MemoryContext	caller_context;
-	NDB_DECLARE(NdbSpiSession *, spi_session);
+	int			ret;
+	StringInfoData sql;
+	bool		found = false;
+	MemoryContext caller_context;
+	NDB_DECLARE (NdbSpiSession *, spi_session);
 
 	if (model_data_out != NULL)
 		*model_data_out = NULL;
@@ -532,7 +558,7 @@ ml_catalog_fetch_model_payload(int32 model_id,
 
 				if (model_data_out != NULL)
 				{
-					NDB_DECLARE(bytea *, copy);
+					NDB_DECLARE (bytea *, copy);
 
 					copy = ndb_spi_get_bytea(spi_session, 0, 1, caller_context);
 					if (copy == NULL)
@@ -550,7 +576,7 @@ ml_catalog_fetch_model_payload(int32 model_id,
 
 				if (parameters_out != NULL)
 				{
-					Jsonb *jsonb_val;
+					Jsonb	   *jsonb_val;
 
 					jsonb_val = ndb_spi_get_jsonb(spi_session, 0, 2, caller_context);
 					if (jsonb_val == NULL)
@@ -566,7 +592,7 @@ ml_catalog_fetch_model_payload(int32 model_id,
 
 				if (metrics_out != NULL)
 				{
-					Jsonb *jsonb_val;
+					Jsonb	   *jsonb_val;
 
 					jsonb_val = ndb_spi_get_jsonb(spi_session, 0, 3, caller_context);
 					if (jsonb_val == NULL)

@@ -48,18 +48,18 @@ PG_FUNCTION_INFO_V1(auto_route_query);
 Datum
 auto_route_query(PG_FUNCTION_ARGS)
 {
-	text *query;
-	int32 embedding_length;
-	char *query_str = NULL;
-	bool use_ann = false;
+	text	   *query;
+	int32		embedding_length;
+	char	   *query_str = NULL;
+	bool		use_ann = false;
 
 	/* Validate input, crash-safe */
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
-			(errmsg("auto_route_query: input query text is NULL")));
+				(errmsg("auto_route_query: input query text is NULL")));
 	if (PG_ARGISNULL(1))
 		ereport(ERROR,
-			(errmsg("auto_route_query: embedding_length is NULL")));
+				(errmsg("auto_route_query: embedding_length is NULL")));
 
 	query = PG_GETARG_TEXT_PP(0);
 	embedding_length = PG_GETARG_INT32(1);
@@ -69,8 +69,8 @@ auto_route_query(PG_FUNCTION_ARGS)
 
 	if (query_str == NULL)
 		ereport(ERROR,
-			(errmsg("auto_route_query: failed to convert query "
-				"text to C string")));
+				(errmsg("auto_route_query: failed to convert query "
+						"text to C string")));
 
 	/* Rugged ANN heuristic logic: case-insensitive, no undefined behaviour */
 	if (embedding_length > 128
@@ -81,9 +81,9 @@ auto_route_query(PG_FUNCTION_ARGS)
 	}
 
 	elog(DEBUG1,
-		"neurondb:auto_route_query: route=%s embedding_length=%d",
-		use_ann ? "ANN" : "FTS",
-		embedding_length);
+		 "neurondb:auto_route_query: route=%s embedding_length=%d",
+		 use_ann ? "ANN" : "FTS",
+		 embedding_length);
 
 	/* Free non-null query_str */
 	if (query_str)
@@ -96,7 +96,7 @@ auto_route_query(PG_FUNCTION_ARGS)
  * learn_from_query:
  * Records fingerprint and statistics for queries; tunes ANN parameterization on a self-learning basis.
  * Table: neurondb_query_history
- * 
+ *
  * Inputs:
  *      query:           query text to fingerprint
  *      actual_recall:   float4, last recall (quality)
@@ -112,23 +112,23 @@ PG_FUNCTION_INFO_V1(learn_from_query);
 Datum
 learn_from_query(PG_FUNCTION_ARGS)
 {
-	text *query;
-	float4 actual_recall;
-	int32 latency_ms;
-	char *query_str = NULL;
-	uint64 fingerprint = 5381ULL; /* djb2 init */
-	int i;
-	bool found = false;
+	text	   *query;
+	float4		actual_recall;
+	int32		latency_ms;
+	char	   *query_str = NULL;
+	uint64		fingerprint = 5381ULL;	/* djb2 init */
+	int			i;
+	bool		found = false;
 
 	/* Defensive: NULL checks */
 	if (PG_ARGISNULL(0))
 		ereport(ERROR, (errmsg("learn_from_query: query is NULL")));
 	if (PG_ARGISNULL(1))
 		ereport(ERROR,
-			(errmsg("learn_from_query: actual_recall is NULL")));
+				(errmsg("learn_from_query: actual_recall is NULL")));
 	if (PG_ARGISNULL(2))
 		ereport(ERROR,
-			(errmsg("learn_from_query: latency_ms is NULL")));
+				(errmsg("learn_from_query: latency_ms is NULL")));
 
 	query = PG_GETARG_TEXT_PP(0);
 	actual_recall = PG_GETARG_FLOAT4(1);
@@ -138,55 +138,56 @@ learn_from_query(PG_FUNCTION_ARGS)
 
 	if (query_str == NULL)
 		ereport(ERROR,
-			(errmsg("learn_from_query: failed to convert query to "
-				"C string")));
+				(errmsg("learn_from_query: failed to convert query to "
+						"C string")));
 
 	/* Compute a robust DJB2 hash, no overflows */
 	for (i = 0; query_str[i] != '\0'; i++)
 		fingerprint = ((fingerprint << 5) + fingerprint)
-			+ (unsigned char)query_str[i];
+			+ (unsigned char) query_str[i];
 
 	elog(DEBUG1,
-		"neurondb:learn_from_query: fprint=%llu recall=%.6f latency=%d",
-		(unsigned long long)fingerprint,
-		actual_recall,
-		latency_ms);
+		 "neurondb:learn_from_query: fprint=%llu recall=%.6f latency=%d",
+		 (unsigned long long) fingerprint,
+		 actual_recall,
+		 latency_ms);
 
 	/* SPI connect - recover/exit safely */
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("learn_from_query: SPI_connect "
-				       "failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("learn_from_query: SPI_connect "
+						"failed")));
 
 	/* Always ensure the table exists. Safe for concurrency. */
 	if (ndb_spi_execute_safe("CREATE TABLE IF NOT EXISTS neurondb_query_history ("
-			"  fingerprint  BIGINT PRIMARY KEY,"
-			"  last_recall  REAL, "
-			"  last_latency INTEGER, "
-			"  seen_count   INTEGER, "
-			"  ef_search    INTEGER, "
-			"  beam_size    INTEGER"
-			")",
-		    false,
-		    0)
+							 "  fingerprint  BIGINT PRIMARY KEY,"
+							 "  last_recall  REAL, "
+							 "  last_latency INTEGER, "
+							 "  seen_count   INTEGER, "
+							 "  ef_search    INTEGER, "
+							 "  beam_size    INTEGER"
+							 ")",
+							 false,
+							 0)
 		!= SPI_OK_UTILITY)
 	{
-		SPI_finish(); /* clean up! */
+		SPI_finish();			/* clean up! */
 		ereport(ERROR,
-			(errmsg("learn_from_query: cannot create "
-				"neurondb_query_history")));
+				(errmsg("learn_from_query: cannot create "
+						"neurondb_query_history")));
 	}
 
 	/* Check for existing fingerprint */
 	{
 		StringInfoData sql;
+
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
-			"SELECT fingerprint, seen_count, ef_search, beam_size "
-			"FROM neurondb_query_history "
-			"WHERE fingerprint = %llu",
-			(unsigned long long)fingerprint);
+						 "SELECT fingerprint, seen_count, ef_search, beam_size "
+						 "FROM neurondb_query_history "
+						 "WHERE fingerprint = %llu",
+						 (unsigned long long) fingerprint);
 
 		if (ndb_spi_execute_safe(sql.data, true, 1) == SPI_OK_SELECT
 			&& SPI_processed == 1)
@@ -202,23 +203,25 @@ learn_from_query(PG_FUNCTION_ARGS)
 	if (found)
 	{
 		/* Defensive extraction of columns */
-		int32 seen_count = 0;
-		int32 ef_search = 0;
-		int32 beam_size = 0;
-		bool isnull1 = false, isnull2 = false, isnull3 = false;
+		int32		seen_count = 0;
+		int32		ef_search = 0;
+		int32		beam_size = 0;
+		bool		isnull1 = false,
+					isnull2 = false,
+					isnull3 = false;
 
 		seen_count = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			2,
-			&isnull1));
+												 SPI_tuptable->tupdesc,
+												 2,
+												 &isnull1));
 		ef_search = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			3,
-			&isnull2));
+												SPI_tuptable->tupdesc,
+												3,
+												&isnull2));
 		beam_size = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			4,
-			&isnull3));
+												SPI_tuptable->tupdesc,
+												4,
+												&isnull3));
 
 		if (isnull1 || isnull2 || isnull3)
 		{
@@ -226,13 +229,13 @@ learn_from_query(PG_FUNCTION_ARGS)
 			if (query_str)
 				NDB_SAFE_PFREE_AND_NULL(query_str);
 			ereport(ERROR,
-				(errmsg("learn_from_query: NULL detected in "
-					"stats fields")));
+					(errmsg("learn_from_query: NULL detected in "
+							"stats fields")));
 		}
 
 		seen_count = (seen_count < 0)
 			? 1
-			: seen_count + 1; /* avoid underflow */
+			: seen_count + 1;	/* avoid underflow */
 
 		/* Rugged heuristic parameter tuning branch */
 		if (actual_recall < 0.90f && ef_search < 128)
@@ -258,22 +261,23 @@ learn_from_query(PG_FUNCTION_ARGS)
 		/* Update the tuple defensively */
 		{
 			StringInfoData usql;
+
 			initStringInfo(&usql);
 			appendStringInfo(&usql,
-				"UPDATE neurondb_query_history "
-				"SET last_recall=%.6f, last_latency=%d, "
-				"seen_count=%d, "
-				"ef_search=%d, beam_size=%d WHERE "
-				"fingerprint=%llu",
-				actual_recall,
-				latency_ms,
-				seen_count,
-				ef_search,
-				beam_size,
-				(unsigned long long)fingerprint);
+							 "UPDATE neurondb_query_history "
+							 "SET last_recall=%.6f, last_latency=%d, "
+							 "seen_count=%d, "
+							 "ef_search=%d, beam_size=%d WHERE "
+							 "fingerprint=%llu",
+							 actual_recall,
+							 latency_ms,
+							 seen_count,
+							 ef_search,
+							 beam_size,
+							 (unsigned long long) fingerprint);
 
 			if (ndb_spi_execute_safe(usql.data, false, 0) != SPI_OK_UPDATE)
-   	NDB_CHECK_SPI_TUPTABLE();
+				NDB_CHECK_SPI_TUPTABLE();
 			{
 				if (usql.data)
 					NDB_SAFE_PFREE_AND_NULL(usql.data);
@@ -281,32 +285,34 @@ learn_from_query(PG_FUNCTION_ARGS)
 				if (query_str)
 					NDB_SAFE_PFREE_AND_NULL(query_str);
 				ereport(ERROR,
-					(errmsg("learn_from_query: failed to "
-						"UPDATE "
-						"neurondb_query_history")));
+						(errmsg("learn_from_query: failed to "
+								"UPDATE "
+								"neurondb_query_history")));
 			}
 			if (usql.data)
 				NDB_SAFE_PFREE_AND_NULL(usql.data);
 		}
-	} else
+	}
+	else
 	{
 		/* Robust INSERT for new tuple */
 		StringInfoData isql;
+
 		initStringInfo(&isql);
 		appendStringInfo(&isql,
-			"INSERT INTO neurondb_query_history "
-			"(fingerprint, last_recall, last_latency, seen_count, "
-			"ef_search, beam_size) "
-			"VALUES (%llu, %.6f, %d, %d, %d, %d)",
-			(unsigned long long)fingerprint,
-			actual_recall,
-			latency_ms,
-			1,
-			32,
-			8);
+						 "INSERT INTO neurondb_query_history "
+						 "(fingerprint, last_recall, last_latency, seen_count, "
+						 "ef_search, beam_size) "
+						 "VALUES (%llu, %.6f, %d, %d, %d, %d)",
+						 (unsigned long long) fingerprint,
+						 actual_recall,
+						 latency_ms,
+						 1,
+						 32,
+						 8);
 
 		if (ndb_spi_execute_safe(isql.data, false, 0) != SPI_OK_INSERT)
-  	NDB_CHECK_SPI_TUPTABLE();
+			NDB_CHECK_SPI_TUPTABLE();
 		{
 			if (isql.data)
 				NDB_SAFE_PFREE_AND_NULL(isql.data);
@@ -314,8 +320,8 @@ learn_from_query(PG_FUNCTION_ARGS)
 			if (query_str)
 				NDB_SAFE_PFREE_AND_NULL(query_str);
 			ereport(ERROR,
-				(errmsg("learn_from_query: failed to INSERT "
-					"neurondb_query_history")));
+					(errmsg("learn_from_query: failed to INSERT "
+							"neurondb_query_history")));
 		}
 		if (isql.data)
 			NDB_SAFE_PFREE_AND_NULL(isql.data);
@@ -334,9 +340,9 @@ learn_from_query(PG_FUNCTION_ARGS)
  * Quantize a float4 array to int8 (saturating at -128, 127), robustly and fully validated.
  */
 static void
-quantize_to_int8(const float4 *src, int8_t *dst, int len)
+quantize_to_int8(const float4 * src, int8_t * dst, int len)
 {
-	int i;
+	int			i;
 
 	if (!src || !dst)
 		elog(ERROR, "quantize_to_int8: null src or dst");
@@ -345,7 +351,7 @@ quantize_to_int8(const float4 *src, int8_t *dst, int len)
 
 	for (i = 0; i < len; i++)
 	{
-		float x = src[i];
+		float		x = src[i];
 
 		/* Saturate input robustly */
 		if (isnan(x))
@@ -355,7 +361,7 @@ quantize_to_int8(const float4 *src, int8_t *dst, int len)
 		else if (x < -128.0f)
 			x = -128.0f;
 
-		dst[i] = (int8_t)rintf(x);
+		dst[i] = (int8_t) rintf(x);
 	}
 }
 
@@ -364,9 +370,9 @@ quantize_to_int8(const float4 *src, int8_t *dst, int len)
  * Simulated quantization: rounds to one decimal (float16-like) for demonstration - robust
  */
 static void
-quantize_to_float16(const float4 *src, float4 *dst, int len)
+quantize_to_float16(const float4 * src, float4 * dst, int len)
 {
-	int i;
+	int			i;
 
 	if (!src || !dst)
 		elog(ERROR, "quantize_to_float16: null src or dst");
@@ -375,7 +381,8 @@ quantize_to_float16(const float4 *src, float4 *dst, int len)
 
 	for (i = 0; i < len; i++)
 	{
-		float in = src[i];
+		float		in = src[i];
+
 		if (isnan(in))
 			dst[i] = 0.0f;
 		else
@@ -392,79 +399,83 @@ PG_FUNCTION_INFO_V1(scale_precision);
 Datum
 scale_precision(PG_FUNCTION_ARGS)
 {
-	Vector *input;
-	float4 memory_pressure;
-	float4 recall_target;
-	int target_precision;
-	Vector *result = NULL;
+	Vector	   *input;
+	float4		memory_pressure;
+	float4		recall_target;
+	int			target_precision;
+	Vector	   *result = NULL;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
-			(errmsg("scale_precision: input vector is NULL")));
+				(errmsg("scale_precision: input vector is NULL")));
 	if (PG_ARGISNULL(1))
 		ereport(ERROR,
-			(errmsg("scale_precision: memory_pressure is NULL")));
+				(errmsg("scale_precision: memory_pressure is NULL")));
 	if (PG_ARGISNULL(2))
 		ereport(ERROR,
-			(errmsg("scale_precision: recall_target is NULL")));
+				(errmsg("scale_precision: recall_target is NULL")));
 
-	input = (Vector *)PG_GETARG_POINTER(0);
+	input = (Vector *) PG_GETARG_POINTER(0);
 	memory_pressure = PG_GETARG_FLOAT4(1);
 	recall_target = PG_GETARG_FLOAT4(2);
 
 	if (input == NULL)
 		ereport(ERROR,
-			(errmsg("scale_precision: input vector is missing")));
+				(errmsg("scale_precision: input vector is missing")));
 
 	/* Defensive: validate dim (max for int16 is 32767) */
 	{
-		int dim = (int)input->dim;
+		int			dim = (int) input->dim;
+
 		if (dim <= 0 || dim > 32767)
 			ereport(ERROR,
-				(errmsg("scale_precision: invalid vector "
-					"dimension")));
+					(errmsg("scale_precision: invalid vector "
+							"dimension")));
 	}
 
 	/* Decision logic (100% robust, never produces weird values) */
 	if (memory_pressure > 0.8f || recall_target < 0.85f)
-		target_precision = 8; /* Quantize to int8 */
+		target_precision = 8;	/* Quantize to int8 */
 	else if (memory_pressure > 0.6f || recall_target < 0.90f)
-		target_precision = 16; /* "float16" (rounded float4) */
+		target_precision = 16;	/* "float16" (rounded float4) */
 	else
-		target_precision = 32; /* float32 (full) */
+		target_precision = 32;	/* float32 (full) */
 
 	elog(DEBUG1,
-		"neurondb:scale_precision: target=%dbit (mem=%.3f recall=%.3f)",
-		target_precision,
-		memory_pressure,
-		recall_target);
+		 "neurondb:scale_precision: target=%dbit (mem=%.3f recall=%.3f)",
+		 target_precision,
+		 memory_pressure,
+		 recall_target);
 
 	/* Defensive instantiation of output vector */
 	result = new_vector(input->dim);
 	if (result == NULL)
 		ereport(ERROR,
-			(errmsg("scale_precision: failed to allocate result "
-				"vector")));
+				(errmsg("scale_precision: failed to allocate result "
+						"vector")));
 
 	if (target_precision == 8)
 	{
-		int8_t *int8buf = NULL;
-		int k;
-		int8buf = (int8_t *)palloc0(sizeof(int8_t) * input->dim);
+		int8_t	   *int8buf = NULL;
+		int			k;
+
+		int8buf = (int8_t *) palloc0(sizeof(int8_t) * input->dim);
 		if (!int8buf)
 			ereport(ERROR,
-				(errmsg("scale_precision: failed to alloc int8 "
-					"buffer")));
+					(errmsg("scale_precision: failed to alloc int8 "
+							"buffer")));
 		quantize_to_int8(input->data, int8buf, input->dim);
 
 		for (k = 0; k < input->dim; k++)
-			result->data[k] = (float4)int8buf[k];
+			result->data[k] = (float4) int8buf[k];
 
 		NDB_SAFE_PFREE_AND_NULL(int8buf);
-	} else if (target_precision == 16)
+	}
+	else if (target_precision == 16)
 	{
 		quantize_to_float16(input->data, result->data, input->dim);
-	} else /* 32 */
+	}
+	else						/* 32 */
 	{
 		memcpy(result->data, input->data, sizeof(float4) * input->dim);
 	}
@@ -486,27 +497,27 @@ PG_FUNCTION_INFO_V1(prefetch_entry_points);
 Datum
 prefetch_entry_points(PG_FUNCTION_ARGS)
 {
-	text *index_name;
-	char *idx_str = NULL;
-	int prefetched_count = 0;
+	text	   *index_name;
+	char	   *idx_str = NULL;
+	int			prefetched_count = 0;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
-			(errmsg("prefetch_entry_points: index_name is NULL")));
+				(errmsg("prefetch_entry_points: index_name is NULL")));
 	if (PG_ARGISNULL(1))
 		ereport(ERROR,
-			(errmsg("prefetch_entry_points: query_vector is "
-				"NULL")));
+				(errmsg("prefetch_entry_points: query_vector is "
+						"NULL")));
 
 	index_name = PG_GETARG_TEXT_PP(0);
 	/* query_vector not currently used in this implementation */
-	(void)PG_GETARG_POINTER(1);
+	(void) PG_GETARG_POINTER(1);
 
 	idx_str = text_to_cstring(index_name);
 	if (!idx_str)
 		ereport(ERROR,
-			(errmsg("prefetch_entry_points: index_name conversion "
-				"failed")));
+				(errmsg("prefetch_entry_points: index_name conversion "
+						"failed")));
 
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -514,45 +525,50 @@ prefetch_entry_points(PG_FUNCTION_ARGS)
 		if (idx_str)
 			NDB_SAFE_PFREE_AND_NULL(idx_str);
 		ereport(ERROR,
-			(errmsg("prefetch_entry_points: SPI_connect failed")));
+				(errmsg("prefetch_entry_points: SPI_connect failed")));
 	}
 
-	/* Query index statistics -- limit all dynamic stats lookups, always deallocate SQL buffers */
+	/*
+	 * Query index statistics -- limit all dynamic stats lookups, always
+	 * deallocate SQL buffers
+	 */
 	{
 		StringInfoData sql;
-		int ret;
+		int			ret;
+
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
-			"SELECT c.oid, c.relpages "
-			"FROM pg_class c "
-			"JOIN pg_index i ON c.oid = i.indexrelid "
-			"WHERE c.relname = %s",
-			quote_literal_cstr(idx_str));
+						 "SELECT c.oid, c.relpages "
+						 "FROM pg_class c "
+						 "JOIN pg_index i ON c.oid = i.indexrelid "
+						 "WHERE c.relname = %s",
+						 quote_literal_cstr(idx_str));
 
 		/* Defensive: forcibly limit row count (~max 10) */
 		ret = ndb_spi_execute_safe(sql.data, true, 10);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
-			int q;
-			for (q = 0; q < (int)SPI_processed; q++)
+			int			q;
+
+			for (q = 0; q < (int) SPI_processed; q++)
 			{
-				Datum pagesDatum;
-				bool isnull = false;
-				int32 pages = 0;
+				Datum		pagesDatum;
+				bool		isnull = false;
+				int32		pages = 0;
 
 				pagesDatum =
 					SPI_getbinval(SPI_tuptable->vals[q],
-						SPI_tuptable->tupdesc,
-						2,
-						&isnull);
+								  SPI_tuptable->tupdesc,
+								  2,
+								  &isnull);
 				if (!isnull)
 				{
 					pages = DatumGetInt32(pagesDatum);
 					if (pages < 0)
 						pages = 0;
 					if (pages > 128)
-						pages = 128; /* robust cap */
+						pages = 128;	/* robust cap */
 					prefetched_count += pages;
 				}
 			}
@@ -567,8 +583,8 @@ prefetch_entry_points(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(idx_str);
 
 	elog(DEBUG1,
-		"neurondb:prefetch_entry_points: prefetched_count=%d",
-		prefetched_count);
+		 "neurondb:prefetch_entry_points: prefetched_count=%d",
+		 prefetched_count);
 
 	PG_RETURN_INT32(prefetched_count);
 }

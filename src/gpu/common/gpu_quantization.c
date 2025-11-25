@@ -23,45 +23,49 @@
 static uint16_t
 float_to_half_bits(float value)
 {
-	union {
-		float f;
-		uint32_t u;
-	} v = { .f = value };
-	uint32_t sign = (v.u >> 16) & 0x8000;
-	uint32_t mant = v.u & 0x7fffff;
-	int32_t exp = ((int32_t)(v.u >> 23) & 0xff) - 127 + 15;
+	union
+	{
+		float		f;
+		uint32_t	u;
+	}			v = {.f = value};
+	uint32_t	sign = (v.u >> 16) & 0x8000;
+	uint32_t	mant = v.u & 0x7fffff;
+	int32_t		exp = ((int32_t) (v.u >> 23) & 0xff) - 127 + 15;
 
 	if (exp <= 0)
 	{
-		uint32_t shifted;
+		uint32_t	shifted;
+
 		if (exp < -10)
-			return (uint16_t)sign;
+			return (uint16_t) sign;
 		mant |= 0x800000;
 		shifted = mant >> (1 - exp);
-		return (uint16_t)(sign | ((shifted + 0x1000) >> 13));
-	} else if (exp >= 31)
+		return (uint16_t) (sign | ((shifted + 0x1000) >> 13));
+	}
+	else if (exp >= 31)
 	{
-		return (uint16_t)(sign | 0x7c00);
+		return (uint16_t) (sign | 0x7c00);
 	}
 
-	return (uint16_t)(sign | (exp << 10) | ((mant + 0x1000) >> 13));
+	return (uint16_t) (sign | (exp << 10) | ((mant + 0x1000) >> 13));
 }
 
 static inline int8_t
 quantize_int8_value(float value, float scale)
 {
-	float scaled = roundf(value * scale);
+	float		scaled = roundf(value * scale);
+
 	if (scaled > 127.0f)
 		scaled = 127.0f;
 	else if (scaled < -128.0f)
 		scaled = -128.0f;
-	return (int8_t)scaled;
+	return (int8_t) scaled;
 }
 
 void
 neurondb_gpu_quantize_fp16(const float *input, void *output, int count)
 {
-	const ndb_gpu_backend *backend;
+	const		ndb_gpu_backend *backend;
 
 	if (input == NULL || output == NULL || count <= 0)
 		return;
@@ -72,18 +76,19 @@ neurondb_gpu_quantize_fp16(const float *input, void *output, int count)
 		if (backend && backend->launch_quant_fp16)
 		{
 			if (backend->launch_quant_fp16(
-				    input, output, count, NULL)
+										   input, output, count, NULL)
 				== 0)
 				return;
 			elog(DEBUG1,
-				"neurondb: GPU quantize_fp16 failed, using CPU "
-				"fallback");
+				 "neurondb: GPU quantize_fp16 failed, using CPU "
+				 "fallback");
 		}
 	}
 
 	{
-		uint16_t *dst = (uint16_t *)output;
-		int i;
+		uint16_t   *dst = (uint16_t *) output;
+		int			i;
+
 		for (i = 0; i < count; i++)
 			dst[i] = float_to_half_bits(input[i]);
 	}
@@ -92,10 +97,10 @@ neurondb_gpu_quantize_fp16(const float *input, void *output, int count)
 void
 neurondb_gpu_quantize_int4(const float *input, unsigned char *output, int count)
 {
-	const ndb_gpu_backend *backend;
-	float max_abs = 0.0f;
-	float scale;
-	int i;
+	const		ndb_gpu_backend *backend;
+	float		max_abs = 0.0f;
+	float		scale;
+	int			i;
 
 	if (input == NULL || output == NULL || count <= 0)
 		return;
@@ -103,7 +108,8 @@ neurondb_gpu_quantize_int4(const float *input, unsigned char *output, int count)
 	/* Find max absolute value */
 	for (i = 0; i < count; i++)
 	{
-		float abs_val = fabsf(input[i]);
+		float		abs_val = fabsf(input[i]);
+
 		if (abs_val > max_abs)
 			max_abs = abs_val;
 	}
@@ -123,37 +129,39 @@ neurondb_gpu_quantize_int4(const float *input, unsigned char *output, int count)
 		{
 			/* Use int8 as fallback for int4 */
 			if (backend->launch_quant_int8(
-					input, (int8_t *)output, count, scale, NULL) == 0)
+										   input, (int8_t *) output, count, scale, NULL) == 0)
 				return;
 			elog(DEBUG1,
-				"neurondb: GPU quantize_int4 failed, using CPU fallback");
+				 "neurondb: GPU quantize_int4 failed, using CPU fallback");
 		}
 	}
 
 	/* CPU fallback: pack 2 values per byte */
 	for (i = 0; i < count; i += 2)
 	{
-		int8_t val1, val2;
-		unsigned char uval1, uval2;
-		float scaled1 = input[i] * scale;
-		float scaled2 = (i + 1 < count) ? input[i + 1] * scale : 0.0f;
+		int8_t		val1,
+					val2;
+		unsigned char uval1,
+					uval2;
+		float		scaled1 = input[i] * scale;
+		float		scaled2 = (i + 1 < count) ? input[i + 1] * scale : 0.0f;
 
 		if (scaled1 > 7.0f)
 			val1 = 7;
 		else if (scaled1 < -8.0f)
 			val1 = -8;
 		else
-			val1 = (int8_t)rintf(scaled1);
+			val1 = (int8_t) rintf(scaled1);
 
 		if (scaled2 > 7.0f)
 			val2 = 7;
 		else if (scaled2 < -8.0f)
 			val2 = -8;
 		else
-			val2 = (int8_t)rintf(scaled2);
+			val2 = (int8_t) rintf(scaled2);
 
-		uval1 = (unsigned char)(8 + val1);
-		uval2 = (unsigned char)(8 + val2);
+		uval1 = (unsigned char) (8 + val1);
+		uval2 = (unsigned char) (8 + val2);
 		if (uval1 > 15)
 			uval1 = 15;
 		if (uval2 > 15)
@@ -166,7 +174,7 @@ neurondb_gpu_quantize_int4(const float *input, unsigned char *output, int count)
 void
 neurondb_gpu_quantize_fp8_e4m3(const float *input, unsigned char *output, int count)
 {
-	const ndb_gpu_backend *backend;
+	const		ndb_gpu_backend *backend;
 
 	if (input == NULL || output == NULL || count <= 0)
 		return;
@@ -177,21 +185,24 @@ neurondb_gpu_quantize_fp8_e4m3(const float *input, unsigned char *output, int co
 		if (backend && backend->launch_quant_fp8_e4m3)
 		{
 			if (backend->launch_quant_fp8_e4m3(
-					input, output, count, NULL) == 0)
+											   input, output, count, NULL) == 0)
 				return;
 			elog(DEBUG1,
-				"neurondb: GPU quantize_fp8_e4m3 failed, using CPU fallback");
+				 "neurondb: GPU quantize_fp8_e4m3 failed, using CPU fallback");
 		}
 	}
 
 	/* CPU fallback */
 	{
-		int i;
+		int			i;
+
 		for (i = 0; i < count; i++)
 		{
-			uint32_t bits;
-			uint8_t sign, mant;
-			int exp;
+			uint32_t	bits;
+			uint8_t		sign,
+						mant;
+			int			exp;
+
 			memcpy(&bits, &input[i], sizeof(float));
 			sign = (bits >> 31) & 0x1;
 			exp = ((bits >> 23) & 0xFF) - 127;
@@ -213,7 +224,7 @@ neurondb_gpu_quantize_fp8_e4m3(const float *input, unsigned char *output, int co
 void
 neurondb_gpu_quantize_fp8_e5m2(const float *input, unsigned char *output, int count)
 {
-	const ndb_gpu_backend *backend;
+	const		ndb_gpu_backend *backend;
 
 	if (input == NULL || output == NULL || count <= 0)
 		return;
@@ -224,21 +235,24 @@ neurondb_gpu_quantize_fp8_e5m2(const float *input, unsigned char *output, int co
 		if (backend && backend->launch_quant_fp8_e5m2)
 		{
 			if (backend->launch_quant_fp8_e5m2(
-					input, output, count, NULL) == 0)
+											   input, output, count, NULL) == 0)
 				return;
 			elog(DEBUG1,
-				"neurondb: GPU quantize_fp8_e5m2 failed, using CPU fallback");
+				 "neurondb: GPU quantize_fp8_e5m2 failed, using CPU fallback");
 		}
 	}
 
 	/* CPU fallback */
 	{
-		int i;
+		int			i;
+
 		for (i = 0; i < count; i++)
 		{
-			uint32_t bits;
-			uint8_t sign, mant;
-			int exp;
+			uint32_t	bits;
+			uint8_t		sign,
+						mant;
+			int			exp;
+
 			memcpy(&bits, &input[i], sizeof(float));
 			sign = (bits >> 31) & 0x1;
 			exp = ((bits >> 23) & 0xFF) - 127;
@@ -258,19 +272,20 @@ neurondb_gpu_quantize_fp8_e5m2(const float *input, unsigned char *output, int co
 }
 
 void
-neurondb_gpu_quantize_int8(const float *input, int8 *output, int count)
+neurondb_gpu_quantize_int8(const float *input, int8 * output, int count)
 {
-	const ndb_gpu_backend *backend;
-	float max_abs = 0.0f;
-	float scale;
-	int i;
+	const		ndb_gpu_backend *backend;
+	float		max_abs = 0.0f;
+	float		scale;
+	int			i;
 
 	if (input == NULL || output == NULL || count <= 0)
 		return;
 
 	for (i = 0; i < count; i++)
 	{
-		float abs_val = fabsf(input[i]);
+		float		abs_val = fabsf(input[i]);
+
 		if (abs_val > max_abs)
 			max_abs = abs_val;
 	}
@@ -282,12 +297,12 @@ neurondb_gpu_quantize_int8(const float *input, int8 *output, int count)
 		if (backend && backend->launch_quant_int8)
 		{
 			if (backend->launch_quant_int8(
-				    input, (int8_t *)output, count, scale, NULL)
+										   input, (int8_t *) output, count, scale, NULL)
 				== 0)
 				return;
 			elog(DEBUG1,
-				"neurondb: GPU int8 quantization failed; using "
-				"CPU fallback");
+				 "neurondb: GPU int8 quantization failed; using "
+				 "CPU fallback");
 		}
 	}
 
@@ -296,9 +311,9 @@ neurondb_gpu_quantize_int8(const float *input, int8 *output, int count)
 }
 
 void
-neurondb_gpu_quantize_binary(const float *input, uint8 *output, int count)
+neurondb_gpu_quantize_binary(const float *input, uint8 * output, int count)
 {
-	const ndb_gpu_backend *backend;
+	const		ndb_gpu_backend *backend;
 
 	if (input == NULL || output == NULL || count <= 0)
 		return;
@@ -309,18 +324,19 @@ neurondb_gpu_quantize_binary(const float *input, uint8 *output, int count)
 		if (backend && backend->launch_quant_binary)
 		{
 			if (backend->launch_quant_binary(
-				    input, (uint8_t *)output, count, NULL)
+											 input, (uint8_t *) output, count, NULL)
 				== 0)
 				return;
 			elog(DEBUG1,
-				"neurondb: GPU binary quantization failed; "
-				"using CPU fallback");
+				 "neurondb: GPU binary quantization failed; "
+				 "using CPU fallback");
 		}
 	}
 
 	{
-		int out_bytes = (count + 7) / 8;
-		int idx;
+		int			out_bytes = (count + 7) / 8;
+		int			idx;
+
 		memset(output, 0, out_bytes);
 
 		for (idx = 0; idx < count; idx++)

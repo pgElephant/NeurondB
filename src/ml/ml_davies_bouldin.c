@@ -52,6 +52,7 @@ euclidean_distance(const float *a, const float *b, int dim)
 	for (i = 0; i < dim; i++)
 	{
 		double		diff = (double) a[i] - (double) b[i];
+
 		sum += diff * diff;
 	}
 	return sqrt(sum);
@@ -94,8 +95,8 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	cluster_col_str = text_to_cstring(cluster_column);
 
 	elog(DEBUG1,
-	     "neurondb: Computing Davies-Bouldin index for %s.%s (clusters=%s)",
-	     tbl_str, vec_col_str, cluster_col_str);
+		 "neurondb: Computing Davies-Bouldin index for %s.%s (clusters=%s)",
+		 tbl_str, vec_col_str, cluster_col_str);
 
 	vectors = neurondb_fetch_vectors_from_table(tbl_str, vec_col_str, &nvec, &dim);
 
@@ -112,7 +113,7 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 		initStringInfo(&sql);
 		appendStringInfo(&sql, "SELECT %s FROM %s ORDER BY ctid", cluster_col_str, tbl_str);
 		ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 	}
 
 	if (ret != SPI_OK_SELECT || (int) SPI_processed != nvec)
@@ -156,7 +157,7 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < nvec; i++)
 	{
-		int		cluster = cluster_labels[i];
+		int			cluster = cluster_labels[i];
 
 		if (cluster < 1 || cluster > num_clusters)
 			continue;
@@ -182,14 +183,14 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < nvec; i++)
 	{
-		int		cluster = cluster_labels[i];
+		int			cluster = cluster_labels[i];
 
 		if (cluster < 1 || cluster > num_clusters)
 			continue;
 
 		cluster = cluster - 1;
 		cluster_scatter[cluster] += euclidean_distance(
-				vectors[i], cluster_centroids[cluster], dim);
+													   vectors[i], cluster_centroids[cluster], dim);
 	}
 
 	for (c = 0; c < num_clusters; c++)
@@ -200,20 +201,20 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 
 	db_index = 0.0;
 	{
-		int		valid_clusters = 0;
+		int			valid_clusters = 0;
 
 		for (i = 0; i < num_clusters; i++)
 		{
-			double	max_ratio = 0.0;
-			int		j;
+			double		max_ratio = 0.0;
+			int			j;
 
 			if (cluster_sizes[i] < 2)
 				continue;
 
 			for (j = 0; j < num_clusters; j++)
 			{
-				double	centroid_dist;
-				double	ratio;
+				double		centroid_dist;
+				double		ratio;
 
 				if (i == j || cluster_sizes[j] < 2)
 					continue;
@@ -269,34 +270,35 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 
 typedef struct DaviesBouldinGpuModelState
 {
-	bytea *model_blob;
-	Jsonb *metrics;
-	float **centroids;
-	int *cluster_sizes;
-	int n_clusters;
-	int dim;
-	int n_samples;
-} DaviesBouldinGpuModelState;
+	bytea	   *model_blob;
+	Jsonb	   *metrics;
+	float	  **centroids;
+	int		   *cluster_sizes;
+	int			n_clusters;
+	int			dim;
+	int			n_samples;
+}			DaviesBouldinGpuModelState;
 
 static bytea *
 davies_bouldin_model_serialize_to_bytea(float **centroids, int *cluster_sizes, int n_clusters, int dim)
 {
 	StringInfoData buf;
-	int i, j;
-	int total_size;
-	bytea *result;
+	int			i,
+				j;
+	int			total_size;
+	bytea	   *result;
 
 	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf, (char *)&n_clusters, sizeof(int));
-	appendBinaryStringInfo(&buf, (char *)&dim, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &n_clusters, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &dim, sizeof(int));
 	for (i = 0; i < n_clusters; i++)
-		appendBinaryStringInfo(&buf, (char *)&cluster_sizes[i], sizeof(int));
+		appendBinaryStringInfo(&buf, (char *) &cluster_sizes[i], sizeof(int));
 	for (i = 0; i < n_clusters; i++)
 		for (j = 0; j < dim; j++)
-			appendBinaryStringInfo(&buf, (char *)&centroids[i][j], sizeof(float));
+			appendBinaryStringInfo(&buf, (char *) &centroids[i][j], sizeof(float));
 
 	total_size = VARHDRSZ + buf.len;
-	result = (bytea *)palloc(total_size);
+	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
@@ -305,13 +307,14 @@ davies_bouldin_model_serialize_to_bytea(float **centroids, int *cluster_sizes, i
 }
 
 static int
-davies_bouldin_model_deserialize_from_bytea(const bytea *data, float ***centroids_out, int **cluster_sizes_out, int *n_clusters_out, int *dim_out)
+davies_bouldin_model_deserialize_from_bytea(const bytea * data, float ***centroids_out, int **cluster_sizes_out, int *n_clusters_out, int *dim_out)
 {
 	const char *buf;
-	int offset = 0;
-	int i, j;
-	float **centroids;
-	int *cluster_sizes;
+	int			offset = 0;
+	int			i,
+				j;
+	float	  **centroids;
+	int		   *cluster_sizes;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 2)
 		return -1;
@@ -325,17 +328,17 @@ davies_bouldin_model_deserialize_from_bytea(const bytea *data, float ***centroid
 	if (*n_clusters_out < 0 || *n_clusters_out > 10000 || *dim_out <= 0 || *dim_out > 100000)
 		return -1;
 
-	cluster_sizes = (int *)palloc(sizeof(int) * *n_clusters_out);
+	cluster_sizes = (int *) palloc(sizeof(int) * *n_clusters_out);
 	for (i = 0; i < *n_clusters_out; i++)
 	{
 		memcpy(&cluster_sizes[i], buf + offset, sizeof(int));
 		offset += sizeof(int);
 	}
 
-	centroids = (float **)palloc(sizeof(float *) * *n_clusters_out);
+	centroids = (float **) palloc(sizeof(float *) * *n_clusters_out);
 	for (i = 0; i < *n_clusters_out; i++)
 	{
-		centroids[i] = (float *)palloc(sizeof(float) * *dim_out);
+		centroids[i] = (float *) palloc(sizeof(float) * *dim_out);
 		for (j = 0; j < *dim_out; j++)
 		{
 			memcpy(&centroids[i][j], buf + offset, sizeof(float));
@@ -349,23 +352,25 @@ davies_bouldin_model_deserialize_from_bytea(const bytea *data, float ***centroid
 }
 
 static bool
-davies_bouldin_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
+davies_bouldin_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 {
 	DaviesBouldinGpuModelState *state;
-	float **data = NULL;
-	int *labels = NULL;
-	float **centroids = NULL;
-	int *cluster_sizes = NULL;
-	int num_clusters = 8;
-	int nvec = 0;
-	int dim = 0;
-	int i, c, d;
-	bytea *model_data = NULL;
-	Jsonb *metrics = NULL;
+	float	  **data = NULL;
+	int		   *labels = NULL;
+	float	  **centroids = NULL;
+	int		   *cluster_sizes = NULL;
+	int			num_clusters = 8;
+	int			nvec = 0;
+	int			dim = 0;
+	int			i,
+				c,
+				d;
+	bytea	   *model_data = NULL;
+	Jsonb	   *metrics = NULL;
 	StringInfoData metrics_json;
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -379,16 +384,17 @@ davies_bouldin_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **e
 	/* Extract hyperparameters */
 	if (spec->hyperparameters != NULL)
 	{
-		it = JsonbIteratorInit((JsonbContainer *)&spec->hyperparameters->root);
+		it = JsonbIteratorInit((JsonbContainer *) & spec->hyperparameters->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "n_clusters") == 0 && v.type == jbvNumeric)
 					num_clusters = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																	 NumericGetDatum(v.val.numeric)));
 				NDB_SAFE_PFREE_AND_NULL(key);
 			}
 		}
@@ -416,24 +422,25 @@ davies_bouldin_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **e
 		return false;
 	}
 
-	data = (float **)palloc(sizeof(float *) * nvec);
+	data = (float **) palloc(sizeof(float *) * nvec);
 	for (i = 0; i < nvec; i++)
 	{
-		data[i] = (float *)palloc(sizeof(float) * dim);
+		data[i] = (float *) palloc(sizeof(float) * dim);
 		memcpy(data[i], &spec->feature_matrix[i * dim], sizeof(float) * dim);
 	}
 
 	/* Simple K-means clustering to get cluster assignments */
-	labels = (int *)palloc0(sizeof(int) * nvec);
-	centroids = (float **)palloc(sizeof(float *) * num_clusters);
-	cluster_sizes = (int *)palloc0(sizeof(int) * num_clusters);
+	labels = (int *) palloc0(sizeof(int) * nvec);
+	centroids = (float **) palloc(sizeof(float *) * num_clusters);
+	cluster_sizes = (int *) palloc0(sizeof(int) * num_clusters);
 
 	/* Initialize centroids randomly */
 	{
-		int rand_idx;
+		int			rand_idx;
+
 		for (c = 0; c < num_clusters; c++)
 		{
-			centroids[c] = (float *)palloc(sizeof(float) * dim);
+			centroids[c] = (float *) palloc(sizeof(float) * dim);
 			rand_idx = (c * nvec) / num_clusters;
 			memcpy(centroids[c], data[rand_idx], sizeof(float) * dim);
 		}
@@ -442,17 +449,18 @@ davies_bouldin_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **e
 	/* K-means iteration */
 	for (int iter = 0; iter < 100; iter++)
 	{
-		bool changed = false;
+		bool		changed = false;
 
 		/* Assignment */
 		for (i = 0; i < nvec; i++)
 		{
-			double min_dist = DBL_MAX;
-			int best = 0;
+			double		min_dist = DBL_MAX;
+			int			best = 0;
 
 			for (c = 0; c < num_clusters; c++)
 			{
-				double dist = sqrt(neurondb_l2_distance_squared(data[i], centroids[c], dim));
+				double		dist = sqrt(neurondb_l2_distance_squared(data[i], centroids[c], dim));
+
 				if (dist < min_dist)
 				{
 					min_dist = dist;
@@ -500,13 +508,13 @@ davies_bouldin_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **e
 	/* Build metrics */
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json,
-		"{\"storage\":\"cpu\",\"n_clusters\":%d,\"dim\":%d,\"n_samples\":%d}",
-		num_clusters, dim, nvec);
+					 "{\"storage\":\"cpu\",\"n_clusters\":%d,\"dim\":%d,\"n_samples\":%d}",
+					 num_clusters, dim, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(metrics_json.data)));
+												 CStringGetDatum(metrics_json.data)));
 	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
 
-	state = (DaviesBouldinGpuModelState *)palloc0(sizeof(DaviesBouldinGpuModelState));
+	state = (DaviesBouldinGpuModelState *) palloc0(sizeof(DaviesBouldinGpuModelState));
 	state->model_blob = model_data;
 	state->metrics = metrics;
 	state->centroids = centroids;
@@ -532,13 +540,13 @@ davies_bouldin_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **e
 }
 
 static bool
-davies_bouldin_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
-	float *output, int output_dim, char **errstr)
+davies_bouldin_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
+						   float *output, int output_dim, char **errstr)
 {
-	const DaviesBouldinGpuModelState *state;
-	int c;
-	double min_dist = DBL_MAX;
-	int best_cluster = -1;
+	const		DaviesBouldinGpuModelState *state;
+	int			c;
+	double		min_dist = DBL_MAX;
+	int			best_cluster = -1;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -563,7 +571,7 @@ davies_bouldin_gpu_predict(const MLGpuModel *model, const float *input, int inpu
 		return false;
 	}
 
-	state = (const DaviesBouldinGpuModelState *)model->backend_state;
+	state = (const DaviesBouldinGpuModelState *) model->backend_state;
 	if (state->centroids == NULL)
 	{
 		if (errstr != NULL)
@@ -580,7 +588,8 @@ davies_bouldin_gpu_predict(const MLGpuModel *model, const float *input, int inpu
 
 	for (c = 0; c < state->n_clusters; c++)
 	{
-		double dist = sqrt(neurondb_l2_distance_squared(input, state->centroids[c], state->dim));
+		double		dist = sqrt(neurondb_l2_distance_squared(input, state->centroids[c], state->dim));
+
 		if (dist < min_dist)
 		{
 			min_dist = dist;
@@ -588,20 +597,22 @@ davies_bouldin_gpu_predict(const MLGpuModel *model, const float *input, int inpu
 		}
 	}
 
-	output[0] = (float)best_cluster;
+	output[0] = (float) best_cluster;
 
 	return true;
 }
 
 static bool
-davies_bouldin_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
-	MLGpuMetrics *out, char **errstr)
+davies_bouldin_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
+							MLGpuMetrics * out, char **errstr)
 {
-	const DaviesBouldinGpuModelState *state;
-	Jsonb *metrics_json;
+	const		DaviesBouldinGpuModelState *state;
+	Jsonb	   *metrics_json;
 	StringInfoData buf;
-	double db_index = 0.0;
-	int i, j, c;
+	double		db_index = 0.0;
+	int			i,
+				j,
+				c;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -614,44 +625,49 @@ davies_bouldin_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 		return false;
 	}
 
-	state = (const DaviesBouldinGpuModelState *)model->backend_state;
+	state = (const DaviesBouldinGpuModelState *) model->backend_state;
 
 	/* Compute Davies-Bouldin index */
 	if (state->centroids != NULL && state->n_clusters > 1)
 	{
-		double *scatter = (double *)palloc0(sizeof(double) * state->n_clusters);
+		double	   *scatter = (double *) palloc0(sizeof(double) * state->n_clusters);
 
 		/* Compute scatter for each cluster */
 		/* Scatter is the average distance from points to cluster centroid */
-		/* If evaluation table is provided, fetch data and compute actual scatter */
+
+		/*
+		 * If evaluation table is provided, fetch data and compute actual
+		 * scatter
+		 */
 		if (spec != NULL && spec->evaluation_table != NULL)
 		{
 			/* Fetch data from evaluation table and compute scatter */
-			float **data = NULL;
-			int nvec = 0;
-			int data_dim = 0;
-			int *cluster_assignments = NULL;
-			int *cluster_counts = NULL;
-			int s;
-			char *vec_col = "vector"; /* Default vector column name */
+			float	  **data = NULL;
+			int			nvec = 0;
+			int			data_dim = 0;
+			int		   *cluster_assignments = NULL;
+			int		   *cluster_counts = NULL;
+			int			s;
+			char	   *vec_col = "vector"; /* Default vector column name */
 
 			/* Try to fetch vectors from evaluation table */
 			data = neurondb_fetch_vectors_from_table(spec->evaluation_table, vec_col, &nvec, &data_dim);
 
 			if (data != NULL && nvec > 0 && data_dim == state->dim)
 			{
-				cluster_assignments = (int *)palloc0(sizeof(int) * nvec);
-				cluster_counts = (int *)palloc0(sizeof(int) * state->n_clusters);
+				cluster_assignments = (int *) palloc0(sizeof(int) * nvec);
+				cluster_counts = (int *) palloc0(sizeof(int) * state->n_clusters);
 
 				/* Assign points to nearest centroids */
 				for (s = 0; s < nvec; s++)
 				{
-					double min_dist = DBL_MAX;
-					int best = 0;
+					double		min_dist = DBL_MAX;
+					int			best = 0;
 
 					for (c = 0; c < state->n_clusters; c++)
 					{
-						double dist = euclidean_distance(data[s], state->centroids[c], state->dim);
+						double		dist = euclidean_distance(data[s], state->centroids[c], state->dim);
+
 						if (dist < min_dist)
 						{
 							min_dist = dist;
@@ -662,12 +678,15 @@ davies_bouldin_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 					cluster_counts[best]++;
 				}
 
-				/* Compute scatter: average distance to centroid for each cluster */
+				/*
+				 * Compute scatter: average distance to centroid for each
+				 * cluster
+				 */
 				for (c = 0; c < state->n_clusters; c++)
 				{
 					if (cluster_counts[c] > 0)
 					{
-						double total_dist = 0.0;
+						double		total_dist = 0.0;
 
 						for (s = 0; s < nvec; s++)
 						{
@@ -676,7 +695,7 @@ davies_bouldin_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 								total_dist += euclidean_distance(data[s], state->centroids[c], state->dim);
 							}
 						}
-						scatter[c] = total_dist / (double)cluster_counts[c];
+						scatter[c] = total_dist / (double) cluster_counts[c];
 					}
 					else
 					{
@@ -714,16 +733,19 @@ davies_bouldin_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 
 		for (i = 0; i < state->n_clusters; i++)
 		{
-			double max_ratio = 0.0;
+			double		max_ratio = 0.0;
+
 			for (j = 0; j < state->n_clusters; j++)
 			{
 				if (i != j)
 				{
-					double centroid_dist = sqrt(neurondb_l2_distance_squared(
-						state->centroids[i], state->centroids[j], state->dim));
+					double		centroid_dist = sqrt(neurondb_l2_distance_squared(
+																				  state->centroids[i], state->centroids[j], state->dim));
+
 					if (centroid_dist > 0.0)
 					{
-						double ratio = (scatter[i] + scatter[j]) / centroid_dist;
+						double		ratio = (scatter[i] + scatter[j]) / centroid_dist;
+
 						if (ratio > max_ratio)
 							max_ratio = ratio;
 					}
@@ -738,15 +760,15 @@ davies_bouldin_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-		"{\"algorithm\":\"davies_bouldin\",\"storage\":\"cpu\","
-		"\"db_index\":%.6f,\"n_clusters\":%d,\"dim\":%d,\"n_samples\":%d}",
-		db_index,
-		state->n_clusters > 0 ? state->n_clusters : 0,
-		state->dim > 0 ? state->dim : 0,
-		state->n_samples > 0 ? state->n_samples : 0);
+					 "{\"algorithm\":\"davies_bouldin\",\"storage\":\"cpu\","
+					 "\"db_index\":%.6f,\"n_clusters\":%d,\"dim\":%d,\"n_samples\":%d}",
+					 db_index,
+					 state->n_clusters > 0 ? state->n_clusters : 0,
+					 state->dim > 0 ? state->dim : 0,
+					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(buf.data)));
+													  CStringGetDatum(buf.data)));
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
 
 	if (out != NULL)
@@ -756,12 +778,12 @@ davies_bouldin_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 }
 
 static bool
-davies_bouldin_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
-	Jsonb **metadata_out, char **errstr)
+davies_bouldin_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
+							 Jsonb * *metadata_out, char **errstr)
 {
-	const DaviesBouldinGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
+	const		DaviesBouldinGpuModelState *state;
+	bytea	   *payload_copy;
+	int			payload_size;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -776,7 +798,7 @@ davies_bouldin_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		return false;
 	}
 
-	state = (const DaviesBouldinGpuModelState *)model->backend_state;
+	state = (const DaviesBouldinGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 	{
 		if (errstr != NULL)
@@ -785,7 +807,7 @@ davies_bouldin_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 	}
 
 	payload_size = VARSIZE(state->model_blob);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, state->model_blob, payload_size);
 
 	if (payload_out != NULL)
@@ -794,26 +816,26 @@ davies_bouldin_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		NDB_SAFE_PFREE_AND_NULL(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
-		*metadata_out = (Jsonb *)PG_DETOAST_DATUM_COPY(
-			PointerGetDatum(state->metrics));
+		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
+														PointerGetDatum(state->metrics));
 
 	return true;
 }
 
 static bool
-davies_bouldin_gpu_deserialize(MLGpuModel *model, const bytea *payload,
-	const Jsonb *metadata, char **errstr)
+davies_bouldin_gpu_deserialize(MLGpuModel * model, const bytea * payload,
+							   const Jsonb * metadata, char **errstr)
 {
 	DaviesBouldinGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
-	float **centroids = NULL;
-	int *cluster_sizes = NULL;
-	int n_clusters = 0;
-	int dim = 0;
+	bytea	   *payload_copy;
+	int			payload_size;
+	float	  **centroids = NULL;
+	int		   *cluster_sizes = NULL;
+	int			n_clusters = 0;
+	int			dim = 0;
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -825,11 +847,11 @@ davies_bouldin_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 	}
 
 	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, payload, payload_size);
 
 	if (davies_bouldin_model_deserialize_from_bytea(payload_copy,
-		&centroids, &cluster_sizes, &n_clusters, &dim) != 0)
+													&centroids, &cluster_sizes, &n_clusters, &dim) != 0)
 	{
 		NDB_SAFE_PFREE_AND_NULL(payload_copy);
 		if (errstr != NULL)
@@ -837,7 +859,7 @@ davies_bouldin_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 		return false;
 	}
 
-	state = (DaviesBouldinGpuModelState *)palloc0(sizeof(DaviesBouldinGpuModelState));
+	state = (DaviesBouldinGpuModelState *) palloc0(sizeof(DaviesBouldinGpuModelState));
 	state->model_blob = payload_copy;
 	state->centroids = centroids;
 	state->cluster_sizes = cluster_sizes;
@@ -847,25 +869,28 @@ davies_bouldin_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 
 	if (metadata != NULL)
 	{
-		int metadata_size = VARSIZE(metadata);
-		Jsonb *metadata_copy = (Jsonb *)palloc(metadata_size);
+		int			metadata_size = VARSIZE(metadata);
+		Jsonb	   *metadata_copy = (Jsonb *) palloc(metadata_size);
+
 		memcpy(metadata_copy, metadata, metadata_size);
 		state->metrics = metadata_copy;
 
-		it = JsonbIteratorInit((JsonbContainer *)&metadata->root);
+		it = JsonbIteratorInit((JsonbContainer *) & metadata->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																		 NumericGetDatum(v.val.numeric)));
 				NDB_SAFE_PFREE_AND_NULL(key);
 			}
 		}
-	} else
+	}
+	else
 	{
 		state->metrics = NULL;
 	}
@@ -881,7 +906,7 @@ davies_bouldin_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 }
 
 static void
-davies_bouldin_gpu_destroy(MLGpuModel *model)
+davies_bouldin_gpu_destroy(MLGpuModel * model)
 {
 	DaviesBouldinGpuModelState *state;
 
@@ -890,7 +915,7 @@ davies_bouldin_gpu_destroy(MLGpuModel *model)
 
 	if (model->backend_state != NULL)
 	{
-		state = (DaviesBouldinGpuModelState *)model->backend_state;
+		state = (DaviesBouldinGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
 			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
 		if (state->metrics != NULL)
@@ -928,6 +953,7 @@ void
 neurondb_gpu_register_davies_bouldin_model(void)
 {
 	static bool registered = false;
+
 	if (registered)
 		return;
 	ndb_gpu_register_model_ops(&davies_bouldin_gpu_model_ops);

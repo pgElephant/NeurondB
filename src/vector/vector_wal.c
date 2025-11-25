@@ -24,12 +24,12 @@
 
 /* Helper for safe text->cstring conversion: always NOT NULL, panics otherwise */
 static char *
-safe_text_to_cstring(const text *txt)
+safe_text_to_cstring(const text * txt)
 {
 	if (!txt)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("NULL vector or base_vector argument")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("NULL vector or base_vector argument")));
 	return text_to_cstring(txt);
 }
 
@@ -37,22 +37,23 @@ safe_text_to_cstring(const text *txt)
 static float8 *
 parse_vector_str(const char *vec, int *out_dim)
 {
-	char *copy = pstrdup(vec);
-	int capacity = 32;
-	int count = 0;
-	float8 *result = (float8 *)palloc(sizeof(float8) * capacity);
-	char *token, *ptr;
-	char *saveptr = NULL;
+	char	   *copy = pstrdup(vec);
+	int			capacity = 32;
+	int			count = 0;
+	float8	   *result = (float8 *) palloc(sizeof(float8) * capacity);
+	char	   *token,
+			   *ptr;
+	char	   *saveptr = NULL;
 
 	*out_dim = 0;
 
 	/* Strip whitespace and brackets */
-	while (isspace((unsigned char)*copy))
+	while (isspace((unsigned char) *copy))
 		copy++;
 	if (copy[0] == '[')
 		copy++;
 	ptr = copy + strlen(copy) - 1;
-	while (ptr > copy && isspace((unsigned char)*ptr))
+	while (ptr > copy && isspace((unsigned char) *ptr))
 		ptr--;
 	if (ptr >= copy && *ptr == ']')
 		*ptr = '\0';
@@ -61,29 +62,29 @@ parse_vector_str(const char *vec, int *out_dim)
 	token = strtok_r(copy, ",", &saveptr);
 	while (token)
 	{
-		double val;
-		char *endptr = NULL;
+		double		val;
+		char	   *endptr = NULL;
 
 		/* Allow whitespace within token */
-		while (isspace((unsigned char)*token))
+		while (isspace((unsigned char) *token))
 			token++;
 		val = strtod(token, &endptr);
 		if (endptr == token || isnan(val) || isinf(val))
 		{
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					errmsg("vector contains invalid float8 "
-					       "value: \"%s\"",
-						token)));
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("vector contains invalid float8 "
+							"value: \"%s\"",
+							token)));
 		}
 
 		if (count >= capacity)
 		{
 			capacity *= 2;
-			result = (float8 *)repalloc(
-				result, capacity * sizeof(float8));
+			result = (float8 *) repalloc(
+										 result, capacity * sizeof(float8));
 		}
-		result[count++] = (float8)val;
+		result[count++] = (float8) val;
 		token = strtok_r(NULL, ",", &saveptr);
 	}
 
@@ -92,8 +93,8 @@ parse_vector_str(const char *vec, int *out_dim)
 
 	if (count == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				errmsg("vector representation is empty")));
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("vector representation is empty")));
 
 	return result;
 }
@@ -109,13 +110,17 @@ PG_FUNCTION_INFO_V1(vector_wal_compress);
 Datum
 vector_wal_compress(PG_FUNCTION_ARGS)
 {
-	text *vector = PG_GETARG_TEXT_PP(0);
-	text *base_vector = PG_GETARG_TEXT_PP(1);
-	char *vec_str = NULL, *base_str = NULL;
-	float8 *cur_values = NULL, *base_values = NULL;
-	int dim = 0, base_dim = 0;
-	int i, run_len;
-	float8 delta = 0;
+	text	   *vector = PG_GETARG_TEXT_PP(0);
+	text	   *base_vector = PG_GETARG_TEXT_PP(1);
+	char	   *vec_str = NULL,
+			   *base_str = NULL;
+	float8	   *cur_values = NULL,
+			   *base_values = NULL;
+	int			dim = 0,
+				base_dim = 0;
+	int			i,
+				run_len;
+	float8		delta = 0;
 	StringInfoData compressed;
 
 	vec_str = safe_text_to_cstring(vector);
@@ -126,24 +131,22 @@ vector_wal_compress(PG_FUNCTION_ARGS)
 
 	if (dim != base_dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector and base_vector dimensions do "
-				       "not match (%d vs %d)",
-					dim,
-					base_dim)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("vector and base_vector dimensions do "
+						"not match (%d vs %d)",
+						dim,
+						base_dim)));
 
 	initStringInfo(&compressed);
 
 	elog(DEBUG1,
-		"neurondb: Compressing vector using delta encoding, dim=%d",
-		dim);
+		 "neurondb: Compressing vector using delta encoding, dim=%d",
+		 dim);
 
 	/*
-	 * Algorithm:
-	 * For each element: delta = cur - base.
-	 * Run-length encode sequences of repeated deltas.
-	 * For demonstration, deltas stored as text and rle length.
-	 * Example: 3:0.5;2:-0.1;1:0.0
+	 * Algorithm: For each element: delta = cur - base. Run-length encode
+	 * sequences of repeated deltas. For demonstration, deltas stored as text
+	 * and rle length. Example: 3:0.5;2:-0.1;1:0.0
 	 */
 	appendStringInfo(&compressed, "D%d:", dim);
 	i = 0;
@@ -154,20 +157,20 @@ vector_wal_compress(PG_FUNCTION_ARGS)
 
 		/* Find repeated consecutive identical deltas */
 		while ((i + run_len < dim)
-			&& fabs((cur_values[i + run_len]
-					- base_values[i + run_len])
-				   - delta)
-				< DBL_EPSILON)
+			   && fabs((cur_values[i + run_len]
+						- base_values[i + run_len])
+					   - delta)
+			   < DBL_EPSILON)
 		{
 			run_len++;
 		}
 
 		/* Write run-length, delta pair */
 		appendStringInfo(&compressed,
-			"%d:%.17g%s",
-			run_len,
-			delta,
-			(i + run_len < dim) ? ";" : "");
+						 "%d:%.17g%s",
+						 run_len,
+						 delta,
+						 (i + run_len < dim) ? ";" : "");
 		i += run_len;
 	}
 
@@ -181,22 +184,28 @@ PG_FUNCTION_INFO_V1(vector_wal_decompress);
 Datum
 vector_wal_decompress(PG_FUNCTION_ARGS)
 {
-	text *compressed = PG_GETARG_TEXT_PP(0);
-	text *base_vector = PG_GETARG_TEXT_PP(1);
-	char *comp_str = NULL, *base_str = NULL;
-	int dim = 0, base_dim = 0;
-	float8 *base_values = NULL, *output = NULL;
-	char *p, *endptr;
-	int out_idx = 0, run, found_dim = 0;
-	float8 delta = 0;
+	text	   *compressed = PG_GETARG_TEXT_PP(0);
+	text	   *base_vector = PG_GETARG_TEXT_PP(1);
+	char	   *comp_str = NULL,
+			   *base_str = NULL;
+	int			dim = 0,
+				base_dim = 0;
+	float8	   *base_values = NULL,
+			   *output = NULL;
+	char	   *p,
+			   *endptr;
+	int			out_idx = 0,
+				run,
+				found_dim = 0;
+	float8		delta = 0;
 	StringInfoData decompressed;
 
 	comp_str = safe_text_to_cstring(compressed);
 	base_str = safe_text_to_cstring(base_vector);
 
 	elog(DEBUG1,
-		"neurondb: Decompressing vector from delta encoding: \"%s\"",
-		comp_str);
+		 "neurondb: Decompressing vector from delta encoding: \"%s\"",
+		 comp_str);
 
 	/*
 	 * Parse header: D<dim>:
@@ -204,31 +213,31 @@ vector_wal_decompress(PG_FUNCTION_ARGS)
 	p = comp_str;
 	if (*p != 'D')
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("Compressed vector format error: "
-				       "missing dimension header")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Compressed vector format error: "
+						"missing dimension header")));
 
 	p++;
 	found_dim = strtol(p, &endptr, 10);
 	if (found_dim <= 0 || *endptr != ':')
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("Compressed vector format error: "
-				       "malformed dimension: \"%s\"",
-					p)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("Compressed vector format error: "
+						"malformed dimension: \"%s\"",
+						p)));
 	dim = found_dim;
 	p = endptr + 1;
 
 	base_values = parse_vector_str(base_str, &base_dim);
 	if (base_dim != dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("base_vector dim %d does not match "
-				       "compressed dim %d",
-					base_dim,
-					dim)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("base_vector dim %d does not match "
+						"compressed dim %d",
+						base_dim,
+						dim)));
 
-	output = (float8 *)palloc(sizeof(float8) * dim);
+	output = (float8 *) palloc(sizeof(float8) * dim);
 
 	/*
 	 * Parse run-length encoding: <run>:<delta>;... (semi-colon separated)
@@ -240,30 +249,30 @@ vector_wal_decompress(PG_FUNCTION_ARGS)
 		run = strtol(p, &endptr, 10);
 		if (run <= 0 || *endptr != ':')
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("Compressed vector format error "
-					       "at position %d: expected "
-					       "<run>:<delta>",
-						(int)(p - comp_str))));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("Compressed vector format error "
+							"at position %d: expected "
+							"<run>:<delta>",
+							(int) (p - comp_str))));
 		p = endptr + 1;
 		/* read delta */
 		delta = strtod(p, &endptr);
 		if ((endptr == p) || isnan(delta) || isinf(delta))
 			ereport(ERROR,
-				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-					errmsg("Compressed encoding contains "
-					       "invalid float8 delta: \"%s\"",
-						p)));
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("Compressed encoding contains "
+							"invalid float8 delta: \"%s\"",
+							p)));
 		p = endptr;
 		/* apply run times */
 		for (int j = 0; j < run; ++j)
 		{
 			if (out_idx >= dim)
 				ereport(ERROR,
-					(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-						errmsg("Decoded vector length "
-						       "exceeds expected %d",
-							dim)));
+						(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+						 errmsg("Decoded vector length "
+								"exceeds expected %d",
+								dim)));
 			output[out_idx] = base_values[out_idx] + delta;
 			out_idx++;
 		}
@@ -271,20 +280,20 @@ vector_wal_decompress(PG_FUNCTION_ARGS)
 			p++;
 		else if (*p && *p != ';')
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("Compressed vector format error "
-					       "after delta at position %d: "
-					       "got '%c'",
-						(int)(p - comp_str),
-						*p)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("Compressed vector format error "
+							"after delta at position %d: "
+							"got '%c'",
+							(int) (p - comp_str),
+							*p)));
 	}
 	if (out_idx != dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("Decompression failed: output vector "
-				       "length %d does not match dimension %d",
-					out_idx,
-					dim)));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("Decompression failed: output vector "
+						"length %d does not match dimension %d",
+						out_idx,
+						dim)));
 
 	/* render back to string [x,y,z,...], max precision */
 	initStringInfo(&decompressed);
@@ -308,18 +317,19 @@ PG_FUNCTION_INFO_V1(vector_wal_estimate_size);
 Datum
 vector_wal_estimate_size(PG_FUNCTION_ARGS)
 {
-	text *vector = PG_GETARG_TEXT_PP(0);
-	char *vec_str;
-	int32 original_size;
-	int32 estimated_compressed_size;
-	float4 compression_ratio;
+	text	   *vector = PG_GETARG_TEXT_PP(0);
+	char	   *vec_str;
+	int32		original_size;
+	int32		estimated_compressed_size;
+	float4		compression_ratio;
 
 	/* NULL-safe: treat NULL as empty vector */
 	if (!vector)
 		PG_RETURN_INT32(0);
 
 	vec_str = text_to_cstring(
-		vector); /* Postgres returns "" for zero-length text */
+							  vector);	/* Postgres returns "" for zero-length
+										 * text */
 	original_size = strlen(vec_str);
 
 	/* Compression ratio: guard against divide by zero, crazy size */
@@ -332,16 +342,16 @@ vector_wal_estimate_size(PG_FUNCTION_ARGS)
 		compression_ratio = 1.0f;
 
 	estimated_compressed_size =
-		(int32)((float4)original_size / compression_ratio);
+		(int32) ((float4) original_size / compression_ratio);
 
 	if (estimated_compressed_size < 0)
 		estimated_compressed_size = 0;
 
 	elog(DEBUG1,
-		"neurondb: Estimated compression: %d -> %d bytes (%.1fx)",
-		original_size,
-		estimated_compressed_size,
-		compression_ratio);
+		 "neurondb: Estimated compression: %d -> %d bytes (%.1fx)",
+		 original_size,
+		 estimated_compressed_size,
+		 compression_ratio);
 
 	PG_RETURN_INT32(estimated_compressed_size);
 }
@@ -354,24 +364,26 @@ PG_FUNCTION_INFO_V1(vector_wal_set_compression);
 Datum
 vector_wal_set_compression(PG_FUNCTION_ARGS)
 {
-	bool enable;
+	bool		enable;
 
 	/* Strict in PostgreSQL ensures not called with NULL, but double check */
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("enable/disable argument must not be "
-				       "NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("enable/disable argument must not be "
+						"NULL")));
 	enable = PG_GETARG_BOOL(0);
 
 	if (enable)
 	{
-	} else
+	}
+	else
 	{
 	}
+
 	/*
-	 * In real system: would set neurondb.wal_compression GUC,
-	 * and (un)register hooks here.
+	 * In real system: would set neurondb.wal_compression GUC, and
+	 * (un)register hooks here.
 	 */
 
 	PG_RETURN_BOOL(true);
@@ -386,32 +398,32 @@ Datum
 vector_wal_get_stats(PG_FUNCTION_ARGS)
 {
 	StringInfoData stats;
-	int64 total_bytes_original = 1024000;
-	int64 total_bytes_compressed = 409600;
-	float4 compression_ratio;
+	int64		total_bytes_original = 1024000;
+	int64		total_bytes_compressed = 409600;
+	float4		compression_ratio;
 
 	/* In production, would be extracted from shared memory/GUC, for now fake. */
 	if (total_bytes_compressed == 0)
 		compression_ratio = 0.0;
 	else
-		compression_ratio = (float4)total_bytes_original
-			/ (float4)total_bytes_compressed;
+		compression_ratio = (float4) total_bytes_original
+			/ (float4) total_bytes_compressed;
 
 	initStringInfo(&stats);
 	appendStringInfo(&stats,
-		"{\"original_bytes\":" NDB_INT64_FMT
-		",\"compressed_bytes\":" NDB_INT64_FMT
-		",\"compression_ratio\":%.2f}",
-		NDB_INT64_CAST(total_bytes_original),
-		NDB_INT64_CAST(total_bytes_compressed),
-		compression_ratio);
+					 "{\"original_bytes\":" NDB_INT64_FMT
+					 ",\"compressed_bytes\":" NDB_INT64_FMT
+					 ",\"compression_ratio\":%.2f}",
+					 NDB_INT64_CAST(total_bytes_original),
+					 NDB_INT64_CAST(total_bytes_compressed),
+					 compression_ratio);
 
 	elog(DEBUG1,
-		"neurondb: WAL compression stats: %.2fx ratio "
-		"(original=" NDB_INT64_FMT ", compressed=" NDB_INT64_FMT ")",
-		compression_ratio,
-		NDB_INT64_CAST(total_bytes_original),
-		NDB_INT64_CAST(total_bytes_compressed));
+		 "neurondb: WAL compression stats: %.2fx ratio "
+		 "(original=" NDB_INT64_FMT ", compressed=" NDB_INT64_FMT ")",
+		 compression_ratio,
+		 NDB_INT64_CAST(total_bytes_original),
+		 NDB_INT64_CAST(total_bytes_compressed));
 
 	PG_RETURN_TEXT_P(cstring_to_text(stats.data));
 }

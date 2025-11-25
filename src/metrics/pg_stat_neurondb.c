@@ -9,9 +9,9 @@
  *  - Recall@K metrics (1, 10, 100, floating-point [0.0-1.0])
  *  - Cache statistics (hits, misses)
  *  - Index rebuild count and last reset timestamp
- * 
- * All routines pay careful attention to Postgres context management, 
- * set-returning function API, type safety, and zero cost for unused stats. 
+ *
+ * All routines pay careful attention to Postgres context management,
+ * set-returning function API, type safety, and zero cost for unused stats.
  * Thread/concurrency safety is not handled here (assumes single backend stats).
  *
  * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
@@ -48,27 +48,32 @@
  */
 typedef struct NeuronDBStats
 {
-	uint64 queries_total; /* Total number of ANN/search queries */
-	uint64 queries_hnsw; /* HNSW index queries */
-	uint64 queries_ivf; /* IVF index queries */
-	uint64 queries_hybrid; /* Hybrid index queries */
-	uint64 avg_latency_ms; /* Rolling average query latency, ms */
-	uint64 max_latency_ms; /* Maximum query latency, ms */
-	uint64 recall_at_1; /* Recall@1, as (fraction*100), e.g. 98.2% -> 9820 */
-	uint64 recall_at_10; /* Recall@10, as (fraction*100) */
-	uint64 recall_at_100; /* Recall@100, as (fraction*100) */
-	uint64 cache_hits; /* Number of plan/vector cache hits */
-	uint64 cache_misses; /* Number of plan/vector cache misses */
-	uint64 index_rebuilds; /* Number of index rebuilds triggered in session */
-	uint64 last_reset; /* TimestampTz, last statistics reset */
-} NeuronDBStats;
+	uint64		queries_total;	/* Total number of ANN/search queries */
+	uint64		queries_hnsw;	/* HNSW index queries */
+	uint64		queries_ivf;	/* IVF index queries */
+	uint64		queries_hybrid; /* Hybrid index queries */
+	uint64		avg_latency_ms; /* Rolling average query latency, ms */
+	uint64		max_latency_ms; /* Maximum query latency, ms */
+	uint64		recall_at_1;	/* Recall@1, as (fraction*100), e.g. 98.2% ->
+								 * 9820 */
+	uint64		recall_at_10;	/* Recall@10, as (fraction*100) */
+	uint64		recall_at_100;	/* Recall@100, as (fraction*100) */
+	uint64		cache_hits;		/* Number of plan/vector cache hits */
+	uint64		cache_misses;	/* Number of plan/vector cache misses */
+	uint64		index_rebuilds; /* Number of index rebuilds triggered in
+								 * session */
+	uint64		last_reset;		/* TimestampTz, last statistics reset */
+}			NeuronDBStats;
 
 /*
  * The global statistics variable.
  * This is one-per-backend (not shared memory); session-only statistics.
  * Zero-initialized.
  */
-static NeuronDBStats g_stats = { 0 };
+static NeuronDBStats g_stats =
+{
+	0
+};
 
 /*
  * SQL-callable function: pg_stat_neurondb
@@ -86,27 +91,27 @@ PG_FUNCTION_INFO_V1(pg_stat_neurondb);
 Datum
 pg_stat_neurondb(PG_FUNCTION_ARGS)
 {
-	ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
-	TupleDesc tupdesc = NULL;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	TupleDesc	tupdesc = NULL;
 	Tuplestorestate *tupstore = NULL;
 	MemoryContext per_query_ctx = NULL;
 	MemoryContext oldcontext = NULL;
-	Datum values[13];
-	bool nulls[13];
+	Datum		values[13];
+	bool		nulls[13];
 
 	/*
-     * Validate that this function is properly called in SRF context.
-     */
+	 * Validate that this function is properly called in SRF context.
+	 */
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("neurondb: set-valued function called "
-				       "in context that cannot accept a set")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("neurondb: set-valued function called "
+						"in context that cannot accept a set")));
 
 	/*
-     * Build or acquire the returned tuple descriptor (rowtype).
-     * This is either provided by the caller or constructed by us.
-     */
+	 * Build or acquire the returned tuple descriptor (rowtype). This is
+	 * either provided by the caller or constructed by us.
+	 */
 	if (rsinfo->expectedDesc == NULL)
 	{
 		if (get_call_result_type(fcinfo, NULL, &tupdesc)
@@ -117,15 +122,15 @@ pg_stat_neurondb(PG_FUNCTION_ARGS)
 	tupdesc = rsinfo->expectedDesc;
 
 	/*
-     * Switch to per-query memory context for allocation of the tuplestore.
-     */
+	 * Switch to per-query memory context for allocation of the tuplestore.
+	 */
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
 	oldcontext = MemoryContextSwitchTo(per_query_ctx);
 
 	/*
-     * Initialize the tuplestore (used by SRFs for materialized sets).
-     * Estimation: only one row, but 1k slots allowed for future expansion.
-     */
+	 * Initialize the tuplestore (used by SRFs for materialized sets).
+	 * Estimation: only one row, but 1k slots allowed for future expansion.
+	 */
 	tupstore = tuplestore_begin_heap(true, false, 1024);
 
 	rsinfo->returnMode = SFRM_Materialize;
@@ -135,41 +140,56 @@ pg_stat_neurondb(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldcontext);
 
 	/*
-     * Prepare output values/nulls.
-     * All columns always filled, so 'nulls' array can stay all false.
-     */
+	 * Prepare output values/nulls. All columns always filled, so 'nulls'
+	 * array can stay all false.
+	 */
 	memset(values, 0, sizeof(values));
 	memset(nulls, 0, sizeof(nulls));
 
-	/* Fill statistic columns, matching order of view definition.
-       Recall values are floating-point (division by 100.0 to convert to fraction);
-       all other metrics are directly cast to Datum. */
-	values[0] = Int64GetDatum(g_stats.queries_total); // queries_total
-	values[1] = Int64GetDatum(g_stats.queries_hnsw); // queries_hnsw
-	values[2] = Int64GetDatum(g_stats.queries_ivf); // queries_ivf
-	values[3] = Int64GetDatum(g_stats.queries_hybrid); // queries_hybrid
-	values[4] = Int64GetDatum(g_stats.avg_latency_ms); // avg_latency_ms
-	values[5] = Int64GetDatum(g_stats.max_latency_ms); // max_latency_ms
-	values[6] = Float8GetDatum(
-		(double)g_stats.recall_at_1 / 100.0); // recall_at_1 (fraction)
-	values[7] = Float8GetDatum((double)g_stats.recall_at_10
-		/ 100.0); // recall_at_10 (fraction)
-	values[8] = Float8GetDatum((double)g_stats.recall_at_100
-		/ 100.0); // recall_at_100 (fraction)
-	values[9] = Int64GetDatum(g_stats.cache_hits); // cache_hits
-	values[10] = Int64GetDatum(g_stats.cache_misses); // cache_misses
-	values[11] = Int64GetDatum(g_stats.index_rebuilds); // index_rebuilds
-	values[12] = TimestampTzGetDatum(
-		g_stats.last_reset); // last_reset (timestamptz)
+	/*
+	 * Fill statistic columns, matching order of view definition. Recall
+	 * values are floating-point (division by 100.0 to convert to fraction);
+	 * all other metrics are directly cast to Datum.
+	 */
+	values[0] = Int64GetDatum(g_stats.queries_total);
+	//queries_total
+		values[1] = Int64GetDatum(g_stats.queries_hnsw);
+	//queries_hnsw
+		values[2] = Int64GetDatum(g_stats.queries_ivf);
+	//queries_ivf
+		values[3] = Int64GetDatum(g_stats.queries_hybrid);
+	//queries_hybrid
+		values[4] = Int64GetDatum(g_stats.avg_latency_ms);
+	//avg_latency_ms
+		values[5] = Int64GetDatum(g_stats.max_latency_ms);
+	//max_latency_ms
+		values[6] = Float8GetDatum(
+								   (double) g_stats.recall_at_1 / 100.0);
+	//recall_at_1(fraction)
+		values[7] = Float8GetDatum((double) g_stats.recall_at_10
+								   / 100.0);
+	//recall_at_10(fraction)
+		values[8] = Float8GetDatum((double) g_stats.recall_at_100
+								   / 100.0);
+	//recall_at_100(fraction)
+		values[9] = Int64GetDatum(g_stats.cache_hits);
+	//cache_hits
+		values[10] = Int64GetDatum(g_stats.cache_misses);
+	//cache_misses
+		values[11] = Int64GetDatum(g_stats.index_rebuilds);
+	//index_rebuilds
+		values[12] = TimestampTzGetDatum(
+										 g_stats.last_reset);
+	//last_reset(timestamptz)
 
 	/*
-     * Materialize the constructed row to the tuplestore.
-     */
-	tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+	 * Materialize the constructed row to the tuplestore.
+	 */
+		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 
 	/*
-     * Done; function returns set ("void"/NULL for SRF end).
-     */
+	 * Done; function returns set ("void"/NULL for SRF end).
+	 */
 	PG_RETURN_NULL();
 }
 
@@ -182,12 +202,12 @@ Datum
 pg_neurondb_stat_reset(PG_FUNCTION_ARGS)
 {
 	/* Unused argument */
-	(void)fcinfo;
+	(void) fcinfo;
 
 	/*
-     * Clear the static statistics structure for clean slate.
-     * All fields zeroed, then last_reset updated to "now".
-     */
+	 * Clear the static statistics structure for clean slate. All fields
+	 * zeroed, then last_reset updated to "now".
+	 */
 	memset(&g_stats, 0, sizeof(NeuronDBStats));
 	g_stats.last_reset = GetCurrentTimestamp();
 
@@ -204,42 +224,48 @@ pg_neurondb_stat_reset(PG_FUNCTION_ARGS)
  *  - recall_percent: recall as a percent (e.g., 95.20 for 95.2%), *100 for tracking as int
  * Precision: latency average is a simple rolling mean (should be improved for true EWMA).
  */
-static void __attribute__((unused))
+static void
+__attribute__((unused))
 neurondb_update_query_stats(int index_type, int latency_ms, int recall_percent)
 {
 	g_stats.queries_total++;
 
 	switch (index_type)
 	{
-	case 1:
-		g_stats.queries_hnsw++;
-		break;
-	case 2:
-		g_stats.queries_ivf++;
-		break;
-	case 3:
-		g_stats.queries_hybrid++;
-		break;
-	default:
-		/* Ignore bad types, can extend to error if wanted */
-		break;
+		case 1:
+			g_stats.queries_hnsw++;
+			break;
+		case 2:
+			g_stats.queries_ivf++;
+			break;
+		case 3:
+			g_stats.queries_hybrid++;
+			break;
+		default:
+			/* Ignore bad types, can extend to error if wanted */
+			break;
 	}
 
-	/* Update latency via rolling mean (biased but simple, to keep atomicity); 
-       for each incoming, mean = (old + new) / 2. More advanced EWMA can be used if needed. */
+	/*
+	 * Update latency via rolling mean (biased but simple, to keep atomicity);
+	 * for each incoming, mean = (old + new) / 2. More advanced EWMA can be
+	 * used if needed.
+	 */
 	g_stats.avg_latency_ms = (g_stats.avg_latency_ms == 0)
-		? (uint64)latency_ms
-		: (g_stats.avg_latency_ms + (uint64)latency_ms) / 2;
+		? (uint64) latency_ms
+		: (g_stats.avg_latency_ms + (uint64) latency_ms) / 2;
 
 	/* Track maximum latency exactly (compare/copy) */
-	if ((uint64)latency_ms > g_stats.max_latency_ms)
-		g_stats.max_latency_ms = (uint64)latency_ms;
+	if ((uint64) latency_ms > g_stats.max_latency_ms)
+		g_stats.max_latency_ms = (uint64) latency_ms;
 
-	/* Update recall stats if recall_percent positive (fraction*100 as int).
-       Again, rolling mean, same comments as above. */
+	/*
+	 * Update recall stats if recall_percent positive (fraction*100 as int).
+	 * Again, rolling mean, same comments as above.
+	 */
 	if (recall_percent > 0)
 	{
-		uint64 recall_u = (uint64)recall_percent;
+		uint64		recall_u = (uint64) recall_percent;
 
 		g_stats.recall_at_1 = (g_stats.recall_at_1 == 0)
 			? recall_u
@@ -250,7 +276,11 @@ neurondb_update_query_stats(int index_type, int latency_ms, int recall_percent)
 		g_stats.recall_at_100 = (g_stats.recall_at_100 == 0)
 			? recall_u
 			: (g_stats.recall_at_100 + recall_u) / 2;
-		/* If/when supports true per-K stats, extend here; for now assumes recall_percent covers K=1,10,100 identically. */
+
+		/*
+		 * If/when supports true per-K stats, extend here; for now assumes
+		 * recall_percent covers K=1,10,100 identically.
+		 */
 	}
 }
 
@@ -258,7 +288,8 @@ neurondb_update_query_stats(int index_type, int latency_ms, int recall_percent)
  * Internal helper: neurondb_update_cache_stats
  * Updates cache_hits/cache_misses; backend-local only.
  */
-static void __attribute__((unused))
+static void
+__attribute__((unused))
 neurondb_update_cache_stats(bool hit)
 {
 	if (hit)
@@ -271,7 +302,8 @@ neurondb_update_cache_stats(bool hit)
  * Internal helper: neurondb_update_rebuild_stats
  * Increment index_rebuilds count each time a rebuild event occurs.
  */
-static void __attribute__((unused))
+static void
+__attribute__((unused))
 neurondb_update_rebuild_stats(void)
 {
 	g_stats.index_rebuilds++;

@@ -28,13 +28,14 @@ neurondb_gpu_metal_init(void)
 
 	if (metal_backend_init())
 	{
-		char caps[512];
+		char		caps[512];
+
 		metal_backend_get_capabilities(caps, sizeof(caps));
 
 		elog(LOG, "neurondb: ✅ Metal GPU initialized: %s", caps);
 		elog(LOG,
-			"neurondb: Metal device: %s",
-			metal_backend_device_name());
+			 "neurondb: Metal device: %s",
+			 metal_backend_device_name());
 		return true;
 	}
 
@@ -86,11 +87,11 @@ neurondb_gpu_metal_inner_product(const float *a, const float *b, int dim)
 /* Batch L2 distance calculation using Metal */
 void
 neurondb_gpu_metal_batch_l2(const float *queries,
-	const float *targets,
-	int num_queries,
-	int num_targets,
-	int dim,
-	float *distances)
+							const float *targets,
+							int num_queries,
+							int num_targets,
+							int dim,
+							float *distances)
 {
 	/* For small batches, not worth Metal overhead */
 	if (num_queries * num_targets < 1000)
@@ -101,8 +102,9 @@ neurondb_gpu_metal_batch_l2(const float *queries,
 	{
 		for (int j = 0; j < num_targets; j++)
 		{
-			float dist = metal_backend_l2_distance(
-				queries + i * dim, targets + j * dim, dim);
+			float		dist = metal_backend_l2_distance(
+														 queries + i * dim, targets + j * dim, dim);
+
 			if (dist >= 0.0f)
 				distances[i * num_targets + j] = dist;
 		}
@@ -112,14 +114,14 @@ neurondb_gpu_metal_batch_l2(const float *queries,
 /* Get Metal device information */
 void
 neurondb_gpu_metal_device_info(char *name,
-	size_t name_len,
-	uint64_t *total_memory,
-	uint64_t *free_memory)
+							   size_t name_len,
+							   uint64_t * total_memory,
+							   uint64_t * free_memory)
 {
 	metal_backend_device_info(name, name_len, total_memory, free_memory);
 }
 
-#else /* !NDB_GPU_METAL */
+#else							/* !NDB_GPU_METAL */
 
 /* Stub functions when Metal is not available */
 bool
@@ -129,7 +131,8 @@ neurondb_gpu_metal_init(void)
 }
 void
 neurondb_gpu_metal_cleanup(void)
-{ }
+{
+}
 bool
 neurondb_gpu_metal_is_available(void)
 {
@@ -157,14 +160,16 @@ neurondb_gpu_metal_inner_product(const float *a, const float *b, int dim)
 }
 void
 neurondb_gpu_metal_batch_l2(const float *q,
-	const float *t,
-	int nq,
-	int nt,
-	int d,
-	float *dist)
-{ }
+							const float *t,
+							int nq,
+							int nt,
+							int d,
+							float *dist)
+{
+}
 void
-neurondb_gpu_metal_device_info(char *n, size_t nl, uint64_t *tm, uint64_t *fm)
-{ }
+neurondb_gpu_metal_device_info(char *n, size_t nl, uint64_t * tm, uint64_t * fm)
+{
+}
 
-#endif /* NDB_GPU_METAL */
+#endif							/* NDB_GPU_METAL */

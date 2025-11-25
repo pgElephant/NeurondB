@@ -28,11 +28,11 @@
 static inline uint16_t
 float_to_fp16(float f)
 {
-	uint32_t bits = *(uint32_t *)&f;
-	uint16_t sign = (bits >> 16) & 0x8000;
-	uint32_t exp = (bits >> 23) & 0xFF;
-	uint32_t mantissa = bits & 0x7FFFFF;
-	int new_exp;
+	uint32_t	bits = *(uint32_t *) & f;
+	uint16_t	sign = (bits >> 16) & 0x8000;
+	uint32_t	exp = (bits >> 23) & 0xFF;
+	uint32_t	mantissa = bits & 0x7FFFFF;
+	int			new_exp;
 
 	if (exp == 0xFF)
 	{
@@ -51,7 +51,7 @@ float_to_fp16(float f)
 	if (new_exp <= 0)
 		return sign;
 	if (new_exp >= 31)
-		return sign | 0x7C00; /* Infinity */
+		return sign | 0x7C00;	/* Infinity */
 
 	return sign | (new_exp << 10) | (mantissa >> 13);
 }
@@ -59,10 +59,10 @@ float_to_fp16(float f)
 static inline float
 fp16_to_float(uint16_t fp16)
 {
-	uint16_t sign = fp16 & 0x8000;
-	uint16_t exp = (fp16 >> 10) & 0x1F;
-	uint16_t mantissa = fp16 & 0x3FF;
-	uint32_t bits;
+	uint16_t	sign = fp16 & 0x8000;
+	uint16_t	exp = (fp16 >> 10) & 0x1F;
+	uint16_t	mantissa = fp16 & 0x3FF;
+	uint32_t	bits;
 
 	if (exp == 0)
 	{
@@ -82,11 +82,12 @@ fp16_to_float(uint16_t fp16)
 	else
 	{
 		/* Normalized */
-		int new_exp = exp - 15 + 127;
+		int			new_exp = exp - 15 + 127;
+
 		bits = (sign << 16) | (new_exp << 23) | (mantissa << 13);
 	}
 
-	return *(float *)&bits;
+	return *(float *) &bits;
 }
 
 /*
@@ -98,50 +99,50 @@ PG_FUNCTION_INFO_V1(vector_quantize_fp16);
 Datum
 vector_quantize_fp16(PG_FUNCTION_ARGS)
 {
-	Vector *vec;
-	bytea *result;
-	uint16_t *fp16_data;
-	int i;
-	size_t size;
+	Vector	   *vec;
+	bytea	   *result;
+	uint16_t   *fp16_data;
+	int			i;
+	size_t		size;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_quantize_fp16 requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_quantize_fp16 requires 1 argument, got %d",
+						PG_NARGS())));
 
 	vec = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(vec);
+	NDB_CHECK_VECTOR_VALID(vec);
 
 	if (vec == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vector must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vector must not be NULL")));
 
 	if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid vector dimension: %d",
-					vec->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid vector dimension: %d",
+						vec->dim)));
 
 	size = sizeof(int16) + sizeof(uint16_t) * vec->dim;
 	if (size > MaxAllocSize)
 		ereport(ERROR,
-			(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-				errmsg("vector size exceeds maximum allocation")));
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("vector size exceeds maximum allocation")));
 
-	result = (bytea *)palloc(VARHDRSZ + size);
+	result = (bytea *) palloc(VARHDRSZ + size);
 	if (result == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 	SET_VARSIZE(result, VARHDRSZ + size);
 
 	/* Store dimension */
-	*(int16 *)VARDATA(result) = vec->dim;
+	*(int16 *) VARDATA(result) = vec->dim;
 
 	/* Convert to FP16 */
-	fp16_data = (uint16_t *)(VARDATA(result) + sizeof(int16));
+	fp16_data = (uint16_t *) (VARDATA(result) + sizeof(int16));
 	for (i = 0; i < vec->dim; i++)
 		fp16_data[i] = float_to_fp16(vec->data[i]);
 
@@ -157,57 +158,57 @@ PG_FUNCTION_INFO_V1(vector_dequantize_fp16);
 Datum
 vector_dequantize_fp16(PG_FUNCTION_ARGS)
 {
-	bytea *fp16_vec;
-	Vector *result;
-	uint16_t *fp16_data;
-	int dim;
-	int i;
-	size_t expected_size;
+	bytea	   *fp16_vec;
+	Vector	   *result;
+	uint16_t   *fp16_data;
+	int			dim;
+	int			i;
+	size_t		expected_size;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_dequantize_fp16 requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_dequantize_fp16 requires 1 argument, got %d",
+						PG_NARGS())));
 
 	fp16_vec = PG_GETARG_BYTEA_P(0);
 
 	if (fp16_vec == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("FP16 vector must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("FP16 vector must not be NULL")));
 
 	if (VARSIZE(fp16_vec) < VARHDRSZ + sizeof(int16))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("invalid FP16 vector size")));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("invalid FP16 vector size")));
 
-	dim = *(int16 *)VARDATA(fp16_vec);
+	dim = *(int16 *) VARDATA(fp16_vec);
 	if (dim <= 0 || dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("invalid FP16 vector dimension: %d",
-					dim)));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("invalid FP16 vector dimension: %d",
+						dim)));
 
 	expected_size = VARHDRSZ + sizeof(int16) + sizeof(uint16_t) * dim;
 	if (VARSIZE(fp16_vec) < expected_size)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("FP16 vector size mismatch: expected %zu, got %d",
-					expected_size,
-					VARSIZE(fp16_vec))));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("FP16 vector size mismatch: expected %zu, got %d",
+						expected_size,
+						VARSIZE(fp16_vec))));
 
-	fp16_data = (uint16_t *)(VARDATA(fp16_vec) + sizeof(int16));
+	fp16_data = (uint16_t *) (VARDATA(fp16_vec) + sizeof(int16));
 	if (fp16_data == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("invalid FP16 vector data")));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("invalid FP16 vector data")));
 
 	result = new_vector(dim);
 	if (result == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 
 	for (i = 0; i < dim; i++)
 		result->data[i] = fp16_to_float(fp16_data[i]);
@@ -225,62 +226,62 @@ PG_FUNCTION_INFO_V1(vector_quantize_int8);
 Datum
 vector_quantize_int8(PG_FUNCTION_ARGS)
 {
-	Vector *vec;
-	Vector *min_vec;
-	Vector *max_vec;
-	bytea *result;
-	int8 *int8_data;
-	int i;
-	size_t size;
-	float scale;
-	float normalized;
-	float range;
+	Vector	   *vec;
+	Vector	   *min_vec;
+	Vector	   *max_vec;
+	bytea	   *result;
+	int8	   *int8_data;
+	int			i;
+	size_t		size;
+	float		scale;
+	float		normalized;
+	float		range;
 
 	if (PG_NARGS() != 3)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_quantize_int8 requires 3 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_quantize_int8 requires 3 arguments, got %d",
+						PG_NARGS())));
 
 	vec = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(vec);
+	NDB_CHECK_VECTOR_VALID(vec);
 	min_vec = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(min_vec);
+	NDB_CHECK_VECTOR_VALID(min_vec);
 	max_vec = PG_GETARG_VECTOR_P(2);
- NDB_CHECK_VECTOR_VALID(max_vec);
+	NDB_CHECK_VECTOR_VALID(max_vec);
 
 	if (vec == NULL || min_vec == NULL || max_vec == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vectors must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vectors must not be NULL")));
 
 	if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM ||
 		min_vec->dim <= 0 || min_vec->dim > VECTOR_MAX_DIM ||
 		max_vec->dim <= 0 || max_vec->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid vector dimension")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid vector dimension")));
 
 	if (vec->dim != min_vec->dim || vec->dim != max_vec->dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector dimensions must match")));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("vector dimensions must match")));
 
 	size = sizeof(int16) + sizeof(int8) * vec->dim;
 	if (size > MaxAllocSize)
 		ereport(ERROR,
-			(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-				errmsg("vector size exceeds maximum allocation")));
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("vector size exceeds maximum allocation")));
 
-	result = (bytea *)palloc(VARHDRSZ + size);
+	result = (bytea *) palloc(VARHDRSZ + size);
 	if (result == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 	SET_VARSIZE(result, VARHDRSZ + size);
 
-	*(int16 *)VARDATA(result) = vec->dim;
-	int8_data = (int8 *)(VARDATA(result) + sizeof(int16));
+	*(int16 *) VARDATA(result) = vec->dim;
+	int8_data = (int8 *) (VARDATA(result) + sizeof(int16));
 
 	for (i = 0; i < vec->dim; i++)
 	{
@@ -298,7 +299,7 @@ vector_quantize_int8(PG_FUNCTION_ARGS)
 		else if (normalized < -128.0f)
 			int8_data[i] = -128;
 		else
-			int8_data[i] = (int8)roundf(normalized);
+			int8_data[i] = (int8) roundf(normalized);
 	}
 
 	PG_RETURN_BYTEA_P(result);
@@ -313,74 +314,74 @@ PG_FUNCTION_INFO_V1(vector_dequantize_int8);
 Datum
 vector_dequantize_int8(PG_FUNCTION_ARGS)
 {
-	bytea *int8_vec;
-	Vector *min_vec;
-	Vector *max_vec;
-	Vector *result;
-	int8 *int8_data;
-	int dim;
-	int i;
-	size_t expected_size;
-	float range;
-	float scale;
+	bytea	   *int8_vec;
+	Vector	   *min_vec;
+	Vector	   *max_vec;
+	Vector	   *result;
+	int8	   *int8_data;
+	int			dim;
+	int			i;
+	size_t		expected_size;
+	float		range;
+	float		scale;
 
 	if (PG_NARGS() != 3)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_dequantize_int8 requires 3 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_dequantize_int8 requires 3 arguments, got %d",
+						PG_NARGS())));
 
 	int8_vec = PG_GETARG_BYTEA_P(0);
 	min_vec = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(min_vec);
+	NDB_CHECK_VECTOR_VALID(min_vec);
 	max_vec = PG_GETARG_VECTOR_P(2);
- NDB_CHECK_VECTOR_VALID(max_vec);
+	NDB_CHECK_VECTOR_VALID(max_vec);
 
 	if (int8_vec == NULL || min_vec == NULL || max_vec == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vectors must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vectors must not be NULL")));
 
 	if (VARSIZE(int8_vec) < VARHDRSZ + sizeof(int16))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("invalid INT8 vector size")));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("invalid INT8 vector size")));
 
-	dim = *(int16 *)VARDATA(int8_vec);
+	dim = *(int16 *) VARDATA(int8_vec);
 	if (dim <= 0 || dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("invalid INT8 vector dimension: %d",
-					dim)));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("invalid INT8 vector dimension: %d",
+						dim)));
 
 	if (min_vec->dim <= 0 || min_vec->dim > VECTOR_MAX_DIM ||
 		max_vec->dim <= 0 || max_vec->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid min/max vector dimension")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid min/max vector dimension")));
 
 	if (dim != min_vec->dim || dim != max_vec->dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector dimensions must match")));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("vector dimensions must match")));
 
 	expected_size = VARHDRSZ + sizeof(int16) + sizeof(int8) * dim;
 	if (VARSIZE(int8_vec) < expected_size)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("INT8 vector size mismatch")));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("INT8 vector size mismatch")));
 
-	int8_data = (int8 *)(VARDATA(int8_vec) + sizeof(int16));
+	int8_data = (int8 *) (VARDATA(int8_vec) + sizeof(int16));
 	if (int8_data == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("invalid INT8 vector data")));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("invalid INT8 vector data")));
 
 	result = new_vector(dim);
 	if (result == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 
 	for (i = 0; i < dim; i++)
 	{
@@ -392,7 +393,7 @@ vector_dequantize_int8(PG_FUNCTION_ARGS)
 		else
 		{
 			scale = range / 127.0f;
-			result->data[i] = min_vec->data[i] + (float)int8_data[i] * scale;
+			result->data[i] = min_vec->data[i] + (float) int8_data[i] * scale;
 		}
 	}
 
@@ -408,32 +409,32 @@ PG_FUNCTION_INFO_V1(vector_l2_distance_fp16);
 Datum
 vector_l2_distance_fp16(PG_FUNCTION_ARGS)
 {
-	bytea *fp16_a;
-	bytea *fp16_b;
-	Vector *a;
-	Vector *b;
-	float4 result;
+	bytea	   *fp16_a;
+	bytea	   *fp16_b;
+	Vector	   *a;
+	Vector	   *b;
+	float4		result;
 	extern float4 l2_distance(Vector *a, Vector *b);
 
 	if (PG_NARGS() != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_l2_distance_fp16 requires 2 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_l2_distance_fp16 requires 2 arguments, got %d",
+						PG_NARGS())));
 
 	fp16_a = PG_GETARG_BYTEA_P(0);
 	fp16_b = PG_GETARG_BYTEA_P(1);
 
 	if (fp16_a == NULL || fp16_b == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("FP16 vectors must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("FP16 vectors must not be NULL")));
 
 	/* Dequantize both vectors */
 	a = DatumGetVector(DirectFunctionCall1(vector_dequantize_fp16,
-		PointerGetDatum(fp16_a)));
+										   PointerGetDatum(fp16_a)));
 	b = DatumGetVector(DirectFunctionCall1(vector_dequantize_fp16,
-		PointerGetDatum(fp16_b)));
+										   PointerGetDatum(fp16_b)));
 
 	if (a == NULL || b == NULL)
 	{
@@ -442,8 +443,8 @@ vector_l2_distance_fp16(PG_FUNCTION_ARGS)
 		if (b != NULL)
 			NDB_SAFE_PFREE_AND_NULL(b);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("failed to dequantize FP16 vectors")));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("failed to dequantize FP16 vectors")));
 	}
 
 	/* Compute distance */
@@ -465,32 +466,32 @@ PG_FUNCTION_INFO_V1(vector_cosine_distance_fp16);
 Datum
 vector_cosine_distance_fp16(PG_FUNCTION_ARGS)
 {
-	bytea *fp16_a;
-	bytea *fp16_b;
-	Vector *a;
-	Vector *b;
-	float4 result;
+	bytea	   *fp16_a;
+	bytea	   *fp16_b;
+	Vector	   *a;
+	Vector	   *b;
+	float4		result;
 	extern float4 cosine_distance(Vector *a, Vector *b);
 
 	if (PG_NARGS() != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_cosine_distance_fp16 requires 2 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_cosine_distance_fp16 requires 2 arguments, got %d",
+						PG_NARGS())));
 
 	fp16_a = PG_GETARG_BYTEA_P(0);
 	fp16_b = PG_GETARG_BYTEA_P(1);
 
 	if (fp16_a == NULL || fp16_b == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("FP16 vectors must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("FP16 vectors must not be NULL")));
 
 	/* Dequantize both vectors */
 	a = DatumGetVector(DirectFunctionCall1(vector_dequantize_fp16,
-		PointerGetDatum(fp16_a)));
+										   PointerGetDatum(fp16_a)));
 	b = DatumGetVector(DirectFunctionCall1(vector_dequantize_fp16,
-		PointerGetDatum(fp16_b)));
+										   PointerGetDatum(fp16_b)));
 
 	/* Compute distance */
 	result = cosine_distance(a, b);
@@ -513,51 +514,51 @@ PG_FUNCTION_INFO_V1(vector_quantize_binary);
 Datum
 vector_quantize_binary(PG_FUNCTION_ARGS)
 {
-	Vector *vec;
+	Vector	   *vec;
 	typedef struct BinaryVec
 	{
-		int32 vl_len_;
-		int32 dim;
-		uint8 data[FLEXIBLE_ARRAY_MEMBER];
-	} BinaryVec;
-	BinaryVec *result;
-	int i;
-	int byte_index;
-	int bit_index;
-	size_t size;
+		int32		vl_len_;
+		int32		dim;
+		uint8		data[FLEXIBLE_ARRAY_MEMBER];
+	}			BinaryVec;
+	BinaryVec  *result;
+	int			i;
+	int			byte_index;
+	int			bit_index;
+	size_t		size;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_quantize_binary requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_quantize_binary requires 1 argument, got %d",
+						PG_NARGS())));
 
 	vec = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(vec);
+	NDB_CHECK_VECTOR_VALID(vec);
 
 	if (vec == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vector must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vector must not be NULL")));
 
 	if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid vector dimension: %d",
-					vec->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid vector dimension: %d",
+						vec->dim)));
 
 	/* Calculate size: header + dimension + packed bits */
 	size = offsetof(BinaryVec, data) + ((vec->dim + 7) / 8);
 	if (size > MaxAllocSize)
 		ereport(ERROR,
-			(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-				errmsg("vector size exceeds maximum allocation")));
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("vector size exceeds maximum allocation")));
 
-	result = (BinaryVec *)palloc0(size);
+	result = (BinaryVec *) palloc0(size);
 	if (result == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_OUT_OF_MEMORY),
-				errmsg("out of memory")));
+				(errcode(ERRCODE_OUT_OF_MEMORY),
+				 errmsg("out of memory")));
 	SET_VARSIZE(result, size);
 	result->dim = vec->dim;
 
@@ -574,4 +575,3 @@ vector_quantize_binary(PG_FUNCTION_ARGS)
 
 	PG_RETURN_POINTER(result);
 }
-

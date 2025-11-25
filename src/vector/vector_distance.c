@@ -35,38 +35,39 @@ check_dimensions(const Vector *a, const Vector *b)
 {
 	if (a == NULL || b == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot compute distance with NULL vectors")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot compute distance with NULL vectors")));
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector dimensions must match: %d vs %d",
-					a->dim,
-					b->dim)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("vector dimensions must match: %d vs %d",
+						a->dim,
+						b->dim)));
 
 	if (a->dim <= 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("cannot compute distance for vector with dimension %d",
-					a->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("cannot compute distance for vector with dimension %d",
+						a->dim)));
 
 	/* Check for NaN/Inf in vectors */
 	{
-		int i;
+		int			i;
+
 		for (i = 0; i < a->dim; i++)
 		{
 			if (isnan(a->data[i]) || isinf(a->data[i]))
 				ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("vector contains NaN or Infinity at index %d", i)));
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("vector contains NaN or Infinity at index %d", i)));
 		}
 		for (i = 0; i < b->dim; i++)
 		{
 			if (isnan(b->data[i]) || isinf(b->data[i]))
 				ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("vector contains NaN or Infinity at index %d", i)));
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("vector contains NaN or Infinity at index %d", i)));
 		}
 	}
 }
@@ -75,28 +76,30 @@ check_dimensions(const Vector *a, const Vector *b)
 float4
 l2_distance(Vector *a, Vector *b)
 {
-	double sum = 0.0, c = 0.0;
-	int i;
-	float4 result;
+	double		sum = 0.0,
+				c = 0.0;
+	int			i;
+	float4		result;
 
 	check_dimensions(a, b);
 
 	for (i = 0; i < a->dim; i++)
 	{
-		double diff = (double)a->data[i] - (double)b->data[i];
-		double y = (diff * diff) - c;
-		double t = sum + y;
+		double		diff = (double) a->data[i] - (double) b->data[i];
+		double		y = (diff * diff) - c;
+		double		t = sum + y;
+
 		c = (t - sum) - y;
 		sum = t;
 	}
 
-	result = (float4)sqrt(sum);
+	result = (float4) sqrt(sum);
 
 	/* Check for overflow/underflow */
 	if (isnan(result) || isinf(result))
 		ereport(ERROR,
-			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				errmsg("L2 distance calculation resulted in NaN or Infinity")));
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("L2 distance calculation resulted in NaN or Infinity")));
 
 	return result;
 }
@@ -105,8 +108,8 @@ PG_FUNCTION_INFO_V1(vector_l2_distance);
 Datum
 vector_l2_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
+	Vector	   *a;
+	Vector	   *b;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -120,23 +123,23 @@ vector_l2_distance(PG_FUNCTION_ARGS)
 float4
 inner_product_distance(Vector *a, Vector *b)
 {
-	double sum = 0.0;
-	int i;
+	double		sum = 0.0;
+	int			i;
 
 	check_dimensions(a, b);
 
 	for (i = 0; i < a->dim; i++)
-		sum += (double)a->data[i] * (double)b->data[i];
+		sum += (double) a->data[i] * (double) b->data[i];
 
-	return (float4)(-sum);
+	return (float4) (-sum);
 }
 
 PG_FUNCTION_INFO_V1(vector_inner_product);
 Datum
 vector_inner_product(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
+	Vector	   *a;
+	Vector	   *b;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -150,17 +153,20 @@ vector_inner_product(PG_FUNCTION_ARGS)
 float4
 cosine_distance(Vector *a, Vector *b)
 {
-	double dot = 0.0, norm_a = 0.0, norm_b = 0.0;
-	int i;
-	float4 result;
+	double		dot = 0.0,
+				norm_a = 0.0,
+				norm_b = 0.0;
+	int			i;
+	float4		result;
 
 	check_dimensions(a, b);
 
 	/* Compute dot(a, b), ||a||^2, ||b||^2 */
 	for (i = 0; i < a->dim; i++)
 	{
-		double va = (double)a->data[i];
-		double vb = (double)b->data[i];
+		double		va = (double) a->data[i];
+		double		vb = (double) b->data[i];
+
 		dot += va * vb;
 		norm_a += va * va;
 		norm_b += vb * vb;
@@ -170,13 +176,13 @@ cosine_distance(Vector *a, Vector *b)
 	if (norm_a == 0.0 || norm_b == 0.0)
 		return 1.0;
 
-	result = (float4)(1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b))));
+	result = (float4) (1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b))));
 
 	/* Validate result */
 	if (isnan(result) || isinf(result))
 		ereport(ERROR,
-			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				errmsg("cosine distance calculation resulted in NaN or Infinity")));
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("cosine distance calculation resulted in NaN or Infinity")));
 
 	return result;
 }
@@ -185,8 +191,8 @@ PG_FUNCTION_INFO_V1(vector_cosine_distance);
 Datum
 vector_cosine_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
+	Vector	   *a;
+	Vector	   *b;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -200,23 +206,23 @@ vector_cosine_distance(PG_FUNCTION_ARGS)
 float4
 l1_distance(Vector *a, Vector *b)
 {
-	double sum = 0.0;
-	int i;
+	double		sum = 0.0;
+	int			i;
 
 	check_dimensions(a, b);
 
 	for (i = 0; i < a->dim; i++)
-		sum += fabs((double)a->data[i] - (double)b->data[i]);
+		sum += fabs((double) a->data[i] - (double) b->data[i]);
 
-	return (float4)sum;
+	return (float4) sum;
 }
 
 PG_FUNCTION_INFO_V1(vector_l1_distance);
 Datum
 vector_l1_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
+	Vector	   *a;
+	Vector	   *b;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -231,10 +237,10 @@ PG_FUNCTION_INFO_V1(vector_hamming_distance);
 Datum
 vector_hamming_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	int count = 0;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	int			count = 0;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -245,7 +251,10 @@ vector_hamming_distance(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < a->dim; i++)
 	{
-		/* Using "!=" direct numerical for float equality; optionally consider tolerances */
+		/*
+		 * Using "!=" direct numerical for float equality; optionally consider
+		 * tolerances
+		 */
 		if (a->data[i] != b->data[i])
 			count++;
 	}
@@ -258,10 +267,10 @@ PG_FUNCTION_INFO_V1(vector_chebyshev_distance);
 Datum
 vector_chebyshev_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	double max_diff = 0.0;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	double		max_diff = 0.0;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -272,7 +281,8 @@ vector_chebyshev_distance(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < a->dim; i++)
 	{
-		double diff = fabs((double)a->data[i] - (double)b->data[i]);
+		double		diff = fabs((double) a->data[i] - (double) b->data[i]);
+
 		if (diff > max_diff)
 			max_diff = diff;
 	}
@@ -285,11 +295,11 @@ PG_FUNCTION_INFO_V1(vector_minkowski_distance);
 Datum
 vector_minkowski_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	float8 p;
-	double sum = 0.0;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	float8		p;
+	double		sum = 0.0;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -301,46 +311,55 @@ vector_minkowski_distance(PG_FUNCTION_ARGS)
 
 	if (p <= 0 || isnan(p) || isinf(p))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("p must be positive and finite")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("p must be positive and finite")));
 
 	if (p == 1.0)
 	{
 		/* Shortcut: L1 distance (Manhattan) */
 		for (i = 0; i < a->dim; i++)
-			sum += fabs((double)a->data[i] - (double)b->data[i]);
+			sum += fabs((double) a->data[i] - (double) b->data[i]);
 		PG_RETURN_FLOAT8(sum);
-	} else if (p == 2.0)
+	}
+	else if (p == 2.0)
 	{
 		/* Shortcut: L2 distance */
-		double partial = 0.0, c = 0.0;
+		double		partial = 0.0,
+					c = 0.0;
+
 		for (i = 0; i < a->dim; i++)
 		{
-			double diff = (double)a->data[i] - (double)b->data[i];
-			double y = (diff * diff) - c;
-			double t = partial + y;
+			double		diff = (double) a->data[i] - (double) b->data[i];
+			double		y = (diff * diff) - c;
+			double		t = partial + y;
+
 			c = (t - partial) - y;
 			partial = t;
 		}
 		PG_RETURN_FLOAT8(sqrt(partial));
-	} else if (p == INFINITY || p > 1e10) /* Large p treated as Chebyshev */
+	}
+	else if (p == INFINITY || p > 1e10) /* Large p treated as Chebyshev */
 	{
-		double max_diff = 0.0;
+		double		max_diff = 0.0;
+
 		for (i = 0; i < a->dim; i++)
 		{
-			double this_diff =
-				fabs((double)a->data[i] - (double)b->data[i]);
+			double		this_diff =
+				fabs((double) a->data[i] - (double) b->data[i]);
+
 			if (this_diff > max_diff)
 				max_diff = this_diff;
 		}
 		PG_RETURN_FLOAT8(max_diff);
-	} else
+	}
+	else
 	{
 		/* General Minkowski sum */
 		for (i = 0; i < a->dim; i++)
 		{
-			double diff =
-				fabs((double)a->data[i] - (double)b->data[i]);
+			double		diff =
+				fabs((double) a->data[i] - (double) b->data[i]);
+
 			sum += pow(diff, p);
 		}
 		PG_RETURN_FLOAT8(pow(sum, 1.0 / p));
@@ -355,11 +374,11 @@ PG_FUNCTION_INFO_V1(vector_squared_l2_distance);
 Datum
 vector_squared_l2_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	double sum = 0.0;
-	double c = 0.0;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	double		sum = 0.0;
+	double		c = 0.0;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -370,9 +389,10 @@ vector_squared_l2_distance(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < a->dim; i++)
 	{
-		double diff = (double)a->data[i] - (double)b->data[i];
-		double y = (diff * diff) - c;
-		double t = sum + y;
+		double		diff = (double) a->data[i] - (double) b->data[i];
+		double		y = (diff * diff) - c;
+		double		t = sum + y;
+
 		c = (t - sum) - y;
 		sum = t;
 	}
@@ -389,12 +409,12 @@ PG_FUNCTION_INFO_V1(vector_jaccard_distance);
 Datum
 vector_jaccard_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	int intersection = 0;
-	int union_count = 0;
-	int i;
-	double jaccard_sim;
+	Vector	   *a;
+	Vector	   *b;
+	int			intersection = 0;
+	int			union_count = 0;
+	int			i;
+	double		jaccard_sim;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -405,8 +425,8 @@ vector_jaccard_distance(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < a->dim; i++)
 	{
-		bool a_nonzero = (fabs((double)a->data[i]) > 1e-10);
-		bool b_nonzero = (fabs((double)b->data[i]) > 1e-10);
+		bool		a_nonzero = (fabs((double) a->data[i]) > 1e-10);
+		bool		b_nonzero = (fabs((double) b->data[i]) > 1e-10);
 
 		if (a_nonzero && b_nonzero)
 			intersection++;
@@ -416,10 +436,10 @@ vector_jaccard_distance(PG_FUNCTION_ARGS)
 
 	if (union_count == 0)
 	{
-		PG_RETURN_FLOAT8(0.0); /* Both vectors are zero */
+		PG_RETURN_FLOAT8(0.0);	/* Both vectors are zero */
 	}
 
-	jaccard_sim = (double)intersection / (double)union_count;
+	jaccard_sim = (double) intersection / (double) union_count;
 	PG_RETURN_FLOAT8(1.0 - jaccard_sim);
 }
 
@@ -432,13 +452,13 @@ PG_FUNCTION_INFO_V1(vector_dice_distance);
 Datum
 vector_dice_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	int intersection = 0;
-	int a_count = 0;
-	int b_count = 0;
-	int i;
-	double dice_coeff;
+	Vector	   *a;
+	Vector	   *b;
+	int			intersection = 0;
+	int			a_count = 0;
+	int			b_count = 0;
+	int			i;
+	double		dice_coeff;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -449,8 +469,8 @@ vector_dice_distance(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < a->dim; i++)
 	{
-		bool a_nonzero = (fabs((double)a->data[i]) > 1e-10);
-		bool b_nonzero = (fabs((double)b->data[i]) > 1e-10);
+		bool		a_nonzero = (fabs((double) a->data[i]) > 1e-10);
+		bool		b_nonzero = (fabs((double) b->data[i]) > 1e-10);
 
 		if (a_nonzero && b_nonzero)
 			intersection++;
@@ -461,12 +481,12 @@ vector_dice_distance(PG_FUNCTION_ARGS)
 	}
 
 	if (a_count == 0 && b_count == 0)
-		return 0.0; /* Both vectors are zero */
+		return 0.0;				/* Both vectors are zero */
 
 	if (a_count == 0 || b_count == 0)
-		return 1.0; /* No overlap */
+		return 1.0;				/* No overlap */
 
-	dice_coeff = (2.0 * (double)intersection) / ((double)a_count + (double)b_count);
+	dice_coeff = (2.0 * (double) intersection) / ((double) a_count + (double) b_count);
 	PG_RETURN_FLOAT8(1.0 - dice_coeff);
 }
 
@@ -480,11 +500,11 @@ PG_FUNCTION_INFO_V1(vector_mahalanobis_distance);
 Datum
 vector_mahalanobis_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	Vector *covariance_inv;
-	double sum = 0.0;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	Vector	   *covariance_inv;
+	double		sum = 0.0;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -502,21 +522,21 @@ vector_mahalanobis_distance(PG_FUNCTION_ARGS)
 
 	if (covariance_inv->dim != a->dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("covariance matrix dimension must match vector dimension: %d vs %d",
-					covariance_inv->dim,
-					a->dim)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("covariance matrix dimension must match vector dimension: %d vs %d",
+						covariance_inv->dim,
+						a->dim)));
 
 	/* Compute Mahalanobis distance with diagonal covariance assumption */
 	for (i = 0; i < a->dim; i++)
 	{
-		double diff = (double)a->data[i] - (double)b->data[i];
-		double inv_var = (double)covariance_inv->data[i];
+		double		diff = (double) a->data[i] - (double) b->data[i];
+		double		inv_var = (double) covariance_inv->data[i];
 
 		if (inv_var <= 0.0 || isnan(inv_var) || isinf(inv_var))
 			ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-					errmsg("covariance inverse must be positive and finite")));
+					(errcode(ERRCODE_DATA_EXCEPTION),
+					 errmsg("covariance inverse must be positive and finite")));
 
 		sum += diff * diff * inv_var;
 	}

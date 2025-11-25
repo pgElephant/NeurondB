@@ -55,9 +55,9 @@ call_model_predict(int32 model_id, float *features, int n_features)
 {
 	StringInfoData sql;
 	StringInfoData features_str;
-	int ret;
-	double prediction = 0.0;
-	int i;
+	int			ret;
+	double		prediction = 0.0;
+	int			i;
 
 	/* Build features array string */
 	initStringInfo(&features_str);
@@ -66,7 +66,7 @@ call_model_predict(int32 model_id, float *features, int n_features)
 	{
 		if (i > 0)
 			appendStringInfoString(&features_str, ", ");
-		appendStringInfo(&features_str, "%.6f", (double)features[i]);
+		appendStringInfo(&features_str, "%.6f", (double) features[i]);
 	}
 	appendStringInfoString(&features_str, "]::real[]");
 
@@ -77,11 +77,12 @@ call_model_predict(int32 model_id, float *features, int n_features)
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool isnull = false;
-		Datum result = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
+		bool		isnull = false;
+		Datum		result = SPI_getbinval(SPI_tuptable->vals[0],
+										   SPI_tuptable->tupdesc,
+										   1,
+										   &isnull);
+
 		if (!isnull)
 			prediction = DatumGetFloat8(result);
 	}
@@ -110,17 +111,18 @@ PG_FUNCTION_INFO_V1(calculate_shap_values);
 Datum
 calculate_shap_values(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	ArrayType *instance;
-	int n_samples;
-	float *features;
-	int n_features;
-	double *shap_values;
-	int i, j;
-	ArrayType *result;
-	Datum *result_datums;
+	int32		model_id;
+	ArrayType  *instance;
+	int			n_samples;
+	float	   *features;
+	int			n_features;
+	double	   *shap_values;
+	int			i,
+				j;
+	ArrayType  *result;
+	Datum	   *result_datums;
 	StringInfoData query;
-	int ret;
+	int			ret;
 
 	model_id = PG_GETARG_INT32(0);
 	instance = PG_GETARG_ARRAYTYPE_P(1);
@@ -128,34 +130,35 @@ calculate_shap_values(PG_FUNCTION_ARGS)
 
 	if (n_samples < 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("n_samples must be positive")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("n_samples must be positive")));
 
 	/* Extract features from array */
 	n_features = ARR_DIMS(instance)[0];
-	features = (float *)ARR_DATA_PTR(instance);
+	features = (float *) ARR_DATA_PTR(instance);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("SPI_connect failed")));
 
 	/* Initialize SHAP values */
-	shap_values = (double *)palloc0(sizeof(double) * n_features);
+	shap_values = (double *) palloc0(sizeof(double) * n_features);
 
 	/* Kernel SHAP: approximate Shapley values using sampling */
 	/* For each feature, estimate its contribution */
 	for (i = 0; i < n_features; i++)
 	{
-		double sum_contrib = 0.0;
-		int valid_samples = 0;
+		double		sum_contrib = 0.0;
+		int			valid_samples = 0;
 
 		for (j = 0; j < n_samples; j++)
 		{
 			/* Create perturbed instance */
-			float *perturbed = (float *)palloc(sizeof(float) * n_features);
-			int k;
-			double pred_with, pred_without;
+			float	   *perturbed = (float *) palloc(sizeof(float) * n_features);
+			int			k;
+			double		pred_with,
+						pred_without;
 
 			/* Sample subset of features */
 			for (k = 0; k < n_features; k++)
@@ -186,16 +189,16 @@ calculate_shap_values(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result array */
-	result_datums = (Datum *)palloc(sizeof(Datum) * n_features);
+	result_datums = (Datum *) palloc(sizeof(Datum) * n_features);
 	for (i = 0; i < n_features; i++)
 		result_datums[i] = Float8GetDatum(shap_values[i]);
 
 	result = construct_array(result_datums,
-				 n_features,
-				 FLOAT8OID,
-				 sizeof(float8),
-				 FLOAT8PASSBYVAL,
-				 'd');
+							 n_features,
+							 FLOAT8OID,
+							 sizeof(float8),
+							 FLOAT8PASSBYVAL,
+							 'd');
 
 	/* Cleanup */
 	NDB_SAFE_PFREE_AND_NULL(shap_values);
@@ -224,19 +227,20 @@ PG_FUNCTION_INFO_V1(explain_with_lime);
 Datum
 explain_with_lime(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	ArrayType *instance;
-	int n_samples;
-	int n_features;
-	float *features;
-	int feature_dim;
-	float *perturbed_features;
-	double *predictions;
-	double *weights;
-	double *coefficients;
-	int i, j;
+	int32		model_id;
+	ArrayType  *instance;
+	int			n_samples;
+	int			n_features;
+	float	   *features;
+	int			feature_dim;
+	float	   *perturbed_features;
+	double	   *predictions;
+	double	   *weights;
+	double	   *coefficients;
+	int			i,
+				j;
 	StringInfoData jsonbuf;
-	Jsonb *result;
+	Jsonb	   *result;
 
 	model_id = PG_GETARG_INT32(0);
 	instance = PG_GETARG_ARRAYTYPE_P(1);
@@ -245,41 +249,42 @@ explain_with_lime(PG_FUNCTION_ARGS)
 
 	if (n_samples < 1 || n_features < 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("n_samples and n_features must be positive")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("n_samples and n_features must be positive")));
 
 	feature_dim = ARR_DIMS(instance)[0];
-	features = (float *)ARR_DATA_PTR(instance);
+	features = (float *) ARR_DATA_PTR(instance);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("SPI_connect failed")));
 
 	/* Allocate arrays */
-	perturbed_features = (float *)palloc(sizeof(float) * feature_dim * n_samples);
-	predictions = (double *)palloc(sizeof(double) * n_samples);
-	weights = (double *)palloc(sizeof(double) * n_samples);
-	coefficients = (double *)palloc0(sizeof(double) * feature_dim);
+	perturbed_features = (float *) palloc(sizeof(float) * feature_dim * n_samples);
+	predictions = (double *) palloc(sizeof(double) * n_samples);
+	weights = (double *) palloc(sizeof(double) * n_samples);
+	coefficients = (double *) palloc0(sizeof(double) * feature_dim);
 
 	/* Generate perturbed samples and get predictions */
 	for (i = 0; i < n_samples; i++)
 	{
-		double distance = 0.0;
-		int k;
+		double		distance = 0.0;
+		int			k;
 
 		/* Perturb features */
 		for (k = 0; k < feature_dim; k++)
 		{
-			float noise = ((float)rand() / (float)RAND_MAX - 0.5) * 0.2;
+			float		noise = ((float) rand() / (float) RAND_MAX - 0.5) * 0.2;
+
 			perturbed_features[i * feature_dim + k] = features[k] + noise;
 			distance += noise * noise;
 		}
 
 		/* Get prediction using actual model */
 		predictions[i] = call_model_predict(model_id,
-			&perturbed_features[i * feature_dim],
-			feature_dim);
+											&perturbed_features[i * feature_dim],
+											feature_dim);
 
 		/* Exponential kernel weight based on distance */
 		distance = sqrt(distance);
@@ -290,12 +295,13 @@ explain_with_lime(PG_FUNCTION_ARGS)
 	/* Simplified: would use proper linear regression solver */
 	for (i = 0; i < feature_dim; i++)
 	{
-		double numerator = 0.0;
-		double denominator = 0.0;
+		double		numerator = 0.0;
+		double		denominator = 0.0;
 
 		for (j = 0; j < n_samples; j++)
 		{
-			float feat_val = perturbed_features[j * feature_dim + i];
+			float		feat_val = perturbed_features[j * feature_dim + i];
+
 			numerator += weights[j] * feat_val * predictions[j];
 			denominator += weights[j] * feat_val * feat_val;
 		}
@@ -312,14 +318,14 @@ explain_with_lime(PG_FUNCTION_ARGS)
 		if (i > 0)
 			appendStringInfoString(&jsonbuf, ",");
 		appendStringInfo(&jsonbuf,
-				 "{\"index\":%d,\"importance\":%.6f}",
-				 i,
-				 coefficients[i]);
+						 "{\"index\":%d,\"importance\":%.6f}",
+						 i,
+						 coefficients[i]);
 	}
 	appendStringInfoString(&jsonbuf, "]}");
 
 	result = DatumGetJsonbP(
-		DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
+							DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
 
 	/* Cleanup */
 	NDB_SAFE_PFREE_AND_NULL(perturbed_features);
@@ -352,33 +358,34 @@ PG_FUNCTION_INFO_V1(feature_importance);
 Datum
 feature_importance(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	text *table_name;
-	text *feature_column;
-	text *target_column;
-	text *metric_text;
-	char *tbl_str;
-	char *feat_col_str;
-	char *targ_col_str;
-	char *metric;
-	float **features;
-	double *targets;
-	int n_samples;
-	int n_features;
-	double baseline_score;
-	double *importance;
-	int i, j;
-	ArrayType *result;
-	Datum *result_datums;
+	int32		model_id;
+	text	   *table_name;
+	text	   *feature_column;
+	text	   *target_column;
+	text	   *metric_text;
+	char	   *tbl_str;
+	char	   *feat_col_str;
+	char	   *targ_col_str;
+	char	   *metric;
+	float	  **features;
+	double	   *targets;
+	int			n_samples;
+	int			n_features;
+	double		baseline_score;
+	double	   *importance;
+	int			i,
+				j;
+	ArrayType  *result;
+	Datum	   *result_datums;
 	StringInfoData query;
-	int ret;
+	int			ret;
 
 	model_id = PG_GETARG_INT32(0);
 	table_name = PG_GETARG_TEXT_PP(1);
 	feature_column = PG_GETARG_TEXT_PP(2);
 	target_column = PG_GETARG_TEXT_PP(3);
 	metric_text = PG_ARGISNULL(4) ? cstring_to_text("mse")
-				      : PG_GETARG_TEXT_PP(4);
+		: PG_GETARG_TEXT_PP(4);
 
 	tbl_str = text_to_cstring(table_name);
 	feat_col_str = text_to_cstring(feature_column);
@@ -387,42 +394,46 @@ feature_importance(PG_FUNCTION_ARGS)
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("SPI_connect failed")));
 
 	/* Load test data */
 	initStringInfo(&query);
 	appendStringInfo(&query,
-			 "SELECT %s, %s FROM %s",
-			 feat_col_str,
-			 targ_col_str,
-			 tbl_str);
+					 "SELECT %s, %s FROM %s",
+					 feat_col_str,
+					 targ_col_str,
+					 tbl_str);
 
 	ret = ndb_spi_execute_safe(query.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("Failed to load test data")));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("Failed to load test data")));
 
 	n_samples = SPI_processed;
 	/* TODO: Determine actual feature count from model or data schema */
-	/* For now, use default value - should be replaced with actual model metadata */
+
+	/*
+	 * For now, use default value - should be replaced with actual model
+	 * metadata
+	 */
 	n_features = 10;
 
-	features = (float **)palloc(sizeof(float *) * n_samples);
-	targets = (double *)palloc(sizeof(double) * n_samples);
+	features = (float **) palloc(sizeof(float *) * n_samples);
+	targets = (double *) palloc(sizeof(double) * n_samples);
 
 	for (i = 0; i < n_samples; i++)
 	{
-		HeapTuple tuple = SPI_tuptable->vals[i];
-		ArrayType *feat_array = DatumGetArrayTypeP(
-			SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, NULL));
-		double target = DatumGetFloat8(SPI_getbinval(tuple,
-							     SPI_tuptable->tupdesc,
-							     2, NULL));
+		HeapTuple	tuple = SPI_tuptable->vals[i];
+		ArrayType  *feat_array = DatumGetArrayTypeP(
+													SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, NULL));
+		double		target = DatumGetFloat8(SPI_getbinval(tuple,
+														  SPI_tuptable->tupdesc,
+														  2, NULL));
 
-		features[i] = (float *)ARR_DATA_PTR(feat_array);
+		features[i] = (float *) ARR_DATA_PTR(feat_array);
 		targets[i] = target;
 	}
 
@@ -431,35 +442,38 @@ feature_importance(PG_FUNCTION_ARGS)
 	for (i = 0; i < n_samples; i++)
 	{
 		/* Call actual model prediction */
-		double pred = call_model_predict(model_id, features[i], n_features);
-		double diff = pred - targets[i];
+		double		pred = call_model_predict(model_id, features[i], n_features);
+		double		diff = pred - targets[i];
+
 		baseline_score += diff * diff;
 	}
 	baseline_score /= n_samples;
 
 	/* Permutation importance: shuffle each feature and measure impact */
-	importance = (double *)palloc0(sizeof(double) * n_features);
+	importance = (double *) palloc0(sizeof(double) * n_features);
 
 	for (i = 0; i < n_features; i++)
 	{
 		/* Shuffle feature i */
 		for (j = n_samples - 1; j > 0; j--)
 		{
-			int k = rand() % (j + 1);
-			float tmp = features[j][i];
+			int			k = rand() % (j + 1);
+			float		tmp = features[j][i];
+
 			features[j][i] = features[k][i];
 			features[k][i] = tmp;
 		}
 
 		/* Calculate score with shuffled feature */
-		double shuffled_score = 0.0;
-		int s;
+		double		shuffled_score = 0.0;
+		int			s;
 
 		for (s = 0; s < n_samples; s++)
 		{
 			/* Call actual model prediction */
-			double pred = call_model_predict(model_id, features[s], n_features);
-			double diff = pred - targets[s];
+			double		pred = call_model_predict(model_id, features[s], n_features);
+			double		diff = pred - targets[s];
+
 			shuffled_score += diff * diff;
 		}
 		shuffled_score /= n_samples;
@@ -470,24 +484,25 @@ feature_importance(PG_FUNCTION_ARGS)
 		/* Restore original order */
 		for (j = n_samples - 1; j > 0; j--)
 		{
-			int k = rand() % (j + 1);
-			float tmp = features[j][i];
+			int			k = rand() % (j + 1);
+			float		tmp = features[j][i];
+
 			features[j][i] = features[k][i];
 			features[k][i] = tmp;
 		}
 	}
 
 	/* Build result array */
-	result_datums = (Datum *)palloc(sizeof(Datum) * n_features);
+	result_datums = (Datum *) palloc(sizeof(Datum) * n_features);
 	for (i = 0; i < n_features; i++)
 		result_datums[i] = Float8GetDatum(importance[i]);
 
 	result = construct_array(result_datums,
-				 n_features,
-				 FLOAT8OID,
-				 sizeof(float8),
-				 FLOAT8PASSBYVAL,
-				 'd');
+							 n_features,
+							 FLOAT8OID,
+							 sizeof(float8),
+							 FLOAT8PASSBYVAL,
+							 'd');
 
 	/* Cleanup */
 	NDB_SAFE_PFREE_AND_NULL(features);
@@ -503,5 +518,3 @@ feature_importance(PG_FUNCTION_ARGS)
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
-
-

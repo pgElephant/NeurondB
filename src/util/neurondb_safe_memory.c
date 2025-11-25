@@ -37,28 +37,30 @@ ndb_safe_pfree_and_null_impl(void *ptr)
 		return false;
 
 #ifdef USE_ASSERT_CHECKING
+
 	/*
-	 * In debug builds, log suspicious pointer patterns
-	 * (e.g., pointers that look like they might be invalid)
+	 * In debug builds, log suspicious pointer patterns (e.g., pointers that
+	 * look like they might be invalid)
 	 */
-	if ((uintptr_t)ptr < 0x1000)
+	if ((uintptr_t) ptr < 0x1000)
 	{
 		elog(DEBUG1,
-			"neurondb: suspicious pointer pattern in ndb_safe_pfree: %p",
-			ptr);
+			 "neurondb: suspicious pointer pattern in ndb_safe_pfree: %p",
+			 ptr);
 	}
 
 	/*
-	 * In debug builds, validate current memory context is valid before freeing.
-	 * This helps catch cases where we're trying to free in an invalid context.
-	 * Note: pfree() itself will validate the pointer's context, but this gives
-	 * us an early warning if CurrentMemoryContext is invalid.
+	 * In debug builds, validate current memory context is valid before
+	 * freeing. This helps catch cases where we're trying to free in an
+	 * invalid context. Note: pfree() itself will validate the pointer's
+	 * context, but this gives us an early warning if CurrentMemoryContext is
+	 * invalid.
 	 */
 	if (!MemoryContextIsValid(CurrentMemoryContext))
 	{
 		elog(WARNING,
-			"neurondb: attempting to free pointer %p while CurrentMemoryContext %p is invalid",
-			ptr, CurrentMemoryContext);
+			 "neurondb: attempting to free pointer %p while CurrentMemoryContext %p is invalid",
+			 ptr, CurrentMemoryContext);
 	}
 #endif
 
@@ -72,10 +74,12 @@ ndb_safe_pfree_and_null_impl(void *ptr)
  * ndb_safe_pfree - Safely free a pointer, checking for NULL
  * Returns true if pointer was freed, false otherwise
  */
-bool ndb_safe_pfree(void *ptr)
+bool
+ndb_safe_pfree(void *ptr)
 {
-    return ndb_safe_pfree_and_null_impl(ptr);
+	return ndb_safe_pfree_and_null_impl(ptr);
 }
+
 /*
  * ndb_safe_pfree_multi - Safely free multiple pointers
  *
@@ -85,12 +89,12 @@ bool ndb_safe_pfree(void *ptr)
  * Returns number of pointers actually freed
  */
 int
-ndb_safe_pfree_multi(int count, ...)
+ndb_safe_pfree_multi(int count,...)
 {
-	va_list ap;
-	int i;
-	int freed = 0;
-	void *ptr;
+	va_list		ap;
+	int			i;
+	int			freed = 0;
+	void	   *ptr;
 
 	if (count <= 0)
 		return 0;
@@ -135,8 +139,8 @@ ndb_memory_context_validate(MemoryContext context)
 		return false;
 
 	/*
-	 * In PostgreSQL, MemoryContextIsValid is a macro that checks
-	 * if context has valid magic number. We use a similar check.
+	 * In PostgreSQL, MemoryContextIsValid is a macro that checks if context
+	 * has valid magic number. We use a similar check.
 	 */
 	return MemoryContextIsValid(context);
 }
@@ -155,7 +159,7 @@ ndb_ensure_memory_context(MemoryContext context)
 	if (!ndb_memory_context_validate(context))
 	{
 		elog(WARNING,
-			"neurondb: attempt to switch to invalid memory context");
+			 "neurondb: attempt to switch to invalid memory context");
 		return false;
 	}
 
@@ -182,20 +186,20 @@ ndb_safe_context_cleanup(MemoryContext context, MemoryContext oldcontext)
 	if (!ndb_memory_context_validate(context))
 	{
 		elog(WARNING,
-			"neurondb: attempt to delete invalid memory context");
+			 "neurondb: attempt to delete invalid memory context");
 		return;
 	}
 
 	/*
-	 * If we're currently in the context being deleted, we need
-	 * to switch to a different context first
+	 * If we're currently in the context being deleted, we need to switch to a
+	 * different context first
 	 */
 	if (CurrentMemoryContext == context)
 	{
 		if (oldcontext == NULL || !ndb_memory_context_validate(oldcontext))
 		{
 			elog(ERROR,
-				"neurondb: cannot delete current memory context without valid old context");
+				 "neurondb: cannot delete current memory context without valid old context");
 			return;
 		}
 		MemoryContextSwitchTo(oldcontext);
@@ -217,14 +221,14 @@ ndb_safe_context_cleanup(MemoryContext context, MemoryContext oldcontext)
  */
 typedef struct NdbPointerEntry
 {
-	void *ptr;
+	void	   *ptr;
 	MemoryContext context;
 	const char *alloc_func;
-} NdbPointerEntry;
+}			NdbPointerEntry;
 
-static NdbPointerEntry *ptr_tracker = NULL;
-static int ptr_tracker_size = 0;
-static int ptr_tracker_count = 0;
+static NdbPointerEntry * ptr_tracker = NULL;
+static int	ptr_tracker_size = 0;
+static int	ptr_tracker_count = 0;
 
 /*
  * ndb_track_allocation - Track an allocation for debugging
@@ -238,10 +242,10 @@ ndb_track_allocation(void *ptr, const char *alloc_func)
 	/* Simple implementation - expand if needed */
 	/* In production, this would be more sophisticated */
 	elog(DEBUG2,
-		"neurondb: tracking allocation %p from %s in context %p",
-		ptr,
-		alloc_func,
-		CurrentMemoryContext);
+		 "neurondb: tracking allocation %p from %s in context %p",
+		 ptr,
+		 alloc_func,
+		 CurrentMemoryContext);
 }
 
 /*
@@ -256,7 +260,7 @@ ndb_untrack_allocation(void *ptr)
 	elog(DEBUG2, "neurondb: untracking allocation %p", ptr);
 }
 
-#endif	/* NDB_DEBUG_MEMORY */
+#endif							/* NDB_DEBUG_MEMORY */
 
 /*-------------------------------------------------------------------------
  * Array cleanup helpers
@@ -276,7 +280,7 @@ ndb_untrack_allocation(void *ptr)
 void
 ndb_safe_pfree_array(void **array, int count)
 {
-	int i;
+	int			i;
 
 	if (array == NULL)
 		return;
@@ -301,7 +305,7 @@ ndb_safe_pfree_array(void **array, int count)
 void
 ndb_safe_pfree_string_array(char **array, int count)
 {
-	int i;
+	int			i;
 
 	if (array == NULL)
 		return;
@@ -340,9 +344,9 @@ ndb_cleanup_on_error(MemoryContext oldcontext,
 					 int n_ptrs,
 					 ...)
 {
-	va_list ap;
-	int i;
-	void *ptr;
+	va_list		ap;
+	int			i;
+	void	   *ptr;
 
 	/* Free all provided pointers */
 	if (n_ptrs > 0)
@@ -367,4 +371,3 @@ ndb_cleanup_on_error(MemoryContext oldcontext,
 	if (callcontext != NULL && callcontext != oldcontext)
 		ndb_safe_context_cleanup(callcontext, oldcontext);
 }
-

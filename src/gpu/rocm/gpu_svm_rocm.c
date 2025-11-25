@@ -31,36 +31,37 @@
 #include "neurondb_safe_memory.h"
 
 /* Forward declarations for kernel launchers */
-extern int ndb_rocm_svm_launch_compute_kernel_row(const float *features,
-	int n_samples,
-	int feature_dim,
-	int row_idx,
-	float *kernel_row);
+extern int	ndb_rocm_svm_launch_compute_kernel_row(const float *features,
+												   int n_samples,
+												   int feature_dim,
+												   int row_idx,
+												   float *kernel_row);
 
-extern int ndb_rocm_svm_launch_update_errors(const float *kernel_row,
-	float delta_alpha,
-	float label_i,
-	int n_samples,
-	float *errors);
+extern int	ndb_rocm_svm_launch_update_errors(const float *kernel_row,
+											  float delta_alpha,
+											  float label_i,
+											  int n_samples,
+											  float *errors);
 
 int
-ndb_rocm_svm_pack_model(const SVMModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+ndb_rocm_svm_pack_model(const SVMModel * model,
+						bytea * *model_data,
+						Jsonb * *metrics,
+						char **errstr)
 {
-	size_t payload_bytes;
-	bytea *blob;
-	char *base;
+	size_t		payload_bytes;
+	bytea	   *blob;
+	char	   *base;
 	NdbCudaSvmModelHeader *hdr;
-	float *alphas_dest;
-	float *sv_dest;
-	int32 *indices_dest;
-	int i, j;
-	size_t alphas_size;
-	size_t sv_size;
-	size_t indices_size;
-	size_t total_payload;
+	float	   *alphas_dest;
+	float	   *sv_dest;
+	int32	   *indices_dest;
+	int			i,
+				j;
+	size_t		alphas_size;
+	size_t		sv_size;
+	size_t		indices_size;
+	size_t		total_payload;
 
 	if (errstr)
 		*errstr = NULL;
@@ -92,9 +93,9 @@ ndb_rocm_svm_pack_model(const SVMModel *model,
 	}
 
 	/* Compute payload size with overflow protection */
-	alphas_size = sizeof(float) * (size_t)model->n_support_vectors;
-	sv_size = sizeof(float) * (size_t)model->n_support_vectors * (size_t)model->n_features;
-	indices_size = sizeof(int32) * (size_t)model->n_support_vectors;
+	alphas_size = sizeof(float) * (size_t) model->n_support_vectors;
+	sv_size = sizeof(float) * (size_t) model->n_support_vectors * (size_t) model->n_features;
+	indices_size = sizeof(int32) * (size_t) model->n_support_vectors;
 	total_payload = sizeof(NdbCudaSvmModelHeader) + alphas_size + sv_size + indices_size;
 
 	/* Check against MaxAllocSize */
@@ -107,60 +108,60 @@ ndb_rocm_svm_pack_model(const SVMModel *model,
 
 	payload_bytes = total_payload;
 
-	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
+	blob = (bytea *) palloc(VARHDRSZ + payload_bytes);
 	SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
 	base = VARDATA(blob);
 
-	hdr = (NdbCudaSvmModelHeader *)base;
+	hdr = (NdbCudaSvmModelHeader *) base;
 	hdr->feature_dim = model->n_features;
 	hdr->n_samples = model->n_samples;
 	hdr->n_support_vectors = model->n_support_vectors;
-	hdr->bias = (float)model->bias;
+	hdr->bias = (float) model->bias;
 	hdr->C = model->C;
 	hdr->max_iters = model->max_iters;
 
-	alphas_dest = (float *)(base + sizeof(NdbCudaSvmModelHeader));
+	alphas_dest = (float *) (base + sizeof(NdbCudaSvmModelHeader));
 	sv_dest = alphas_dest + model->n_support_vectors;
-	indices_dest = (int32 *)(sv_dest
-		+ model->n_support_vectors * model->n_features);
+	indices_dest = (int32 *) (sv_dest
+							  + model->n_support_vectors * model->n_features);
 
 	if (model->alphas != NULL && model->support_vectors != NULL
 		&& model->support_vector_indices != NULL)
 	{
 		for (i = 0; i < model->n_support_vectors; i++)
 		{
-			alphas_dest[i] = (float)model->alphas[i];
+			alphas_dest[i] = (float) model->alphas[i];
 			indices_dest[i] = model->support_vector_indices[i];
 			for (j = 0; j < model->n_features; j++)
 				sv_dest[i * model->n_features + j] =
 					model->support_vectors[i
-							* model->n_features
-						+ j];
+										   * model->n_features
+										   + j];
 		}
 	}
 
 	if (metrics != NULL)
 	{
 		StringInfoData buf;
-		Jsonb *metrics_json;
+		Jsonb	   *metrics_json;
 
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
-			"{\"algorithm\":\"svm\","
-			"\"storage\":\"gpu\","
-			"\"n_features\":%d,"
-			"\"n_samples\":%d,"
-			"\"n_support_vectors\":%d,"
-			"\"C\":%.6f,"
-			"\"max_iters\":%d}",
-			model->n_features,
-			model->n_samples,
-			model->n_support_vectors,
-			model->C,
-			model->max_iters);
+						 "{\"algorithm\":\"svm\","
+						 "\"storage\":\"gpu\","
+						 "\"n_features\":%d,"
+						 "\"n_samples\":%d,"
+						 "\"n_support_vectors\":%d,"
+						 "\"C\":%.6f,"
+						 "\"max_iters\":%d}",
+						 model->n_features,
+						 model->n_samples,
+						 model->n_support_vectors,
+						 model->C,
+						 model->max_iters);
 
 		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-			jsonb_in, CStringGetDatum(buf.data)));
+														  jsonb_in, CStringGetDatum(buf.data)));
 		NDB_SAFE_PFREE_AND_NULL(buf.data);
 		*metrics = metrics_json;
 	}
@@ -171,35 +172,36 @@ ndb_rocm_svm_pack_model(const SVMModel *model,
 
 int
 ndb_rocm_svm_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				   const double *labels,
+				   int n_samples,
+				   int feature_dim,
+				   const Jsonb * hyperparams,
+				   bytea * *model_data,
+				   Jsonb * *metrics,
+				   char **errstr)
 {
-	double C = 1.0;
-	int max_iters = 1000;
-	float *alphas = NULL;
-	float *errors = NULL;
-	float *kernel_matrix = NULL;
-	float *kernel_row = NULL;
-	float bias = 0.0f;
-	int actual_max_iters;
-	int sample_limit;
-	int iter;
-	int num_changed = 0;
-	int examine_all = 1;
-	double eps = 1e-3;
-	int sv_count = 0;
-	SVMModel model;
-	int i, j;
-	int rc = -1;
-	size_t alphas_size;
-	size_t errors_size;
-	size_t kernel_matrix_size;
-	size_t kernel_row_size;
+	double		C = 1.0;
+	int			max_iters = 1000;
+	float	   *alphas = NULL;
+	float	   *errors = NULL;
+	float	   *kernel_matrix = NULL;
+	float	   *kernel_row = NULL;
+	float		bias = 0.0f;
+	int			actual_max_iters;
+	int			sample_limit;
+	int			iter;
+	int			num_changed = 0;
+	int			examine_all = 1;
+	double		eps = 1e-3;
+	int			sv_count = 0;
+	SVMModel	model;
+	int			i,
+				j;
+	int			rc = -1;
+	size_t		alphas_size;
+	size_t		errors_size;
+	size_t		kernel_matrix_size;
+	size_t		kernel_row_size;
 
 	if (errstr)
 		*errstr = NULL;
@@ -239,25 +241,25 @@ ndb_rocm_svm_train(const float *features,
 	/* Extract hyperparameters */
 	if (hyperparams != NULL)
 	{
-		Datum C_datum;
-		Datum max_iters_datum;
-		Datum numeric_datum;
-		Numeric num;
+		Datum		C_datum;
+		Datum		max_iters_datum;
+		Datum		numeric_datum;
+		Numeric		num;
 
 		C_datum = DirectFunctionCall2(
-			jsonb_object_field,
-			JsonbPGetDatum(hyperparams),
-			CStringGetTextDatum("C"));
+									  jsonb_object_field,
+									  JsonbPGetDatum(hyperparams),
+									  CStringGetTextDatum("C"));
 		if (DatumGetPointer(C_datum) != NULL)
 		{
 			numeric_datum = DirectFunctionCall1(
-				jsonb_numeric, C_datum);
+												jsonb_numeric, C_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
 				C = DatumGetFloat8(
-					DirectFunctionCall1(numeric_float8,
-						NumericGetDatum(num)));
+								   DirectFunctionCall1(numeric_float8,
+													   NumericGetDatum(num)));
 				if (C <= 0.0)
 					C = 1.0;
 				if (C > 1000.0)
@@ -266,19 +268,19 @@ ndb_rocm_svm_train(const float *features,
 		}
 
 		max_iters_datum = DirectFunctionCall2(
-			jsonb_object_field,
-			JsonbPGetDatum(hyperparams),
-			CStringGetTextDatum("max_iters"));
+											  jsonb_object_field,
+											  JsonbPGetDatum(hyperparams),
+											  CStringGetTextDatum("max_iters"));
 		if (DatumGetPointer(max_iters_datum) != NULL)
 		{
 			numeric_datum = DirectFunctionCall1(
-				jsonb_numeric, max_iters_datum);
+												jsonb_numeric, max_iters_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
 				max_iters = DatumGetInt32(
-					DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(num)));
+										  DirectFunctionCall1(numeric_int4,
+															  NumericGetDatum(num)));
 				if (max_iters <= 0)
 					max_iters = 1000;
 				if (max_iters > 100000)
@@ -319,10 +321,10 @@ ndb_rocm_svm_train(const float *features,
 	}
 
 	/* Allocate memory with size validation */
-	alphas_size = sizeof(float) * (size_t)sample_limit;
-	errors_size = sizeof(float) * (size_t)sample_limit;
-	kernel_matrix_size = sizeof(float) * (size_t)sample_limit * (size_t)sample_limit;
-	kernel_row_size = sizeof(float) * (size_t)sample_limit;
+	alphas_size = sizeof(float) * (size_t) sample_limit;
+	errors_size = sizeof(float) * (size_t) sample_limit;
+	kernel_matrix_size = sizeof(float) * (size_t) sample_limit * (size_t) sample_limit;
+	kernel_row_size = sizeof(float) * (size_t) sample_limit;
 
 	if (alphas_size > MaxAllocSize || errors_size > MaxAllocSize ||
 		kernel_matrix_size > MaxAllocSize || kernel_row_size > MaxAllocSize)
@@ -332,10 +334,10 @@ ndb_rocm_svm_train(const float *features,
 		return -1;
 	}
 
-	alphas = (float *)palloc0(alphas_size);
-	errors = (float *)palloc(errors_size);
-	kernel_matrix = (float *)palloc(kernel_matrix_size);
-	kernel_row = (float *)palloc(kernel_row_size);
+	alphas = (float *) palloc0(alphas_size);
+	errors = (float *) palloc(errors_size);
+	kernel_matrix = (float *) palloc(kernel_matrix_size);
+	kernel_row = (float *) palloc(kernel_row_size);
 
 	if (alphas == NULL || errors == NULL || kernel_matrix == NULL || kernel_row == NULL)
 	{
@@ -365,18 +367,18 @@ ndb_rocm_svm_train(const float *features,
 			NDB_SAFE_PFREE_AND_NULL(kernel_row);
 			return -1;
 		}
-		memcpy(kernel_matrix + i * sample_limit, kernel_row, sizeof(float) * (size_t)sample_limit);
+		memcpy(kernel_matrix + i * sample_limit, kernel_row, sizeof(float) * (size_t) sample_limit);
 	}
 
 	/* Initialize errors: E_i = f(x_i) - y_i, where f(x_i) = 0 initially */
 	/* Also initialize alphas to small values to help convergence */
 	for (i = 0; i < sample_limit; i++)
 	{
-		errors[i] = -(float)labels[i];
+		errors[i] = -(float) labels[i];
 		/* Initialize alphas to small random values to break symmetry */
-		alphas[i] = ((float)(i % 10) + 1.0f) * 0.01f * (float)C;
-		if (alphas[i] > (float)C)
-			alphas[i] = (float)C * 0.1f;
+		alphas[i] = ((float) (i % 10) + 1.0f) * 0.01f * (float) C;
+		if (alphas[i] > (float) C)
+			alphas[i] = (float) C * 0.1f;
 	}
 
 	/* Simplified SMO: iterate until convergence or max iterations */
@@ -387,14 +389,14 @@ ndb_rocm_svm_train(const float *features,
 		/* Simplified update: adjust alphas based on errors */
 		for (i = 0; i < sample_limit; i++)
 		{
-			float error_i = errors[i];
-			float label_i = (float)labels[i];
-			float alpha_i = alphas[i];
-			float eta;
-			float L = 0.0f;
-			float H = (float)C;
-			float new_alpha_i;
-			float delta_alpha;
+			float		error_i = errors[i];
+			float		label_i = (float) labels[i];
+			float		alpha_i = alphas[i];
+			float		eta;
+			float		L = 0.0f;
+			float		H = (float) C;
+			float		new_alpha_i;
+			float		delta_alpha;
 
 			/* Compute eta: second derivative of objective function */
 			/* For linear kernel: eta = 2 * K(x_i, x_i) = 2 * ||x_i||^2 */
@@ -407,12 +409,12 @@ ndb_rocm_svm_train(const float *features,
 			/* Update alpha using gradient descent-like approach */
 			/* new_alpha = alpha - (error * label) / eta */
 			/* But we need to respect KKT conditions */
-			if (label_i * error_i < -(float)eps)
+			if (label_i * error_i < -(float) eps)
 			{
 				/* Violates KKT: alpha should increase */
 				new_alpha_i = alpha_i + (-label_i * error_i) / eta;
 			}
-			else if (label_i * error_i > (float)eps)
+			else if (label_i * error_i > (float) eps)
 			{
 				/* Violates KKT: alpha should decrease */
 				new_alpha_i = alpha_i - (label_i * error_i) / eta;
@@ -431,23 +433,24 @@ ndb_rocm_svm_train(const float *features,
 
 			/* Only update if change is significant */
 			delta_alpha = new_alpha_i - alpha_i;
-			if (fabsf(delta_alpha) < (float)eps)
+			if (fabsf(delta_alpha) < (float) eps)
 				continue;
 
 			alphas[i] = new_alpha_i;
 
 			/* Update errors using GPU */
 			if (ndb_rocm_svm_launch_update_errors(
-				kernel_matrix + i * sample_limit,
-				delta_alpha,
-				label_i,
-				sample_limit,
-				errors) != 0)
+												  kernel_matrix + i * sample_limit,
+												  delta_alpha,
+												  label_i,
+												  sample_limit,
+												  errors) != 0)
 			{
 				/* Fallback to CPU update */
 				for (j = 0; j < sample_limit; j++)
 				{
-					float k_val = kernel_matrix[i * sample_limit + j];
+					float		k_val = kernel_matrix[i * sample_limit + j];
+
 					errors[j] -= delta_alpha * label_i * k_val;
 				}
 			}
@@ -458,27 +461,30 @@ ndb_rocm_svm_train(const float *features,
 		/* Update bias (simplified) */
 		if (num_changed > 0)
 		{
-			float bias_sum = 0.0f;
-			int bias_count = 0;
+			float		bias_sum = 0.0f;
+			int			bias_count = 0;
+
 			for (i = 0; i < sample_limit; i++)
 			{
-				if (alphas[i] > (float)eps && alphas[i] < ((float)C - (float)eps))
+				if (alphas[i] > (float) eps && alphas[i] < ((float) C - (float) eps))
 				{
-					float pred = 0.0f;
+					float		pred = 0.0f;
+
 					for (j = 0; j < sample_limit; j++)
 					{
-						if (alphas[j] > (float)eps)
+						if (alphas[j] > (float) eps)
 						{
-							float k_val = kernel_matrix[j * sample_limit + i];
-							pred += alphas[j] * (float)labels[j] * k_val;
+							float		k_val = kernel_matrix[j * sample_limit + i];
+
+							pred += alphas[j] * (float) labels[j] * k_val;
 						}
 					}
-					bias_sum += (float)labels[i] - pred;
+					bias_sum += (float) labels[i] - pred;
 					bias_count++;
 				}
 			}
 			if (bias_count > 0)
-				bias = bias_sum / (float)bias_count;
+				bias = bias_sum / (float) bias_count;
 		}
 
 		if (examine_all)
@@ -494,7 +500,7 @@ ndb_rocm_svm_train(const float *features,
 	sv_count = 0;
 	for (i = 0; i < sample_limit; i++)
 	{
-		if (alphas[i] > (float)eps)
+		if (alphas[i] > (float) eps)
 			sv_count++;
 	}
 
@@ -507,14 +513,14 @@ ndb_rocm_svm_train(const float *features,
 	model.n_features = feature_dim;
 	model.n_samples = n_samples;
 	model.n_support_vectors = sv_count;
-	model.bias = (double)bias;
+	model.bias = (double) bias;
 	model.C = C;
 	model.max_iters = actual_max_iters;
 
 	/* Allocate support vectors and alphas */
-	model.alphas = (double *)palloc(sizeof(double) * (size_t)sv_count);
-	model.support_vectors = (float *)palloc(sizeof(float) * (size_t)sv_count * (size_t)feature_dim);
-	model.support_vector_indices = (int *)palloc(sizeof(int) * (size_t)sv_count);
+	model.alphas = (double *) palloc(sizeof(double) * (size_t) sv_count);
+	model.support_vectors = (float *) palloc(sizeof(float) * (size_t) sv_count * (size_t) feature_dim);
+	model.support_vector_indices = (int *) palloc(sizeof(int) * (size_t) sv_count);
 
 	if (model.alphas == NULL || model.support_vectors == NULL || model.support_vector_indices == NULL)
 	{
@@ -535,23 +541,24 @@ ndb_rocm_svm_train(const float *features,
 
 	/* Copy support vectors */
 	{
-		int sv_idx = 0;
+		int			sv_idx = 0;
+
 		for (i = 0; i < sample_limit && sv_idx < sv_count; i++)
 		{
-			if (alphas[i] > (float)eps || (sv_count == 1 && sv_idx == 0))
+			if (alphas[i] > (float) eps || (sv_count == 1 && sv_idx == 0))
 			{
-				model.alphas[sv_idx] = (double)alphas[i] * (double)labels[i];
+				model.alphas[sv_idx] = (double) alphas[i] * (double) labels[i];
 				model.support_vector_indices[sv_idx] = i;
 				memcpy(model.support_vectors + sv_idx * feature_dim,
-					features + i * feature_dim,
-					sizeof(float) * feature_dim);
+					   features + i * feature_dim,
+					   sizeof(float) * feature_dim);
 				sv_idx++;
 			}
 		}
 		if (sv_idx == 0)
 		{
 			/* Fallback: use first sample */
-			model.alphas[0] = 1.0 * (double)labels[0];
+			model.alphas[0] = 1.0 * (double) labels[0];
 			model.support_vector_indices[0] = 0;
 			memcpy(model.support_vectors, features, sizeof(float) * feature_dim);
 		}
@@ -592,21 +599,22 @@ ndb_rocm_svm_train(const float *features,
 }
 
 int
-ndb_rocm_svm_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	int *class_out,
-	double *confidence_out,
-	char **errstr)
+ndb_rocm_svm_predict(const bytea * model_data,
+					 const float *input,
+					 int feature_dim,
+					 int *class_out,
+					 double *confidence_out,
+					 char **errstr)
 {
-	const NdbCudaSvmModelHeader *hdr;
+	const		NdbCudaSvmModelHeader *hdr;
 	const float *alphas;
 	const float *support_vectors;
-	const int32 *indices __attribute__((unused));
-	const bytea *detoasted;
-	double prediction;
-	int i, j;
-	size_t expected_size;
+	const		int32 *indices __attribute__((unused));
+	const		bytea *detoasted;
+	double		prediction;
+	int			i,
+				j;
+	size_t		expected_size;
 
 	if (errstr)
 		*errstr = NULL;
@@ -614,27 +622,27 @@ ndb_rocm_svm_predict(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = pstrdup(
-				"invalid parameters for HIP SVM predict");
+							  "invalid parameters for HIP SVM predict");
 		return -1;
 	}
 
 	/* Detoast the bytea to ensure we have the full data */
 	detoasted =
-		(const bytea *)PG_DETOAST_DATUM_COPY(PointerGetDatum(model_data));
+		(const bytea *) PG_DETOAST_DATUM_COPY(PointerGetDatum(model_data));
 
-	hdr = (const NdbCudaSvmModelHeader *)VARDATA(detoasted);
+	hdr = (const NdbCudaSvmModelHeader *) VARDATA(detoasted);
 
 	/* Validate payload size */
 	expected_size = sizeof(NdbCudaSvmModelHeader)
-		+ sizeof(float) * (size_t)hdr->n_support_vectors
-		+ sizeof(float) * (size_t)hdr->n_support_vectors * (size_t)hdr->feature_dim
-		+ sizeof(int32) * (size_t)hdr->n_support_vectors;
+		+ sizeof(float) * (size_t) hdr->n_support_vectors
+		+ sizeof(float) * (size_t) hdr->n_support_vectors * (size_t) hdr->feature_dim
+		+ sizeof(int32) * (size_t) hdr->n_support_vectors;
 
 	if (VARSIZE_ANY_EXHDR(detoasted) < expected_size)
 	{
 		if (errstr)
 			*errstr = pstrdup("HIP SVM predict: model_data too small for expected layout");
-		NDB_SAFE_PFREE_AND_NULL((void *)detoasted);
+		NDB_SAFE_PFREE_AND_NULL((void *) detoasted);
 		return -1;
 	}
 
@@ -642,24 +650,24 @@ ndb_rocm_svm_predict(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = psprintf("feature dimension mismatch: model "
-					   "has %d, input has %d",
-				hdr->feature_dim,
-				feature_dim);
-		NDB_SAFE_PFREE_AND_NULL((void *)detoasted);
+							   "has %d, input has %d",
+							   hdr->feature_dim,
+							   feature_dim);
+		NDB_SAFE_PFREE_AND_NULL((void *) detoasted);
 		return -1;
 	}
 
-	alphas = (const float *)((const char *)hdr
-		+ sizeof(NdbCudaSvmModelHeader));
+	alphas = (const float *) ((const char *) hdr
+							  + sizeof(NdbCudaSvmModelHeader));
 	support_vectors = alphas + hdr->n_support_vectors;
-	indices = (const int32 *)(support_vectors
-		+ hdr->n_support_vectors * hdr->feature_dim);
+	indices = (const int32 *) (support_vectors
+							   + hdr->n_support_vectors * hdr->feature_dim);
 
 	/* Compute prediction: f(x) = Σ(alpha_i * y_i * K(x_i, x)) + bias */
 	prediction = hdr->bias;
 	for (i = 0; i < hdr->n_support_vectors; i++)
 	{
-		double kernel_val = 0.0;
+		double		kernel_val = 0.0;
 		const float *sv = support_vectors + (i * feature_dim);
 
 		/* Linear kernel: K(x_i, x) = x_i · x */
@@ -675,7 +683,7 @@ ndb_rocm_svm_predict(const bytea *model_data,
 		*confidence_out = fabs(prediction);
 
 	/* Free detoasted copy */
-	NDB_SAFE_PFREE_AND_NULL((void *)detoasted);
+	NDB_SAFE_PFREE_AND_NULL((void *) detoasted);
 
 	return 0;
 }
@@ -684,19 +692,19 @@ ndb_rocm_svm_predict(const bytea *model_data,
  * Batch prediction: predict for multiple samples
  */
 int
-ndb_rocm_svm_predict_batch(const bytea *model_data,
-	const float *features,
-	int n_samples,
-	int feature_dim,
-	int *predictions_out,
-	char **errstr)
+ndb_rocm_svm_predict_batch(const bytea * model_data,
+						   const float *features,
+						   int n_samples,
+						   int feature_dim,
+						   int *predictions_out,
+						   char **errstr)
 {
 	const char *base;
-	const NdbCudaSvmModelHeader *hdr;
-	const bytea *detoasted;
-	int i;
-	int rc;
-	size_t expected_size;
+	const		NdbCudaSvmModelHeader *hdr;
+	const		bytea *detoasted;
+	int			i;
+	int			rc;
+	size_t		expected_size;
 
 	if (errstr)
 		*errstr = NULL;
@@ -711,31 +719,31 @@ ndb_rocm_svm_predict_batch(const bytea *model_data,
 
 	/* Detoast the bytea to ensure we have the full data */
 	detoasted =
-		(const bytea *)PG_DETOAST_DATUM_COPY(PointerGetDatum(model_data));
+		(const bytea *) PG_DETOAST_DATUM_COPY(PointerGetDatum(model_data));
 
 	/* Validate model_data bytea */
 	if (VARSIZE_ANY_EXHDR(detoasted) < sizeof(NdbCudaSvmModelHeader))
 	{
 		if (errstr)
 			*errstr = pstrdup("HIP SVM batch predict: model_data too small");
-		NDB_SAFE_PFREE_AND_NULL((void *)detoasted);
+		NDB_SAFE_PFREE_AND_NULL((void *) detoasted);
 		return -1;
 	}
 
 	base = VARDATA_ANY(detoasted);
-	hdr = (const NdbCudaSvmModelHeader *)base;
+	hdr = (const NdbCudaSvmModelHeader *) base;
 
 	/* Validate full payload size */
 	expected_size = sizeof(NdbCudaSvmModelHeader)
-		+ sizeof(float) * (size_t)hdr->n_support_vectors
-		+ sizeof(float) * (size_t)hdr->n_support_vectors * (size_t)hdr->feature_dim
-		+ sizeof(int32) * (size_t)hdr->n_support_vectors;
+		+ sizeof(float) * (size_t) hdr->n_support_vectors
+		+ sizeof(float) * (size_t) hdr->n_support_vectors * (size_t) hdr->feature_dim
+		+ sizeof(int32) * (size_t) hdr->n_support_vectors;
 
 	if (VARSIZE_ANY_EXHDR(detoasted) < expected_size)
 	{
 		if (errstr)
 			*errstr = pstrdup("HIP SVM batch predict: model_data too small for expected layout");
-		NDB_SAFE_PFREE_AND_NULL((void *)detoasted);
+		NDB_SAFE_PFREE_AND_NULL((void *) detoasted);
 		return -1;
 	}
 
@@ -744,8 +752,8 @@ ndb_rocm_svm_predict_batch(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = psprintf("HIP SVM batch predict: feature dimension mismatch (expected %d, got %d)",
-				hdr->feature_dim, feature_dim);
-		NDB_SAFE_PFREE_AND_NULL((void *)detoasted);
+							   hdr->feature_dim, feature_dim);
+		NDB_SAFE_PFREE_AND_NULL((void *) detoasted);
 		return -1;
 	}
 
@@ -753,15 +761,15 @@ ndb_rocm_svm_predict_batch(const bytea *model_data,
 	for (i = 0; i < n_samples; i++)
 	{
 		const float *input = features + (i * feature_dim);
-		int class_out = 0;
-		double confidence_out = 0.0;
+		int			class_out = 0;
+		double		confidence_out = 0.0;
 
 		rc = ndb_rocm_svm_predict(detoasted,
-			input,
-			feature_dim,
-			&class_out,
-			&confidence_out,
-			errstr);
+								  input,
+								  feature_dim,
+								  &class_out,
+								  &confidence_out,
+								  errstr);
 
 		if (rc != 0)
 		{
@@ -774,7 +782,7 @@ ndb_rocm_svm_predict_batch(const bytea *model_data,
 	}
 
 	/* Free detoasted copy */
-	NDB_SAFE_PFREE_AND_NULL((void *)detoasted);
+	NDB_SAFE_PFREE_AND_NULL((void *) detoasted);
 
 	return 0;
 }
@@ -783,25 +791,25 @@ ndb_rocm_svm_predict_batch(const bytea *model_data,
  * Batch evaluation: compute metrics for multiple samples
  */
 int
-ndb_rocm_svm_evaluate_batch(const bytea *model_data,
-	const float *features,
-	const int *labels,
-	int n_samples,
-	int feature_dim,
-	double *accuracy_out,
-	double *precision_out,
-	double *recall_out,
-	double *f1_out,
-	char **errstr)
+ndb_rocm_svm_evaluate_batch(const bytea * model_data,
+							const float *features,
+							const int *labels,
+							int n_samples,
+							int feature_dim,
+							double *accuracy_out,
+							double *precision_out,
+							double *recall_out,
+							double *f1_out,
+							char **errstr)
 {
-	int *predictions = NULL;
-	int tp = 0;
-	int tn = 0;
-	int fp = 0;
-	int fn = 0;
-	int i;
-	int total_correct = 0;
-	int rc;
+	int		   *predictions = NULL;
+	int			tp = 0;
+	int			tn = 0;
+	int			fp = 0;
+	int			fn = 0;
+	int			i;
+	int			total_correct = 0;
+	int			rc;
 
 	if (errstr)
 		*errstr = NULL;
@@ -823,7 +831,7 @@ ndb_rocm_svm_evaluate_batch(const bytea *model_data,
 	}
 
 	/* Allocate predictions array */
-	predictions = (int *)palloc(sizeof(int) * (size_t)n_samples);
+	predictions = (int *) palloc(sizeof(int) * (size_t) n_samples);
 	if (predictions == NULL)
 	{
 		if (errstr)
@@ -833,11 +841,11 @@ ndb_rocm_svm_evaluate_batch(const bytea *model_data,
 
 	/* Batch predict */
 	rc = ndb_rocm_svm_predict_batch(model_data,
-		features,
-		n_samples,
-		feature_dim,
-		predictions,
-		errstr);
+									features,
+									n_samples,
+									feature_dim,
+									predictions,
+									errstr);
 
 	if (rc != 0)
 	{
@@ -848,8 +856,8 @@ ndb_rocm_svm_evaluate_batch(const bytea *model_data,
 	/* Compute confusion matrix for binary classification */
 	for (i = 0; i < n_samples; i++)
 	{
-		int true_label = labels[i];
-		int pred_label = predictions[i];
+		int			true_label = labels[i];
+		int			pred_label = predictions[i];
 
 		if (true_label < 0 || true_label > 1)
 			continue;
@@ -874,16 +882,16 @@ ndb_rocm_svm_evaluate_batch(const bytea *model_data,
 
 	/* Compute metrics */
 	*accuracy_out = (n_samples > 0)
-		? ((double)total_correct / (double)n_samples)
+		? ((double) total_correct / (double) n_samples)
 		: 0.0;
 
 	if ((tp + fp) > 0)
-		*precision_out = (double)tp / (double)(tp + fp);
+		*precision_out = (double) tp / (double) (tp + fp);
 	else
 		*precision_out = 0.0;
 
 	if ((tp + fn) > 0)
-		*recall_out = (double)tp / (double)(tp + fn);
+		*recall_out = (double) tp / (double) (tp + fn);
 	else
 		*recall_out = 0.0;
 
@@ -898,4 +906,4 @@ ndb_rocm_svm_evaluate_batch(const bytea *model_data,
 	return 0;
 }
 
-#endif /* NDB_GPU_HIP */
+#endif							/* NDB_GPU_HIP */

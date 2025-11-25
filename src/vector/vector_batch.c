@@ -42,82 +42,82 @@ extern Vector *normalize_vector_new(Vector *v);
  */
 PG_FUNCTION_INFO_V1(vector_l2_distance_batch);
 Datum
-	vector_l2_distance_batch(PG_FUNCTION_ARGS)
+vector_l2_distance_batch(PG_FUNCTION_ARGS)
 {
-	ArrayType *vec_array;
-	Vector *query;
-	ArrayType *result;
-	Datum *elems;
-	bool *nulls;
-	int nvec;
-	int i;
-	Oid vector_oid;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
-	bool isnull;
-	Datum vec_datum;
-	Vector *vec;
+	ArrayType  *vec_array;
+	Vector	   *query;
+	ArrayType  *result;
+	Datum	   *elems;
+	bool	   *nulls;
+	int			nvec;
+	int			i;
+	Oid			vector_oid;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	bool		isnull;
+	Datum		vec_datum;
+	Vector	   *vec;
 
 	if (PG_NARGS() != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_l2_distance_batch requires 2 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_l2_distance_batch requires 2 arguments, got %d",
+						PG_NARGS())));
 
 	vec_array = PG_GETARG_ARRAYTYPE_P(0);
 	query = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(query);
+	NDB_CHECK_VECTOR_VALID(query);
 
 	if (vec_array == NULL || query == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vector array and query vector must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vector array and query vector must not be NULL")));
 
 	if (query->dim <= 0 || query->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid query vector dimension: %d",
-					query->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid query vector dimension: %d",
+						query->dim)));
 
 	/* Get vector type OID and type information */
 	vector_oid = ARR_ELEMTYPE(vec_array);
 	if (!OidIsValid(vector_oid))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array element type")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array element type")));
 
 	get_typlenbyvalalign(vector_oid, &typlen, &typbyval, &typalign);
 
 	if (ARR_NDIM(vec_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("vector array must be one-dimensional")));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("vector array must be one-dimensional")));
 
 	nvec = ARR_DIMS(vec_array)[0];
 	if (nvec <= 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector array must not be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector array must not be empty")));
 
-	elems = (Datum *)palloc(sizeof(Datum) * nvec);
-	nulls = (bool *)palloc(sizeof(bool) * nvec);
+	elems = (Datum *) palloc(sizeof(Datum) * nvec);
+	nulls = (bool *) palloc(sizeof(bool) * nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
 		vec_datum = array_ref(vec_array,
-			1,
-			&i,
-			typlen,
-			typlen,
-			typbyval,
-			typalign,
-			&isnull);
+							  1,
+							  &i,
+							  typlen,
+							  typlen,
+							  typbyval,
+							  typalign,
+							  &isnull);
 
 		if (isnull)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
@@ -125,14 +125,14 @@ Datum
 		if (vec == NULL || vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
 		if (vec->dim != query->dim)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
@@ -154,82 +154,82 @@ Datum
  */
 PG_FUNCTION_INFO_V1(vector_cosine_distance_batch);
 Datum
-	vector_cosine_distance_batch(PG_FUNCTION_ARGS)
+vector_cosine_distance_batch(PG_FUNCTION_ARGS)
 {
-	ArrayType *vec_array;
-	Vector *query;
-	ArrayType *result;
-	Datum *elems;
-	bool *nulls;
-	int nvec;
-	int i;
-	Oid vector_oid;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
-	bool isnull;
-	Datum vec_datum;
-	Vector *vec;
+	ArrayType  *vec_array;
+	Vector	   *query;
+	ArrayType  *result;
+	Datum	   *elems;
+	bool	   *nulls;
+	int			nvec;
+	int			i;
+	Oid			vector_oid;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	bool		isnull;
+	Datum		vec_datum;
+	Vector	   *vec;
 
 	if (PG_NARGS() != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_cosine_distance_batch requires 2 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_cosine_distance_batch requires 2 arguments, got %d",
+						PG_NARGS())));
 
 	vec_array = PG_GETARG_ARRAYTYPE_P(0);
 	query = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(query);
+	NDB_CHECK_VECTOR_VALID(query);
 
 	if (vec_array == NULL || query == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vector array and query vector must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vector array and query vector must not be NULL")));
 
 	if (query->dim <= 0 || query->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid query vector dimension: %d",
-					query->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid query vector dimension: %d",
+						query->dim)));
 
 	/* Get vector type OID and type information */
 	vector_oid = ARR_ELEMTYPE(vec_array);
 	if (!OidIsValid(vector_oid))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array element type")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array element type")));
 
 	get_typlenbyvalalign(vector_oid, &typlen, &typbyval, &typalign);
 
 	if (ARR_NDIM(vec_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("vector array must be one-dimensional")));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("vector array must be one-dimensional")));
 
 	nvec = ARR_DIMS(vec_array)[0];
 	if (nvec <= 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector array must not be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector array must not be empty")));
 
-	elems = (Datum *)palloc(sizeof(Datum) * nvec);
-	nulls = (bool *)palloc(sizeof(bool) * nvec);
+	elems = (Datum *) palloc(sizeof(Datum) * nvec);
+	nulls = (bool *) palloc(sizeof(bool) * nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
 		vec_datum = array_ref(vec_array,
-			1,
-			&i,
-			typlen,
-			typlen,
-			typbyval,
-			typalign,
-			&isnull);
+							  1,
+							  &i,
+							  typlen,
+							  typlen,
+							  typbyval,
+							  typalign,
+							  &isnull);
 
 		if (isnull)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
@@ -237,14 +237,14 @@ Datum
 		if (vec == NULL || vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
 		if (vec->dim != query->dim)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
@@ -266,82 +266,82 @@ Datum
  */
 PG_FUNCTION_INFO_V1(vector_inner_product_batch);
 Datum
-	vector_inner_product_batch(PG_FUNCTION_ARGS)
+vector_inner_product_batch(PG_FUNCTION_ARGS)
 {
-	ArrayType *vec_array;
-	Vector *query;
-	ArrayType *result;
-	Datum *elems;
-	bool *nulls;
-	int nvec;
-	int i;
-	Oid vector_oid;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
-	bool isnull;
-	Datum vec_datum;
-	Vector *vec;
+	ArrayType  *vec_array;
+	Vector	   *query;
+	ArrayType  *result;
+	Datum	   *elems;
+	bool	   *nulls;
+	int			nvec;
+	int			i;
+	Oid			vector_oid;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	bool		isnull;
+	Datum		vec_datum;
+	Vector	   *vec;
 
 	if (PG_NARGS() != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_inner_product_batch requires 2 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_inner_product_batch requires 2 arguments, got %d",
+						PG_NARGS())));
 
 	vec_array = PG_GETARG_ARRAYTYPE_P(0);
 	query = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(query);
+	NDB_CHECK_VECTOR_VALID(query);
 
 	if (vec_array == NULL || query == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vector array and query vector must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vector array and query vector must not be NULL")));
 
 	if (query->dim <= 0 || query->dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid query vector dimension: %d",
-					query->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid query vector dimension: %d",
+						query->dim)));
 
 	/* Get vector type OID and type information */
 	vector_oid = ARR_ELEMTYPE(vec_array);
 	if (!OidIsValid(vector_oid))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array element type")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array element type")));
 
 	get_typlenbyvalalign(vector_oid, &typlen, &typbyval, &typalign);
 
 	if (ARR_NDIM(vec_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("vector array must be one-dimensional")));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("vector array must be one-dimensional")));
 
 	nvec = ARR_DIMS(vec_array)[0];
 	if (nvec <= 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector array must not be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector array must not be empty")));
 
-	elems = (Datum *)palloc(sizeof(Datum) * nvec);
-	nulls = (bool *)palloc(sizeof(bool) * nvec);
+	elems = (Datum *) palloc(sizeof(Datum) * nvec);
+	nulls = (bool *) palloc(sizeof(bool) * nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
 		vec_datum = array_ref(vec_array,
-			1,
-			&i,
-			typlen,
-			typlen,
-			typbyval,
-			typalign,
-			&isnull);
+							  1,
+							  &i,
+							  typlen,
+							  typlen,
+							  typbyval,
+							  typalign,
+							  &isnull);
 
 		if (isnull)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
@@ -349,14 +349,14 @@ Datum
 		if (vec == NULL || vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
 		if (vec->dim != query->dim)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
@@ -378,74 +378,74 @@ Datum
  */
 PG_FUNCTION_INFO_V1(vector_normalize_batch);
 Datum
-	vector_normalize_batch(PG_FUNCTION_ARGS)
+vector_normalize_batch(PG_FUNCTION_ARGS)
 {
-	ArrayType *vec_array;
-	ArrayType *result;
-	Datum *elems;
-	bool *nulls;
-	int nvec;
-	int i;
-	Oid vector_oid;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
-	bool isnull;
-	Datum vec_datum;
-	Vector *vec;
-	Vector *normalized;
+	ArrayType  *vec_array;
+	ArrayType  *result;
+	Datum	   *elems;
+	bool	   *nulls;
+	int			nvec;
+	int			i;
+	Oid			vector_oid;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	bool		isnull;
+	Datum		vec_datum;
+	Vector	   *vec;
+	Vector	   *normalized;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_normalize_batch requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_normalize_batch requires 1 argument, got %d",
+						PG_NARGS())));
 
 	vec_array = PG_GETARG_ARRAYTYPE_P(0);
 
 	if (vec_array == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("vector array must not be NULL")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("vector array must not be NULL")));
 
 	if (ARR_NDIM(vec_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("vector array must be one-dimensional")));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("vector array must be one-dimensional")));
 
 	nvec = ARR_DIMS(vec_array)[0];
 	if (nvec <= 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector array must not be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector array must not be empty")));
 
 	/* Get vector type OID and type information */
 	vector_oid = ARR_ELEMTYPE(vec_array);
 	if (!OidIsValid(vector_oid))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array element type")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array element type")));
 
 	get_typlenbyvalalign(vector_oid, &typlen, &typbyval, &typalign);
 
-	elems = (Datum *)palloc(sizeof(Datum) * nvec);
-	nulls = (bool *)palloc(sizeof(bool) * nvec);
+	elems = (Datum *) palloc(sizeof(Datum) * nvec);
+	nulls = (bool *) palloc(sizeof(bool) * nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
 		vec_datum = array_ref(vec_array,
-			1,
-			&i,
-			typlen,
-			typlen,
-			typbyval,
-			typalign,
-			&isnull);
+							  1,
+							  &i,
+							  typlen,
+							  typlen,
+							  typbyval,
+							  typalign,
+							  &isnull);
 
 		if (isnull)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
@@ -453,7 +453,7 @@ Datum
 		if (vec == NULL || vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
@@ -461,7 +461,7 @@ Datum
 		if (normalized == NULL)
 		{
 			nulls[i] = true;
-			elems[i] = (Datum)0;
+			elems[i] = (Datum) 0;
 			continue;
 		}
 
@@ -470,8 +470,8 @@ Datum
 	}
 
 	{
-		int dims[1];
-		int lbs[1];
+		int			dims[1];
+		int			lbs[1];
 
 		dims[0] = nvec;
 		lbs[0] = 1;
@@ -492,25 +492,25 @@ PG_FUNCTION_INFO_V1(vector_sum_batch);
 Datum
 vector_sum_batch(PG_FUNCTION_ARGS)
 {
-	ArrayType *vec_array;
-	Vector *result = NULL;
-	int nvec;
-	int i;
-	int dim = 0;
-	int j;
-	bool isnull;
-	Datum vec_datum;
-	Vector *vec;
-	Oid vector_oid;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
+	ArrayType  *vec_array;
+	Vector	   *result = NULL;
+	int			nvec;
+	int			i;
+	int			dim = 0;
+	int			j;
+	bool		isnull;
+	Datum		vec_datum;
+	Vector	   *vec;
+	Oid			vector_oid;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_sum_batch requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_sum_batch requires 1 argument, got %d",
+						PG_NARGS())));
 
 	vec_array = PG_GETARG_ARRAYTYPE_P(0);
 
@@ -519,8 +519,8 @@ vector_sum_batch(PG_FUNCTION_ARGS)
 
 	if (ARR_NDIM(vec_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("vector array must be one-dimensional")));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("vector array must be one-dimensional")));
 
 	nvec = ARR_DIMS(vec_array)[0];
 	if (nvec <= 0)
@@ -530,21 +530,21 @@ vector_sum_batch(PG_FUNCTION_ARGS)
 	vector_oid = ARR_ELEMTYPE(vec_array);
 	if (!OidIsValid(vector_oid))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array element type")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array element type")));
 
 	get_typlenbyvalalign(vector_oid, &typlen, &typbyval, &typalign);
 
 	for (i = 0; i < nvec; i++)
 	{
 		vec_datum = array_ref(vec_array,
-			1,
-			&i,
-			typlen,
-			typlen,
-			typbyval,
-			typalign,
-			&isnull);
+							  1,
+							  &i,
+							  typlen,
+							  typlen,
+							  typbyval,
+							  typalign,
+							  &isnull);
 
 		if (isnull)
 			continue;
@@ -562,8 +562,8 @@ vector_sum_batch(PG_FUNCTION_ARGS)
 			result = new_vector(dim);
 			if (result == NULL)
 				ereport(ERROR,
-					(errcode(ERRCODE_OUT_OF_MEMORY),
-						errmsg("out of memory")));
+						(errcode(ERRCODE_OUT_OF_MEMORY),
+						 errmsg("out of memory")));
 			for (j = 0; j < dim; j++)
 				result->data[j] = vec->data[j];
 		}
@@ -591,26 +591,26 @@ PG_FUNCTION_INFO_V1(vector_avg_batch);
 Datum
 vector_avg_batch(PG_FUNCTION_ARGS)
 {
-	ArrayType *vec_array;
-	Vector *result = NULL;
-	int nvec;
-	int i;
-	int dim = 0;
-	int count = 0;
-	int j;
-	bool isnull;
-	Datum vec_datum;
-	Vector *vec;
-	Oid vector_oid;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
+	ArrayType  *vec_array;
+	Vector	   *result = NULL;
+	int			nvec;
+	int			i;
+	int			dim = 0;
+	int			count = 0;
+	int			j;
+	bool		isnull;
+	Datum		vec_datum;
+	Vector	   *vec;
+	Oid			vector_oid;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
 
 	if (PG_NARGS() != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector_avg_batch requires 1 argument, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector_avg_batch requires 1 argument, got %d",
+						PG_NARGS())));
 
 	vec_array = PG_GETARG_ARRAYTYPE_P(0);
 
@@ -619,8 +619,8 @@ vector_avg_batch(PG_FUNCTION_ARGS)
 
 	if (ARR_NDIM(vec_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				errmsg("vector array must be one-dimensional")));
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("vector array must be one-dimensional")));
 
 	nvec = ARR_DIMS(vec_array)[0];
 	if (nvec <= 0)
@@ -630,21 +630,21 @@ vector_avg_batch(PG_FUNCTION_ARGS)
 	vector_oid = ARR_ELEMTYPE(vec_array);
 	if (!OidIsValid(vector_oid))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid array element type")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid array element type")));
 
 	get_typlenbyvalalign(vector_oid, &typlen, &typbyval, &typalign);
 
 	for (i = 0; i < nvec; i++)
 	{
 		vec_datum = array_ref(vec_array,
-			1,
-			&i,
-			typlen,
-			typlen,
-			typbyval,
-			typalign,
-			&isnull);
+							  1,
+							  &i,
+							  typlen,
+							  typlen,
+							  typbyval,
+							  typalign,
+							  &isnull);
 
 		if (isnull)
 			continue;
@@ -662,8 +662,8 @@ vector_avg_batch(PG_FUNCTION_ARGS)
 			result = new_vector(dim);
 			if (result == NULL)
 				ereport(ERROR,
-					(errcode(ERRCODE_OUT_OF_MEMORY),
-						errmsg("out of memory")));
+						(errcode(ERRCODE_OUT_OF_MEMORY),
+						 errmsg("out of memory")));
 			for (j = 0; j < dim; j++)
 				result->data[j] = vec->data[j];
 			count = 1;
@@ -685,10 +685,8 @@ vector_avg_batch(PG_FUNCTION_ARGS)
 	if (count > 0)
 	{
 		for (i = 0; i < dim; i++)
-			result->data[i] /= (float4)count;
+			result->data[i] /= (float4) count;
 	}
 
 	PG_RETURN_VECTOR_P(result);
 }
-
-

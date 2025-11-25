@@ -15,29 +15,31 @@
 
 /* Function prototypes to fix implicit declaration errors */
 static char *ndb_quote_json_cstr(const char *str);
-static text *ndb_encode_base64(bytea *data);
-int http_post_json(const char *url, const char *api_key, const char *body, int timeout_ms, char **resp_out);
+static text * ndb_encode_base64(bytea * data);
+int			http_post_json(const char *url, const char *api_key, const char *body, int timeout_ms, char **resp_out);
 
 /*
  * ndb_hf_vision_complete - Call HuggingFace vision model for image+prompt completion
  */
-int ndb_hf_vision_complete(const NdbLLMConfig *cfg,
-	const unsigned char *image_data,
-	size_t image_size,
-	const char *prompt,
-	const char *params_json,
-	NdbLLMResp *out)
+int
+ndb_hf_vision_complete(const NdbLLMConfig * cfg,
+					   const unsigned char *image_data,
+					   size_t image_size,
+					   const char *prompt,
+					   const char *params_json,
+					   NdbLLMResp * out)
 {
-	StringInfoData url, body;
-	char *resp = NULL;
-	int code;
-	bool ok = false;
-	char *base64_data = NULL;
-	text *encoded_text = NULL;
-	char *quoted_prompt = NULL;
-	char *text_start;
-	char *text_end;
-	size_t len;
+	StringInfoData url,
+				body;
+	char	   *resp = NULL;
+	int			code;
+	bool		ok = false;
+	char	   *base64_data = NULL;
+	text	   *encoded_text = NULL;
+	char	   *quoted_prompt = NULL;
+	char	   *text_start;
+	char	   *text_end;
+	size_t		len;
 
 	if (!cfg || !image_data || image_size == 0 || !prompt || !out)
 		return -1;
@@ -47,7 +49,8 @@ int ndb_hf_vision_complete(const NdbLLMConfig *cfg,
 
 	/* Base64 encode image */
 	{
-		bytea *image_bytea = (bytea *)palloc(VARHDRSZ + image_size);
+		bytea	   *image_bytea = (bytea *) palloc(VARHDRSZ + image_size);
+
 		SET_VARSIZE(image_bytea, VARHDRSZ + image_size);
 		memcpy(VARDATA(image_bytea), image_data, image_size);
 		encoded_text = ndb_encode_base64(image_bytea);
@@ -60,40 +63,40 @@ int ndb_hf_vision_complete(const NdbLLMConfig *cfg,
 
 	/* Build URL for HuggingFace vision completion API */
 	if (cfg->endpoint && (strstr(cfg->endpoint, "router.huggingface.co") != NULL ||
-		strstr(cfg->endpoint, "hf-inference") != NULL))
+						  strstr(cfg->endpoint, "hf-inference") != NULL))
 	{
 		appendStringInfo(&url,
-			"%s/models/%s/pipeline/image-to-text",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/models/%s/pipeline/image-to-text",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 	else
 	{
 		appendStringInfo(&url,
-			"%s/pipeline/image-to-text/%s",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/pipeline/image-to-text/%s",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 
 	/* Compose JSON body */
 	if (params_json && strlen(params_json) > 0)
 	{
 		appendStringInfo(&body,
-			"{\"inputs\":{\"image\":\"data:image/jpeg;base64,%s\",\"prompt\":%s},%s}",
-			base64_data,
-			quoted_prompt,
-			params_json);
+						 "{\"inputs\":{\"image\":\"data:image/jpeg;base64,%s\",\"prompt\":%s},%s}",
+						 base64_data,
+						 quoted_prompt,
+						 params_json);
 	}
 	else
 	{
 		appendStringInfo(&body,
-			"{\"inputs\":{\"image\":\"data:image/jpeg;base64,%s\",\"prompt\":%s}}",
-			base64_data,
-			quoted_prompt);
+						 "{\"inputs\":{\"image\":\"data:image/jpeg;base64,%s\",\"prompt\":%s}}",
+						 base64_data,
+						 quoted_prompt);
 	}
 
 	code = http_post_json(
-		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+						  url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
 
 	text_start = NULL;
 	text_end = NULL;
@@ -118,12 +121,13 @@ int ndb_hf_vision_complete(const NdbLLMConfig *cfg,
 		if (text_start)
 		{
 			text_start++;
-			while (*text_start && (*text_start == ' ' || *text_start == '"')) text_start++;
+			while (*text_start && (*text_start == ' ' || *text_start == '"'))
+				text_start++;
 			text_end = strchr(text_start, '"');
 			if (text_end)
 			{
 				len = text_end - text_start;
-				out->text = (char *)palloc(len + 1);
+				out->text = (char *) palloc(len + 1);
 				strncpy(out->text, text_start, len);
 				out->text[len] = '\0';
 				ok = true;
@@ -136,13 +140,14 @@ int ndb_hf_vision_complete(const NdbLLMConfig *cfg,
 	out->tokens_out = 0;
 	return ok ? 0 : -1;
 }
+
 /* Helper: Quote a C string for JSON (returns JSON string with quotes and escaping) */
 static char *
 ndb_quote_json_cstr(const char *str)
 {
 	StringInfoData buf;
 	const char *p;
-	char *result;
+	char	   *result;
 
 	if (str == NULL)
 		return pstrdup("null");
@@ -179,7 +184,8 @@ ndb_quote_json_cstr(const char *str)
 				if ((unsigned char) *p < 0x20)
 				{
 					appendStringInfo(&buf, "\\u%04x", (unsigned char) *p);
-				} else
+				}
+				else
 				{
 					appendStringInfoChar(&buf, *p);
 				}
@@ -195,13 +201,13 @@ ndb_quote_json_cstr(const char *str)
 
 /* Helper: Look up and call PostgreSQL's encode() function for base64 encoding */
 static text *
-ndb_encode_base64(bytea *data)
+ndb_encode_base64(bytea * data)
 {
-	List *funcname;
-	Oid argtypes[2];
-	Oid encode_oid;
-	FmgrInfo flinfo;
-	Datum result;
+	List	   *funcname;
+	Oid			argtypes[2];
+	Oid			encode_oid;
+	FmgrInfo	flinfo;
+	Datum		result;
 
 	/* Look up encode(bytea, text) function */
 	funcname = list_make1(makeString("encode"));
@@ -211,13 +217,13 @@ ndb_encode_base64(bytea *data)
 
 	if (!OidIsValid(encode_oid))
 		ereport(ERROR,
-			(errcode(ERRCODE_UNDEFINED_FUNCTION),
-				errmsg("encode function not found")));
+				(errcode(ERRCODE_UNDEFINED_FUNCTION),
+				 errmsg("encode function not found")));
 
 	fmgr_info(encode_oid, &flinfo);
 	result = FunctionCall2(&flinfo,
-		PointerGetDatum(data),
-		CStringGetDatum("base64"));
+						   PointerGetDatum(data),
+						   CStringGetDatum("base64"));
 
 	return DatumGetTextP(result);
 }
@@ -225,15 +231,16 @@ ndb_encode_base64(bytea *data)
 /* Helper for dynamic memory buffer for curl writes */
 typedef struct
 {
-	char *data;
-	size_t len;
-} MemBuf;
+	char	   *data;
+	size_t		len;
+}			MemBuf;
 
 static size_t
 write_cb(void *ptr, size_t size, size_t nmemb, void *userdata)
 {
-	MemBuf *m = (MemBuf *)userdata;
-	size_t n = size * nmemb;
+	MemBuf	   *m = (MemBuf *) userdata;
+	size_t		n = size * nmemb;
+
 	m->data = repalloc(m->data, m->len + n + 1);
 	memcpy(m->data + m->len, ptr, n);
 	m->len += n;
@@ -244,16 +251,17 @@ write_cb(void *ptr, size_t size, size_t nmemb, void *userdata)
 /* HTTP POST with JSON body, outputs body and HTTP status code */
 int
 http_post_json(const char *url,
-	const char *api_key,
-	const char *json_body,
-	int timeout_ms,
-	char **out)
+			   const char *api_key,
+			   const char *json_body,
+			   int timeout_ms,
+			   char **out)
 {
-	CURL *curl = curl_easy_init();
+	CURL	   *curl = curl_easy_init();
 	struct curl_slist *headers = NULL;
-	MemBuf buf = { palloc0(1), 0 };
-	long code = 0;
-	CURLcode res;
+	MemBuf		buf = {palloc0(1), 0};
+	long		code = 0;
+	CURLcode	res;
+
 	if (!curl)
 		return -1;
 
@@ -261,6 +269,7 @@ http_post_json(const char *url,
 	if (api_key && api_key[0])
 	{
 		StringInfoData h;
+
 		initStringInfo(&h);
 		appendStringInfo(&h, "Authorization: Bearer %s", api_key);
 		headers = curl_slist_append(headers, h.data);
@@ -287,22 +296,23 @@ http_post_json(const char *url,
 	curl_easy_cleanup(curl);
 
 	*out = buf.data;
-	return (int)code;
+	return (int) code;
 }
 
 /* Extracts text field from HuggingFace inference API responses */
 static char *
 extract_hf_text(const char *json)
 {
-	/* The text generation output is a top-level list of { "generated_text": ... } objects.
-     * Example: [{"generated_text":"result"}], so we parse it.
-     * The response might also be { "error": ... }.
-     */
+	/*
+	 * The text generation output is a top-level list of { "generated_text":
+	 * ... } objects. Example: [{"generated_text":"result"}], so we parse it.
+	 * The response might also be { "error": ... }.
+	 */
 	const char *key;
-	char *p;
-	char *q;
-	size_t len;
-	char *out;
+	char	   *p;
+	char	   *q;
+	size_t		len;
+	char	   *out;
 
 	if (!json || json[0] == '\0')
 		return NULL;
@@ -324,19 +334,21 @@ extract_hf_text(const char *json)
 	if (!q)
 		return NULL;
 	len = q - p;
-	out = (char *)palloc(len + 1);
+	out = (char *) palloc(len + 1);
 	memcpy(out, p, len);
 	out[len] = '\0';
 	return out;
 }
 
 int
-ndb_hf_complete(const NdbLLMConfig *cfg,
-	const char *prompt,
-	const char *params_json,
-	NdbLLMResp *out)
+ndb_hf_complete(const NdbLLMConfig * cfg,
+				const char *prompt,
+				const char *params_json,
+				NdbLLMResp * out)
 {
-	StringInfoData url, body;
+	StringInfoData url,
+				body;
+
 	initStringInfo(&url);
 	initStringInfo(&body);
 
@@ -349,24 +361,26 @@ ndb_hf_complete(const NdbLLMConfig *cfg,
 
 	appendStringInfo(&url, "%s/models/%s", cfg->endpoint, cfg->model);
 	appendStringInfo(&body,
-		"{\"inputs\":%s,\"parameters\":%s}",
-		ndb_quote_json_cstr(prompt),
-		params_json ? params_json : "{}");
+					 "{\"inputs\":%s,\"parameters\":%s}",
+					 ndb_quote_json_cstr(prompt),
+					 params_json ? params_json : "{}");
 
 	out->http_status = http_post_json(
-		url.data, cfg->api_key, body.data, cfg->timeout_ms, &out->json);
+									  url.data, cfg->api_key, body.data, cfg->timeout_ms, &out->json);
 
 	out->text = NULL;
 
 	if (out->json && out->http_status >= 200 && out->http_status < 300)
 	{
 		/* Try to parse a "generated_text" value out */
-		char *t = extract_hf_text(out->json);
+		char	   *t = extract_hf_text(out->json);
+
 		if (t)
 			out->text = t;
 		else
 			out->text = pstrdup(out->json);
-	} else if (out->json)
+	}
+	else if (out->json)
 	{
 		out->text = NULL;
 	}
@@ -381,11 +395,11 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 	/* Response is: [[float, float, ...]] */
 	/* Error response is: {"error":"..."} */
 	const char *p;
-	float *vec = NULL;
-	int n = 0;
-	int cap = 32;
-	char *endptr;
-	double v;
+	float	   *vec = NULL;
+	int			n = 0;
+	int			cap = 32;
+	char	   *endptr;
+	double		v;
 
 	if (!json)
 		return false;
@@ -406,8 +420,9 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 				err_end = strchr(err_start, '"');
 				if (err_end)
 				{
-					size_t err_len = err_end - err_start;
-					char *err_msg = palloc(err_len + 1);
+					size_t		err_len = err_end - err_start;
+					char	   *err_msg = palloc(err_len + 1);
+
 					memcpy(err_msg, err_start, err_len);
 					err_msg[err_len] = '\0';
 					elog(DEBUG1, "neurondb: HF API error: %s", err_msg);
@@ -426,7 +441,11 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 	p++;
 	while (*p && isspace(*p))
 		p++;
-	/* Router endpoint returns flat array [...], old endpoint returns nested [[...]] */
+
+	/*
+	 * Router endpoint returns flat array [...], old endpoint returns nested
+	 * [[...]]
+	 */
 	/* Check if next char is '[' (nested) or a number/digit (flat) */
 	if (*p == '[')
 	{
@@ -443,7 +462,7 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 		return false;
 	}
 
-	vec = (float *)palloc(sizeof(float) * cap);
+	vec = (float *) palloc(sizeof(float) * cap);
 
 	while (*p && *p != ']')
 	{
@@ -458,7 +477,7 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 			cap *= 2;
 			vec = repalloc(vec, sizeof(float) * cap);
 		}
-		vec[n++] = (float)v;
+		vec[n++] = (float) v;
 		p = endptr;
 	}
 	if (n > 0)
@@ -466,7 +485,8 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 		*vec_out = vec;
 		*dim_out = n;
 		return true;
-	} else
+	}
+	else
 	{
 		pfree(vec);
 		return false;
@@ -474,15 +494,16 @@ parse_hf_emb_vector(const char *json, float **vec_out, int *dim_out)
 }
 
 int
-ndb_hf_embed(const NdbLLMConfig *cfg,
-	const char *text,
-	float **vec_out,
-	int *dim_out)
+ndb_hf_embed(const NdbLLMConfig * cfg,
+			 const char *text,
+			 float **vec_out,
+			 int *dim_out)
 {
-	StringInfoData url, body;
-	char *resp = NULL;
-	int code;
-	bool ok;
+	StringInfoData url,
+				body;
+	char	   *resp = NULL;
+	int			code;
+	bool		ok;
 
 	initStringInfo(&url);
 	initStringInfo(&body);
@@ -494,50 +515,59 @@ ndb_hf_embed(const NdbLLMConfig *cfg,
 		return -1;
 	}
 
-	/* Router endpoint (router.huggingface.co) uses new path format for embeddings */
+	/*
+	 * Router endpoint (router.huggingface.co) uses new path format for
+	 * embeddings
+	 */
 	/* New format: /hf-inference/models/<model>/pipeline/feature-extraction */
 	/* Old format: /pipeline/feature-extraction/<model> */
 	if (cfg->endpoint && strstr(cfg->endpoint, "router.huggingface.co") != NULL)
 	{
-		/* Router endpoint: add /hf-inference if missing, use new format with models path */
+		/*
+		 * Router endpoint: add /hf-inference if missing, use new format with
+		 * models path
+		 */
 		if (strstr(cfg->endpoint, "/hf-inference") != NULL)
 		{
 			/* Endpoint already includes /hf-inference */
 			appendStringInfo(&url,
-				"%s/models/%s/pipeline/feature-extraction",
-				cfg->endpoint,
-				cfg->model);
+							 "%s/models/%s/pipeline/feature-extraction",
+							 cfg->endpoint,
+							 cfg->model);
 		}
 		else
 		{
 			/* Router endpoint without /hf-inference - add it */
 			appendStringInfo(&url,
-				"%s/hf-inference/models/%s/pipeline/feature-extraction",
-				cfg->endpoint,
-				cfg->model);
+							 "%s/hf-inference/models/%s/pipeline/feature-extraction",
+							 cfg->endpoint,
+							 cfg->model);
 		}
 	}
 	else if (cfg->endpoint && strstr(cfg->endpoint, "hf-inference") != NULL)
 	{
 		/* Endpoint contains hf-inference (could be dedicated endpoint) */
 		appendStringInfo(&url,
-			"%s/models/%s/pipeline/feature-extraction",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/models/%s/pipeline/feature-extraction",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 	else
 	{
-		/* Old endpoint format (deprecated but kept for backward compatibility) */
+		/*
+		 * Old endpoint format (deprecated but kept for backward
+		 * compatibility)
+		 */
 		appendStringInfo(&url,
-			"%s/pipeline/feature-extraction/%s",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/pipeline/feature-extraction/%s",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 	appendStringInfo(&body,
-		"{\"inputs\":%s,\"truncate\":true}",
-		ndb_quote_json_cstr(text));
+					 "{\"inputs\":%s,\"truncate\":true}",
+					 ndb_quote_json_cstr(text));
 	code = http_post_json(
-		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+						  url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
 	if (code < 200 || code >= 300 || !resp)
 	{
 		if (resp)
@@ -571,20 +601,20 @@ ndb_hf_embed(const NdbLLMConfig *cfg,
 /* Parse batch embedding response: [[emb1...], [emb2...], ...] */
 static bool
 parse_hf_emb_batch(const char *json,
-	float ***vecs_out,
-	int **dims_out,
-	int *num_vecs_out)
+				   float ***vecs_out,
+				   int **dims_out,
+				   int *num_vecs_out)
 {
 	const char *p;
-	float **vecs = NULL;
-	int *dims = NULL;
-	int num_vecs = 0;
-	int cap = 16;
-	char *endptr;
-	double v;
-	float *vec = NULL;
-	int vec_dim = 0;
-	int vec_cap = 32;
+	float	  **vecs = NULL;
+	int		   *dims = NULL;
+	int			num_vecs = 0;
+	int			cap = 16;
+	char	   *endptr;
+	double		v;
+	float	   *vec = NULL;
+	int			vec_dim = 0;
+	int			vec_cap = 32;
 
 	if (!json)
 		return false;
@@ -600,8 +630,8 @@ parse_hf_emb_batch(const char *json,
 	while (*p && isspace(*p))
 		p++;
 
-	vecs = (float **)palloc(sizeof(float *) * cap);
-	dims = (int *)palloc(sizeof(int) * cap);
+	vecs = (float **) palloc(sizeof(float *) * cap);
+	dims = (int *) palloc(sizeof(int) * cap);
 
 	/* Parse array of arrays */
 	while (*p && *p != ']')
@@ -618,7 +648,7 @@ parse_hf_emb_batch(const char *json,
 		p++;
 
 		/* Parse vector elements */
-		vec = (float *)palloc(sizeof(float) * vec_cap);
+		vec = (float *) palloc(sizeof(float) * vec_cap);
 		vec_dim = 0;
 		while (*p && *p != ']')
 		{
@@ -638,7 +668,7 @@ parse_hf_emb_batch(const char *json,
 				vec_cap *= 2;
 				vec = repalloc(vec, sizeof(float) * vec_cap);
 			}
-			vec[vec_dim++] = (float)v;
+			vec[vec_dim++] = (float) v;
 			p = endptr;
 		}
 
@@ -661,7 +691,8 @@ parse_hf_emb_batch(const char *json,
 			vec = NULL;
 			vec_dim = 0;
 			vec_cap = 32;
-		} else if (vec)
+		}
+		else if (vec)
 		{
 			pfree(vec);
 			vec = NULL;
@@ -674,7 +705,8 @@ parse_hf_emb_batch(const char *json,
 		*dims_out = dims;
 		*num_vecs_out = num_vecs;
 		return true;
-	} else
+	}
+	else
 	{
 		if (vecs)
 			pfree(vecs);
@@ -685,21 +717,23 @@ parse_hf_emb_batch(const char *json,
 }
 
 int
-ndb_hf_embed_batch(const NdbLLMConfig *cfg,
-	const char **texts,
-	int num_texts,
-	float ***vecs_out,
-	int **dims_out,
-	int *num_success_out)
+ndb_hf_embed_batch(const NdbLLMConfig * cfg,
+				   const char **texts,
+				   int num_texts,
+				   float ***vecs_out,
+				   int **dims_out,
+				   int *num_success_out)
 {
-	StringInfoData url, body, inputs_json;
-	char *resp = NULL;
-	int code;
-	bool ok;
-	int i;
-	float **vecs = NULL;
-	int *dims = NULL;
-	int num_vecs = 0;
+	StringInfoData url,
+				body,
+				inputs_json;
+	char	   *resp = NULL;
+	int			code;
+	bool		ok;
+	int			i;
+	float	  **vecs = NULL;
+	int		   *dims = NULL;
+	int			num_vecs = 0;
 
 	initStringInfo(&url);
 	initStringInfo(&body);
@@ -721,10 +755,12 @@ ndb_hf_embed_batch(const NdbLLMConfig *cfg,
 			appendStringInfoChar(&inputs_json, ',');
 		if (texts[i] != NULL)
 		{
-			char *quoted = ndb_quote_json_cstr(texts[i]);
+			char	   *quoted = ndb_quote_json_cstr(texts[i]);
+
 			appendStringInfoString(&inputs_json, quoted);
 			pfree(quoted);
-		} else
+		}
+		else
 		{
 			appendStringInfoString(&inputs_json, "null");
 		}
@@ -733,28 +769,28 @@ ndb_hf_embed_batch(const NdbLLMConfig *cfg,
 
 	/* Router endpoint uses new path format for embeddings */
 	if (cfg->endpoint && (strstr(cfg->endpoint, "router.huggingface.co") != NULL ||
-		strstr(cfg->endpoint, "hf-inference") != NULL))
+						  strstr(cfg->endpoint, "hf-inference") != NULL))
 	{
 		/* Router endpoint: use new format with models path */
 		appendStringInfo(&url,
-			"%s/models/%s/pipeline/feature-extraction",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/models/%s/pipeline/feature-extraction",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 	else
 	{
 		/* Old endpoint format */
 		appendStringInfo(&url,
-			"%s/pipeline/feature-extraction/%s",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/pipeline/feature-extraction/%s",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 	appendStringInfo(&body,
-		"{\"inputs\":%s,\"truncate\":true}",
-		inputs_json.data);
+					 "{\"inputs\":%s,\"truncate\":true}",
+					 inputs_json.data);
 
 	code = http_post_json(
-		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+						  url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
 
 	pfree(url.data);
 	pfree(body.data);
@@ -793,18 +829,19 @@ ndb_hf_embed_batch(const NdbLLMConfig *cfg,
 }
 
 int
-ndb_hf_image_embed(const NdbLLMConfig *cfg,
-	const unsigned char *image_data,
-	size_t image_size,
-	float **vec_out,
-	int *dim_out)
+ndb_hf_image_embed(const NdbLLMConfig * cfg,
+				   const unsigned char *image_data,
+				   size_t image_size,
+				   float **vec_out,
+				   int *dim_out)
 {
-	StringInfoData url, body;
-	char *resp = NULL;
-	int code;
-	bool ok;
-	char *base64_data = NULL;
-	text *encoded_text = NULL;
+	StringInfoData url,
+				body;
+	char	   *resp = NULL;
+	int			code;
+	bool		ok;
+	char	   *base64_data = NULL;
+	text	   *encoded_text = NULL;
 
 	initStringInfo(&url);
 	initStringInfo(&body);
@@ -816,10 +853,14 @@ ndb_hf_image_embed(const NdbLLMConfig *cfg,
 		return -1;
 	}
 
-	/* Convert image data to bytea, then base64 encode using PostgreSQL's encode() */
+	/*
+	 * Convert image data to bytea, then base64 encode using PostgreSQL's
+	 * encode()
+	 */
 	{
-		bytea *image_bytea = NULL;
-		image_bytea = (bytea *)palloc(VARHDRSZ + image_size);
+		bytea	   *image_bytea = NULL;
+
+		image_bytea = (bytea *) palloc(VARHDRSZ + image_size);
 		SET_VARSIZE(image_bytea, VARHDRSZ + image_size);
 		memcpy(VARDATA(image_bytea), image_data, image_size);
 
@@ -834,30 +875,30 @@ ndb_hf_image_embed(const NdbLLMConfig *cfg,
 	/* Build URL and JSON body for HuggingFace CLIP API */
 	/* Router endpoint uses new path format for embeddings */
 	if (cfg->endpoint && (strstr(cfg->endpoint, "router.huggingface.co") != NULL ||
-		strstr(cfg->endpoint, "hf-inference") != NULL))
+						  strstr(cfg->endpoint, "hf-inference") != NULL))
 	{
 		/* Router endpoint: use new format with models path */
 		appendStringInfo(&url,
-			"%s/models/%s/pipeline/feature-extraction",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/models/%s/pipeline/feature-extraction",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 	else
 	{
 		/* Old endpoint format */
 		appendStringInfo(&url,
-			"%s/pipeline/feature-extraction/%s",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/pipeline/feature-extraction/%s",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 
 	/* HuggingFace expects image in data URI format */
 	appendStringInfo(&body,
-		"{\"inputs\":{\"image\":\"data:image/jpeg;base64,%s\"}}",
-		base64_data);
+					 "{\"inputs\":{\"image\":\"data:image/jpeg;base64,%s\"}}",
+					 base64_data);
 
 	code = http_post_json(
-		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+						  url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
 
 	pfree(url.data);
 	pfree(body.data);
@@ -879,20 +920,21 @@ ndb_hf_image_embed(const NdbLLMConfig *cfg,
 }
 
 int
-ndb_hf_multimodal_embed(const NdbLLMConfig *cfg,
-	const char *text_input,
-	const unsigned char *image_data,
-	size_t image_size,
-	float **vec_out,
-	int *dim_out)
+ndb_hf_multimodal_embed(const NdbLLMConfig * cfg,
+						const char *text_input,
+						const unsigned char *image_data,
+						size_t image_size,
+						float **vec_out,
+						int *dim_out)
 {
-	StringInfoData url, body;
-	char *resp = NULL;
-	int code;
-	bool ok;
-	char *base64_data = NULL;
-	text *encoded_text = NULL;
-	char *quoted_text = NULL;
+	StringInfoData url,
+				body;
+	char	   *resp = NULL;
+	int			code;
+	bool		ok;
+	char	   *base64_data = NULL;
+	text	   *encoded_text = NULL;
+	char	   *quoted_text = NULL;
 
 	initStringInfo(&url);
 	initStringInfo(&body);
@@ -906,8 +948,9 @@ ndb_hf_multimodal_embed(const NdbLLMConfig *cfg,
 
 	/* Base64 encode image */
 	{
-		bytea *image_bytea = NULL;
-		image_bytea = (bytea *)palloc(VARHDRSZ + image_size);
+		bytea	   *image_bytea = NULL;
+
+		image_bytea = (bytea *) palloc(VARHDRSZ + image_size);
 		SET_VARSIZE(image_bytea, VARHDRSZ + image_size);
 		memcpy(VARDATA(image_bytea), image_data, image_size);
 
@@ -924,31 +967,31 @@ ndb_hf_multimodal_embed(const NdbLLMConfig *cfg,
 	/* Build URL and JSON body for HuggingFace CLIP multimodal API */
 	/* Router endpoint uses new path format for embeddings */
 	if (cfg->endpoint && (strstr(cfg->endpoint, "router.huggingface.co") != NULL ||
-		strstr(cfg->endpoint, "hf-inference") != NULL))
+						  strstr(cfg->endpoint, "hf-inference") != NULL))
 	{
 		/* Router endpoint: use new format with models path */
 		appendStringInfo(&url,
-			"%s/models/%s/pipeline/feature-extraction",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/models/%s/pipeline/feature-extraction",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 	else
 	{
 		/* Old endpoint format */
 		appendStringInfo(&url,
-			"%s/pipeline/feature-extraction/%s",
-			cfg->endpoint,
-			cfg->model);
+						 "%s/pipeline/feature-extraction/%s",
+						 cfg->endpoint,
+						 cfg->model);
 	}
 
 	/* HuggingFace CLIP expects both text and image in inputs */
 	appendStringInfo(&body,
-		"{\"inputs\":{\"text\":%s,\"image\":\"data:image/jpeg;base64,%s\"}}",
-		quoted_text,
-		base64_data);
+					 "{\"inputs\":{\"text\":%s,\"image\":\"data:image/jpeg;base64,%s\"}}",
+					 quoted_text,
+					 base64_data);
 
 	code = http_post_json(
-		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+						  url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
 
 	pfree(url.data);
 	pfree(body.data);
@@ -973,15 +1016,16 @@ ndb_hf_multimodal_embed(const NdbLLMConfig *cfg,
 static bool
 parse_hf_scores(const char *json, float **scores_out, int ndocs)
 {
-	/* The response is [{"scores":[float, float,...]}] or similar;
-     * We will parse for the first float array in the string.
-     */
+	/*
+	 * The response is [{"scores":[float, float,...]}] or similar; We will
+	 * parse for the first float array in the string.
+	 */
 	const char *scores_key = "\"scores\"";
-	char *ps;
-	float *scores;
-	int n = 0;
-	char *endptr;
-	double v;
+	char	   *ps;
+	float	   *scores;
+	int			n = 0;
+	char	   *endptr;
+	double		v;
 
 	if (!json)
 		return false;
@@ -1001,7 +1045,7 @@ parse_hf_scores(const char *json, float **scores_out, int ndocs)
 		v = strtod(ps, &endptr);
 		if (endptr == ps)
 			break;
-		scores[n++] = (float)v;
+		scores[n++] = (float) v;
 		ps = endptr;
 	}
 	if (n == ndocs)
@@ -1014,18 +1058,19 @@ parse_hf_scores(const char *json, float **scores_out, int ndocs)
 }
 
 int
-ndb_hf_rerank(const NdbLLMConfig *cfg,
-	const char *query,
-	const char **docs,
-	int ndocs,
-	float **scores_out)
+ndb_hf_rerank(const NdbLLMConfig * cfg,
+			  const char *query,
+			  const char **docs,
+			  int ndocs,
+			  float **scores_out)
 {
-	StringInfoData url, body;
+	StringInfoData url,
+				body;
 	StringInfoData docs_json;
-	char *resp = NULL;
-	int code;
-	int i;
-	bool ok;
+	char	   *resp = NULL;
+	int			code;
+	int			i;
+	bool		ok;
 
 	initStringInfo(&url);
 	initStringInfo(&body);
@@ -1054,17 +1099,17 @@ ndb_hf_rerank(const NdbLLMConfig *cfg,
 
 	/* URL: .../pipeline/text-classification/model */
 	appendStringInfo(&url,
-		"%s/pipeline/token-classification/%s",
-		cfg->endpoint,
-		cfg->model);
+					 "%s/pipeline/token-classification/%s",
+					 cfg->endpoint,
+					 cfg->model);
 	/* Use models endpoint if above fails for reranking */
 	appendStringInfo(&body,
-		"{\"inputs\":{\"query\":%s,\"documents\":%s}}",
-		ndb_quote_json_cstr(query),
-		docs_json.data);
+					 "{\"inputs\":{\"query\":%s,\"documents\":%s}}",
+					 ndb_quote_json_cstr(query),
+					 docs_json.data);
 
 	code = http_post_json(
-		url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
+						  url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
 
 	if (code < 200 || code >= 300 || !resp)
 	{

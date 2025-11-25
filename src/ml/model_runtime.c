@@ -2,9 +2,9 @@
  * model_runtime.c
  *     Model Runtime Integration for NeuronDB
  *
- * Provides HTTP-based model inference (with retry logic and circuit breaker), 
- * simulated LLM integration with cost tracking, expiring cache mechanism, 
- * and distributed tracing/auditing. Implements tight PostgreSQL integration 
+ * Provides HTTP-based model inference (with retry logic and circuit breaker),
+ * simulated LLM integration with cost tracking, expiring cache mechanism,
+ * and distributed tracing/auditing. Implements tight PostgreSQL integration
  * using the Server Programming Interface (SPI).
  *
  * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
@@ -31,13 +31,13 @@
 
 typedef struct curl_buffer
 {
-	StringInfo buf;
-} curl_buffer;
+	StringInfo	buf;
+}			curl_buffer;
 
 static size_t
 curl_writefunc(void *ptr, size_t size, size_t nmemb, void *userdata)
 {
-	curl_buffer *cb = (curl_buffer *)userdata;
+	curl_buffer *cb = (curl_buffer *) userdata;
 
 	if (cb == NULL || cb->buf == NULL)
 		return 0;
@@ -56,21 +56,21 @@ PG_FUNCTION_INFO_V1(mdl_http);
 Datum
 mdl_http(PG_FUNCTION_ARGS)
 {
-	text *url = PG_GETARG_TEXT_PP(0);
-	text *method = PG_GETARG_TEXT_PP(1);
-	text *body = PG_GETARG_TEXT_PP(2);
-	int32 timeout_ms = PG_GETARG_INT32(3);
-	int32 max_retries = PG_GETARG_INT32(4);
+	text	   *url = PG_GETARG_TEXT_PP(0);
+	text	   *method = PG_GETARG_TEXT_PP(1);
+	text	   *body = PG_GETARG_TEXT_PP(2);
+	int32		timeout_ms = PG_GETARG_INT32(3);
+	int32		max_retries = PG_GETARG_INT32(4);
 
-	char *url_str = text_to_cstring(url);
-	char *method_str = text_to_cstring(method);
-	char *body_str = text_to_cstring(body);
+	char	   *url_str = text_to_cstring(url);
+	char	   *method_str = text_to_cstring(method);
+	char	   *body_str = text_to_cstring(body);
 	curl_buffer cb;
-	CURL *curl;
-	CURLcode res;
-	long http_code = 0;
-	int attempt;
-	bool success = false;
+	CURL	   *curl;
+	CURLcode	res;
+	long		http_code = 0;
+	int			attempt;
+	bool		success = false;
 	StringInfoData response;
 	struct timespec ts;
 	struct curl_slist *headers = NULL;
@@ -79,20 +79,20 @@ mdl_http(PG_FUNCTION_ARGS)
 	cb.buf = &response;
 
 	elog(DEBUG1,
-		"neurondb: HTTP %s %s (timeout=%dms, max_retries=%d)",
-		method_str,
-		url_str,
-		timeout_ms,
-		max_retries);
+		 "neurondb: HTTP %s %s (timeout=%dms, max_retries=%d)",
+		 method_str,
+		 url_str,
+		 timeout_ms,
+		 max_retries);
 
 	for (attempt = 1; attempt <= max_retries; attempt++)
 	{
 		curl = curl_easy_init();
 		if (!curl)
 			ereport(ERROR,
-				(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-					errmsg("neurondb: curl initialization "
-					       "failed")));
+					(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
+					 errmsg("neurondb: curl initialization "
+							"failed")));
 
 		resetStringInfo(&response);
 		http_code = 0;
@@ -101,7 +101,7 @@ mdl_http(PG_FUNCTION_ARGS)
 		curl_easy_setopt(curl, CURLOPT_URL, url_str);
 		curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writefunc);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&cb);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &cb);
 		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
 		if (pg_strcasecmp(method_str, "POST") == 0)
@@ -109,44 +109,48 @@ mdl_http(PG_FUNCTION_ARGS)
 			curl_easy_setopt(curl, CURLOPT_POST, 1L);
 			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str);
 			curl_easy_setopt(curl,
-				CURLOPT_POSTFIELDSIZE,
-				(long)strlen(body_str));
+							 CURLOPT_POSTFIELDSIZE,
+							 (long) strlen(body_str));
 			headers = curl_slist_append(
-				headers, "Content-Type: application/json");
+										headers, "Content-Type: application/json");
 			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-		} else if (pg_strcasecmp(method_str, "PUT") == 0)
+		}
+		else if (pg_strcasecmp(method_str, "PUT") == 0)
 		{
 			curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
 			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str);
 			curl_easy_setopt(curl,
-				CURLOPT_POSTFIELDSIZE,
-				(long)strlen(body_str));
+							 CURLOPT_POSTFIELDSIZE,
+							 (long) strlen(body_str));
 			headers = curl_slist_append(
-				headers, "Content-Type: application/json");
+										headers, "Content-Type: application/json");
 			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-		} else if (pg_strcasecmp(method_str, "DELETE") == 0)
+		}
+		else if (pg_strcasecmp(method_str, "DELETE") == 0)
 		{
 			curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
-		} else if (pg_strcasecmp(method_str, "PATCH") == 0)
+		}
+		else if (pg_strcasecmp(method_str, "PATCH") == 0)
 		{
 			curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PATCH");
 			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str);
 			curl_easy_setopt(curl,
-				CURLOPT_POSTFIELDSIZE,
-				(long)strlen(body_str));
+							 CURLOPT_POSTFIELDSIZE,
+							 (long) strlen(body_str));
 			headers = curl_slist_append(
-				headers, "Content-Type: application/json");
+										headers, "Content-Type: application/json");
 			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 		}
 
 		res = curl_easy_perform(curl);
 		{
-			CURLcode getinfo_res = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+			CURLcode	getinfo_res = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
 			if (getinfo_res != CURLE_OK)
 			{
 				elog(WARNING,
-					"neurondb: mdl_http: failed to get HTTP response code: %s",
-					curl_easy_strerror(getinfo_res));
+					 "neurondb: mdl_http: failed to get HTTP response code: %s",
+					 curl_easy_strerror(getinfo_res));
 			}
 		}
 
@@ -161,22 +165,23 @@ mdl_http(PG_FUNCTION_ARGS)
 		{
 			success = true;
 			break;
-		} else
+		}
+		else
 		{
 			success = false;
 			elog(WARNING,
-				"neurondb: HTTP failed on attempt %d: %s (HTTP "
-				"%ld) - Retrying",
-				attempt,
-				curl_easy_strerror(res),
-				http_code);
+				 "neurondb: HTTP failed on attempt %d: %s (HTTP "
+				 "%ld) - Retrying",
+				 attempt,
+				 curl_easy_strerror(res),
+				 http_code);
 
 			ts.tv_sec = 0;
 			ts.tv_nsec = attempt * 100L * 1000000L;
 			if (ts.tv_nsec > 1000000000L)
 				ts.tv_nsec = 1000000000L;
 
-			(void)nanosleep(&ts, NULL);
+			(void) nanosleep(&ts, NULL);
 		}
 	}
 
@@ -184,26 +189,29 @@ mdl_http(PG_FUNCTION_ARGS)
 	{
 		resetStringInfo(&response);
 		appendStringInfo(&response,
-			"{\"status\":\"error\",\"message\":\"Failed after %d "
-			"retries, circuit breaker tripped\",\"http_code\":%ld}",
-			max_retries,
-			http_code);
-	} else
+						 "{\"status\":\"error\",\"message\":\"Failed after %d "
+						 "retries, circuit breaker tripped\",\"http_code\":%ld}",
+						 max_retries,
+						 http_code);
+	}
+	else
 	{
 		if (response.len > 0 && response.data[0] != '{'
 			&& response.data[0] != '[')
 		{
 			StringInfoData result_json;
+
 			initStringInfo(&result_json);
 			appendStringInfo(&result_json,
-				"{\"status\":\"success\",\"data\":\"%s\"}",
-				response.data);
+							 "{\"status\":\"success\",\"data\":\"%s\"}",
+							 response.data);
 			NDB_SAFE_PFREE_AND_NULL(response.data);
 			response = result_json;
-		} else if (response.len == 0)
+		}
+		else if (response.len == 0)
 		{
 			appendStringInfoString(&response,
-				"{\"status\":\"success\",\"data\":{}}");
+								   "{\"status\":\"success\",\"data\":{}}");
 		}
 	}
 
@@ -220,39 +228,40 @@ PG_FUNCTION_INFO_V1(mdl_llm);
 Datum
 mdl_llm(PG_FUNCTION_ARGS)
 {
-	text *model = PG_GETARG_TEXT_PP(0);
-	text *prompt = PG_GETARG_TEXT_PP(1);
-	int32 max_tokens = PG_GETARG_INT32(2);
-	float4 temperature = PG_GETARG_FLOAT4(3);
+	text	   *model = PG_GETARG_TEXT_PP(0);
+	text	   *prompt = PG_GETARG_TEXT_PP(1);
+	int32		max_tokens = PG_GETARG_INT32(2);
+	float4		temperature = PG_GETARG_FLOAT4(3);
 
-	char *model_str = text_to_cstring(model);
-	char *prompt_str = text_to_cstring(prompt);
-	int32 tokens_in = 0;
-	int32 tokens_out;
-	int32 estimated_cost_microcents;
+	char	   *model_str = text_to_cstring(model);
+	char	   *prompt_str = text_to_cstring(prompt);
+	int32		tokens_in = 0;
+	int32		tokens_out;
+	int32		estimated_cost_microcents;
 	StringInfoData result;
 
 	elog(DEBUG1,
-		"neurondb: LLM call: model=%s; max_tokens=%d; temperature=%.2f",
-		model_str,
-		max_tokens,
-		temperature);
+		 "neurondb: LLM call: model=%s; max_tokens=%d; temperature=%.2f",
+		 model_str,
+		 max_tokens,
+		 temperature);
 
 	/* Simple word-count for rough token estimation */
 	{
-		char *ptr = prompt_str;
-		int state = 0;
+		char	   *ptr = prompt_str;
+		int			state = 0;
 
 		while (*ptr)
 		{
-			if (!isspace((unsigned char)*ptr))
+			if (!isspace((unsigned char) *ptr))
 			{
 				if (state == 0)
 				{
 					tokens_in++;
 					state = 1;
 				}
-			} else
+			}
+			else
 			{
 				state = 0;
 			}
@@ -267,29 +276,29 @@ mdl_llm(PG_FUNCTION_ARGS)
 		((tokens_in * 2000 + tokens_out * 6000) + 999) / 1000;
 
 	elog(LOG,
-		"neurondb: LLM tokens_in=%d tokens_out=%d cost_microcents=%d",
-		tokens_in,
-		tokens_out,
-		estimated_cost_microcents);
+		 "neurondb: LLM tokens_in=%d tokens_out=%d cost_microcents=%d",
+		 tokens_in,
+		 tokens_out,
+		 estimated_cost_microcents);
 
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"{\"model\":\"%s\",\"prompt\":\"%s\","
-		"\"response\":\"Hello, I am an AI model. Your prompt was "
-		"processed.\","
-		"\"tokens_in\":%d,\"tokens_out\":%d,\"cost_cents\":%.3f}",
-		model_str,
-		prompt_str,
-		tokens_in,
-		tokens_out,
-		estimated_cost_microcents / 100.0);
+					 "{\"model\":\"%s\",\"prompt\":\"%s\","
+					 "\"response\":\"Hello, I am an AI model. Your prompt was "
+					 "processed.\","
+					 "\"tokens_in\":%d,\"tokens_out\":%d,\"cost_cents\":%.3f}",
+					 model_str,
+					 prompt_str,
+					 tokens_in,
+					 tokens_out,
+					 estimated_cost_microcents / 100.0);
 
 	/* Audit/metering: store in neurondb_llm_usage */
 	if (SPI_connect() == SPI_OK_CONNECT)
 	{
-		Datum values[4];
-		Oid argtypes[4] = { TEXTOID, INT4OID, INT4OID, INT4OID };
-		int ret;
+		Datum		values[4];
+		Oid			argtypes[4] = {TEXTOID, INT4OID, INT4OID, INT4OID};
+		int			ret;
 
 		values[0] = CStringGetTextDatum(model_str);
 		values[1] = Int32GetDatum(tokens_in);
@@ -297,19 +306,19 @@ mdl_llm(PG_FUNCTION_ARGS)
 		values[3] = Int32GetDatum(estimated_cost_microcents);
 
 		ret = SPI_execute_with_args(
-			"INSERT INTO neurondb_llm_usage (model, tokens_in, "
-			"tokens_out, cost_microcents) VALUES ($1, $2, $3, $4)",
-			4,
-			argtypes,
-			values,
-			NULL,
-			false,
-			0);
+									"INSERT INTO neurondb_llm_usage (model, tokens_in, "
+									"tokens_out, cost_microcents) VALUES ($1, $2, $3, $4)",
+									4,
+									argtypes,
+									values,
+									NULL,
+									false,
+									0);
 		if (ret != SPI_OK_INSERT)
 		{
 			elog(WARNING,
-				"neurondb: mdl_http: failed to insert LLM usage record: SPI return code %d",
-				ret);
+				 "neurondb: mdl_http: failed to insert LLM usage record: SPI return code %d",
+				 ret);
 		}
 		SPI_finish();
 	}
@@ -327,60 +336,62 @@ PG_FUNCTION_INFO_V1(mdl_cache);
 Datum
 mdl_cache(PG_FUNCTION_ARGS)
 {
-	text *cache_key = PG_GETARG_TEXT_PP(0);
-	text *cache_value = PG_GETARG_TEXT_PP(1);
-	int32 ttl_seconds = PG_GETARG_INT32(2);
+	text	   *cache_key = PG_GETARG_TEXT_PP(0);
+	text	   *cache_value = PG_GETARG_TEXT_PP(1);
+	int32		ttl_seconds = PG_GETARG_INT32(2);
 
-	char *key_str = text_to_cstring(cache_key);
-	char *value_str = text_to_cstring(cache_value);
-	Datum values[3];
-	Oid argtypes[3] = { TEXTOID, TEXTOID, INT8OID };
+	char	   *key_str = text_to_cstring(cache_key);
+	char	   *value_str = text_to_cstring(cache_value);
+	Datum		values[3];
+	Oid			argtypes[3] = {TEXTOID, TEXTOID, INT8OID};
 	struct timeval tv;
-	time_t expires_at;
-	bool success = false;
+	time_t		expires_at;
+	bool		success = false;
 
 	elog(DEBUG1,
-		"neurondb: Insert/Update cache: key='%s' ttl=%d",
-		key_str,
-		ttl_seconds);
+		 "neurondb: Insert/Update cache: key='%s' ttl=%d",
+		 key_str,
+		 ttl_seconds);
 
 	if (SPI_connect() == SPI_OK_CONNECT)
 	{
-		int ret;
+		int			ret;
 
 		gettimeofday(&tv, NULL);
 		expires_at = tv.tv_sec + ((ttl_seconds > 0) ? ttl_seconds : 1L);
 
 		values[0] = CStringGetTextDatum(key_str);
 		values[1] = CStringGetTextDatum(value_str);
-		values[2] = Int64GetDatum((int64)expires_at);
+		values[2] = Int64GetDatum((int64) expires_at);
 
 		ret = SPI_execute_with_args(
-			"INSERT INTO neurondb_cache (cache_key, cache_value, "
-			"expires_at, created_at) "
-			"VALUES ($1, $2, TO_TIMESTAMP($3), now()) "
-			"ON CONFLICT (cache_key) DO UPDATE "
-			"SET cache_value = $2, expires_at = TO_TIMESTAMP($3), "
-			"created_at = NOW()",
-			3,
-			argtypes,
-			values,
-			NULL,
-			false,
-			0);
+									"INSERT INTO neurondb_cache (cache_key, cache_value, "
+									"expires_at, created_at) "
+									"VALUES ($1, $2, TO_TIMESTAMP($3), now()) "
+									"ON CONFLICT (cache_key) DO UPDATE "
+									"SET cache_value = $2, expires_at = TO_TIMESTAMP($3), "
+									"created_at = NOW()",
+									3,
+									argtypes,
+									values,
+									NULL,
+									false,
+									0);
 
 		if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE)
 		{
 			elog(WARNING,
-				"neurondb: mdl_cache: failed to insert/update cache entry: SPI return code %d",
-				ret);
+				 "neurondb: mdl_cache: failed to insert/update cache entry: SPI return code %d",
+				 ret);
 			success = false;
-		} else
+		}
+		else
 		{
 			success = true;
 		}
 		SPI_finish();
-	} else
+	}
+	else
 	{
 		success = false;
 	}
@@ -398,49 +409,50 @@ PG_FUNCTION_INFO_V1(mdl_trace);
 Datum
 mdl_trace(PG_FUNCTION_ARGS)
 {
-	text *trace_id = PG_GETARG_TEXT_PP(0);
-	text *event = PG_GETARG_TEXT_PP(1);
-	text *metadata = PG_GETARG_TEXT_PP(2);
+	text	   *trace_id = PG_GETARG_TEXT_PP(0);
+	text	   *event = PG_GETARG_TEXT_PP(1);
+	text	   *metadata = PG_GETARG_TEXT_PP(2);
 
-	char *trace_str = text_to_cstring(trace_id);
-	char *event_str = text_to_cstring(event);
-	char *meta_str = text_to_cstring(metadata);
+	char	   *trace_str = text_to_cstring(trace_id);
+	char	   *event_str = text_to_cstring(event);
+	char	   *meta_str = text_to_cstring(metadata);
 
-	Datum values[3];
-	Oid argtypes[3] = { TEXTOID, TEXTOID, TEXTOID };
+	Datum		values[3];
+	Oid			argtypes[3] = {TEXTOID, TEXTOID, TEXTOID};
 
 	elog(DEBUG1,
-		"neurondb: mdl_trace: id='%s', event='%s', meta='%s'",
-		trace_str,
-		event_str,
-		meta_str);
+		 "neurondb: mdl_trace: id='%s', event='%s', meta='%s'",
+		 trace_str,
+		 event_str,
+		 meta_str);
 
 	if (SPI_connect() == SPI_OK_CONNECT)
 	{
-		int ret;
+		int			ret;
 
 		values[0] = CStringGetTextDatum(trace_str);
 		values[1] = CStringGetTextDatum(event_str);
 		values[2] = CStringGetTextDatum(meta_str);
 
 		ret = SPI_execute_with_args(
-			"INSERT INTO neurondb_traces (trace_id, event, "
-			"metadata, created_at) VALUES ($1, $2, $3, now())",
-			3,
-			argtypes,
-			values,
-			NULL,
-			false,
-			0);
+									"INSERT INTO neurondb_traces (trace_id, event, "
+									"metadata, created_at) VALUES ($1, $2, $3, now())",
+									3,
+									argtypes,
+									values,
+									NULL,
+									false,
+									0);
 
 		if (ret != SPI_OK_INSERT)
 		{
 			elog(WARNING,
-				"neurondb: mdl_trace: failed to insert trace record: SPI return code %d",
-				ret);
+				 "neurondb: mdl_trace: failed to insert trace record: SPI return code %d",
+				 ret);
 		}
 		SPI_finish();
-	} else
+	}
+	else
 	{
 	}
 

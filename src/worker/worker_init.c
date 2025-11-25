@@ -35,13 +35,13 @@
 #include "neurondb_index.h"
 
 /* Core GUC variables (defined in neurondb.c) */
-extern int neurondb_hnsw_ef_search;
-extern int neurondb_ivf_probes;
-extern int neurondb_ef_construction;
+extern int	neurondb_hnsw_ef_search;
+extern int	neurondb_ivf_probes;
+extern int	neurondb_ef_construction;
 
 /* Reloption kinds for HNSW and IVF indexes */
-int relopt_kind_hnsw;
-int relopt_kind_ivf;
+int			relopt_kind_hnsw;
+int			relopt_kind_ivf;
 
 /* Forward declarations from background worker modules */
 extern void neuranq_main(Datum main_arg);
@@ -76,7 +76,7 @@ extern void entrypoint_cache_shmem_init(void);
 extern void register_hybrid_scan_provider(void);
 
 /* Module initialization */
-void neurondb_worker_fini(void);
+void		neurondb_worker_fini(void);
 
 /* Shared memory hooks */
 #if PG_VERSION_NUM >= 150000
@@ -97,8 +97,8 @@ _PG_init(void)
 	if (!process_shared_preload_libraries_in_progress)
 	{
 		elog(ERROR,
-			"neurondb: background workers require "
-			"shared_preload_libraries");
+			 "neurondb: background workers require "
+			 "shared_preload_libraries");
 		return;
 	}
 
@@ -112,47 +112,47 @@ _PG_init(void)
 	relopt_kind_hnsw = add_reloption_kind();
 	relopt_kind_ivf = add_reloption_kind();
 	elog(LOG, "neurondb: registered reloption kinds (HNSW=%d, IVF=%d)",
-		relopt_kind_hnsw, relopt_kind_ivf);
+		 relopt_kind_hnsw, relopt_kind_ivf);
 
 	/* Initialize core GUC variables */
 	DefineCustomIntVariable("neurondb.hnsw_ef_search",
-		"Sets the ef_search parameter for HNSW index scans",
-		"Higher values improve recall but increase search time. Default is 64.",
-		&neurondb_hnsw_ef_search,
-		64, /* default */
-		1,  /* min */
-		10000, /* max */
-		PGC_USERSET,
-		0,
-		NULL,
-		NULL,
-		NULL);
+							"Sets the ef_search parameter for HNSW index scans",
+							"Higher values improve recall but increase search time. Default is 64.",
+							&neurondb_hnsw_ef_search,
+							64, /* default */
+							1,	/* min */
+							10000,	/* max */
+							PGC_USERSET,
+							0,
+							NULL,
+							NULL,
+							NULL);
 
 	DefineCustomIntVariable("neurondb.ivf_probes",
-		"Sets the number of probes for IVF index scans",
-		"Higher values improve recall but increase search time. Default is 10.",
-		&neurondb_ivf_probes,
-		10, /* default */
-		1,  /* min */
-		1000, /* max */
-		PGC_USERSET,
-		0,
-		NULL,
-		NULL,
-		NULL);
+							"Sets the number of probes for IVF index scans",
+							"Higher values improve recall but increase search time. Default is 10.",
+							&neurondb_ivf_probes,
+							10, /* default */
+							1,	/* min */
+							1000,	/* max */
+							PGC_USERSET,
+							0,
+							NULL,
+							NULL,
+							NULL);
 
 	DefineCustomIntVariable("neurondb.ef_construction",
-		"Sets the ef_construction parameter for HNSW index builds",
-		"Higher values improve index quality but increase build time. Default is 200.",
-		&neurondb_ef_construction,
-		200, /* default */
-		4,   /* min */
-		2000, /* max */
-		PGC_USERSET,
-		0,
-		NULL,
-		NULL,
-		NULL);
+							"Sets the ef_construction parameter for HNSW index builds",
+							"Higher values improve index quality but increase build time. Default is 200.",
+							&neurondb_ef_construction,
+							200,	/* default */
+							4,	/* min */
+							2000,	/* max */
+							PGC_USERSET,
+							0,
+							NULL,
+							NULL,
+							NULL);
 
 	/* Initialize GUC variables for all workers */
 	neuranq_init_guc();
@@ -180,9 +180,9 @@ _PG_init(void)
 #else
 	/* Request shared memory and LWLocks directly for older versions */
 	RequestAddinShmemSpace(neuranq_shmem_size() + neuranmon_shmem_size()
-		+ neurandefrag_shmem_size() + neurondb_llm_shmem_size()
-		+ entrypoint_cache_shmem_size()
-		+ 8192); /* prometheus metrics */
+						   + neurandefrag_shmem_size() + neurondb_llm_shmem_size()
+						   + entrypoint_cache_shmem_size()
+						   + 8192); /* prometheus metrics */
 	RequestNamedLWLockTranche("neurondb_queue", 1);
 	RequestNamedLWLockTranche("neurondb_tuner", 1);
 	RequestNamedLWLockTranche("neurondb_defrag", 1);
@@ -208,7 +208,7 @@ _PG_init(void)
 	snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_queue");
 	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
 	worker.bgw_notify_pid = 0;
-	worker.bgw_main_arg = (Datum)0;
+	worker.bgw_main_arg = (Datum) 0;
 
 	RegisterBackgroundWorker(&worker);
 
@@ -227,7 +227,7 @@ _PG_init(void)
 	snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_tuner");
 	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
 	worker.bgw_notify_pid = 0;
-	worker.bgw_main_arg = (Datum)0;
+	worker.bgw_main_arg = (Datum) 0;
 
 	RegisterBackgroundWorker(&worker);
 
@@ -237,23 +237,22 @@ _PG_init(void)
 	 * Register background worker: neurandefrag (Index Maintenance)
 	 * Temporarily disabled due to assertion failure during extension loading
 	 */
+
 	/*
-	memset(&worker, 0, sizeof(worker));
-	worker.bgw_flags =
-		BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
-	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
-	snprintf(worker.bgw_library_name, BGW_MAXLEN, "neurondb");
-	snprintf(worker.bgw_function_name, BGW_MAXLEN, "neurandefrag_main");
-	snprintf(worker.bgw_name, BGW_MAXLEN, "neurondb: defrag worker");
-	snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_defrag");
-	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
-	worker.bgw_notify_pid = 0;
-	worker.bgw_main_arg = (Datum)0;
-
-	RegisterBackgroundWorker(&worker);
-
-	elog(LOG, "neurondb: registered neurandefrag background worker");
-	*/
+	 * memset(&worker, 0, sizeof(worker)); worker.bgw_flags =
+	 * BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+	 * worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
+	 * snprintf(worker.bgw_library_name, BGW_MAXLEN, "neurondb");
+	 * snprintf(worker.bgw_function_name, BGW_MAXLEN, "neurandefrag_main");
+	 * snprintf(worker.bgw_name, BGW_MAXLEN, "neurondb: defrag worker");
+	 * snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_defrag");
+	 * worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
+	 * worker.bgw_notify_pid = 0; worker.bgw_main_arg = (Datum)0;
+	 *
+	 * RegisterBackgroundWorker(&worker);
+	 *
+	 * elog(LOG, "neurondb: registered neurandefrag background worker");
+	 */
 
 	/* Register background worker: neuranllm (LLM jobs) */
 	memset(&worker, 0, sizeof(worker));
@@ -266,7 +265,7 @@ _PG_init(void)
 	snprintf(worker.bgw_type, BGW_MAXLEN, "neurondb_llm");
 	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
 	worker.bgw_notify_pid = 0;
-	worker.bgw_main_arg = (Datum)0;
+	worker.bgw_main_arg = (Datum) 0;
 	RegisterBackgroundWorker(&worker);
 	elog(LOG, "neurondb: registered neuranllm background worker");
 	elog(LOG, "neurondb: all background workers registered successfully");
@@ -345,9 +344,9 @@ neurondb_shmem_request(void)
 
 	/* Request shared memory */
 	RequestAddinShmemSpace(neuranq_shmem_size() + neuranmon_shmem_size()
-		+ neurandefrag_shmem_size() + neurondb_llm_shmem_size()
-		+ entrypoint_cache_shmem_size()
-		+ 8192); /* prometheus metrics */
+						   + neurandefrag_shmem_size() + neurondb_llm_shmem_size()
+						   + entrypoint_cache_shmem_size()
+						   + 8192); /* prometheus metrics */
 
 	/* Request LWLocks */
 	RequestNamedLWLockTranche("neurondb_queue", 1);

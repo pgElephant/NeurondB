@@ -47,24 +47,27 @@ PG_FUNCTION_INFO_V1(neurondb_transform_data);
 Datum
 neurondb_chunk_text(PG_FUNCTION_ARGS)
 {
-	text *input_text;
-	int32 chunk_size;
-	int32 overlap;
-	text *separator_text;
-	char *input_str;
-	char *separator;
-	int input_len;
-	int chunk_count = 0;
-	Datum *chunk_datums;
-	ArrayType *result_array;
-	int i, start, end, chunk_len;
-	int max_chunks;
+	text	   *input_text;
+	int32		chunk_size;
+	int32		overlap;
+	text	   *separator_text;
+	char	   *input_str;
+	char	   *separator;
+	int			input_len;
+	int			chunk_count = 0;
+	Datum	   *chunk_datums;
+	ArrayType  *result_array;
+	int			i,
+				start,
+				end,
+				chunk_len;
+	int			max_chunks;
 
 	if (PG_NARGS() < 1 || PG_NARGS() > 4)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_chunk_text: expected 1-4 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb_chunk_text: expected 1-4 arguments, got %d",
+						PG_NARGS())));
 
 	input_text = PG_GETARG_TEXT_PP(0);
 	chunk_size = PG_ARGISNULL(1) ? 512 : PG_GETARG_INT32(1);
@@ -75,21 +78,21 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 	input_str = text_to_cstring(input_text);
 	input_len = strlen(input_str);
 	separator = separator_text ? text_to_cstring(separator_text)
-				   : pstrdup("\n\n");
+		: pstrdup("\n\n");
 
 	if (chunk_size <= overlap)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("chunk_size must be greater than "
-				       "overlap")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("chunk_size must be greater than "
+						"overlap")));
 
 	/* Conservative estimate of number of chunks */
 	if (input_len == 0)
 	{
-		chunk_datums = (Datum *)palloc(sizeof(Datum));
+		chunk_datums = (Datum *) palloc(sizeof(Datum));
 		chunk_datums[0] = CStringGetTextDatum("");
 		result_array = construct_array(
-			chunk_datums, 1, TEXTOID, -1, false, TYPALIGN_INT);
+									   chunk_datums, 1, TEXTOID, -1, false, TYPALIGN_INT);
 		NDB_SAFE_PFREE_AND_NULL(chunk_datums);
 		PG_RETURN_ARRAYTYPE_P(result_array);
 	}
@@ -99,7 +102,7 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 	if (max_chunks < 1)
 		max_chunks = 1;
 
-	chunk_datums = (Datum *)palloc0(sizeof(Datum) * max_chunks);
+	chunk_datums = (Datum *) palloc0(sizeof(Datum) * max_chunks);
 
 	start = 0;
 	while (start < input_len)
@@ -111,12 +114,13 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 		/* Try to split on the separator, if provided and found */
 		if (separator && strlen(separator) > 0 && end < input_len)
 		{
-			int sep_pos = -1;
+			int			sep_pos = -1;
+
 			for (i = end; i > start; i--)
 			{
 				if (strncmp(input_str + i - strlen(separator),
-					    separator,
-					    strlen(separator))
+							separator,
+							strlen(separator))
 					== 0)
 				{
 					sep_pos = i;
@@ -132,7 +136,8 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 			break;
 
 		{
-			char *chunk_buf = (char *)palloc(chunk_len + 1);
+			char	   *chunk_buf = (char *) palloc(chunk_len + 1);
+
 			memcpy(chunk_buf, input_str + start, chunk_len);
 			chunk_buf[chunk_len] = '\0';
 			chunk_datums[chunk_count++] =
@@ -148,7 +153,7 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 			start = 0;
 	}
 	result_array = construct_array(
-		chunk_datums, chunk_count, TEXTOID, -1, false, TYPALIGN_INT);
+								   chunk_datums, chunk_count, TEXTOID, -1, false, TYPALIGN_INT);
 	NDB_SAFE_PFREE_AND_NULL(chunk_datums);
 	if (separator_text)
 		NDB_SAFE_PFREE_AND_NULL(separator);
@@ -163,24 +168,24 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 Datum
 neurondb_embed_text(PG_FUNCTION_ARGS)
 {
-	text *model_text;
-	text *input_text;
-	bool use_gpu;
+	text	   *model_text;
+	text	   *input_text;
+	bool		use_gpu;
 
-	char *model_name;
-	char *input_str;
-	int input_len;
-	const int embedding_dim = 384;
-	float *embedding_data;
-	Vector *result;
-	uint32 hash = 5381;
-	int i;
+	char	   *model_name;
+	char	   *input_str;
+	int			input_len;
+	const int	embedding_dim = 384;
+	float	   *embedding_data;
+	Vector	   *result;
+	uint32		hash = 5381;
+	int			i;
 
 	if (PG_NARGS() < 2 || PG_NARGS() > 3)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_embed_text: expected 2-3 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb_embed_text: expected 2-3 arguments, got %d",
+						PG_NARGS())));
 
 	model_text = PG_GETARG_TEXT_PP(0);
 	input_text = PG_GETARG_TEXT_PP(1);
@@ -190,30 +195,31 @@ neurondb_embed_text(PG_FUNCTION_ARGS)
 	input_str = text_to_cstring(input_text);
 	input_len = strlen(input_str);
 
-		elog(DEBUG1,
-			"neurondb_embed_text: model='%s', use_gpu=%d",
-		model_name,
-		use_gpu);
+	elog(DEBUG1,
+		 "neurondb_embed_text: model='%s', use_gpu=%d",
+		 model_name,
+		 use_gpu);
 
-	embedding_data = (float *)palloc(sizeof(float) * embedding_dim);
+	embedding_data = (float *) palloc(sizeof(float) * embedding_dim);
+
 	/*
-	 * Mock: create a deterministic pseudo-random vector using
-	 * djb2-like hash for plausible-appearing results (not real embedding).
+	 * Mock: create a deterministic pseudo-random vector using djb2-like hash
+	 * for plausible-appearing results (not real embedding).
 	 */
 	for (i = 0; i < input_len; i++)
-		hash = ((hash << 5) + hash) ^ (unsigned char)input_str[i];
+		hash = ((hash << 5) + hash) ^ (unsigned char) input_str[i];
 
 	for (i = 0; i < embedding_dim; i++)
 	{
 		hash = ((hash << 5) + hash)
-			^ (unsigned char)(model_name[i % strlen(model_name)]);
-		embedding_data[i] = ((float)((hash % 2000) - 1000)) / 1000.0f;
+			^ (unsigned char) (model_name[i % strlen(model_name)]);
+		embedding_data[i] = ((float) ((hash % 2000) - 1000)) / 1000.0f;
 	}
 
-	result = (Vector *)palloc(
-		VARHDRSZ + sizeof(int16) * 2 + sizeof(float) * embedding_dim);
+	result = (Vector *) palloc(
+							   VARHDRSZ + sizeof(int16) * 2 + sizeof(float) * embedding_dim);
 	SET_VARSIZE(result,
-		VARHDRSZ + sizeof(int16) * 2 + sizeof(float) * embedding_dim);
+				VARHDRSZ + sizeof(int16) * 2 + sizeof(float) * embedding_dim);
 	result->dim = embedding_dim;
 	result->unused = 0;
 	memcpy(result->data, embedding_data, sizeof(float) * embedding_dim);
@@ -236,12 +242,13 @@ simple_bm25(const char *query, const char *doc)
 	/*
 	 * Naive: score = matches of every query word in doc, normalized.
 	 */
-	float score = 0.0f;
-	int total = 0;
-	char *doc_lc = pstrdup(doc);
-	char *query_lc = pstrdup(query);
-	char *tok, *saveptr_q;
-	bool found = false;
+	float		score = 0.0f;
+	int			total = 0;
+	char	   *doc_lc = pstrdup(doc);
+	char	   *query_lc = pstrdup(query);
+	char	   *tok,
+			   *saveptr_q;
+	bool		found = false;
 
 	/* Lowercase for case-insensitive matching */
 	for (int i = 0; doc_lc[i]; i++)
@@ -250,7 +257,7 @@ simple_bm25(const char *query, const char *doc)
 		query_lc[i] = tolower(query_lc[i]);
 
 	for (tok = strtok_r(query_lc, " \t\r\n", &saveptr_q); tok != NULL;
-		tok = strtok_r(NULL, " \t\r\n", &saveptr_q))
+		 tok = strtok_r(NULL, " \t\r\n", &saveptr_q))
 	{
 		total++;
 		found = false;
@@ -264,7 +271,7 @@ simple_bm25(const char *query, const char *doc)
 
 	NDB_SAFE_PFREE_AND_NULL(doc_lc);
 	NDB_SAFE_PFREE_AND_NULL(query_lc);
-	return score + 0.5f; /* Base for sort stability */
+	return score + 0.5f;		/* Base for sort stability */
 }
 
 static float
@@ -273,25 +280,27 @@ simple_cosine(const char *query, const char *doc)
 	/*
 	 * Naive "cosine": overlap count for tokens.
 	 */
-	char *doc_lc = pstrdup(doc);
-	char *query_lc = pstrdup(query);
-	int score = 0;
-	int qcount = 0;
-	char *tok_q, *saveptr_q;
-	char *tok_d, *saveptr_d;
+	char	   *doc_lc = pstrdup(doc);
+	char	   *query_lc = pstrdup(query);
+	int			score = 0;
+	int			qcount = 0;
+	char	   *tok_q,
+			   *saveptr_q;
+	char	   *tok_d,
+			   *saveptr_d;
 
 	for (int i = 0; doc_lc[i]; i++)
 		doc_lc[i] = tolower(doc_lc[i]);
 	for (int i = 0; query_lc[i]; i++)
 		query_lc[i] = tolower(query_lc[i]);
 	for (tok_q = strtok_r(query_lc, " \t\r\n", &saveptr_q); tok_q != NULL;
-		tok_q = strtok_r(NULL, " \t\r\n", &saveptr_q))
+		 tok_q = strtok_r(NULL, " \t\r\n", &saveptr_q))
 	{
 		qcount++;
 		/* Here, check if token appears in doc */
 		for (tok_d = strtok_r(doc_lc, " \t\r\n", &saveptr_d);
-			tok_d != NULL;
-			tok_d = strtok_r(NULL, " \t\r\n", &saveptr_d))
+			 tok_d != NULL;
+			 tok_d = strtok_r(NULL, " \t\r\n", &saveptr_d))
 		{
 			if (strcmp(tok_d, tok_q) == 0)
 			{
@@ -308,17 +317,24 @@ simple_cosine(const char *query, const char *doc)
 		qcount = 1;
 	NDB_SAFE_PFREE_AND_NULL(doc_lc);
 	NDB_SAFE_PFREE_AND_NULL(query_lc);
-	return (float)score / qcount + 0.5f; /* stabilization */
+	return (float) score / qcount + 0.5f;	/* stabilization */
 }
 
 static int
 levenshtein(const char *s1, const char *s2)
 {
-	int len1 = strlen(s1), len2 = strlen(s2);
-	int *v0 = (int *)palloc(sizeof(int) * (len2 + 1));
-	int *v1 = (int *)palloc(sizeof(int) * (len2 + 1));
+	int			len1 = strlen(s1),
+				len2 = strlen(s2);
+	int		   *v0 = (int *) palloc(sizeof(int) * (len2 + 1));
+	int		   *v1 = (int *) palloc(sizeof(int) * (len2 + 1));
 
-	int i, j, cost, min1, min2, min3;
+	int			i,
+				j,
+				cost,
+				min1,
+				min2,
+				min3;
+
 	for (j = 0; j <= len2; j++)
 		v0[j] = j;
 	for (i = 0; i < len1; i++)
@@ -339,7 +355,7 @@ levenshtein(const char *s1, const char *s2)
 		memcpy(v0, v1, sizeof(int) * (len2 + 1));
 	}
 	{
-		int result;
+		int			result;
 
 		result = v1[len2];
 		NDB_SAFE_PFREE_AND_NULL(v0);
@@ -352,34 +368,35 @@ static float
 simple_edit_distance(const char *query, const char *doc)
 {
 	/*
-	 * Return normalized similarity based on edit distance:
-	 * similarity = 1.0 - (edit_distance / max(len1, len2))
+	 * Return normalized similarity based on edit distance: similarity = 1.0 -
+	 * (edit_distance / max(len1, len2))
 	 */
-	int lenq = strlen(query);
-	int lend;
-	int maxl;
-	int edit;
+	int			lenq = strlen(query);
+	int			lend;
+	int			maxl;
+	int			edit;
 
 	lend = strlen(doc);
 	maxl = (lenq > lend) ? lenq : lend;
 	if (maxl == 0)
 		return 1.0f;
 	edit = levenshtein(query, doc);
-	return 1.0f - ((float)edit / (float)maxl);
+	return 1.0f - ((float) edit / (float) maxl);
 }
 
 typedef struct
 {
-	char *doc;
-	float score;
-	int rawidx;
-} doc_with_score;
+	char	   *doc;
+	float		score;
+	int			rawidx;
+}			doc_with_score;
 
 static int
 doc_with_score_cmp(const void *a, const void *b)
 {
-	const doc_with_score *da = (const doc_with_score *)a;
-	const doc_with_score *db = (const doc_with_score *)b;
+	const		doc_with_score *da = (const doc_with_score *) a;
+	const		doc_with_score *db = (const doc_with_score *) b;
+
 	if (da->score > db->score)
 		return -1;
 	if (da->score < db->score)
@@ -390,24 +407,28 @@ doc_with_score_cmp(const void *a, const void *b)
 Datum
 neurondb_rank_documents(PG_FUNCTION_ARGS)
 {
-	text *query_text;
-	ArrayType *documents_array;
-	text *algorithm_text;
+	text	   *query_text;
+	ArrayType  *documents_array;
+	text	   *algorithm_text;
 
-	char *query;
-	char *algorithm;
-	int ndims, nelems, *dims;
-	Datum *elem_values;
-	bool *elem_nulls;
+	char	   *query;
+	char	   *algorithm;
+	int			ndims,
+				nelems,
+			   *dims;
+	Datum	   *elem_values;
+	bool	   *elem_nulls;
 	doc_with_score *ranklist;
-	int i, limit = 10, count = 0;
+	int			i,
+				limit = 10,
+				count = 0;
 	StringInfoData json_result;
 
 	if (PG_NARGS() < 2 || PG_NARGS() > 3)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_rank_documents: expected 2-3 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb_rank_documents: expected 2-3 arguments, got %d",
+						PG_NARGS())));
 
 	query_text = PG_GETARG_TEXT_PP(0);
 	documents_array = PG_GETARG_ARRAYTYPE_P(1);
@@ -415,21 +436,21 @@ neurondb_rank_documents(PG_FUNCTION_ARGS)
 
 	query = text_to_cstring(query_text);
 	algorithm = algorithm_text ? text_to_cstring(algorithm_text)
-				   : pstrdup("bm25");
+		: pstrdup("bm25");
 
 	ndims = ARR_NDIM(documents_array);
 	dims = ARR_DIMS(documents_array);
 	nelems = ArrayGetNItems(ndims, dims);
 
 	deconstruct_array(documents_array,
-		TEXTOID,
-		-1,
-		false,
-		TYPALIGN_INT,
-		&elem_values,
-		&elem_nulls,
-		&nelems);
-	ranklist = (doc_with_score *)palloc0(nelems * sizeof(doc_with_score));
+					  TEXTOID,
+					  -1,
+					  false,
+					  TYPALIGN_INT,
+					  &elem_values,
+					  &elem_nulls,
+					  &nelems);
+	ranklist = (doc_with_score *) palloc0(nelems * sizeof(doc_with_score));
 	for (i = 0; i < nelems; i++)
 	{
 		if (elem_nulls[i])
@@ -465,10 +486,10 @@ neurondb_rank_documents(PG_FUNCTION_ARGS)
 			if (count != 0)
 				appendStringInfoString(&json_result, ", ");
 			appendStringInfo(&json_result,
-				"{\"document\": %s, \"score\": %.4f, \"rank\": %d}",
-				quote_literal_cstr(ranklist[i].doc),
-				ranklist[i].score,
-				count + 1);
+							 "{\"document\": %s, \"score\": %.4f, \"rank\": %d}",
+							 quote_literal_cstr(ranklist[i].doc),
+							 ranklist[i].score,
+							 count + 1);
 			count++;
 		}
 	}
@@ -486,7 +507,7 @@ neurondb_rank_documents(PG_FUNCTION_ARGS)
 	NDB_SAFE_PFREE_AND_NULL(query);
 
 	PG_RETURN_JSONB_P(DatumGetJsonbP(DirectFunctionCall1(
-		jsonb_in, CStringGetDatum(json_result.data))));
+														 jsonb_in, CStringGetDatum(json_result.data))));
 }
 
 /*
@@ -497,26 +518,33 @@ neurondb_rank_documents(PG_FUNCTION_ARGS)
 Datum
 neurondb_transform_data(PG_FUNCTION_ARGS)
 {
-	text *pipeline_text;
-	ArrayType *input_array;
+	text	   *pipeline_text;
+	ArrayType  *input_array;
 
-	char *pipeline_name;
-	int ndims, nelems, *dims;
-	Oid element_type;
-	Datum *elem_values = NULL;
-	bool *elem_nulls = NULL;
-	float8 *transformed_data;
-	Datum *result_datums;
-	ArrayType *result_array;
-	int i;
-	float8 sum = 0.0, sum_sq = 0.0, min_v = DBL_MAX, max_v = -DBL_MAX, mean,
-	       stddev, range;
+	char	   *pipeline_name;
+	int			ndims,
+				nelems,
+			   *dims;
+	Oid			element_type;
+	Datum	   *elem_values = NULL;
+	bool	   *elem_nulls = NULL;
+	float8	   *transformed_data;
+	Datum	   *result_datums;
+	ArrayType  *result_array;
+	int			i;
+	float8		sum = 0.0,
+				sum_sq = 0.0,
+				min_v = DBL_MAX,
+				max_v = -DBL_MAX,
+				mean,
+				stddev,
+				range;
 
 	if (PG_NARGS() != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb_transform_data: expected 2 arguments, got %d",
-					PG_NARGS())));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb_transform_data: expected 2 arguments, got %d",
+						PG_NARGS())));
 
 	pipeline_text = PG_GETARG_TEXT_PP(0);
 	input_array = PG_GETARG_ARRAYTYPE_P(1);
@@ -529,13 +557,13 @@ neurondb_transform_data(PG_FUNCTION_ARGS)
 	element_type = ARR_ELEMTYPE(input_array);
 
 	deconstruct_array(input_array,
-		element_type,
-		sizeof(float8),
-		FLOAT8PASSBYVAL,
-		'd',
-		&elem_values,
-		&elem_nulls,
-		&nelems);
+					  element_type,
+					  sizeof(float8),
+					  FLOAT8PASSBYVAL,
+					  'd',
+					  &elem_values,
+					  &elem_nulls,
+					  &nelems);
 
 	if (nelems == 0)
 	{
@@ -548,7 +576,8 @@ neurondb_transform_data(PG_FUNCTION_ARGS)
 	{
 		if (!elem_nulls[i])
 		{
-			float8 x = DatumGetFloat8(elem_values[i]);
+			float8		x = DatumGetFloat8(elem_values[i]);
+
 			sum += x;
 			sum_sq += x * x;
 			if (x < min_v)
@@ -560,25 +589,28 @@ neurondb_transform_data(PG_FUNCTION_ARGS)
 	mean = sum / nelems;
 	stddev = sqrt((sum_sq / nelems) - (mean * mean));
 
-	transformed_data = (float8 *)palloc0(sizeof(float8) * nelems);
-	result_datums = (Datum *)palloc0(sizeof(Datum) * nelems);
+	transformed_data = (float8 *) palloc0(sizeof(float8) * nelems);
+	result_datums = (Datum *) palloc0(sizeof(Datum) * nelems);
 
 	if (strcmp(pipeline_name, "normalize") == 0)
 	{
 		/* L2 normalization */
-		float8 norm = sqrt(sum_sq);
+		float8		norm = sqrt(sum_sq);
+
 		if (norm <= 0.0)
 		{
 			for (i = 0; i < nelems; i++)
 				transformed_data[i] = 0.0;
-		} else
+		}
+		else
 		{
 			for (i = 0; i < nelems; i++)
 				transformed_data[i] = elem_nulls[i]
 					? 0.0
 					: DatumGetFloat8(elem_values[i]) / norm;
 		}
-	} else if (strcmp(pipeline_name, "standardize") == 0)
+	}
+	else if (strcmp(pipeline_name, "standardize") == 0)
 	{
 		/* Z-score */
 		if (stddev > 0.0)
@@ -587,14 +619,16 @@ neurondb_transform_data(PG_FUNCTION_ARGS)
 				transformed_data[i] = elem_nulls[i]
 					? 0.0
 					: (DatumGetFloat8(elem_values[i])
-						  - mean)
-						/ stddev;
-		} else
+					   - mean)
+					/ stddev;
+		}
+		else
 		{
 			for (i = 0; i < nelems; i++)
 				transformed_data[i] = 0.0;
 		}
-	} else if (strcmp(pipeline_name, "min_max") == 0)
+	}
+	else if (strcmp(pipeline_name, "min_max") == 0)
 	{
 		/* Min-max scaling [0, 1] */
 		range = max_v - min_v;
@@ -604,35 +638,37 @@ neurondb_transform_data(PG_FUNCTION_ARGS)
 				transformed_data[i] = elem_nulls[i]
 					? 0.0
 					: (DatumGetFloat8(elem_values[i])
-						  - min_v)
-						/ range;
-		} else
+					   - min_v)
+					/ range;
+		}
+		else
 		{
 			for (i = 0; i < nelems; i++)
 				transformed_data[i] = 0.5;
 		}
-	} else
+	}
+	else
 	{
 		NDB_SAFE_PFREE_AND_NULL(transformed_data);
 		NDB_SAFE_PFREE_AND_NULL(result_datums);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("unsupported transformation pipeline: "
-				       "\"%s\"",
-					pipeline_name),
-				errhint("Supported pipelines: normalize, "
-					"standardize, min_max")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("unsupported transformation pipeline: "
+						"\"%s\"",
+						pipeline_name),
+				 errhint("Supported pipelines: normalize, "
+						 "standardize, min_max")));
 	}
 
 	for (i = 0; i < nelems; i++)
 		result_datums[i] = Float8GetDatum(transformed_data[i]);
 
 	result_array = construct_array(result_datums,
-		nelems,
-		FLOAT8OID,
-		sizeof(float8),
-		FLOAT8PASSBYVAL,
-		'd');
+								   nelems,
+								   FLOAT8OID,
+								   sizeof(float8),
+								   FLOAT8PASSBYVAL,
+								   'd');
 
 	NDB_SAFE_PFREE_AND_NULL(result_datums);
 	NDB_SAFE_PFREE_AND_NULL(transformed_data);

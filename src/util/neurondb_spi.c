@@ -42,7 +42,7 @@ struct NdbSpiSession
 {
 	bool		we_connected_spi;	/* Did we call SPI_connect()? */
 	MemoryContext parent_context;	/* Context before SPI_connect() */
-	MemoryContext spi_context;		/* SPI context (if connected) */
+	MemoryContext spi_context;	/* SPI context (if connected) */
 };
 
 /*-------------------------------------------------------------------------
@@ -53,7 +53,7 @@ struct NdbSpiSession
 NdbSpiSession *
 ndb_spi_session_begin(MemoryContext parent_context, bool assume_spi_connected)
 {
-	NDB_DECLARE(NdbSpiSession *, session);
+	NDB_DECLARE (NdbSpiSession *, session);
 	MemoryContext oldcontext;
 
 	if (parent_context == NULL)
@@ -61,7 +61,8 @@ ndb_spi_session_begin(MemoryContext parent_context, bool assume_spi_connected)
 
 	/* Allocate session in parent context */
 	oldcontext = MemoryContextSwitchTo(parent_context);
-	NDB_ALLOC(session, NdbSpiSession, 1);
+	NDB_ALLOC	(session, NdbSpiSession, 1);
+
 	MemoryContextSwitchTo(oldcontext);
 
 	session->parent_context = parent_context;
@@ -80,8 +81,8 @@ ndb_spi_session_begin(MemoryContext parent_context, bool assume_spi_connected)
 		{
 			NDB_SAFE_PFREE_AND_NULL(session);
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed in ndb_spi_session_begin")));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: SPI_connect failed in ndb_spi_session_begin")));
 		}
 		session->we_connected_spi = true;
 		session->spi_context = CurrentMemoryContext;
@@ -147,13 +148,13 @@ ndb_spi_execute(NdbSpiSession *session,
 
 	if (session == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: ndb_spi_execute: session is NULL")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ndb_spi_execute: session is NULL")));
 
 	if (query == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: ndb_spi_execute: query is NULL")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ndb_spi_execute: query is NULL")));
 
 	/* Ensure we're in SPI context */
 	oldcontext = MemoryContextSwitchTo(session->spi_context);
@@ -174,6 +175,7 @@ ndb_spi_execute(NdbSpiSession *session,
 		if (ret < 0)
 		{
 			const char *error_msg = "unknown SPI error";
+
 			switch (ret)
 			{
 				case SPI_ERROR_UNCONNECTED:
@@ -193,10 +195,10 @@ ndb_spi_execute(NdbSpiSession *session,
 					break;
 			}
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_execute returned error code %d: %s",
-					ret, error_msg),
-				 errdetail("Query: %s (SPI code: %d)", query, ret)));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: SPI_execute returned error code %d: %s",
+							ret, error_msg),
+					 errdetail("Query: %s (SPI code: %d)", query, ret)));
 		}
 	}
 	PG_CATCH();
@@ -214,7 +216,7 @@ int
 ndb_spi_execute_with_args(NdbSpiSession *session,
 						  const char *src,
 						  int nargs,
-						  Oid *argtypes,
+						  Oid * argtypes,
 						  Datum *values,
 						  const char *nulls,
 						  bool read_only,
@@ -225,13 +227,13 @@ ndb_spi_execute_with_args(NdbSpiSession *session,
 
 	if (session == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: ndb_spi_execute_with_args: session is NULL")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ndb_spi_execute_with_args: session is NULL")));
 
 	if (src == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: ndb_spi_execute_with_args: src is NULL")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ndb_spi_execute_with_args: src is NULL")));
 
 	/* Ensure we're in SPI context */
 	oldcontext = MemoryContextSwitchTo(session->spi_context);
@@ -253,6 +255,7 @@ ndb_spi_execute_with_args(NdbSpiSession *session,
 		if (ret < 0)
 		{
 			const char *error_msg = "unknown SPI error";
+
 			switch (ret)
 			{
 				case SPI_ERROR_UNCONNECTED:
@@ -272,10 +275,10 @@ ndb_spi_execute_with_args(NdbSpiSession *session,
 					break;
 			}
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_execute_with_args returned error code %d: %s",
-					ret, error_msg),
-				 errdetail("Query: %s (SPI code: %d)", src, ret)));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: SPI_execute_with_args returned error code %d: %s",
+							ret, error_msg),
+					 errdetail("Query: %s (SPI code: %d)", src, ret)));
 		}
 	}
 	PG_CATCH();
@@ -301,13 +304,13 @@ ndb_spi_stringinfo_init(NdbSpiSession *session, StringInfoData *str)
 
 	if (session == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: ndb_spi_stringinfo_init: session is NULL")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ndb_spi_stringinfo_init: session is NULL")));
 
 	if (str == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: ndb_spi_stringinfo_init: str is NULL")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: ndb_spi_stringinfo_init: str is NULL")));
 
 	/* Initialize StringInfo in SPI context */
 	oldcontext = MemoryContextSwitchTo(session->spi_context);
@@ -321,8 +324,9 @@ ndb_spi_stringinfo_free(NdbSpiSession *session, StringInfoData *str)
 	if (session == NULL || str == NULL || str->data == NULL)
 		return;
 
-	/* pfree is context-aware through chunk headers, so we don't need
-	 * to switch contexts. Always free explicitly for consistency.
+	/*
+	 * pfree is context-aware through chunk headers, so we don't need to
+	 * switch contexts. Always free explicitly for consistency.
 	 */
 	NDB_SAFE_PFREE_AND_NULL(str->data);
 }
@@ -349,7 +353,7 @@ bool
 ndb_spi_get_int32(NdbSpiSession *session,
 				  int row_idx,
 				  int col_idx,
-				  int32 *out_value)
+				  int32 * out_value)
 {
 	Datum		datum;
 	bool		isnull;
@@ -368,9 +372,9 @@ ndb_spi_get_int32(NdbSpiSession *session,
 
 	/* Extract datum from SPI result */
 	datum = SPI_getbinval(SPI_tuptable->vals[row_idx],
-						 SPI_tuptable->tupdesc,
-						 col_idx,
-						 &isnull);
+						  SPI_tuptable->tupdesc,
+						  col_idx,
+						  &isnull);
 
 	if (isnull)
 		return false;
@@ -409,16 +413,16 @@ ndb_spi_get_text(NdbSpiSession *session,
 
 	/* Extract datum from SPI result */
 	datum = SPI_getbinval(SPI_tuptable->vals[row_idx],
-						 SPI_tuptable->tupdesc,
-						 col_idx,
-						 &isnull);
+						  SPI_tuptable->tupdesc,
+						  col_idx,
+						  &isnull);
 
 	if (isnull)
 		return NULL;
 
 	/* Copy directly from datum to caller's context */
 	oldcontext = MemoryContextSwitchTo(dest_context);
-	result = (text *)PG_DETOAST_DATUM_COPY(datum);
+	result = (text *) PG_DETOAST_DATUM_COPY(datum);
 	MemoryContextSwitchTo(oldcontext);
 
 	return result;
@@ -452,16 +456,16 @@ ndb_spi_get_jsonb(NdbSpiSession *session,
 
 	/* Extract datum from SPI result */
 	datum = SPI_getbinval(SPI_tuptable->vals[row_idx],
-						 SPI_tuptable->tupdesc,
-						 col_idx,
-						 &isnull);
+						  SPI_tuptable->tupdesc,
+						  col_idx,
+						  &isnull);
 
 	if (isnull)
 		return NULL;
 
 	/* Copy directly from datum to caller's context */
 	oldcontext = MemoryContextSwitchTo(dest_context);
-	result = (Jsonb *)PG_DETOAST_DATUM_COPY(datum);
+	result = (Jsonb *) PG_DETOAST_DATUM_COPY(datum);
 	MemoryContextSwitchTo(oldcontext);
 
 	return result;
@@ -495,18 +499,17 @@ ndb_spi_get_bytea(NdbSpiSession *session,
 
 	/* Extract datum from SPI result */
 	datum = SPI_getbinval(SPI_tuptable->vals[row_idx],
-						 SPI_tuptable->tupdesc,
-						 col_idx,
-						 &isnull);
+						  SPI_tuptable->tupdesc,
+						  col_idx,
+						  &isnull);
 
 	if (isnull)
 		return NULL;
 
 	/* Copy directly from datum to caller's context */
 	oldcontext = MemoryContextSwitchTo(dest_context);
-	result = (bytea *)PG_DETOAST_DATUM_COPY(datum);
+	result = (bytea *) PG_DETOAST_DATUM_COPY(datum);
 	MemoryContextSwitchTo(oldcontext);
 
 	return result;
 }
-

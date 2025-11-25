@@ -30,20 +30,20 @@
 #include <math.h>
 
 /* Temporal scoring parameters */
-#define DEFAULT_DECAY_RATE 0.1 /* Per day */
-#define DEFAULT_RECENCY_WEIGHT 0.3 /* 0..1 */
+#define DEFAULT_DECAY_RATE 0.1	/* Per day */
+#define DEFAULT_RECENCY_WEIGHT 0.3	/* 0..1 */
 
 /*
  * Temporal scoring configuration
  */
 typedef struct TemporalConfig
 {
-	float4 decayRate; /* Exponential decay rate */
-	float4 recencyWeight; /* Weight for temporal component */
-	TimestampTz referenceTime; /* Reference timestamp (usually now) */
-	Interval *timeWindow; /* Optional time window filter */
-	bool enabled;
-} TemporalConfig;
+	float4		decayRate;		/* Exponential decay rate */
+	float4		recencyWeight;	/* Weight for temporal component */
+	TimestampTz referenceTime;	/* Reference timestamp (usually now) */
+	Interval   *timeWindow;		/* Optional time window filter */
+	bool		enabled;
+}			TemporalConfig;
 
 /*
  * Comparison function for temporal items (for qsort)
@@ -51,16 +51,16 @@ typedef struct TemporalConfig
 typedef struct TemporalItem
 {
 	ItemPointer item;
-	float4 distance;
+	float4		distance;
 	TimestampTz timestamp;
-	float4 score;
-} TemporalItem;
+	float4		score;
+}			TemporalItem;
 
 static int
 compare_temporal_items(const void *a, const void *b)
 {
-	const TemporalItem *item_a = (const TemporalItem *)a;
-	const TemporalItem *item_b = (const TemporalItem *)b;
+	const		TemporalItem *item_a = (const TemporalItem *) a;
+	const		TemporalItem *item_b = (const TemporalItem *) b;
 
 	/* Sort by decreasing score */
 	if (item_b->score > item_a->score)
@@ -79,15 +79,15 @@ compare_temporal_items(const void *a, const void *b)
 static float4
 compute_time_decay(TimestampTz docTime, TimestampTz refTime, float4 decayRate)
 {
-	float8 age_seconds;
-	float8 age_days;
-	float4 decay;
+	float8		age_seconds;
+	float8		age_days;
+	float4		decay;
 
-	age_seconds = (float8)(refTime - docTime) / USECS_PER_SEC;
+	age_seconds = (float8) (refTime - docTime) / USECS_PER_SEC;
 	age_days = age_seconds / (24.0 * 3600.0);
 
 	/* Exponential decay */
-	decay = (float4)exp(-decayRate * age_days);
+	decay = (float4) exp(-decayRate * age_days);
 
 	return decay;
 }
@@ -99,22 +99,22 @@ compute_time_decay(TimestampTz docTime, TimestampTz refTime, float4 decayRate)
  */
 static float4
 temporal_compute_hybrid_score(float4 vectorDistance,
-	TimestampTz docTime,
-	TemporalConfig *config)
+							  TimestampTz docTime,
+							  TemporalConfig * config)
 {
-	float4 vectorScore;
-	float4 temporalScore;
-	float4 finalScore;
+	float4		vectorScore;
+	float4		temporalScore;
+	float4		finalScore;
 
 	if (!config->enabled)
-		return 1.0 / (1.0 + vectorDistance); /* Vector-only */
+		return 1.0 / (1.0 + vectorDistance);	/* Vector-only */
 
 	/* Normalize vector distance to similarity score */
 	vectorScore = 1.0 / (1.0 + vectorDistance);
 
 	/* Compute temporal score */
 	temporalScore = compute_time_decay(
-		docTime, config->referenceTime, config->decayRate);
+									   docTime, config->referenceTime, config->decayRate);
 
 	/* Weighted combination */
 	finalScore = (1.0 - config->recencyWeight) * vectorScore
@@ -127,7 +127,7 @@ temporal_compute_hybrid_score(float4 vectorDistance,
  * Check if document is within time window
  */
 static bool
-temporal_in_window(TimestampTz docTime, TemporalConfig *config)
+temporal_in_window(TimestampTz docTime, TemporalConfig * config)
 {
 	TimestampTz windowStart;
 
@@ -138,15 +138,16 @@ temporal_in_window(TimestampTz docTime, TemporalConfig *config)
 	/* Proper interval subtraction: convert interval to microseconds */
 	if (config->timeWindow != NULL)
 	{
-		int64 interval_usec;
+		int64		interval_usec;
 
 		/* Convert interval to microseconds */
 		interval_usec = config->timeWindow->time;
-		interval_usec += (int64)config->timeWindow->day * USECS_PER_DAY;
-		interval_usec += (int64)config->timeWindow->month * (30 * USECS_PER_DAY);
+		interval_usec += (int64) config->timeWindow->day * USECS_PER_DAY;
+		interval_usec += (int64) config->timeWindow->month * (30 * USECS_PER_DAY);
 
 		windowStart = config->referenceTime - interval_usec;
-	} else
+	}
+	else
 	{
 		/* No window specified, use default 7 days */
 		windowStart = config->referenceTime
@@ -162,15 +163,17 @@ temporal_in_window(TimestampTz docTime, TemporalConfig *config)
  * Takes a set of results and re-orders them by combined vector+temporal score.
  */
 static void
-pg_attribute_unused() temporal_rerank_results(ItemPointer *items,
-	float4 *distances,
-	TimestampTz *timestamps,
-	int count,
-	TemporalConfig *config)
+pg_attribute_unused() temporal_rerank_results(ItemPointer * items,
+											  float4 * distances,
+											  TimestampTz * timestamps,
+											  int count,
+											  TemporalConfig * config)
 {
-	float4 *scores;
-	int i, j;
-	float4 temp_score, temp_dist;
+	float4	   *scores;
+	int			i,
+				j;
+	float4		temp_score,
+				temp_dist;
 	ItemPointer temp_item;
 	TimestampTz temp_ts;
 
@@ -178,13 +181,13 @@ pg_attribute_unused() temporal_rerank_results(ItemPointer *items,
 		return;
 
 	/* Compute hybrid scores */
-	scores = (float4 *)palloc(count * sizeof(float4));
+	scores = (float4 *) palloc(count * sizeof(float4));
 	NDB_CHECK_ALLOC(scores, "scores");
 
 	for (i = 0; i < count; i++)
 	{
 		scores[i] = temporal_compute_hybrid_score(
-			distances[i], timestamps[i], config);
+												  distances[i], timestamps[i], config);
 	}
 
 	/* Sort by score descending */
@@ -195,7 +198,7 @@ pg_attribute_unused() temporal_rerank_results(ItemPointer *items,
 		{
 			for (j = i + 1; j < count; j++)
 			{
-				if (scores[j] > scores[i]) /* Higher score = better */
+				if (scores[j] > scores[i])	/* Higher score = better */
 				{
 					/* Swap */
 					temp_score = scores[i];
@@ -216,20 +219,21 @@ pg_attribute_unused() temporal_rerank_results(ItemPointer *items,
 				}
 			}
 		}
-	} else
+	}
+	else
 	{
 		/* Use qsort for larger sets */
 		struct
 		{
 			ItemPointer item;
-			float4 distance;
+			float4		distance;
 			TimestampTz timestamp;
-			float4 score;
-		} *sort_items;
-		int idx;
+			float4		score;
+		}		   *sort_items;
+		int			idx;
 
 		sort_items = palloc(sizeof(*sort_items) * count);
-  NDB_CHECK_ALLOC(sort_items, "allocation");
+		NDB_CHECK_ALLOC(sort_items, "allocation");
 		for (idx = 0; idx < count; idx++)
 		{
 			sort_items[idx].item = items[idx];
@@ -239,9 +243,9 @@ pg_attribute_unused() temporal_rerank_results(ItemPointer *items,
 		}
 
 		qsort(sort_items,
-			count,
-			sizeof(*sort_items),
-			compare_temporal_items);
+			  count,
+			  sizeof(*sort_items),
+			  compare_temporal_items);
 
 		for (idx = 0; idx < count; idx++)
 		{
@@ -265,12 +269,12 @@ PG_FUNCTION_INFO_V1(neurondb_temporal_score);
 Datum
 neurondb_temporal_score(PG_FUNCTION_ARGS)
 {
-	float4 vectorDistance = PG_GETARG_FLOAT4(0);
+	float4		vectorDistance = PG_GETARG_FLOAT4(0);
 	TimestampTz docTime = PG_GETARG_TIMESTAMPTZ(1);
-	float4 decayRate = PG_GETARG_FLOAT4(2);
-	float4 recencyWeight = PG_GETARG_FLOAT4(3);
+	float4		decayRate = PG_GETARG_FLOAT4(2);
+	float4		recencyWeight = PG_GETARG_FLOAT4(3);
 	TemporalConfig config;
-	float4 score;
+	float4		score;
 
 	config.decayRate = decayRate;
 	config.recencyWeight = recencyWeight;
@@ -292,9 +296,9 @@ Datum
 neurondb_temporal_filter(PG_FUNCTION_ARGS)
 {
 	TimestampTz docTime = PG_GETARG_TIMESTAMPTZ(0);
-	Interval *window = PG_GETARG_INTERVAL_P(1);
+	Interval   *window = PG_GETARG_INTERVAL_P(1);
 	TemporalConfig config;
-	bool inWindow;
+	bool		inWindow;
 
 	config.referenceTime = GetCurrentTimestamp();
 	config.timeWindow = window;
@@ -313,7 +317,7 @@ temporal_create_config(float4 decayRate, float4 recencyWeight)
 {
 	TemporalConfig *config;
 
-	config = (TemporalConfig *)palloc0(sizeof(TemporalConfig));
+	config = (TemporalConfig *) palloc0(sizeof(TemporalConfig));
 	NDB_CHECK_ALLOC(config, "config");
 	config->decayRate = decayRate;
 	config->recencyWeight = recencyWeight;
@@ -331,46 +335,48 @@ temporal_create_config(float4 decayRate, float4 recencyWeight)
  * temporal boosting to results.
  */
 static void
-pg_attribute_unused() temporal_integrate_hnsw_search(BlockNumber *results,
-	float4 *distances,
-	int resultCount,
-	float4 decayRate,
-	float4 recencyWeight)
+pg_attribute_unused() temporal_integrate_hnsw_search(BlockNumber * results,
+													 float4 * distances,
+													 int resultCount,
+													 float4 decayRate,
+													 float4 recencyWeight)
 {
 	TimestampTz *timestamps;
 	TemporalConfig *config;
-	int i;
+	int			i;
 
-	(void)results; /* Unused - would fetch from blocks */
-	(void)distances; /* Used later for reranking */
+	(void) results;				/* Unused - would fetch from blocks */
+	(void) distances;			/* Used later for reranking */
 
 	if (resultCount == 0)
 		return;
 
 	/* Allocate timestamp array */
-	timestamps = (TimestampTz *)palloc(resultCount * sizeof(TimestampTz));
+	timestamps = (TimestampTz *) palloc(resultCount * sizeof(TimestampTz));
 	NDB_CHECK_ALLOC(timestamps, "timestamps");
 
 	/* Fetch timestamps from heap tuples */
-	/* Note: This requires ItemPointers and a heap relation, which are not
+
+	/*
+	 * Note: This requires ItemPointers and a heap relation, which are not
 	 * available in the current function signature. For a full implementation,
-	 * this function would need:
-	 * - Relation heapRel parameter
-	 * - ItemPointer *items parameter (from index nodes)
-	 * - Column name or attnum for timestamp column
-	 * 
+	 * this function would need: - Relation heapRel parameter - ItemPointer
+	 * *items parameter (from index nodes) - Column name or attnum for
+	 * timestamp column
+	 *
 	 * For now, use current timestamp as placeholder until function signature
 	 * is extended to provide necessary context.
 	 */
 	for (i = 0; i < resultCount; i++)
 	{
-		/* TODO: When ItemPointers and heap relation are available:
-		 * 1. Get ItemPointer from index node at results[i]
-		 * 2. Fetch heap tuple using heap_fetch(heapRel, snapshot, &items[i])
-		 * 3. Extract timestamp column using heap_getattr()
-		 * 4. Convert to TimestampTz
+		/*
+		 * TODO: When ItemPointers and heap relation are available: 1. Get
+		 * ItemPointer from index node at results[i] 2. Fetch heap tuple using
+		 * heap_fetch(heapRel, snapshot, &items[i]) 3. Extract timestamp
+		 * column using heap_getattr() 4. Convert to TimestampTz
 		 */
-		timestamps[i] = GetCurrentTimestamp(); /* Placeholder - requires heap access */
+		timestamps[i] = GetCurrentTimestamp();	/* Placeholder - requires heap
+												 * access */
 	}
 
 	/* Create config */
@@ -389,17 +395,17 @@ pg_attribute_unused() temporal_integrate_hnsw_search(BlockNumber *results,
  */
 static TimestampTz
 pg_attribute_unused() temporal_get_tuple_timestamp(HeapTuple tuple,
-	TupleDesc tupdesc,
-	const char *columnName)
+												   TupleDesc tupdesc,
+												   const char *columnName)
 {
-	bool isnull;
-	Datum datum;
-	int attnum;
+	bool		isnull;
+	Datum		datum;
+	int			attnum;
 
 	/* Find timestamp column */
 	attnum = SPI_fnumber(tupdesc, columnName);
 	if (attnum == SPI_ERROR_NOATTRIBUTE)
-		return GetCurrentTimestamp(); /* Fallback to now */
+		return GetCurrentTimestamp();	/* Fallback to now */
 
 	datum = SPI_getbinval(tuple, tupdesc, attnum, &isnull);
 	if (isnull)

@@ -43,7 +43,7 @@
 static char *
 get_rerank_cache_table(const char *tbl, const char *col)
 {
-	char   *buf;
+	char	   *buf;
 
 	Assert(tbl != NULL && col != NULL);
 
@@ -64,8 +64,8 @@ get_rerank_cache_table(const char *tbl, const char *col)
 static uint64
 vector_hash(Vector *v)
 {
-	int		i;
-	uint64	h = 0;
+	int			i;
+	uint64		h = 0;
 
 	if (v == NULL)
 		elog(ERROR, "vector_hash: NULL input");
@@ -82,8 +82,8 @@ vector_hash(Vector *v)
 static float4 __attribute__((unused))
 vector_l2(Vector *a, Vector *b)
 {
-	int		i;
-	float4	sum = 0.0f;
+	int			i;
+	float4		sum = 0.0f;
 
 	if (a == NULL || b == NULL)
 		elog(ERROR, "vector_l2: NULL input");
@@ -93,7 +93,8 @@ vector_l2(Vector *a, Vector *b)
 
 	for (i = 0; i < a->dim; i++)
 	{
-		float4	d = a->data[i] - b->data[i];
+		float4		d = a->data[i] - b->data[i];
+
 		sum += d * d;
 	}
 
@@ -109,15 +110,15 @@ PG_FUNCTION_INFO_V1(rerank_index_create);
 Datum
 rerank_index_create(PG_FUNCTION_ARGS)
 {
-	text   *table_name = PG_GETARG_TEXT_PP(0);
-	text   *vector_col = PG_GETARG_TEXT_PP(1);
-	int32	cache_size = PG_GETARG_INT32(2);
-	int32	k_candidates = PG_GETARG_INT32(3);
-	char   *tbl_str = text_to_cstring(table_name);
-	char   *col_str = text_to_cstring(vector_col);
-	char   *cache_tbl;
+	text	   *table_name = PG_GETARG_TEXT_PP(0);
+	text	   *vector_col = PG_GETARG_TEXT_PP(1);
+	int32		cache_size = PG_GETARG_INT32(2);
+	int32		k_candidates = PG_GETARG_INT32(3);
+	char	   *tbl_str = text_to_cstring(table_name);
+	char	   *col_str = text_to_cstring(vector_col);
+	char	   *cache_tbl;
 	StringInfoData sql;
-	int    ret;
+	int			ret;
 
 	cache_tbl = get_rerank_cache_table(tbl_str, col_str);
 
@@ -164,22 +165,22 @@ PG_FUNCTION_INFO_V1(rerank_get_candidates);
 Datum
 rerank_get_candidates(PG_FUNCTION_ARGS)
 {
-	Vector *query = PG_GETARG_VECTOR_P(0);
-	int32 k = PG_GETARG_INT32(1);
-	uint64 query_hash;
-	bool cache_hit = false;
-	char *table_name = "";
-	char *vector_col = "";
-	char *cache_tbl;
+	Vector	   *query = PG_GETARG_VECTOR_P(0);
+	int32		k = PG_GETARG_INT32(1);
+	uint64		query_hash;
+	bool		cache_hit = false;
+	char	   *table_name = "";
+	char	   *vector_col = "";
+	char	   *cache_tbl;
 	StringInfoData sql;
-	int ret;
+	int			ret;
 	FuncCallContext *funcctx;
-	TupleDesc tupdesc;
-	int i;
+	TupleDesc	tupdesc;
+	int			i;
 	StringInfoData vec_buf;
-	char *vec_lit = NULL;
-	Oid argtypes[1];
-	Datum values[1];
+	char	   *vec_lit = NULL;
+	Oid			argtypes[1];
+	Datum		values[1];
 
 	NDB_CHECK_VECTOR_VALID(query);
 
@@ -199,7 +200,7 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 						 NDB_UINT64_CAST(query_hash),
 						 k);
 		ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		if (ret != SPI_OK_SELECT)
 		{
 			SPI_finish();
@@ -212,9 +213,9 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 			cache_hit = true;
 
 		/*
-		 * Populate from underlying vector table if cache miss.
-		 * Use proper ANN scan with vector distance operator which will use
-		 * HNSW or IVF index if available.
+		 * Populate from underlying vector table if cache miss. Use proper ANN
+		 * scan with vector distance operator which will use HNSW or IVF index
+		 * if available.
 		 */
 		if (!cache_hit)
 		{
@@ -225,7 +226,7 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 			{
 				if (i > 0)
 					appendStringInfoString(&vec_buf, ", ");
-				appendStringInfo(&vec_buf, "%.6f", (double)query->data[i]);
+				appendStringInfo(&vec_buf, "%.6f", (double) query->data[i]);
 			}
 			appendStringInfoString(&vec_buf, "]'::vector");
 			vec_lit = vec_buf.data;
@@ -233,7 +234,10 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 			NDB_SAFE_PFREE_AND_NULL(sql.data);
 			initStringInfo(&sql);
 
-			/* Use vector distance operator <-> which will use index if available */
+			/*
+			 * Use vector distance operator <-> which will use index if
+			 * available
+			 */
 			appendStringInfo(&sql,
 							 "INSERT INTO %s (query_hash, query_vec, "
 							 "candidate_id, candidate_vec, similarity) "
@@ -288,7 +292,7 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 							 k);
 
 			ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+			NDB_CHECK_SPI_TUPTABLE();
 			if (ret != SPI_OK_SELECT)
 			{
 				SPI_finish();
@@ -315,11 +319,11 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 
 	if (funcctx->call_cntr < funcctx->max_calls)
 	{
-		SPITupleTable  *tuptable = (SPITupleTable *) funcctx->user_fctx;
-		HeapTuple		spi_tuple;
-		Datum			values[2];
-		bool			nulls[2];
-		HeapTuple		tuple;
+		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
+		HeapTuple	spi_tuple;
+		Datum		values[2];
+		bool		nulls[2];
+		HeapTuple	tuple;
 
 		Assert(tuptable != NULL);
 
@@ -334,7 +338,7 @@ rerank_get_candidates(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		SPITupleTable  *tuptable = (SPITupleTable *) funcctx->user_fctx;
+		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
 
 		if (tuptable)
 			SPI_freetuptable(tuptable);
@@ -351,84 +355,84 @@ PG_FUNCTION_INFO_V1(rerank_index_warm);
 Datum
 rerank_index_warm(PG_FUNCTION_ARGS)
 {
-    text       *index_name = PG_GETARG_TEXT_PP(0);
-    ArrayType  *queries = PG_GETARG_ARRAYTYPE_P(1);
-    char       *idx_str = text_to_cstring(index_name);
-    int        nqueries = ArrayGetNItems(ARR_NDIM(queries), ARR_DIMS(queries));
-    int        i;
-    int        ret;
-    Oid        eltype = ARR_ELEMTYPE(queries);
-    int16      elmlen;
-    bool       elmbyval;
-    char       elmalign;
-    Datum      *elem_values;
-    bool       *elem_nulls;
-    char       *cache_tbl;
-    StringInfoData sql;
+	text	   *index_name = PG_GETARG_TEXT_PP(0);
+	ArrayType  *queries = PG_GETARG_ARRAYTYPE_P(1);
+	char	   *idx_str = text_to_cstring(index_name);
+	int			nqueries = ArrayGetNItems(ARR_NDIM(queries), ARR_DIMS(queries));
+	int			i;
+	int			ret;
+	Oid			eltype = ARR_ELEMTYPE(queries);
+	int16		elmlen;
+	bool		elmbyval;
+	char		elmalign;
+	Datum	   *elem_values;
+	bool	   *elem_nulls;
+	char	   *cache_tbl;
+	StringInfoData sql;
 
-    get_typlenbyvalalign(eltype, &elmlen, &elmbyval, &elmalign);
+	get_typlenbyvalalign(eltype, &elmlen, &elmbyval, &elmalign);
 
-    elog(INFO,
-         "neurondb: Warming rerank index %s with %d queries",
-         idx_str, nqueries);
+	elog(INFO,
+		 "neurondb: Warming rerank index %s with %d queries",
+		 idx_str, nqueries);
 
-    cache_tbl = pstrdup(idx_str);
+	cache_tbl = pstrdup(idx_str);
 
-    deconstruct_array(queries,
-                      eltype,
-                      elmlen,
-                      elmbyval,
-                      elmalign,
-                      &elem_values,
-                      &elem_nulls,
-                      &nqueries);
+	deconstruct_array(queries,
+					  eltype,
+					  elmlen,
+					  elmbyval,
+					  elmalign,
+					  &elem_values,
+					  &elem_nulls,
+					  &nqueries);
 
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        elog(ERROR, "SPI_connect failed: %d", ret);
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed: %d", ret);
 
-    for (i = 0; i < nqueries; i++)
-    {
-        Vector *qv;
-        uint64  qhash;
-        Oid     argtypes[1];
-        Datum   values[1];
+	for (i = 0; i < nqueries; i++)
+	{
+		Vector	   *qv;
+		uint64		qhash;
+		Oid			argtypes[1];
+		Datum		values[1];
 
-        if (elem_nulls[i])
-            continue;
+		if (elem_nulls[i])
+			continue;
 
-        qv = (Vector *) DatumGetPointer(elem_values[i]);
-        qhash = vector_hash(qv);
+		qv = (Vector *) DatumGetPointer(elem_values[i]);
+		qhash = vector_hash(qv);
 
-        initStringInfo(&sql);
+		initStringInfo(&sql);
 
-        appendStringInfo(&sql,
-                         "INSERT INTO %s (query_hash, query_vec, candidate_id, "
-                         "candidate_vec, similarity) "
-                         "SELECT " NDB_UINT64_FMT ", $1, id, v, (random()) "
-                         "FROM some_base_table ORDER BY random() LIMIT 10",
-                         cache_tbl,
-                         NDB_UINT64_CAST(qhash));
+		appendStringInfo(&sql,
+						 "INSERT INTO %s (query_hash, query_vec, candidate_id, "
+						 "candidate_vec, similarity) "
+						 "SELECT " NDB_UINT64_FMT ", $1, id, v, (random()) "
+						 "FROM some_base_table ORDER BY random() LIMIT 10",
+						 cache_tbl,
+						 NDB_UINT64_CAST(qhash));
 
-        argtypes[0] = 3802;
-        values[0] = PointerGetDatum(qv);
+		argtypes[0] = 3802;
+		values[0] = PointerGetDatum(qv);
 
-        ret = SPI_execute_with_args(sql.data, 1, argtypes, values, NULL, false, 0);
-        if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE)
-        {
-            SPI_finish();
-            elog(ERROR,
-                 "Failed to cache candidates for query_hash " NDB_UINT64_FMT ": %s",
-                 NDB_UINT64_CAST(qhash), sql.data);
-        }
-        /* Use safe free/reinit to handle potential memory context changes */
-        NDB_SAFE_PFREE_AND_NULL(sql.data);
-        initStringInfo(&sql);
-    }
+		ret = SPI_execute_with_args(sql.data, 1, argtypes, values, NULL, false, 0);
+		if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE)
+		{
+			SPI_finish();
+			elog(ERROR,
+				 "Failed to cache candidates for query_hash " NDB_UINT64_FMT ": %s",
+				 NDB_UINT64_CAST(qhash), sql.data);
+		}
+		/* Use safe free/reinit to handle potential memory context changes */
+		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		initStringInfo(&sql);
+	}
 
-    if (cache_tbl)
-        NDB_SAFE_PFREE_AND_NULL(cache_tbl);
+	if (cache_tbl)
+		NDB_SAFE_PFREE_AND_NULL(cache_tbl);
 
-    SPI_finish();
+	SPI_finish();
 
-    PG_RETURN_BOOL(true);
+	PG_RETURN_BOOL(true);
 }

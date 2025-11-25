@@ -32,38 +32,38 @@
 
 /* Forward declaration for kernel launch wrappers */
 extern cudaError_t launch_build_X_matrix_kernel(const float *features,
-	float *X_with_intercept,
-	int n_samples,
-	int feature_dim,
-	int dim_with_intercept);
+												float *X_with_intercept,
+												int n_samples,
+												int feature_dim,
+												int dim_with_intercept);
 extern cudaError_t launch_linreg_compute_xtx_kernel(const float *features,
-	const double *targets,
-	int n_samples,
-	int feature_dim,
-	int dim_with_intercept,
-	double *XtX,
-	double *Xty);
+													const double *targets,
+													int n_samples,
+													int feature_dim,
+													int dim_with_intercept,
+													double *XtX,
+													double *Xty);
 extern cudaError_t launch_linreg_eval_kernel(const float *features,
-	const double *targets,
-	const double *coefficients,
-	double intercept,
-	int n_samples,
-	int feature_dim,
-	double *sse_out,
-	double *sae_out,
-	long long *count_out);
+											 const double *targets,
+											 const double *coefficients,
+											 double intercept,
+											 int n_samples,
+											 int feature_dim,
+											 double *sse_out,
+											 double *sae_out,
+											 long long *count_out);
 
 int
-ndb_cuda_linreg_pack_model(const LinRegModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+ndb_cuda_linreg_pack_model(const LinRegModel * model,
+						   bytea * *model_data,
+						   Jsonb * *metrics,
+						   char **errstr)
 {
-	size_t payload_bytes;
-	bytea *blob;
-	char *base;
+	size_t		payload_bytes;
+	bytea	   *blob;
+	char	   *base;
 	NdbCudaLinRegModelHeader *hdr;
-	float *coef_dest;
+	float	   *coef_dest;
 
 	if (errstr)
 		*errstr = NULL;
@@ -75,51 +75,51 @@ ndb_cuda_linreg_pack_model(const LinRegModel *model,
 	}
 
 	payload_bytes = sizeof(NdbCudaLinRegModelHeader)
-		+ sizeof(float) * (size_t)model->n_features;
+		+ sizeof(float) * (size_t) model->n_features;
 
-	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
+	blob = (bytea *) palloc(VARHDRSZ + payload_bytes);
 	SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
 	base = VARDATA(blob);
 
-	hdr = (NdbCudaLinRegModelHeader *)base;
+	hdr = (NdbCudaLinRegModelHeader *) base;
 	hdr->feature_dim = model->n_features;
 	hdr->n_samples = model->n_samples;
-	hdr->intercept = (float)model->intercept;
+	hdr->intercept = (float) model->intercept;
 	hdr->r_squared = model->r_squared;
 	hdr->mse = model->mse;
 	hdr->mae = model->mae;
 
-	coef_dest = (float *)(base + sizeof(NdbCudaLinRegModelHeader));
+	coef_dest = (float *) (base + sizeof(NdbCudaLinRegModelHeader));
 	if (model->coefficients != NULL)
 	{
-		int i;
+		int			i;
 
 		for (i = 0; i < model->n_features; i++)
-			coef_dest[i] = (float)model->coefficients[i];
+			coef_dest[i] = (float) model->coefficients[i];
 	}
 
 	if (metrics != NULL)
 	{
 		StringInfoData buf;
-		Jsonb *metrics_json;
+		Jsonb	   *metrics_json;
 
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
-			"{\"algorithm\":\"linear_regression\","
-			"\"storage\":\"gpu\","
-			"\"n_features\":%d,"
-			"\"n_samples\":%d,"
-			"\"r_squared\":%.6f,"
-			"\"mse\":%.6f,"
-			"\"mae\":%.6f}",
-			model->n_features,
-			model->n_samples,
-			model->r_squared,
-			model->mse,
-			model->mae);
+						 "{\"algorithm\":\"linear_regression\","
+						 "\"storage\":\"gpu\","
+						 "\"n_features\":%d,"
+						 "\"n_samples\":%d,"
+						 "\"r_squared\":%.6f,"
+						 "\"mse\":%.6f,"
+						 "\"mae\":%.6f}",
+						 model->n_features,
+						 model->n_samples,
+						 model->r_squared,
+						 model->mse,
+						 model->mae);
 
 		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-			jsonb_in, CStringGetDatum(buf.data)));
+														  jsonb_in, CStringGetDatum(buf.data)));
 		NDB_SAFE_PFREE_AND_NULL(buf.data);
 		*metrics = metrics_json;
 	}
@@ -130,35 +130,37 @@ ndb_cuda_linreg_pack_model(const LinRegModel *model,
 
 int
 ndb_cuda_linreg_train(const float *features,
-	const double *targets,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+					  const double *targets,
+					  int n_samples,
+					  int feature_dim,
+					  const Jsonb * hyperparams,
+					  bytea * *model_data,
+					  Jsonb * *metrics,
+					  char **errstr)
 {
-	float *d_features = NULL;
-	double *d_targets = NULL;
-	double *d_XtX = NULL;
-	double *d_Xty = NULL;
-	double *d_XtX_inv __attribute__((unused)) = NULL;
-	double *d_beta __attribute__((unused)) = NULL;
-	double *h_XtX = NULL;
-	double *h_Xty = NULL;
-	double *h_XtX_inv = NULL;
-	double *h_beta = NULL;
-	bytea *payload = NULL;
-	Jsonb *metrics_json = NULL;
+	float	   *d_features = NULL;
+	double	   *d_targets = NULL;
+	double	   *d_XtX = NULL;
+	double	   *d_Xty = NULL;
+	double	   *d_XtX_inv __attribute__((unused)) = NULL;
+	double	   *d_beta __attribute__((unused)) = NULL;
+	double	   *h_XtX = NULL;
+	double	   *h_Xty = NULL;
+	double	   *h_XtX_inv = NULL;
+	double	   *h_beta = NULL;
+	bytea	   *payload = NULL;
+	Jsonb	   *metrics_json = NULL;
 	cudaError_t status __attribute__((unused)) = cudaSuccess;
-	size_t feature_bytes __attribute__((unused));
-	size_t target_bytes __attribute__((unused));
-	size_t XtX_bytes;
-	size_t Xty_bytes;
-	size_t beta_bytes;
-	int dim_with_intercept;
-	int i, j, k;
-	int rc = -1;
+	size_t		feature_bytes __attribute__((unused));
+	size_t		target_bytes __attribute__((unused));
+	size_t		XtX_bytes;
+	size_t		Xty_bytes;
+	size_t		beta_bytes;
+	int			dim_with_intercept;
+	int			i,
+				j,
+				k;
+	int			rc = -1;
 
 	if (errstr)
 		*errstr = NULL;
@@ -168,34 +170,34 @@ ndb_cuda_linreg_train(const float *features,
 	{
 		if (errstr)
 			*errstr = pstrdup("invalid input parameters for CUDA "
-					  "LinReg train");
+							  "LinReg train");
 		return -1;
 	}
 
 	dim_with_intercept = feature_dim + 1;
 
 	/* Allocate host memory for matrices */
-	XtX_bytes = sizeof(double) * (size_t)dim_with_intercept
-		* (size_t)dim_with_intercept;
-	Xty_bytes = sizeof(double) * (size_t)dim_with_intercept;
-	beta_bytes = sizeof(double) * (size_t)dim_with_intercept;
+	XtX_bytes = sizeof(double) * (size_t) dim_with_intercept
+		* (size_t) dim_with_intercept;
+	Xty_bytes = sizeof(double) * (size_t) dim_with_intercept;
+	beta_bytes = sizeof(double) * (size_t) dim_with_intercept;
 
-	h_XtX = (double *)palloc0(XtX_bytes);
-	h_Xty = (double *)palloc0(Xty_bytes);
-	h_XtX_inv = (double *)palloc(XtX_bytes);
-	h_beta = (double *)palloc(beta_bytes);
+	h_XtX = (double *) palloc0(XtX_bytes);
+	h_Xty = (double *) palloc0(Xty_bytes);
+	h_XtX_inv = (double *) palloc(XtX_bytes);
+	h_beta = (double *) palloc(beta_bytes);
 
 	/* Compute X'X and X'y on GPU */
 	{
 		cudaError_t err;
 
 		/* Allocate device memory */
-		feature_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
-		target_bytes = sizeof(double) * (size_t)n_samples;
-		XtX_bytes = sizeof(double) * (size_t)dim_with_intercept * (size_t)dim_with_intercept;
-		Xty_bytes = sizeof(double) * (size_t)dim_with_intercept;
+		feature_bytes = sizeof(float) * (size_t) n_samples * (size_t) feature_dim;
+		target_bytes = sizeof(double) * (size_t) n_samples;
+		XtX_bytes = sizeof(double) * (size_t) dim_with_intercept * (size_t) dim_with_intercept;
+		Xty_bytes = sizeof(double) * (size_t) dim_with_intercept;
 
-		err = cudaMalloc((void **)&d_features, feature_bytes);
+		err = cudaMalloc((void **) &d_features, feature_bytes);
 		if (err != cudaSuccess)
 		{
 			if (errstr)
@@ -203,7 +205,7 @@ ndb_cuda_linreg_train(const float *features,
 			goto cpu_fallback;
 		}
 
-		err = cudaMalloc((void **)&d_targets, target_bytes);
+		err = cudaMalloc((void **) &d_targets, target_bytes);
 		if (err != cudaSuccess)
 		{
 			cudaFree(d_features);
@@ -212,7 +214,7 @@ ndb_cuda_linreg_train(const float *features,
 			goto cpu_fallback;
 		}
 
-		err = cudaMalloc((void **)&d_XtX, XtX_bytes);
+		err = cudaMalloc((void **) &d_XtX, XtX_bytes);
 		if (err != cudaSuccess)
 		{
 			cudaFree(d_features);
@@ -222,7 +224,7 @@ ndb_cuda_linreg_train(const float *features,
 			goto cpu_fallback;
 		}
 
-		err = cudaMalloc((void **)&d_Xty, Xty_bytes);
+		err = cudaMalloc((void **) &d_Xty, Xty_bytes);
 		if (err != cudaSuccess)
 		{
 			cudaFree(d_features);
@@ -253,65 +255,72 @@ ndb_cuda_linreg_train(const float *features,
 #ifdef NDB_GPU_CUDA
 		{
 			cublasHandle_t handle = ndb_cuda_get_cublas_handle();
-			float *d_X_with_intercept = NULL;
-			size_t X_bytes = sizeof(float) * (size_t)n_samples * (size_t)dim_with_intercept;
-			
+			float	   *d_X_with_intercept = NULL;
+			size_t		X_bytes = sizeof(float) * (size_t) n_samples * (size_t) dim_with_intercept;
+
 			elog(DEBUG1,
-				"neurondb: linear_regression: attempting cuBLAS path (handle=%p, n_samples=%d, dim=%d)",
-				(void *)handle,
-				n_samples,
-				dim_with_intercept);
-			
+				 "neurondb: linear_regression: attempting cuBLAS path (handle=%p, n_samples=%d, dim=%d)",
+				 (void *) handle,
+				 n_samples,
+				 dim_with_intercept);
+
 			/* Allocate and build X matrix with intercept column */
-			err = cudaMalloc((void **)&d_X_with_intercept, X_bytes);
+			err = cudaMalloc((void **) &d_X_with_intercept, X_bytes);
 			if (err != cudaSuccess)
 			{
 				elog(WARNING,
-					"neurondb: linear_regression: failed to allocate X matrix, falling back to kernel");
+					 "neurondb: linear_regression: failed to allocate X matrix, falling back to kernel");
 				/* Fallback to kernel approach */
 				goto kernel_fallback;
 			}
-			
+
 			/* Build X matrix with intercept using GPU kernel (much faster) */
 			err = launch_build_X_matrix_kernel(d_features,
-				d_X_with_intercept,
-				n_samples,
-				feature_dim,
-				dim_with_intercept);
+											   d_X_with_intercept,
+											   n_samples,
+											   feature_dim,
+											   dim_with_intercept);
 			if (err != cudaSuccess)
 			{
 				elog(WARNING,
-					"neurondb: linear_regression: build_X_matrix kernel failed, falling back");
+					 "neurondb: linear_regression: build_X_matrix kernel failed, falling back");
 				goto kernel_fallback;
 			}
-			
+
 			if (handle == NULL)
 				goto kernel_fallback;
-			
-			/* Use optimized custom kernel for X'X and X'y - it's correct and fast */
+
+			/*
+			 * Use optimized custom kernel for X'X and X'y - it's correct and
+			 * fast
+			 */
 			elog(DEBUG1,
-				"neurondb: linear_regression: using optimized custom kernel for X'X/X'y");
+				 "neurondb: linear_regression: using optimized custom kernel for X'X/X'y");
 			goto kernel_fallback;
-			
-kernel_fallback:
+
+	kernel_fallback:
 			if (d_X_with_intercept)
 				cudaFree(d_X_with_intercept);
-			
+
 			/* Fallback to kernel approach */
 			{
 				err = launch_linreg_compute_xtx_kernel(d_features,
-					d_targets,
-					n_samples,
-					feature_dim,
-					dim_with_intercept,
-					d_XtX,
-					d_Xty);
+													   d_targets,
+													   n_samples,
+													   feature_dim,
+													   dim_with_intercept,
+													   d_XtX,
+													   d_Xty);
 				if (err != cudaSuccess)
 					goto gpu_cleanup;
 			}
 		}
 #else
-		/* Kernel launch not available when compiling with gcc, fall back to CPU */
+
+		/*
+		 * Kernel launch not available when compiling with gcc, fall back to
+		 * CPU
+		 */
 		if (d_features)
 			cudaFree(d_features);
 		if (d_targets)
@@ -361,128 +370,145 @@ cpu_fallback:
 		for (i = 0; i < n_samples; i++)
 		{
 			const float *row = features + (i * feature_dim);
-			double *xi = (double *)palloc(sizeof(double) * dim_with_intercept);
-			
-			xi[0] = 1.0; /* intercept */
+			double	   *xi = (double *) palloc(sizeof(double) * dim_with_intercept);
+
+			xi[0] = 1.0;		/* intercept */
 			for (k = 1; k < dim_with_intercept; k++)
-				xi[k] = row[k-1];
-			
+				xi[k] = row[k - 1];
+
 			/* X'X accumulation */
 			for (j = 0; j < dim_with_intercept; j++)
 			{
 				for (k = 0; k < dim_with_intercept; k++)
 					h_XtX[j * dim_with_intercept + k] += xi[j] * xi[k];
-				
+
 				/* X'y accumulation */
 				h_Xty[j] += xi[j] * targets[i];
 			}
-			
+
 			NDB_SAFE_PFREE_AND_NULL(xi);
 		}
 	}
 
-		/* Solve normal equations using Cholesky decomposition with regularization */
-		/* X'X should be positive definite, but we add regularization for numerical stability */
+	/* Solve normal equations using Cholesky decomposition with regularization */
+
+	/*
+	 * X'X should be positive definite, but we add regularization for
+	 * numerical stability
+	 */
+	{
+		double		lambda = 1e-3;	/* Base regularization parameter */
+		double	   *L = NULL;	/* Lower triangular Cholesky factor */
+		double	   *y_work = NULL;	/* Working vector for forward substitution */
+		double	   *XtX_work = NULL;	/* Working copy of X'X for Cholesky
+										 * (preserve original) */
+		int			row,
+					col,
+					k_local;
+		bool		cholesky_success = true;
+		double		diag_sum;
+		double		max_diag = 0.0;
+		double		max_off_diag = 0.0;
+		double		trace = 0.0;
+
+		/* Ensure matrix is symmetric (X'X should be symmetric) */
+
+		/*
+		 * Also validate that diagonal elements are positive (required for
+		 * positive definiteness)
+		 */
+		for (row = 0; row < dim_with_intercept; row++)
 		{
-			double lambda = 1e-3;  /* Base regularization parameter */
-			double *L = NULL;      /* Lower triangular Cholesky factor */
-			double *y_work = NULL; /* Working vector for forward substitution */
-			double *XtX_work = NULL; /* Working copy of X'X for Cholesky (preserve original) */
-			int row, col, k_local;
-			bool cholesky_success = true;
-			double diag_sum;
-			double max_diag = 0.0;
-			double max_off_diag = 0.0;
-			double trace = 0.0;
+			double		diag_val = h_XtX[row * dim_with_intercept + row];
 
-			/* Ensure matrix is symmetric (X'X should be symmetric) */
-			/* Also validate that diagonal elements are positive (required for positive definiteness) */
-			for (row = 0; row < dim_with_intercept; row++)
+			/* Defensive check: ensure diagonal is positive */
+			if (diag_val <= 0.0)
 			{
-				double diag_val = h_XtX[row * dim_with_intercept + row];
-				
-				/* Defensive check: ensure diagonal is positive */
-				if (diag_val <= 0.0)
-				{
-					elog(WARNING,
-						"neurondb: GPU LinReg: X'X[%d][%d] = %.6e is not positive, forcing to small positive value",
-						row, row, diag_val);
-					h_XtX[row * dim_with_intercept + row] = 1e-6;
-					diag_val = 1e-6;
-				}
-				
-				for (col = row + 1; col < dim_with_intercept; col++)
-				{
-					double val1 = h_XtX[row * dim_with_intercept + col];
-					double val2 = h_XtX[col * dim_with_intercept + row];
-					double avg = (val1 + val2) / 2.0;
-					h_XtX[row * dim_with_intercept + col] = avg;
-					h_XtX[col * dim_with_intercept + row] = avg;
-					if (fabs(avg) > max_off_diag)
-						max_off_diag = fabs(avg);
-				}
+				elog(WARNING,
+					 "neurondb: GPU LinReg: X'X[%d][%d] = %.6e is not positive, forcing to small positive value",
+					 row, row, diag_val);
+				h_XtX[row * dim_with_intercept + row] = 1e-6;
+				diag_val = 1e-6;
 			}
 
-			/* Find maximum diagonal element for adaptive regularization */
-			/* After symmetry enforcement, all diagonals should be positive */
-			for (row = 0; row < dim_with_intercept; row++)
+			for (col = row + 1; col < dim_with_intercept; col++)
 			{
-				double diag_val = h_XtX[row * dim_with_intercept + row];
-				
-				/* Defensive: ensure positive */
-				if (diag_val <= 0.0)
-					diag_val = 1e-6;  /* Force to small positive value */
-				
-				if (diag_val > max_diag)
-					max_diag = diag_val;
-				trace += diag_val;  /* Sum of diagonal values */
-			}
+				double		val1 = h_XtX[row * dim_with_intercept + col];
+				double		val2 = h_XtX[col * dim_with_intercept + row];
+				double		avg = (val1 + val2) / 2.0;
 
-			/* Adaptive regularization: ensure matrix is well-conditioned */
-			/* Use conservative regularization based on matrix scale */
-			if (max_diag > 0.0 && trace > 0.0)
-			{
-				double avg_diag = trace / (double)dim_with_intercept;
-				/* Use the smaller of max_diag or avg_diag to avoid over-regularization */
-				double scale = (max_diag < avg_diag) ? max_diag : avg_diag;
-				/* Use 0.01% of scale, but cap at reasonable values */
-				lambda = scale * 1e-4;
-				/* Ensure lambda is within reasonable bounds */
-				if (lambda < 1e-6)
-					lambda = 1e-6;  /* Minimum regularization */
-				if (lambda > 1.0)
-					lambda = 1.0;   /* Maximum regularization (safety cap) */
+				h_XtX[row * dim_with_intercept + col] = avg;
+				h_XtX[col * dim_with_intercept + row] = avg;
+				if (fabs(avg) > max_off_diag)
+					max_off_diag = fabs(avg);
 			}
-			else
-			{
-				/* Fallback: use fixed regularization */
-				lambda = 1e-3;
-			}
+		}
 
-			/* Create working copy of X'X for Cholesky (don't modify original) */
-			XtX_work = (double *)palloc(sizeof(double) * (size_t)dim_with_intercept * (size_t)dim_with_intercept);
-			if (XtX_work == NULL)
-			{
-				if (errstr)
-					*errstr = pstrdup("neurondb: failed to allocate memory for Cholesky decomposition");
-				NDB_SAFE_PFREE_AND_NULL(h_XtX);
-				NDB_SAFE_PFREE_AND_NULL(h_Xty);
-				return -1;
-			}
+		/* Find maximum diagonal element for adaptive regularization */
+		/* After symmetry enforcement, all diagonals should be positive */
+		for (row = 0; row < dim_with_intercept; row++)
+		{
+			double		diag_val = h_XtX[row * dim_with_intercept + row];
 
-			/* Copy X'X to working matrix and add regularization to diagonal */
-			for (row = 0; row < dim_with_intercept; row++)
+			/* Defensive: ensure positive */
+			if (diag_val <= 0.0)
+				diag_val = 1e-6;	/* Force to small positive value */
+
+			if (diag_val > max_diag)
+				max_diag = diag_val;
+			trace += diag_val;	/* Sum of diagonal values */
+		}
+
+		/* Adaptive regularization: ensure matrix is well-conditioned */
+		/* Use conservative regularization based on matrix scale */
+		if (max_diag > 0.0 && trace > 0.0)
+		{
+			double		avg_diag = trace / (double) dim_with_intercept;
+
+			/*
+			 * Use the smaller of max_diag or avg_diag to avoid
+			 * over-regularization
+			 */
+			double		scale = (max_diag < avg_diag) ? max_diag : avg_diag;
+
+			/* Use 0.01% of scale, but cap at reasonable values */
+			lambda = scale * 1e-4;
+			/* Ensure lambda is within reasonable bounds */
+			if (lambda < 1e-6)
+				lambda = 1e-6;	/* Minimum regularization */
+			if (lambda > 1.0)
+				lambda = 1.0;	/* Maximum regularization (safety cap) */
+		}
+		else
+		{
+			/* Fallback: use fixed regularization */
+			lambda = 1e-3;
+		}
+
+		/* Create working copy of X'X for Cholesky (don't modify original) */
+		XtX_work = (double *) palloc(sizeof(double) * (size_t) dim_with_intercept * (size_t) dim_with_intercept);
+		if (XtX_work == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("neurondb: failed to allocate memory for Cholesky decomposition");
+			NDB_SAFE_PFREE_AND_NULL(h_XtX);
+			NDB_SAFE_PFREE_AND_NULL(h_Xty);
+			return -1;
+		}
+
+		/* Copy X'X to working matrix and add regularization to diagonal */
+		for (row = 0; row < dim_with_intercept; row++)
+		{
+			for (col = 0; col < dim_with_intercept; col++)
 			{
-				for (col = 0; col < dim_with_intercept; col++)
-				{
-					XtX_work[row * dim_with_intercept + col] = h_XtX[row * dim_with_intercept + col];
-				}
-				/* Add regularization to diagonal: X'X + lambda*I */
-				XtX_work[row * dim_with_intercept + row] += lambda;
+				XtX_work[row * dim_with_intercept + col] = h_XtX[row * dim_with_intercept + col];
 			}
+			/* Add regularization to diagonal: X'X + lambda*I */
+			XtX_work[row * dim_with_intercept + row] += lambda;
+		}
 
 		/* Allocate Cholesky factor L (lower triangular, stored row-major) */
-		L = (double *)palloc0(sizeof(double) * dim_with_intercept * dim_with_intercept);
+		L = (double *) palloc0(sizeof(double) * dim_with_intercept * dim_with_intercept);
 
 		/* Cholesky decomposition: X'X_work = L * L^T */
 		/* Use working copy (XtX_work) so we don't modify original matrix */
@@ -500,28 +526,31 @@ cpu_fallback:
 			/* With proper regularization, diag_sum should be positive */
 			if (diag_sum <= 1e-12)
 			{
-				/* If still too small after regularization, add more dynamically */
-				double min_diag;
-				double extra_lambda;
-				
-				min_diag = lambda * 0.1;  /* 10% of regularization */
+				/*
+				 * If still too small after regularization, add more
+				 * dynamically
+				 */
+				double		min_diag;
+				double		extra_lambda;
+
+				min_diag = lambda * 0.1;	/* 10% of regularization */
 				if (min_diag < 1e-8)
 					min_diag = 1e-8;
-				
+
 				extra_lambda = min_diag - diag_sum;
 				if (extra_lambda > 0.0)
 				{
 					XtX_work[row * dim_with_intercept + row] += extra_lambda;
 					diag_sum += extra_lambda;
 				}
-				
+
 				/* Final check - if still too small, matrix is truly singular */
 				if (diag_sum <= 1e-12)
 				{
 					cholesky_success = false;
 					if (errstr)
 						*errstr = psprintf("Matrix is not positive definite at row %d (diag_sum=%.6e, lambda=%.6e)",
-								  row, diag_sum, lambda);
+										   row, diag_sum, lambda);
 					break;
 				}
 			}
@@ -531,7 +560,8 @@ cpu_fallback:
 			for (col = row + 1; col < dim_with_intercept; col++)
 			{
 				/* Use symmetric property: X'X[col][row] = X'X[row][col] */
-				double off_diag_sum = XtX_work[row * dim_with_intercept + col];
+				double		off_diag_sum = XtX_work[row * dim_with_intercept + col];
+
 				for (k_local = 0; k_local < row; k_local++)
 				{
 					off_diag_sum -= L[col * dim_with_intercept + k_local]
@@ -556,10 +586,11 @@ cpu_fallback:
 		}
 
 		/* Forward substitution: L * y = X'y, solve for y */
-		y_work = (double *)palloc(sizeof(double) * dim_with_intercept);
+		y_work = (double *) palloc(sizeof(double) * dim_with_intercept);
 		for (row = 0; row < dim_with_intercept; row++)
 		{
-			double sum = h_Xty[row];
+			double		sum = h_Xty[row];
+
 			for (k_local = 0; k_local < row; k_local++)
 			{
 				sum -= L[row * dim_with_intercept + k_local] * y_work[k_local];
@@ -570,7 +601,8 @@ cpu_fallback:
 		/* Backward substitution: L^T * beta = y, solve for beta */
 		for (row = dim_with_intercept - 1; row >= 0; row--)
 		{
-			double sum = y_work[row];
+			double		sum = y_work[row];
+
 			for (k_local = row + 1; k_local < dim_with_intercept; k_local++)
 			{
 				sum -= L[k_local * dim_with_intercept + row] * h_beta[k_local];
@@ -582,13 +614,15 @@ cpu_fallback:
 		/* Solve L * L^T * X = I column by column */
 		for (col = 0; col < dim_with_intercept; col++)
 		{
-			double *col_vec = (double *)palloc0(sizeof(double) * dim_with_intercept);
+			double	   *col_vec = (double *) palloc0(sizeof(double) * dim_with_intercept);
+
 			col_vec[col] = 1.0;
 
 			/* Forward substitution: L * y = e_col */
 			for (row = 0; row < dim_with_intercept; row++)
 			{
-				double sum = col_vec[row];
+				double		sum = col_vec[row];
+
 				for (k_local = 0; k_local < row; k_local++)
 				{
 					sum -= L[row * dim_with_intercept + k_local] * y_work[k_local];
@@ -599,7 +633,8 @@ cpu_fallback:
 			/* Backward substitution: L^T * x = y */
 			for (row = dim_with_intercept - 1; row >= 0; row--)
 			{
-				double sum = y_work[row];
+				double		sum = y_work[row];
+
 				for (k_local = row + 1; k_local < dim_with_intercept; k_local++)
 				{
 					sum -= L[k_local * dim_with_intercept + row]
@@ -622,17 +657,17 @@ cpu_fallback:
 	/* Build model */
 	{
 		LinRegModel model;
-		double y_mean = 0.0;
-		double ss_tot = 0.0;
-		double ss_res = 0.0;
-		double mse = 0.0;
-		double mae = 0.0;
+		double		y_mean = 0.0;
+		double		ss_tot = 0.0;
+		double		ss_res = 0.0;
+		double		mse = 0.0;
+		double		mae = 0.0;
 
 		model.n_features = feature_dim;
 		model.n_samples = n_samples;
 		model.intercept = h_beta[0];
 		model.coefficients =
-			(double *)palloc(sizeof(double) * feature_dim);
+			(double *) palloc(sizeof(double) * feature_dim);
 		for (i = 0; i < feature_dim; i++)
 			model.coefficients[i] = h_beta[i + 1];
 
@@ -643,19 +678,19 @@ cpu_fallback:
 
 		for (i = 0; i < n_samples; i++)
 		{
-		const float *row = features + (i * feature_dim);
-		double y_pred = model.intercept;
-		double error;
-		int j_local;
+			const float *row = features + (i * feature_dim);
+			double		y_pred = model.intercept;
+			double		error;
+			int			j_local;
 
-	for (j_local = 0; j_local < feature_dim; j_local++)
-		y_pred += model.coefficients[j_local] * row[j_local];
+			for (j_local = 0; j_local < feature_dim; j_local++)
+				y_pred += model.coefficients[j_local] * row[j_local];
 
-	error = targets[i] - y_pred;
-	mse += error * error;
-	mae += fabs(error);
-	ss_res += error * error;
-	ss_tot += (targets[i] - y_mean) * (targets[i] - y_mean);
+			error = targets[i] - y_pred;
+			mse += error * error;
+			mae += fabs(error);
+			ss_res += error * error;
+			ss_tot += (targets[i] - y_mean) * (targets[i] - y_mean);
 		}
 
 		mse /= n_samples;
@@ -663,13 +698,13 @@ cpu_fallback:
 		if (ss_tot > 1e-10)
 			model.r_squared = 1.0 - (ss_res / ss_tot);
 		else
-			model.r_squared = 0.0;  /* All targets are the same */
+			model.r_squared = 0.0;	/* All targets are the same */
 		model.mse = mse;
 		model.mae = mae;
 
 		/* Pack model */
 		rc = ndb_cuda_linreg_pack_model(
-			&model, &payload, &metrics_json, errstr);
+										&model, &payload, &metrics_json, errstr);
 
 		NDB_SAFE_PFREE_AND_NULL(model.coefficients);
 	}
@@ -697,17 +732,17 @@ cpu_fallback:
 }
 
 int
-ndb_cuda_linreg_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	double *prediction_out,
-	char **errstr)
+ndb_cuda_linreg_predict(const bytea * model_data,
+						const float *input,
+						int feature_dim,
+						double *prediction_out,
+						char **errstr)
 {
-	const NdbCudaLinRegModelHeader *hdr;
+	const		NdbCudaLinRegModelHeader *hdr;
 	const float *coefficients;
-	const bytea *detoasted;
-	double prediction;
-	int i;
+	const		bytea *detoasted;
+	double		prediction;
+	int			i;
 
 	if (errstr)
 		*errstr = NULL;
@@ -715,45 +750,45 @@ ndb_cuda_linreg_predict(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = pstrdup(
-				"invalid parameters for CUDA LinReg predict");
+							  "invalid parameters for CUDA LinReg predict");
 		return -1;
 	}
 
 	/* Detoast the bytea to ensure we have the full data */
 	detoasted =
-		(const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+		(const bytea *) PG_DETOAST_DATUM(PointerGetDatum(model_data));
 
 	/* Validate bytea size */
 	{
-		size_t expected_size = sizeof(NdbCudaLinRegModelHeader)
-			+ sizeof(float) * (size_t)feature_dim;
-		size_t actual_size = VARSIZE(detoasted) - VARHDRSZ;
+		size_t		expected_size = sizeof(NdbCudaLinRegModelHeader)
+			+ sizeof(float) * (size_t) feature_dim;
+		size_t		actual_size = VARSIZE(detoasted) - VARHDRSZ;
 
 		if (actual_size < expected_size)
 		{
 			if (errstr)
 				*errstr =
 					psprintf("model data too small: "
-						 "expected %zu bytes, got %zu",
-						expected_size,
-						actual_size);
+							 "expected %zu bytes, got %zu",
+							 expected_size,
+							 actual_size);
 			return -1;
 		}
 	}
 
-	hdr = (const NdbCudaLinRegModelHeader *)VARDATA(detoasted);
+	hdr = (const NdbCudaLinRegModelHeader *) VARDATA(detoasted);
 	if (hdr->feature_dim != feature_dim)
 	{
 		if (errstr)
 			*errstr = psprintf("feature dimension mismatch: model "
-					   "has %d, input has %d",
-				hdr->feature_dim,
-				feature_dim);
+							   "has %d, input has %d",
+							   hdr->feature_dim,
+							   feature_dim);
 		return -1;
 	}
 
-	coefficients = (const float *)((const char *)hdr
-		+ sizeof(NdbCudaLinRegModelHeader));
+	coefficients = (const float *) ((const char *) hdr
+									+ sizeof(NdbCudaLinRegModelHeader));
 
 	prediction = hdr->intercept;
 	for (i = 0; i < feature_dim; i++)
@@ -766,11 +801,11 @@ ndb_cuda_linreg_predict(const bytea *model_data,
 /*
  * ndb_cuda_linreg_evaluate
  *    GPU-accelerated batch evaluation for Linear Regression
- * 
+ *
  * Computes predictions for all samples and accumulates SSE, SAE, and count
  * using a CUDA kernel, then computes final metrics (MSE, RMSE, MAE, R-squared)
  * on the host.
- * 
+ *
  * Parameters:
  *   model_data: GPU model bytea (contains header + coefficients)
  *   features: Feature matrix [n_samples, feature_dim] (float, row-major)
@@ -782,45 +817,45 @@ ndb_cuda_linreg_predict(const bytea *model_data,
  *   rmse_out: Output RMSE (root mean squared error)
  *   r_squared_out: Output R-squared
  *   errstr: Error message output (if non-NULL)
- * 
+ *
  * Returns:
  *   0 on success, -1 on error
  */
 int
-ndb_cuda_linreg_evaluate(const bytea *model_data,
-	const float *features,
-	const double *targets,
-	int n_samples,
-	int feature_dim,
-	double *mse_out,
-	double *mae_out,
-	double *rmse_out,
-	double *r_squared_out,
-	char **errstr)
+ndb_cuda_linreg_evaluate(const bytea * model_data,
+						 const float *features,
+						 const double *targets,
+						 int n_samples,
+						 int feature_dim,
+						 double *mse_out,
+						 double *mae_out,
+						 double *rmse_out,
+						 double *r_squared_out,
+						 char **errstr)
 {
-	const NdbCudaLinRegModelHeader *hdr;
+	const		NdbCudaLinRegModelHeader *hdr;
 	const float *coefficients;
-	const bytea *detoasted;
+	const		bytea *detoasted;
 	cudaError_t cuda_err;
-	float *d_features = NULL;
-	double *d_targets = NULL;
-	double *d_coefficients = NULL;
-	double *d_sse = NULL;
-	double *d_sae = NULL;
-	long long *d_count = NULL;
-	double h_sse = 0.0;
-	double h_sae = 0.0;
-	long long h_count = 0;
-	double y_mean = 0.0;
-	double ss_tot = 0.0;
-	double mse = 0.0;
-	double mae = 0.0;
-	double rmse = 0.0;
-	double r_squared = 0.0;
-	size_t feature_bytes;
-	size_t target_bytes;
-	size_t coeff_bytes;
-	int i;
+	float	   *d_features = NULL;
+	double	   *d_targets = NULL;
+	double	   *d_coefficients = NULL;
+	double	   *d_sse = NULL;
+	double	   *d_sae = NULL;
+	long long  *d_count = NULL;
+	double		h_sse = 0.0;
+	double		h_sae = 0.0;
+	long long	h_count = 0;
+	double		y_mean = 0.0;
+	double		ss_tot = 0.0;
+	double		mse = 0.0;
+	double		mae = 0.0;
+	double		rmse = 0.0;
+	double		r_squared = 0.0;
+	size_t		feature_bytes;
+	size_t		target_bytes;
+	size_t		coeff_bytes;
+	int			i;
 
 	if (errstr)
 		*errstr = NULL;
@@ -851,7 +886,7 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: invalid n_samples %d",
-					n_samples);
+							   n_samples);
 		return -1;
 	}
 
@@ -859,7 +894,7 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: invalid feature_dim %d",
-					feature_dim);
+							   feature_dim);
 		return -1;
 	}
 
@@ -871,37 +906,37 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 	}
 
 	/* Detoast the bytea to ensure we have the full data */
-	detoasted = (const bytea *)PG_DETOAST_DATUM(PointerGetDatum(model_data));
+	detoasted = (const bytea *) PG_DETOAST_DATUM(PointerGetDatum(model_data));
 
 	/* Validate bytea size */
 	{
-		size_t expected_size = sizeof(NdbCudaLinRegModelHeader)
-			+ sizeof(float) * (size_t)feature_dim;
-		size_t actual_size = VARSIZE(detoasted) - VARHDRSZ;
+		size_t		expected_size = sizeof(NdbCudaLinRegModelHeader)
+			+ sizeof(float) * (size_t) feature_dim;
+		size_t		actual_size = VARSIZE(detoasted) - VARHDRSZ;
 
 		if (actual_size < expected_size)
 		{
 			if (errstr)
 				*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: model data too small: "
-						"expected %zu bytes, got %zu",
-					expected_size,
-					actual_size);
+								   "expected %zu bytes, got %zu",
+								   expected_size,
+								   actual_size);
 			return -1;
 		}
 	}
 
-	hdr = (const NdbCudaLinRegModelHeader *)VARDATA(detoasted);
+	hdr = (const NdbCudaLinRegModelHeader *) VARDATA(detoasted);
 	if (hdr->feature_dim != feature_dim)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: feature dimension mismatch: "
-					"model has %d, input has %d",
-				hdr->feature_dim,
-				feature_dim);
+							   "model has %d, input has %d",
+							   hdr->feature_dim,
+							   feature_dim);
 		return -1;
 	}
 
-	coefficients = (const float *)((const char *)hdr + sizeof(NdbCudaLinRegModelHeader));
+	coefficients = (const float *) ((const char *) hdr + sizeof(NdbCudaLinRegModelHeader));
 
 	/* Compute y_mean for R-squared calculation */
 	for (i = 0; i < n_samples; i++)
@@ -910,46 +945,46 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 			y_mean += targets[i];
 	}
 	if (n_samples > 0)
-		y_mean /= (double)n_samples;
+		y_mean /= (double) n_samples;
 
 	/* Allocate GPU memory for features */
-	feature_bytes = sizeof(float) * (size_t)n_samples * (size_t)feature_dim;
-	cuda_err = cudaMalloc((void **)&d_features, feature_bytes);
+	feature_bytes = sizeof(float) * (size_t) n_samples * (size_t) feature_dim;
+	cuda_err = cudaMalloc((void **) &d_features, feature_bytes);
 	if (cuda_err != cudaSuccess)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to allocate GPU memory for features: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
 	/* Allocate GPU memory for targets */
-	target_bytes = sizeof(double) * (size_t)n_samples;
-	cuda_err = cudaMalloc((void **)&d_targets, target_bytes);
+	target_bytes = sizeof(double) * (size_t) n_samples;
+	cuda_err = cudaMalloc((void **) &d_targets, target_bytes);
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to allocate GPU memory for targets: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
 	/* Allocate GPU memory for coefficients */
-	coeff_bytes = sizeof(double) * (size_t)feature_dim;
-	cuda_err = cudaMalloc((void **)&d_coefficients, coeff_bytes);
+	coeff_bytes = sizeof(double) * (size_t) feature_dim;
+	cuda_err = cudaMalloc((void **) &d_coefficients, coeff_bytes);
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
 		cudaFree(d_targets);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to allocate GPU memory for coefficients: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
 	/* Allocate GPU memory for output accumulators */
-	cuda_err = cudaMalloc((void **)&d_sse, sizeof(double));
+	cuda_err = cudaMalloc((void **) &d_sse, sizeof(double));
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
@@ -957,11 +992,11 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		cudaFree(d_coefficients);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to allocate GPU memory for SSE: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
-	cuda_err = cudaMalloc((void **)&d_sae, sizeof(double));
+	cuda_err = cudaMalloc((void **) &d_sae, sizeof(double));
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
@@ -970,11 +1005,11 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		cudaFree(d_sse);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to allocate GPU memory for SAE: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
-	cuda_err = cudaMalloc((void **)&d_count, sizeof(long long));
+	cuda_err = cudaMalloc((void **) &d_count, sizeof(long long));
 	if (cuda_err != cudaSuccess)
 	{
 		cudaFree(d_features);
@@ -984,7 +1019,7 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		cudaFree(d_sae);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to allocate GPU memory for count: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -1000,7 +1035,7 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to copy features to GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -1016,13 +1051,14 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to copy targets to GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
 	/* Convert coefficients from float to double and copy to GPU */
 	{
-		double *h_coefficients_double = (double *)palloc(sizeof(double) * (size_t)feature_dim);
+		double	   *h_coefficients_double = (double *) palloc(sizeof(double) * (size_t) feature_dim);
+
 		if (h_coefficients_double == NULL)
 		{
 			cudaFree(d_features);
@@ -1037,7 +1073,7 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		}
 
 		for (i = 0; i < feature_dim; i++)
-			h_coefficients_double[i] = (double)coefficients[i];
+			h_coefficients_double[i] = (double) coefficients[i];
 
 		cuda_err = cudaMemcpy(d_coefficients, h_coefficients_double, coeff_bytes, cudaMemcpyHostToDevice);
 		NDB_SAFE_PFREE_AND_NULL(h_coefficients_double);
@@ -1052,21 +1088,21 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 			cudaFree(d_count);
 			if (errstr)
 				*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to copy coefficients to GPU: %s",
-						cudaGetErrorString(cuda_err));
+								   cudaGetErrorString(cuda_err));
 			return -1;
 		}
 	}
 
 	/* Launch evaluation kernel */
 	cuda_err = launch_linreg_eval_kernel(d_features,
-		d_targets,
-		d_coefficients,
-		(double)hdr->intercept,
-		n_samples,
-		feature_dim,
-		d_sse,
-		d_sae,
-		d_count);
+										 d_targets,
+										 d_coefficients,
+										 (double) hdr->intercept,
+										 n_samples,
+										 feature_dim,
+										 d_sse,
+										 d_sae,
+										 d_count);
 
 	if (cuda_err != cudaSuccess)
 	{
@@ -1078,7 +1114,7 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: evaluation kernel failed: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -1094,7 +1130,7 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to copy SSE from GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -1109,7 +1145,7 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to copy SAE from GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -1124,7 +1160,7 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		cudaFree(d_count);
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: failed to copy count from GPU: %s",
-					cudaGetErrorString(cuda_err));
+							   cudaGetErrorString(cuda_err));
 		return -1;
 	}
 
@@ -1137,20 +1173,20 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 	cudaFree(d_count);
 
 	/* Defensive check: ensure count matches expected */
-	if (h_count != (long long)n_samples)
+	if (h_count != (long long) n_samples)
 	{
 		if (errstr)
 			*errstr = psprintf("neurondb: ndb_cuda_linreg_evaluate: count mismatch: expected %d, got %lld",
-					n_samples,
-					(long long)h_count);
+							   n_samples,
+							   (long long) h_count);
 		return -1;
 	}
 
 	/* Compute final metrics */
 	if (h_count > 0)
 	{
-		mse = h_sse / (double)h_count;
-		mae = h_sae / (double)h_count;
+		mse = h_sse / (double) h_count;
+		mae = h_sae / (double) h_count;
 		rmse = sqrt(mse);
 
 		/* Compute SS_tot for R-squared */
@@ -1158,7 +1194,8 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 		{
 			if (targets != NULL)
 			{
-				double diff = targets[i] - y_mean;
+				double		diff = targets[i] - y_mean;
+
 				ss_tot += diff * diff;
 			}
 		}
@@ -1185,5 +1222,4 @@ ndb_cuda_linreg_evaluate(const bytea *model_data,
 	return 0;
 }
 
-#endif /* NDB_GPU_CUDA */
-
+#endif							/* NDB_GPU_CUDA */

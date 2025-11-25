@@ -44,43 +44,44 @@ PG_FUNCTION_INFO_V1(index_tune_hnsw);
 Datum
 index_tune_hnsw(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_P(0);
-	text *column_name = PG_GETARG_TEXT_P(1);
-	char *tbl_name;
-	char *col_name;
+	text	   *table_name = PG_GETARG_TEXT_P(0);
+	text	   *column_name = PG_GETARG_TEXT_P(1);
+	char	   *tbl_name;
+	char	   *col_name;
 	StringInfoData sql;
-	int ret;
-	int64 row_count = 0;
-	int32 vector_dim = 0;
-	double memory_budget_mb = 0.0;
-	int recommended_m = 16;
-	int recommended_ef_construction = 64;
+	int			ret;
+	int64		row_count = 0;
+	int32		vector_dim = 0;
+	double		memory_budget_mb = 0.0;
+	int			recommended_m = 16;
+	int			recommended_ef_construction = 64;
 	StringInfoData json_buf;
-	Jsonb *result_jsonb;
+	Jsonb	   *result_jsonb;
 
 	tbl_name = text_to_cstring(table_name);
 	col_name = text_to_cstring(column_name);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("index_tune_hnsw: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("index_tune_hnsw: SPI_connect failed")));
 
 	/* Get table row count */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT COUNT(*) FROM %s",
-		quote_identifier(tbl_name));
+					 "SELECT COUNT(*) FROM %s",
+					 quote_identifier(tbl_name));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool isnull;
-		Datum count_datum = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
+		bool		isnull;
+		Datum		count_datum = SPI_getbinval(SPI_tuptable->vals[0],
+												SPI_tuptable->tupdesc,
+												1,
+												&isnull);
+
 		if (!isnull)
 			row_count = DatumGetInt64(count_datum);
 	}
@@ -90,19 +91,20 @@ index_tune_hnsw(PG_FUNCTION_ARGS)
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT vector_dims(%s) FROM %s LIMIT 1",
-		quote_identifier(col_name),
-		quote_identifier(tbl_name));
+					 "SELECT vector_dims(%s) FROM %s LIMIT 1",
+					 quote_identifier(col_name),
+					 quote_identifier(tbl_name));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool isnull;
-		Datum dim_datum = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
+		bool		isnull;
+		Datum		dim_datum = SPI_getbinval(SPI_tuptable->vals[0],
+											  SPI_tuptable->tupdesc,
+											  1,
+											  &isnull);
+
 		if (!isnull)
 			vector_dim = DatumGetInt32(dim_datum);
 	}
@@ -110,13 +112,14 @@ index_tune_hnsw(PG_FUNCTION_ARGS)
 	/* Estimate memory budget (use work_mem if available) */
 	{
 		const char *work_mem_str = GetConfigOption("work_mem", true, false);
+
 		if (work_mem_str)
 		{
 			memory_budget_mb = strtod(work_mem_str, NULL) / 1024.0; /* Convert KB to MB */
 		}
 		else
 		{
-			memory_budget_mb = 64.0; /* Default 64MB */
+			memory_budget_mb = 64.0;	/* Default 64MB */
 		}
 	}
 
@@ -148,19 +151,19 @@ index_tune_hnsw(PG_FUNCTION_ARGS)
 
 	/* Adjust based on memory budget */
 	{
-		double estimated_index_size_mb;
-		double bytes_per_vector;
+		double		estimated_index_size_mb;
+		double		bytes_per_vector;
 
 		/* Rough estimate: m * ef_construction * dim * 4 bytes */
-		bytes_per_vector = (double)recommended_m * (double)recommended_ef_construction *
-			(double)vector_dim * 4.0;
-		estimated_index_size_mb = (bytes_per_vector * (double)row_count) / (1024.0 * 1024.0);
+		bytes_per_vector = (double) recommended_m * (double) recommended_ef_construction *
+			(double) vector_dim * 4.0;
+		estimated_index_size_mb = (bytes_per_vector * (double) row_count) / (1024.0 * 1024.0);
 
 		if (estimated_index_size_mb > memory_budget_mb * 0.8)
 		{
 			/* Reduce parameters to fit memory */
-			recommended_m = (int)(recommended_m * 0.75);
-			recommended_ef_construction = (int)(recommended_ef_construction * 0.75);
+			recommended_m = (int) (recommended_m * 0.75);
+			recommended_ef_construction = (int) (recommended_ef_construction * 0.75);
 			if (recommended_m < 8)
 				recommended_m = 8;
 			if (recommended_ef_construction < 32)
@@ -171,23 +174,23 @@ index_tune_hnsw(PG_FUNCTION_ARGS)
 	/* Build JSONB result */
 	initStringInfo(&json_buf);
 	appendStringInfo(&json_buf,
-		"{\"index_type\":\"hnsw\","
-		"\"recommended_m\":%d,"
-		"\"recommended_ef_construction\":%d,"
-		"\"estimated_index_size_mb\":%.2f,"
-		"\"row_count\":%lld,"
-		"\"vector_dim\":%d,"
-		"\"memory_budget_mb\":%.2f}",
-		recommended_m,
-		recommended_ef_construction,
-		(double)recommended_m * (double)recommended_ef_construction *
-			(double)vector_dim * 4.0 * (double)row_count / (1024.0 * 1024.0),
-		(long long)row_count,
-		vector_dim,
-		memory_budget_mb);
+					 "{\"index_type\":\"hnsw\","
+					 "\"recommended_m\":%d,"
+					 "\"recommended_ef_construction\":%d,"
+					 "\"estimated_index_size_mb\":%.2f,"
+					 "\"row_count\":%lld,"
+					 "\"vector_dim\":%d,"
+					 "\"memory_budget_mb\":%.2f}",
+					 recommended_m,
+					 recommended_ef_construction,
+					 (double) recommended_m * (double) recommended_ef_construction *
+					 (double) vector_dim * 4.0 * (double) row_count / (1024.0 * 1024.0),
+					 (long long) row_count,
+					 vector_dim,
+					 memory_budget_mb);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-		jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetDatum(json_buf.data)));
 
 	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
 	NDB_SAFE_PFREE_AND_NULL(tbl_name);
@@ -204,41 +207,42 @@ PG_FUNCTION_INFO_V1(index_tune_ivf);
 Datum
 index_tune_ivf(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_P(0);
-	text *column_name = PG_GETARG_TEXT_P(1);
-	char *tbl_name;
-	char *col_name;
+	text	   *table_name = PG_GETARG_TEXT_P(0);
+	text	   *column_name = PG_GETARG_TEXT_P(1);
+	char	   *tbl_name;
+	char	   *col_name;
 	StringInfoData sql;
-	int ret;
-	int64 row_count = 0;
-	int32 vector_dim = 0;
-	int recommended_lists = 100;
+	int			ret;
+	int64		row_count = 0;
+	int32		vector_dim = 0;
+	int			recommended_lists = 100;
 	StringInfoData json_buf;
-	Jsonb *result_jsonb;
+	Jsonb	   *result_jsonb;
 
 	tbl_name = text_to_cstring(table_name);
 	col_name = text_to_cstring(column_name);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("index_tune_ivf: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("index_tune_ivf: SPI_connect failed")));
 
 	/* Get table row count */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT COUNT(*) FROM %s",
-		quote_identifier(tbl_name));
+					 "SELECT COUNT(*) FROM %s",
+					 quote_identifier(tbl_name));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool isnull;
-		Datum count_datum = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
+		bool		isnull;
+		Datum		count_datum = SPI_getbinval(SPI_tuptable->vals[0],
+												SPI_tuptable->tupdesc,
+												1,
+												&isnull);
+
 		if (!isnull)
 			row_count = DatumGetInt64(count_datum);
 	}
@@ -248,19 +252,20 @@ index_tune_ivf(PG_FUNCTION_ARGS)
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT vector_dims(%s) FROM %s LIMIT 1",
-		quote_identifier(col_name),
-		quote_identifier(tbl_name));
+					 "SELECT vector_dims(%s) FROM %s LIMIT 1",
+					 quote_identifier(col_name),
+					 quote_identifier(tbl_name));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool isnull;
-		Datum dim_datum = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
+		bool		isnull;
+		Datum		dim_datum = SPI_getbinval(SPI_tuptable->vals[0],
+											  SPI_tuptable->tupdesc,
+											  1,
+											  &isnull);
+
 		if (!isnull)
 			vector_dim = DatumGetInt32(dim_datum);
 	}
@@ -268,7 +273,7 @@ index_tune_ivf(PG_FUNCTION_ARGS)
 	/* Parameter optimization: lists = sqrt(row_count) is a common heuristic */
 	if (row_count > 0)
 	{
-		recommended_lists = (int)sqrt((double)row_count);
+		recommended_lists = (int) sqrt((double) row_count);
 		/* Clamp to reasonable range */
 		if (recommended_lists < 10)
 			recommended_lists = 10;
@@ -281,18 +286,19 @@ index_tune_ivf(PG_FUNCTION_ARGS)
 	/* Build JSONB result */
 	initStringInfo(&json_buf);
 	appendStringInfo(&json_buf,
-		"{\"index_type\":\"ivf\","
-		"\"recommended_lists\":%d,"
-		"\"recommended_probes\":%d,"
-		"\"row_count\":%lld,"
-		"\"vector_dim\":%d}",
-		recommended_lists,
-		recommended_lists / 10, /* probes = lists / 10 is common */
-		(long long)row_count,
-		vector_dim);
+					 "{\"index_type\":\"ivf\","
+					 "\"recommended_lists\":%d,"
+					 "\"recommended_probes\":%d,"
+					 "\"row_count\":%lld,"
+					 "\"vector_dim\":%d}",
+					 recommended_lists,
+					 recommended_lists / 10,	/* probes = lists / 10 is
+												 * common */
+					 (long long) row_count,
+					 vector_dim);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-		jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetDatum(json_buf.data)));
 
 	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
 	NDB_SAFE_PFREE_AND_NULL(tbl_name);
@@ -309,44 +315,45 @@ PG_FUNCTION_INFO_V1(index_recommend_type);
 Datum
 index_recommend_type(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_P(0);
-	text *column_name = PG_GETARG_TEXT_P(1);
-	char *tbl_name;
-	char *col_name;
+	text	   *table_name = PG_GETARG_TEXT_P(0);
+	text	   *column_name = PG_GETARG_TEXT_P(1);
+	char	   *tbl_name;
+	char	   *col_name;
 	StringInfoData sql;
-	int ret;
-	int64 row_count = 0;
-	int64 update_frequency = 0;
-	double memory_budget_mb = 0.0;
-	char *recommended_type = "hnsw";
+	int			ret;
+	int64		row_count = 0;
+	int64		update_frequency = 0;
+	double		memory_budget_mb = 0.0;
+	char	   *recommended_type = "hnsw";
 	StringInfoData json_buf;
-	Jsonb *result_jsonb;
-	Jsonb *hnsw_params;
-	Jsonb *ivf_params;
+	Jsonb	   *result_jsonb;
+	Jsonb	   *hnsw_params;
+	Jsonb	   *ivf_params;
 
 	tbl_name = text_to_cstring(table_name);
 	col_name = text_to_cstring(column_name);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("index_recommend_type: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("index_recommend_type: SPI_connect failed")));
 
 	/* Get table row count */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT COUNT(*) FROM %s",
-		quote_identifier(tbl_name));
+					 "SELECT COUNT(*) FROM %s",
+					 quote_identifier(tbl_name));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool isnull;
-		Datum count_datum = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
+		bool		isnull;
+		Datum		count_datum = SPI_getbinval(SPI_tuptable->vals[0],
+												SPI_tuptable->tupdesc,
+												1,
+												&isnull);
+
 		if (!isnull)
 			row_count = DatumGetInt64(count_datum);
 	}
@@ -356,34 +363,36 @@ index_recommend_type(PG_FUNCTION_ARGS)
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT COUNT(*) FROM %s WHERE "
-		"ctid >= (SELECT ctid FROM %s ORDER BY ctid DESC LIMIT 1 OFFSET %lld)",
-		quote_identifier(tbl_name),
-		quote_identifier(tbl_name),
-		(long long)(row_count / 10)); /* Check last 10% */
+					 "SELECT COUNT(*) FROM %s WHERE "
+					 "ctid >= (SELECT ctid FROM %s ORDER BY ctid DESC LIMIT 1 OFFSET %lld)",
+					 quote_identifier(tbl_name),
+					 quote_identifier(tbl_name),
+					 (long long) (row_count / 10)); /* Check last 10% */
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool isnull;
-		Datum update_datum = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
+		bool		isnull;
+		Datum		update_datum = SPI_getbinval(SPI_tuptable->vals[0],
+												 SPI_tuptable->tupdesc,
+												 1,
+												 &isnull);
+
 		if (!isnull)
 			update_frequency = DatumGetInt64(update_datum);
 	}
 
 	{
 		const char *work_mem_str = GetConfigOption("work_mem", true, false);
+
 		if (work_mem_str)
 		{
 			memory_budget_mb = strtod(work_mem_str, NULL) / 1024.0; /* Convert KB to MB */
 		}
 		else
 		{
-			memory_budget_mb = 64.0; /* Default 64MB */
+			memory_budget_mb = 64.0;	/* Default 64MB */
 		}
 	}
 
@@ -406,29 +415,29 @@ index_recommend_type(PG_FUNCTION_ARGS)
 
 	/* Get recommended parameters for both types */
 	hnsw_params = DatumGetJsonbP(DirectFunctionCall2(
-		index_tune_hnsw, PointerGetDatum(table_name), PointerGetDatum(column_name)));
+													 index_tune_hnsw, PointerGetDatum(table_name), PointerGetDatum(column_name)));
 
 	ivf_params = DatumGetJsonbP(DirectFunctionCall2(
-		index_tune_ivf, PointerGetDatum(table_name), PointerGetDatum(column_name)));
+													index_tune_ivf, PointerGetDatum(table_name), PointerGetDatum(column_name)));
 
 	/* Build JSONB result */
 	initStringInfo(&json_buf);
 	appendStringInfo(&json_buf,
-		"{\"recommended_type\":\"%s\","
-		"\"row_count\":%lld,"
-		"\"update_frequency\":%lld,"
-		"\"memory_budget_mb\":%.2f,"
-		"\"hnsw_params\":%s,"
-		"\"ivf_params\":%s}",
-		recommended_type,
-		(long long)row_count,
-		(long long)update_frequency,
-		memory_budget_mb,
-		JsonbToCString(NULL, &hnsw_params->root, VARSIZE(hnsw_params)),
-		JsonbToCString(NULL, &ivf_params->root, VARSIZE(ivf_params)));
+					 "{\"recommended_type\":\"%s\","
+					 "\"row_count\":%lld,"
+					 "\"update_frequency\":%lld,"
+					 "\"memory_budget_mb\":%.2f,"
+					 "\"hnsw_params\":%s,"
+					 "\"ivf_params\":%s}",
+					 recommended_type,
+					 (long long) row_count,
+					 (long long) update_frequency,
+					 memory_budget_mb,
+					 JsonbToCString(NULL, &hnsw_params->root, VARSIZE(hnsw_params)),
+					 JsonbToCString(NULL, &ivf_params->root, VARSIZE(ivf_params)));
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-		jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetDatum(json_buf.data)));
 
 	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
 	NDB_SAFE_PFREE_AND_NULL(tbl_name);
@@ -445,45 +454,47 @@ PG_FUNCTION_INFO_V1(index_tune_query_params);
 Datum
 index_tune_query_params(PG_FUNCTION_ARGS)
 {
-	text *index_name = PG_GETARG_TEXT_P(0);
-	char *idx_name;
+	text	   *index_name = PG_GETARG_TEXT_P(0);
+	char	   *idx_name;
 	StringInfoData sql;
-	int ret;
-	double avg_latency = 0.0;
-	double avg_recall = 0.0;
-	int recommended_ef_search = 64;
-	int recommended_probes = 10;
-	char *index_type = "hnsw";
+	int			ret;
+	double		avg_latency = 0.0;
+	double		avg_recall = 0.0;
+	int			recommended_ef_search = 64;
+	int			recommended_probes = 10;
+	char	   *index_type = "hnsw";
 	StringInfoData json_buf;
-	Jsonb *result_jsonb;
+	Jsonb	   *result_jsonb;
 
 	idx_name = text_to_cstring(index_name);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("index_tune_query_params: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("index_tune_query_params: SPI_connect failed")));
 
 	/* Determine index type */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT amname FROM pg_am am "
-		"JOIN pg_class c ON c.relam = am.oid "
-		"WHERE c.relname = %s",
-		quote_literal_cstr(idx_name));
+					 "SELECT amname FROM pg_am am "
+					 "JOIN pg_class c ON c.relam = am.oid "
+					 "WHERE c.relname = %s",
+					 quote_literal_cstr(idx_name));
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool isnull;
-		Datum amname_datum = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull);
+		bool		isnull;
+		Datum		amname_datum = SPI_getbinval(SPI_tuptable->vals[0],
+												 SPI_tuptable->tupdesc,
+												 1,
+												 &isnull);
+
 		if (!isnull)
 		{
-			char *amname = text_to_cstring(DatumGetTextP(amname_datum));
+			char	   *amname = text_to_cstring(DatumGetTextP(amname_datum));
+
 			if (strcmp(amname, "hnsw") == 0)
 				index_type = "hnsw";
 			else if (strcmp(amname, "ivfflat") == 0)
@@ -497,25 +508,27 @@ index_tune_query_params(PG_FUNCTION_ARGS)
 	NDB_SAFE_PFREE_AND_NULL(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"SELECT AVG(latency_ms) as avg_latency, "
-		"       AVG(recall_at_k) as avg_recall "
-		"FROM neurondb.neurondb_query_metrics "
-		"WHERE query_timestamp > now() - interval '1 hour' "
-		"  AND recall_at_k IS NOT NULL");
+					 "SELECT AVG(latency_ms) as avg_latency, "
+					 "       AVG(recall_at_k) as avg_recall "
+					 "FROM neurondb.neurondb_query_metrics "
+					 "WHERE query_timestamp > now() - interval '1 hour' "
+					 "  AND recall_at_k IS NOT NULL");
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		bool isnull1, isnull2;
-		Datum latency_datum = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			1,
-			&isnull1);
-		Datum recall_datum = SPI_getbinval(SPI_tuptable->vals[0],
-			SPI_tuptable->tupdesc,
-			2,
-			&isnull2);
+		bool		isnull1,
+					isnull2;
+		Datum		latency_datum = SPI_getbinval(SPI_tuptable->vals[0],
+												  SPI_tuptable->tupdesc,
+												  1,
+												  &isnull1);
+		Datum		recall_datum = SPI_getbinval(SPI_tuptable->vals[0],
+												 SPI_tuptable->tupdesc,
+												 2,
+												 &isnull2);
+
 		if (!isnull1)
 			avg_latency = DatumGetFloat8(latency_datum);
 		if (!isnull2)
@@ -540,7 +553,7 @@ index_tune_query_params(PG_FUNCTION_ARGS)
 	}
 	else if (strcmp(index_type, "ivf") == 0)
 	{
-		recommended_probes = 10; /* default */
+		recommended_probes = 10;	/* default */
 
 		if (avg_recall < 0.90 && avg_latency < 100.0)
 		{
@@ -559,28 +572,28 @@ index_tune_query_params(PG_FUNCTION_ARGS)
 	if (strcmp(index_type, "hnsw") == 0)
 	{
 		appendStringInfo(&json_buf,
-			"{\"index_type\":\"hnsw\","
-			"\"recommended_ef_search\":%d,"
-			"\"avg_latency_ms\":%.2f,"
-			"\"avg_recall\":%.3f}",
-			recommended_ef_search,
-			avg_latency,
-			avg_recall);
+						 "{\"index_type\":\"hnsw\","
+						 "\"recommended_ef_search\":%d,"
+						 "\"avg_latency_ms\":%.2f,"
+						 "\"avg_recall\":%.3f}",
+						 recommended_ef_search,
+						 avg_latency,
+						 avg_recall);
 	}
 	else
 	{
 		appendStringInfo(&json_buf,
-			"{\"index_type\":\"ivf\","
-			"\"recommended_probes\":%d,"
-			"\"avg_latency_ms\":%.2f,"
-			"\"avg_recall\":%.3f}",
-			recommended_probes,
-			avg_latency,
-			avg_recall);
+						 "{\"index_type\":\"ivf\","
+						 "\"recommended_probes\":%d,"
+						 "\"avg_latency_ms\":%.2f,"
+						 "\"avg_recall\":%.3f}",
+						 recommended_probes,
+						 avg_latency,
+						 avg_recall);
 	}
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-		jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetDatum(json_buf.data)));
 
 	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
 	NDB_SAFE_PFREE_AND_NULL(idx_name);
@@ -588,4 +601,3 @@ index_tune_query_params(PG_FUNCTION_ARGS)
 
 	PG_RETURN_POINTER(result_jsonb);
 }
-

@@ -34,28 +34,28 @@
 /* KNN model structure */
 typedef struct KNNModel
 {
-	int		n_samples;
-	int		n_features;
-	int		k;
-	int		task_type;  /* 0=classification, 1=regression */
-	float	*features;  /* Training features [n_samples * n_features] */
-	double	*labels;    /* Training labels [n_samples] */
-} KNNModel;
+	int			n_samples;
+	int			n_features;
+	int			k;
+	int			task_type;		/* 0=classification, 1=regression */
+	float	   *features;		/* Training features [n_samples * n_features] */
+	double	   *labels;			/* Training labels [n_samples] */
+}			KNNModel;
 
 int
 ndb_cuda_knn_pack(const struct KNNModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				  bytea * *model_data,
+				  Jsonb * *metrics,
+				  char **errstr)
 {
-	size_t payload_bytes;
-	size_t features_bytes;
-	size_t labels_bytes;
-	bytea *blob;
-	char *base;
+	size_t		payload_bytes;
+	size_t		features_bytes;
+	size_t		labels_bytes;
+	bytea	   *blob;
+	char	   *base;
 	NdbCudaKnnModelHeader *hdr;
-	float *features_dest;
-	double *labels_dest;
+	float	   *features_dest;
+	double	   *labels_dest;
 
 	if (errstr)
 		*errstr = NULL;
@@ -93,10 +93,10 @@ ndb_cuda_knn_pack(const struct KNNModel *model,
 	}
 
 	/* Check for integer overflow in size calculations */
-	features_bytes = sizeof(float) * (size_t)model->n_samples * (size_t)model->n_features;
-	labels_bytes = sizeof(double) * (size_t)model->n_samples;
+	features_bytes = sizeof(float) * (size_t) model->n_samples * (size_t) model->n_features;
+	labels_bytes = sizeof(double) * (size_t) model->n_samples;
 
-	if (features_bytes / sizeof(float) / (size_t)model->n_samples != (size_t)model->n_features)
+	if (features_bytes / sizeof(float) / (size_t) model->n_samples != (size_t) model->n_features)
 	{
 		if (errstr)
 			*errstr = pstrdup("invalid KNN model: integer overflow in features size calculation");
@@ -119,7 +119,7 @@ ndb_cuda_knn_pack(const struct KNNModel *model,
 		return -1;
 	}
 
-	blob = (bytea *)palloc(VARHDRSZ + payload_bytes);
+	blob = (bytea *) palloc(VARHDRSZ + payload_bytes);
 	if (blob == NULL)
 	{
 		if (errstr)
@@ -130,14 +130,14 @@ ndb_cuda_knn_pack(const struct KNNModel *model,
 	SET_VARSIZE(blob, VARHDRSZ + payload_bytes);
 	base = VARDATA(blob);
 
-	hdr = (NdbCudaKnnModelHeader *)base;
+	hdr = (NdbCudaKnnModelHeader *) base;
 	hdr->n_samples = model->n_samples;
 	hdr->n_features = model->n_features;
 	hdr->k = model->k;
 	hdr->task_type = model->task_type;
 
-	features_dest = (float *)(base + sizeof(NdbCudaKnnModelHeader));
-	labels_dest = (double *)(base + sizeof(NdbCudaKnnModelHeader) + sizeof(float) * (size_t)model->n_samples * (size_t)model->n_features);
+	features_dest = (float *) (base + sizeof(NdbCudaKnnModelHeader));
+	labels_dest = (double *) (base + sizeof(NdbCudaKnnModelHeader) + sizeof(float) * (size_t) model->n_samples * (size_t) model->n_features);
 
 	if (model->features != NULL)
 	{
@@ -175,7 +175,8 @@ ndb_cuda_knn_pack(const struct KNNModel *model,
 			/* For classification, labels should be integers */
 			if (model->task_type == 0)
 			{
-				double label = model->labels[i];
+				double		label = model->labels[i];
+
 				if (label != floor(label) || label < 0.0)
 				{
 					if (errstr)
@@ -196,25 +197,25 @@ ndb_cuda_knn_pack(const struct KNNModel *model,
 	if (metrics != NULL)
 	{
 		StringInfoData buf;
-		Jsonb *metrics_json;
+		Jsonb	   *metrics_json;
 
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
-			"{\"algorithm\":\"knn\","
-			"\"storage\":\"gpu\","
-			"\"n_samples\":%d,"
-			"\"n_features\":%d,"
-			"\"k\":%d,"
-			"\"task_type\":%d}",
-			model->n_samples,
-			model->n_features,
-			model->k,
-			model->task_type);
+						 "{\"algorithm\":\"knn\","
+						 "\"storage\":\"gpu\","
+						 "\"n_samples\":%d,"
+						 "\"n_features\":%d,"
+						 "\"k\":%d,"
+						 "\"task_type\":%d}",
+						 model->n_samples,
+						 model->n_features,
+						 model->k,
+						 model->task_type);
 
 		PG_TRY();
 		{
 			metrics_json = DatumGetJsonbP(
-				DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+										  DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
 		}
 		PG_CATCH();
 		{
@@ -234,24 +235,25 @@ ndb_cuda_knn_pack(const struct KNNModel *model,
 
 int
 ndb_cuda_knn_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	int k,
-	int task_type,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				   const double *labels,
+				   int n_samples,
+				   int feature_dim,
+				   int k,
+				   int task_type,
+				   const Jsonb * hyperparams,
+				   bytea * *model_data,
+				   Jsonb * *metrics,
+				   char **errstr)
 {
 	struct KNNModel model;
-	bytea *blob = NULL;
-	Jsonb *metrics_json = NULL;
-	float *features_copy = NULL;
-	double *labels_copy = NULL;
-	int i, j;
-	int extracted_task;
-	int rc = -1;
+	bytea	   *blob = NULL;
+	Jsonb	   *metrics_json = NULL;
+	float	   *features_copy = NULL;
+	double	   *labels_copy = NULL;
+	int			i,
+				j;
+	int			extracted_task;
+	int			rc = -1;
 
 	if (errstr)
 		*errstr = NULL;
@@ -301,7 +303,7 @@ ndb_cuda_knn_train(const float *features,
 	}
 
 	elog(DEBUG1, "ndb_cuda_knn_train: entry: n_samples=%d, feature_dim=%d, k=%d, task_type=%d",
-		n_samples, feature_dim, k, task_type);
+		 n_samples, feature_dim, k, task_type);
 
 	/* Validate input data for NaN/Inf before processing */
 	for (i = 0; i < n_samples; i++)
@@ -324,7 +326,8 @@ ndb_cuda_knn_train(const float *features,
 		/* For classification, validate labels are integers */
 		if (task_type == 0)
 		{
-			double label = labels[i];
+			double		label = labels[i];
+
 			if (label != floor(label) || label < 0.0)
 			{
 				if (errstr)
@@ -337,44 +340,44 @@ ndb_cuda_knn_train(const float *features,
 	/* Extract hyperparameters if provided */
 	if (hyperparams != NULL)
 	{
-		Datum k_datum;
-		Datum task_type_datum;
-		Datum numeric_datum;
-		Numeric num;
+		Datum		k_datum;
+		Datum		task_type_datum;
+		Datum		numeric_datum;
+		Numeric		num;
 
 		k_datum = DirectFunctionCall2(
-			jsonb_object_field,
-			JsonbPGetDatum(hyperparams),
-			CStringGetTextDatum("k"));
+									  jsonb_object_field,
+									  JsonbPGetDatum(hyperparams),
+									  CStringGetTextDatum("k"));
 		if (DatumGetPointer(k_datum) != NULL)
 		{
 			numeric_datum = DirectFunctionCall1(
-				jsonb_numeric, k_datum);
+												jsonb_numeric, k_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
 				k = DatumGetInt32(
-					DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(num)));
+								  DirectFunctionCall1(numeric_int4,
+													  NumericGetDatum(num)));
 				if (k <= 0 || k > n_samples)
 					k = (n_samples < 10) ? n_samples : 10;
 			}
 		}
 
 		task_type_datum = DirectFunctionCall2(
-			jsonb_object_field,
-			JsonbPGetDatum(hyperparams),
-			CStringGetTextDatum("task_type"));
+											  jsonb_object_field,
+											  JsonbPGetDatum(hyperparams),
+											  CStringGetTextDatum("task_type"));
 		if (DatumGetPointer(task_type_datum) != NULL)
 		{
 			numeric_datum = DirectFunctionCall1(
-				jsonb_numeric, task_type_datum);
+												jsonb_numeric, task_type_datum);
 			if (DatumGetPointer(numeric_datum) != NULL)
 			{
 				num = DatumGetNumeric(numeric_datum);
 				extracted_task = DatumGetInt32(
-					DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(num)));
+											   DirectFunctionCall1(numeric_int4,
+																   NumericGetDatum(num)));
 				if (extracted_task == 0 || extracted_task == 1)
 					task_type = extracted_task;
 			}
@@ -382,13 +385,13 @@ ndb_cuda_knn_train(const float *features,
 	}
 
 	/* Check for integer overflow in memory allocation before copying */
-	if (feature_dim > 0 && (size_t)n_samples > MaxAllocSize / sizeof(float) / (size_t)feature_dim)
+	if (feature_dim > 0 && (size_t) n_samples > MaxAllocSize / sizeof(float) / (size_t) feature_dim)
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA KNN train: feature array size exceeds MaxAllocSize");
 		return -1;
 	}
-	features_copy = (float *)palloc(sizeof(float) * (size_t)n_samples * (size_t)feature_dim);
+	features_copy = (float *) palloc(sizeof(float) * (size_t) n_samples * (size_t) feature_dim);
 	if (features_copy == NULL)
 	{
 		if (errstr)
@@ -396,7 +399,7 @@ ndb_cuda_knn_train(const float *features,
 		return -1;
 	}
 
-	labels_copy = (double *)palloc(sizeof(double) * (size_t)n_samples);
+	labels_copy = (double *) palloc(sizeof(double) * (size_t) n_samples);
 	if (labels_copy == NULL)
 	{
 		if (errstr)
@@ -405,8 +408,8 @@ ndb_cuda_knn_train(const float *features,
 		return -1;
 	}
 
-	memcpy(features_copy, features, sizeof(float) * (size_t)n_samples * (size_t)feature_dim);
-	memcpy(labels_copy, labels, sizeof(double) * (size_t)n_samples);
+	memcpy(features_copy, features, sizeof(float) * (size_t) n_samples * (size_t) feature_dim);
+	memcpy(labels_copy, labels, sizeof(double) * (size_t) n_samples);
 
 	/* Build model structure */
 	model.n_samples = n_samples;
@@ -416,7 +419,10 @@ ndb_cuda_knn_train(const float *features,
 	model.features = features_copy;
 	model.labels = labels_copy;
 
-	/* Pack model - pass NULL for metrics if caller doesn't want them to avoid DirectFunctionCall issues */
+	/*
+	 * Pack model - pass NULL for metrics if caller doesn't want them to avoid
+	 * DirectFunctionCall issues
+	 */
 	if (ndb_cuda_knn_pack(&model, &blob, metrics ? &metrics_json : NULL, errstr) != 0)
 	{
 		if (errstr && *errstr == NULL)
@@ -440,19 +446,19 @@ cleanup:
 }
 
 int
-ndb_cuda_knn_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	double *prediction_out,
-	char **errstr)
+ndb_cuda_knn_predict(const bytea * model_data,
+					 const float *input,
+					 int feature_dim,
+					 double *prediction_out,
+					 char **errstr)
 {
 	const char *base;
 	NdbCudaKnnModelHeader *hdr;
 	const float *training_features;
 	const double *training_labels;
-	float *distances = NULL;
-	int i;
-	size_t expected_size;
+	float	   *distances = NULL;
+	int			i;
+	size_t		expected_size;
 
 	if (errstr)
 		*errstr = NULL;
@@ -486,7 +492,7 @@ ndb_cuda_knn_predict(const bytea *model_data,
 	}
 
 	base = VARDATA_ANY(model_data);
-	hdr = (NdbCudaKnnModelHeader *)base;
+	hdr = (NdbCudaKnnModelHeader *) base;
 
 	/* Validate model header */
 	if (hdr->n_samples <= 0 || hdr->n_samples > 100000000)
@@ -522,8 +528,8 @@ ndb_cuda_knn_predict(const bytea *model_data,
 
 	/* Validate bytea size matches expected payload */
 	expected_size = sizeof(NdbCudaKnnModelHeader)
-		+ sizeof(float) * (size_t)hdr->n_samples * (size_t)hdr->n_features
-		+ sizeof(double) * (size_t)hdr->n_samples;
+		+ sizeof(float) * (size_t) hdr->n_samples * (size_t) hdr->n_features
+		+ sizeof(double) * (size_t) hdr->n_samples;
 	if (VARSIZE_ANY_EXHDR(model_data) < expected_size)
 	{
 		if (errstr)
@@ -542,8 +548,8 @@ ndb_cuda_knn_predict(const bytea *model_data,
 		}
 	}
 
-	training_features = (const float *)(base + sizeof(NdbCudaKnnModelHeader));
-	training_labels = (const double *)(base + sizeof(NdbCudaKnnModelHeader) + sizeof(float) * (size_t)hdr->n_samples * (size_t)hdr->n_features);
+	training_features = (const float *) (base + sizeof(NdbCudaKnnModelHeader));
+	training_labels = (const double *) (base + sizeof(NdbCudaKnnModelHeader) + sizeof(float) * (size_t) hdr->n_samples * (size_t) hdr->n_features);
 
 	/* Validate model data pointers */
 	if (training_features == NULL || training_labels == NULL)
@@ -560,7 +566,7 @@ ndb_cuda_knn_predict(const bytea *model_data,
 			*errstr = pstrdup("CUDA KNN predict: distances array size exceeds MaxAllocSize");
 		return -1;
 	}
-	distances = (float *)palloc(sizeof(float) * hdr->n_samples);
+	distances = (float *) palloc(sizeof(float) * hdr->n_samples);
 	if (distances == NULL)
 	{
 		if (errstr)
@@ -626,17 +632,17 @@ ndb_cuda_knn_predict(const bytea *model_data,
  * Batch prediction: predict for multiple samples
  */
 int
-ndb_cuda_knn_predict_batch(const bytea *model_data,
-	const float *features,
-	int n_samples,
-	int feature_dim,
-	int *predictions_out,
-	char **errstr)
+ndb_cuda_knn_predict_batch(const bytea * model_data,
+						   const float *features,
+						   int n_samples,
+						   int feature_dim,
+						   int *predictions_out,
+						   char **errstr)
 {
 	const char *base;
-	const NdbCudaKnnModelHeader *hdr;
-	int i;
-	int rc;
+	const		NdbCudaKnnModelHeader *hdr;
+	int			i;
+	int			rc;
 
 	if (errstr)
 		*errstr = NULL;
@@ -658,7 +664,7 @@ ndb_cuda_knn_predict_batch(const bytea *model_data,
 	}
 
 	base = VARDATA_ANY(model_data);
-	hdr = (const NdbCudaKnnModelHeader *)base;
+	hdr = (const NdbCudaKnnModelHeader *) base;
 
 	/* Validate model header (same checks as predict) */
 	if (hdr->n_samples <= 0 || hdr->n_samples > 100000000)
@@ -689,15 +695,16 @@ ndb_cuda_knn_predict_batch(const bytea *model_data,
 	{
 		if (errstr)
 			*errstr = psprintf("CUDA KNN batch predict: feature dimension mismatch (expected %d, got %d)",
-				hdr->n_features, feature_dim);
+							   hdr->n_features, feature_dim);
 		return -1;
 	}
 
 	/* Validate bytea size matches expected payload */
 	{
-		size_t expected_size = sizeof(NdbCudaKnnModelHeader)
-			+ sizeof(float) * (size_t)hdr->n_samples * (size_t)hdr->n_features
-			+ sizeof(double) * (size_t)hdr->n_samples;
+		size_t		expected_size = sizeof(NdbCudaKnnModelHeader)
+			+ sizeof(float) * (size_t) hdr->n_samples * (size_t) hdr->n_features
+			+ sizeof(double) * (size_t) hdr->n_samples;
+
 		if (VARSIZE_ANY_EXHDR(model_data) < expected_size)
 		{
 			if (errstr)
@@ -710,13 +717,13 @@ ndb_cuda_knn_predict_batch(const bytea *model_data,
 	for (i = 0; i < n_samples; i++)
 	{
 		const float *input = features + (i * feature_dim);
-		double prediction = 0.0;
+		double		prediction = 0.0;
 
 		rc = ndb_cuda_knn_predict(model_data,
-			input,
-			feature_dim,
-			&prediction,
-			errstr);
+								  input,
+								  feature_dim,
+								  &prediction,
+								  errstr);
 
 		if (rc != 0)
 		{
@@ -727,9 +734,9 @@ ndb_cuda_knn_predict_batch(const bytea *model_data,
 
 		/* Convert prediction to integer class for classification */
 		if (hdr->task_type == 0)
-			predictions_out[i] = (int)rint(prediction);
+			predictions_out[i] = (int) rint(prediction);
 		else
-			predictions_out[i] = (int)rint(prediction);
+			predictions_out[i] = (int) rint(prediction);
 	}
 
 	return 0;
@@ -739,27 +746,27 @@ ndb_cuda_knn_predict_batch(const bytea *model_data,
  * Batch evaluation: compute metrics for multiple samples
  */
 int
-ndb_cuda_knn_evaluate_batch(const bytea *model_data,
-	const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	double *accuracy_out,
-	double *precision_out,
-	double *recall_out,
-	double *f1_out,
-	char **errstr)
+ndb_cuda_knn_evaluate_batch(const bytea * model_data,
+							const float *features,
+							const double *labels,
+							int n_samples,
+							int feature_dim,
+							double *accuracy_out,
+							double *precision_out,
+							double *recall_out,
+							double *f1_out,
+							char **errstr)
 {
 	const char *base;
-	const NdbCudaKnnModelHeader *hdr;
-	int *predictions = NULL;
-	int tp = 0;
-	int tn = 0;
-	int fp = 0;
-	int fn = 0;
-	int i;
-	int total_valid = 0;
-	int rc;
+	const		NdbCudaKnnModelHeader *hdr;
+	int		   *predictions = NULL;
+	int			tp = 0;
+	int			tn = 0;
+	int			fp = 0;
+	int			fn = 0;
+	int			i;
+	int			total_valid = 0;
+	int			rc;
 
 	if (errstr)
 		*errstr = NULL;
@@ -789,7 +796,7 @@ ndb_cuda_knn_evaluate_batch(const bytea *model_data,
 	}
 
 	base = VARDATA_ANY(model_data);
-	hdr = (const NdbCudaKnnModelHeader *)base;
+	hdr = (const NdbCudaKnnModelHeader *) base;
 
 	/* Batch evaluate only supports classification models */
 	if (hdr->task_type != 0)
@@ -800,7 +807,7 @@ ndb_cuda_knn_evaluate_batch(const bytea *model_data,
 	}
 
 	/* Allocate predictions array */
-	predictions = (int *)palloc(sizeof(int) * (size_t)n_samples);
+	predictions = (int *) palloc(sizeof(int) * (size_t) n_samples);
 	if (predictions == NULL)
 	{
 		if (errstr)
@@ -810,11 +817,11 @@ ndb_cuda_knn_evaluate_batch(const bytea *model_data,
 
 	/* Batch predict */
 	rc = ndb_cuda_knn_predict_batch(model_data,
-		features,
-		n_samples,
-		feature_dim,
-		predictions,
-		errstr);
+									features,
+									n_samples,
+									feature_dim,
+									predictions,
+									errstr);
 
 	if (rc != 0)
 	{
@@ -825,9 +832,9 @@ ndb_cuda_knn_evaluate_batch(const bytea *model_data,
 	/* Compute confusion matrix for binary classification */
 	for (i = 0; i < n_samples; i++)
 	{
-		double true_label_d = labels[i];
-		int true_label = (int)rint(true_label_d);
-		int pred_label = predictions[i];
+		double		true_label_d = labels[i];
+		int			true_label = (int) rint(true_label_d);
+		int			pred_label = predictions[i];
 
 		if (true_label < 0 || true_label > 1)
 			continue;
@@ -850,18 +857,21 @@ ndb_cuda_knn_evaluate_batch(const bytea *model_data,
 			fn++;
 	}
 
-	/* Compute metrics - use total_valid (tp+tn+fp+fn) as denominator for accuracy */
+	/*
+	 * Compute metrics - use total_valid (tp+tn+fp+fn) as denominator for
+	 * accuracy
+	 */
 	*accuracy_out = (total_valid > 0)
-		? ((double)(tp + tn) / (double)total_valid)
+		? ((double) (tp + tn) / (double) total_valid)
 		: 0.0;
 
 	if ((tp + fp) > 0)
-		*precision_out = (double)tp / (double)(tp + fp);
+		*precision_out = (double) tp / (double) (tp + fp);
 	else
 		*precision_out = 0.0;
 
 	if ((tp + fn) > 0)
-		*recall_out = (double)tp / (double)(tp + fn);
+		*recall_out = (double) tp / (double) (tp + fn);
 	else
 		*recall_out = 0.0;
 
@@ -881,15 +891,15 @@ ndb_cuda_knn_evaluate_batch(const bytea *model_data,
 /* Stubs when CUDA is not available - return error codes */
 int
 ndb_cuda_knn_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	int k,
-	int task_type,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				   const double *labels,
+				   int n_samples,
+				   int feature_dim,
+				   int k,
+				   int task_type,
+				   const Jsonb * hyperparams,
+				   bytea * *model_data,
+				   Jsonb * *metrics,
+				   char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA not available");
@@ -897,11 +907,11 @@ ndb_cuda_knn_train(const float *features,
 }
 
 int
-ndb_cuda_knn_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	double *prediction_out,
-	char **errstr)
+ndb_cuda_knn_predict(const bytea * model_data,
+					 const float *input,
+					 int feature_dim,
+					 double *prediction_out,
+					 char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA not available");
@@ -909,12 +919,12 @@ ndb_cuda_knn_predict(const bytea *model_data,
 }
 
 int
-ndb_cuda_knn_predict_batch(const bytea *model_data,
-	const float *features,
-	int n_samples,
-	int feature_dim,
-	int *predictions_out,
-	char **errstr)
+ndb_cuda_knn_predict_batch(const bytea * model_data,
+						   const float *features,
+						   int n_samples,
+						   int feature_dim,
+						   int *predictions_out,
+						   char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA not available");
@@ -922,16 +932,16 @@ ndb_cuda_knn_predict_batch(const bytea *model_data,
 }
 
 int
-ndb_cuda_knn_evaluate_batch(const bytea *model_data,
-	const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	double *accuracy_out,
-	double *precision_out,
-	double *recall_out,
-	double *f1_out,
-	char **errstr)
+ndb_cuda_knn_evaluate_batch(const bytea * model_data,
+							const float *features,
+							const double *labels,
+							int n_samples,
+							int feature_dim,
+							double *accuracy_out,
+							double *precision_out,
+							double *recall_out,
+							double *f1_out,
+							char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA not available");
@@ -940,14 +950,13 @@ ndb_cuda_knn_evaluate_batch(const bytea *model_data,
 
 int
 ndb_cuda_knn_pack(const struct KNNModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				  bytea * *model_data,
+				  Jsonb * *metrics,
+				  char **errstr)
 {
 	if (errstr)
 		*errstr = pstrdup("CUDA not available");
 	return -1;
 }
 
-#endif /* NDB_GPU_CUDA */
-
+#endif							/* NDB_GPU_CUDA */

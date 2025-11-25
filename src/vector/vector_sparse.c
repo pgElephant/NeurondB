@@ -28,14 +28,14 @@
 
 /* Helper: Check dimensions match */
 static inline void
-check_vecmap_dimensions(const VectorMap *a, const VectorMap *b)
+check_vecmap_dimensions(const VectorMap * a, const VectorMap * b)
 {
 	if (a->total_dim != b->total_dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("sparse vector dimensions must match: %d vs %d",
-					a->total_dim,
-					b->total_dim)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("sparse vector dimensions must match: %d vs %d",
+						a->total_dim,
+						b->total_dim)));
 }
 
 /*
@@ -46,21 +46,21 @@ PG_FUNCTION_INFO_V1(vecmap_l2_distance);
 Datum
 vecmap_l2_distance(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
-	int32 *a_indices;
-	float4 *a_values;
-	int32 *b_indices;
-	float4 *b_values;
-	double sum = 0.0;
-	double c = 0.0; /* Kahan summation correction */
-	int i;
-	int j;
-	int32 idx_a;
-	int32 idx_b;
-	double diff;
-	double y;
-	double t;
+	VectorMap  *a = (VectorMap *) PG_GETARG_POINTER(0);
+	VectorMap  *b = (VectorMap *) PG_GETARG_POINTER(1);
+	int32	   *a_indices;
+	float4	   *a_values;
+	int32	   *b_indices;
+	float4	   *b_values;
+	double		sum = 0.0;
+	double		c = 0.0;		/* Kahan summation correction */
+	int			i;
+	int			j;
+	int32		idx_a;
+	int32		idx_b;
+	double		diff;
+	double		y;
+	double		t;
 
 	check_vecmap_dimensions(a, b);
 
@@ -79,7 +79,7 @@ vecmap_l2_distance(PG_FUNCTION_ARGS)
 		{
 			/* Only b has value at this index */
 			idx_b = b_indices[j];
-			diff = 0.0 - (double)b_values[j];
+			diff = 0.0 - (double) b_values[j];
 			y = (diff * diff) - c;
 			t = sum + y;
 			c = (t - sum) - y;
@@ -90,7 +90,7 @@ vecmap_l2_distance(PG_FUNCTION_ARGS)
 		{
 			/* Only a has value at this index */
 			idx_a = a_indices[i];
-			diff = (double)a_values[i] - 0.0;
+			diff = (double) a_values[i] - 0.0;
 			y = (diff * diff) - c;
 			t = sum + y;
 			c = (t - sum) - y;
@@ -105,7 +105,7 @@ vecmap_l2_distance(PG_FUNCTION_ARGS)
 			if (idx_a < idx_b)
 			{
 				/* Only a has value at this index */
-				diff = (double)a_values[i] - 0.0;
+				diff = (double) a_values[i] - 0.0;
 				y = (diff * diff) - c;
 				t = sum + y;
 				c = (t - sum) - y;
@@ -115,7 +115,7 @@ vecmap_l2_distance(PG_FUNCTION_ARGS)
 			else if (idx_a > idx_b)
 			{
 				/* Only b has value at this index */
-				diff = 0.0 - (double)b_values[j];
+				diff = 0.0 - (double) b_values[j];
 				y = (diff * diff) - c;
 				t = sum + y;
 				c = (t - sum) - y;
@@ -125,7 +125,7 @@ vecmap_l2_distance(PG_FUNCTION_ARGS)
 			else
 			{
 				/* Both have values at this index */
-				diff = (double)a_values[i] - (double)b_values[j];
+				diff = (double) a_values[i] - (double) b_values[j];
 				y = (diff * diff) - c;
 				t = sum + y;
 				c = (t - sum) - y;
@@ -136,7 +136,7 @@ vecmap_l2_distance(PG_FUNCTION_ARGS)
 		}
 	}
 
-	PG_RETURN_FLOAT4((float4)sqrt(sum));
+	PG_RETURN_FLOAT4((float4) sqrt(sum));
 }
 
 /*
@@ -146,15 +146,15 @@ PG_FUNCTION_INFO_V1(vecmap_inner_product);
 Datum
 vecmap_inner_product(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
-	int32 *a_indices;
-	float4 *a_values;
-	int32 *b_indices;
-	float4 *b_values;
-	double sum = 0.0;
-	int i;
-	int j;
+	VectorMap  *a = (VectorMap *) PG_GETARG_POINTER(0);
+	VectorMap  *b = (VectorMap *) PG_GETARG_POINTER(1);
+	int32	   *a_indices;
+	float4	   *a_values;
+	int32	   *b_indices;
+	float4	   *b_values;
+	double		sum = 0.0;
+	int			i;
+	int			j;
 
 	check_vecmap_dimensions(a, b);
 
@@ -180,13 +180,13 @@ vecmap_inner_product(PG_FUNCTION_ARGS)
 		else
 		{
 			/* Both have values at this index */
-			sum += (double)a_values[i] * (double)b_values[j];
+			sum += (double) a_values[i] * (double) b_values[j];
 			i++;
 			j++;
 		}
 	}
 
-	PG_RETURN_FLOAT4((float4)sum);
+	PG_RETURN_FLOAT4((float4) sum);
 }
 
 /*
@@ -196,19 +196,19 @@ PG_FUNCTION_INFO_V1(vecmap_cosine_distance);
 Datum
 vecmap_cosine_distance(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
-	int32 *a_indices;
-	float4 *a_values;
-	int32 *b_indices;
-	float4 *b_values;
-	double dot = 0.0;
-	double norm_a = 0.0;
-	double norm_b = 0.0;
-	int i;
-	int j;
-	int32 idx_a;
-	int32 idx_b;
+	VectorMap  *a = (VectorMap *) PG_GETARG_POINTER(0);
+	VectorMap  *b = (VectorMap *) PG_GETARG_POINTER(1);
+	int32	   *a_indices;
+	float4	   *a_values;
+	int32	   *b_indices;
+	float4	   *b_values;
+	double		dot = 0.0;
+	double		norm_a = 0.0;
+	double		norm_b = 0.0;
+	int			i;
+	int			j;
+	int32		idx_a;
+	int32		idx_b;
 
 	check_vecmap_dimensions(a, b);
 
@@ -226,13 +226,13 @@ vecmap_cosine_distance(PG_FUNCTION_ARGS)
 		if (i >= a->nnz)
 		{
 			idx_b = b_indices[j];
-			norm_b += (double)b_values[j] * (double)b_values[j];
+			norm_b += (double) b_values[j] * (double) b_values[j];
 			j++;
 		}
 		else if (j >= b->nnz)
 		{
 			idx_a = a_indices[i];
-			norm_a += (double)a_values[i] * (double)a_values[i];
+			norm_a += (double) a_values[i] * (double) a_values[i];
 			i++;
 		}
 		else
@@ -242,19 +242,20 @@ vecmap_cosine_distance(PG_FUNCTION_ARGS)
 
 			if (idx_a < idx_b)
 			{
-				norm_a += (double)a_values[i] * (double)a_values[i];
+				norm_a += (double) a_values[i] * (double) a_values[i];
 				i++;
 			}
 			else if (idx_a > idx_b)
 			{
-				norm_b += (double)b_values[j] * (double)b_values[j];
+				norm_b += (double) b_values[j] * (double) b_values[j];
 				j++;
 			}
 			else
 			{
 				/* Both have values at this index */
-				double va = (double)a_values[i];
-				double vb = (double)b_values[j];
+				double		va = (double) a_values[i];
+				double		vb = (double) b_values[j];
+
 				dot += va * vb;
 				norm_a += va * va;
 				norm_b += vb * vb;
@@ -268,7 +269,7 @@ vecmap_cosine_distance(PG_FUNCTION_ARGS)
 	if (norm_a == 0.0 || norm_b == 0.0)
 		PG_RETURN_FLOAT4(1.0f);
 
-	PG_RETURN_FLOAT4((float4)(1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b)))));
+	PG_RETURN_FLOAT4((float4) (1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b)))));
 }
 
 /*
@@ -278,15 +279,15 @@ PG_FUNCTION_INFO_V1(vecmap_l1_distance);
 Datum
 vecmap_l1_distance(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
-	int32 *a_indices;
-	float4 *a_values;
-	int32 *b_indices;
-	float4 *b_values;
-	double sum = 0.0;
-	int i;
-	int j;
+	VectorMap  *a = (VectorMap *) PG_GETARG_POINTER(0);
+	VectorMap  *b = (VectorMap *) PG_GETARG_POINTER(1);
+	int32	   *a_indices;
+	float4	   *a_values;
+	int32	   *b_indices;
+	float4	   *b_values;
+	double		sum = 0.0;
+	int			i;
+	int			j;
 
 	check_vecmap_dimensions(a, b);
 
@@ -304,38 +305,38 @@ vecmap_l1_distance(PG_FUNCTION_ARGS)
 		if (i >= a->nnz)
 		{
 			/* Only b has value */
-			sum += fabs((double)b_values[j]);
+			sum += fabs((double) b_values[j]);
 			j++;
 		}
 		else if (j >= b->nnz)
 		{
 			/* Only a has value */
-			sum += fabs((double)a_values[i]);
+			sum += fabs((double) a_values[i]);
 			i++;
 		}
 		else
 		{
 			if (a_indices[i] < b_indices[j])
 			{
-				sum += fabs((double)a_values[i]);
+				sum += fabs((double) a_values[i]);
 				i++;
 			}
 			else if (a_indices[i] > b_indices[j])
 			{
-				sum += fabs((double)b_values[j]);
+				sum += fabs((double) b_values[j]);
 				j++;
 			}
 			else
 			{
 				/* Both have values */
-				sum += fabs((double)a_values[i] - (double)b_values[j]);
+				sum += fabs((double) a_values[i] - (double) b_values[j]);
 				i++;
 				j++;
 			}
 		}
 	}
 
-	PG_RETURN_FLOAT4((float4)sum);
+	PG_RETURN_FLOAT4((float4) sum);
 }
 
 /*
@@ -345,21 +346,21 @@ PG_FUNCTION_INFO_V1(vecmap_add);
 Datum
 vecmap_add(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
-	int32 *a_indices;
-	float4 *a_values;
-	int32 *b_indices;
-	float4 *b_values;
-	VectorMap *result;
-	int32 *result_indices;
-	float4 *result_values;
-	int32 max_nnz;
-	int32 result_nnz;
-	int i;
-	int j;
-	int k;
-	int size;
+	VectorMap  *a = (VectorMap *) PG_GETARG_POINTER(0);
+	VectorMap  *b = (VectorMap *) PG_GETARG_POINTER(1);
+	int32	   *a_indices;
+	float4	   *a_values;
+	int32	   *b_indices;
+	float4	   *b_values;
+	VectorMap  *result;
+	int32	   *result_indices;
+	float4	   *result_values;
+	int32		max_nnz;
+	int32		result_nnz;
+	int			i;
+	int			j;
+	int			k;
+	int			size;
 
 	check_vecmap_dimensions(a, b);
 
@@ -370,8 +371,8 @@ vecmap_add(PG_FUNCTION_ARGS)
 
 	/* Maximum possible nnz is sum of both (if no overlap) */
 	max_nnz = a->nnz + b->nnz;
-	result_indices = (int32 *)palloc(sizeof(int32) * max_nnz);
-	result_values = (float4 *)palloc(sizeof(float4) * max_nnz);
+	result_indices = (int32 *) palloc(sizeof(int32) * max_nnz);
+	result_values = (float4 *) palloc(sizeof(float4) * max_nnz);
 
 	/* Merge-like addition */
 	i = 0;
@@ -413,7 +414,8 @@ vecmap_add(PG_FUNCTION_ARGS)
 			else
 			{
 				/* Both have values - add them */
-				float4 sum_val = a_values[i] + b_values[j];
+				float4		sum_val = a_values[i] + b_values[j];
+
 				if (fabs(sum_val) > 1e-10f) /* Skip near-zero results */
 				{
 					result_indices[k] = a_indices[i];
@@ -431,7 +433,7 @@ vecmap_add(PG_FUNCTION_ARGS)
 	/* Allocate result */
 	size = sizeof(VectorMap) + sizeof(int32) * result_nnz +
 		sizeof(float4) * result_nnz;
-	result = (VectorMap *)palloc0(size);
+	result = (VectorMap *) palloc0(size);
 	SET_VARSIZE(result, size);
 
 	result->total_dim = a->total_dim;
@@ -453,21 +455,21 @@ PG_FUNCTION_INFO_V1(vecmap_sub);
 Datum
 vecmap_sub(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	VectorMap *b = (VectorMap *)PG_GETARG_POINTER(1);
-	int32 *a_indices;
-	float4 *a_values;
-	int32 *b_indices;
-	float4 *b_values;
-	VectorMap *result;
-	int32 *result_indices;
-	float4 *result_values;
-	int32 max_nnz;
-	int32 result_nnz;
-	int i;
-	int j;
-	int k;
-	int size;
+	VectorMap  *a = (VectorMap *) PG_GETARG_POINTER(0);
+	VectorMap  *b = (VectorMap *) PG_GETARG_POINTER(1);
+	int32	   *a_indices;
+	float4	   *a_values;
+	int32	   *b_indices;
+	float4	   *b_values;
+	VectorMap  *result;
+	int32	   *result_indices;
+	float4	   *result_values;
+	int32		max_nnz;
+	int32		result_nnz;
+	int			i;
+	int			j;
+	int			k;
+	int			size;
 
 	check_vecmap_dimensions(a, b);
 
@@ -477,8 +479,8 @@ vecmap_sub(PG_FUNCTION_ARGS)
 	b_values = VECMAP_VALUES(b);
 
 	max_nnz = a->nnz + b->nnz;
-	result_indices = (int32 *)palloc(sizeof(int32) * max_nnz);
-	result_values = (float4 *)palloc(sizeof(float4) * max_nnz);
+	result_indices = (int32 *) palloc(sizeof(int32) * max_nnz);
+	result_values = (float4 *) palloc(sizeof(float4) * max_nnz);
 
 	/* Merge-like subtraction */
 	i = 0;
@@ -490,7 +492,7 @@ vecmap_sub(PG_FUNCTION_ARGS)
 		if (i >= a->nnz)
 		{
 			result_indices[k] = b_indices[j];
-			result_values[k] = -b_values[j]; /* Negate b */
+			result_values[k] = -b_values[j];	/* Negate b */
 			j++;
 			k++;
 		}
@@ -520,7 +522,8 @@ vecmap_sub(PG_FUNCTION_ARGS)
 			else
 			{
 				/* Both have values - subtract */
-				float4 diff_val = a_values[i] - b_values[j];
+				float4		diff_val = a_values[i] - b_values[j];
+
 				if (fabs(diff_val) > 1e-10f)
 				{
 					result_indices[k] = a_indices[i];
@@ -537,7 +540,7 @@ vecmap_sub(PG_FUNCTION_ARGS)
 
 	size = sizeof(VectorMap) + sizeof(int32) * result_nnz +
 		sizeof(float4) * result_nnz;
-	result = (VectorMap *)palloc0(size);
+	result = (VectorMap *) palloc0(size);
 	SET_VARSIZE(result, size);
 
 	result->total_dim = a->total_dim;
@@ -559,16 +562,16 @@ PG_FUNCTION_INFO_V1(vecmap_mul_scalar);
 Datum
 vecmap_mul_scalar(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	float4 scalar = PG_GETARG_FLOAT4(1);
-	VectorMap *result;
-	int32 *a_indices;
-	float4 *a_values;
-	int32 *result_indices;
-	float4 *result_values;
-	int32 result_nnz;
-	int i;
-	int size;
+	VectorMap  *a = (VectorMap *) PG_GETARG_POINTER(0);
+	float4		scalar = PG_GETARG_FLOAT4(1);
+	VectorMap  *result;
+	int32	   *a_indices;
+	float4	   *a_values;
+	int32	   *result_indices;
+	float4	   *result_values;
+	int32		result_nnz;
+	int			i;
+	int			size;
 
 	a_indices = VECMAP_INDICES(a);
 	a_values = VECMAP_VALUES(a);
@@ -583,7 +586,7 @@ vecmap_mul_scalar(PG_FUNCTION_ARGS)
 
 	size = sizeof(VectorMap) + sizeof(int32) * result_nnz +
 		sizeof(float4) * result_nnz;
-	result = (VectorMap *)palloc0(size);
+	result = (VectorMap *) palloc0(size);
 	SET_VARSIZE(result, size);
 
 	result->total_dim = a->total_dim;
@@ -593,10 +596,12 @@ vecmap_mul_scalar(PG_FUNCTION_ARGS)
 	result_values = VECMAP_VALUES(result);
 
 	{
-		int k = 0;
+		int			k = 0;
+
 		for (i = 0; i < a->nnz; i++)
 		{
-			float4 scaled = a_values[i] * scalar;
+			float4		scaled = a_values[i] * scalar;
+
 			if (fabs(scaled) > 1e-10f)
 			{
 				result_indices[k] = a_indices[i];
@@ -616,16 +621,15 @@ PG_FUNCTION_INFO_V1(vecmap_norm);
 Datum
 vecmap_norm(PG_FUNCTION_ARGS)
 {
-	VectorMap *a = (VectorMap *)PG_GETARG_POINTER(0);
-	float4 *values;
-	double sum = 0.0;
-	int i;
+	VectorMap  *a = (VectorMap *) PG_GETARG_POINTER(0);
+	float4	   *values;
+	double		sum = 0.0;
+	int			i;
 
 	values = VECMAP_VALUES(a);
 
 	for (i = 0; i < a->nnz; i++)
-		sum += (double)values[i] * (double)values[i];
+		sum += (double) values[i] * (double) values[i];
 
-	PG_RETURN_FLOAT4((float4)sqrt(sum));
+	PG_RETURN_FLOAT4((float4) sqrt(sum));
 }
-

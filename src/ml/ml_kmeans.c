@@ -40,12 +40,14 @@
 static void
 kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 {
-	bool *selected;
-	double *dist;
-	int c, i, d;
+	bool	   *selected;
+	double	   *dist;
+	int			c,
+				i,
+				d;
 
-	selected = (bool *)palloc0(sizeof(bool) * nvec);
-	dist = (double *)palloc(sizeof(double) * nvec);
+	selected = (bool *) palloc0(sizeof(bool) * nvec);
+	dist = (double *) palloc(sizeof(double) * nvec);
 
 	/* Pick first centroid randomly */
 	centroids[0] = rand() % nvec;
@@ -54,11 +56,12 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 	/* Compute initial distances from first centroid */
 	for (i = 0; i < nvec; i++)
 	{
-		double acc = 0.0;
+		double		acc = 0.0;
 
 		for (d = 0; d < dim; d++)
 		{
-			float diff = data[i][d] - data[centroids[0]][d];
+			float		diff = data[i][d] - data[centroids[0]][d];
+
 			acc += diff * diff;
 		}
 		dist[i] = acc;
@@ -67,15 +70,15 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 	/* Pick remaining centroids */
 	for (c = 1; c < k; c++)
 	{
-		double sum = 0.0;
-		double r;
-		int picked = -1;
+		double		sum = 0.0;
+		double		r;
+		int			picked = -1;
 
 		for (i = 0; i < nvec; i++)
 			if (!selected[i])
 				sum += dist[i];
 
-		r = ((double)rand() / (double)RAND_MAX) * sum;
+		r = ((double) rand() / (double) RAND_MAX) * sum;
 
 		for (i = 0; i < nvec; i++)
 		{
@@ -106,9 +109,9 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 			NDB_SAFE_PFREE_AND_NULL(dist);
 			NDB_SAFE_PFREE_AND_NULL(selected);
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("neurondb: k-means++ failed to select centroid %d",
-						c)));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: k-means++ failed to select centroid %d",
+							c)));
 		}
 
 		centroids[c] = picked;
@@ -117,7 +120,8 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 		/* Update distances if new centroid is closer */
 		for (i = 0; i < nvec; i++)
 		{
-			double acc = 0.0;
+			double		acc = 0.0;
+
 			for (d = 0; d < dim; d++)
 				acc += (data[i][d] - data[picked][d])
 					* (data[i][d] - data[picked][d]);
@@ -139,32 +143,35 @@ PG_FUNCTION_INFO_V1(cluster_kmeans);
 Datum
 cluster_kmeans(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_PP(0);
-	text *vector_col = PG_GETARG_TEXT_PP(1);
-	int32 num_clusters = PG_GETARG_INT32(2);
-	int32 max_iters = PG_GETARG_INT32(3);
+	text	   *table_name = PG_GETARG_TEXT_PP(0);
+	text	   *vector_col = PG_GETARG_TEXT_PP(1);
+	int32		num_clusters = PG_GETARG_INT32(2);
+	int32		max_iters = PG_GETARG_INT32(3);
 
-	char *tbl_str;
-	char *col_str;
-	int nvec = 0;
-	int dim = 0;
-	int *assignments = NULL;
-	int *centroids_idx = NULL;
-	float **data = NULL;
-	float **centers = NULL;
-	bool changed = false;
-	int iter, i, c, d;
-	Datum *out_datums;
-	ArrayType *out_array;
+	char	   *tbl_str;
+	char	   *col_str;
+	int			nvec = 0;
+	int			dim = 0;
+	int		   *assignments = NULL;
+	int		   *centroids_idx = NULL;
+	float	  **data = NULL;
+	float	  **centers = NULL;
+	bool		changed = false;
+	int			iter,
+				i,
+				c,
+				d;
+	Datum	   *out_datums;
+	ArrayType  *out_array;
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_col);
 
 	if (num_clusters <= 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("number of clusters must be at least "
-				       "2")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("number of clusters must be at least "
+						"2")));
 	if (max_iters < 1)
 		max_iters = 100;
 
@@ -172,21 +179,21 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 
 	if (!data || nvec < num_clusters)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("not enough vectors for cluster count (need >= %d, have %d)",
-					num_clusters,
-					nvec)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("not enough vectors for cluster count (need >= %d, have %d)",
+						num_clusters,
+						nvec)));
 
-	assignments = (int *)palloc0(sizeof(int) * nvec);
-	centroids_idx = (int *)palloc(sizeof(int) * num_clusters);
+	assignments = (int *) palloc0(sizeof(int) * nvec);
+	centroids_idx = (int *) palloc(sizeof(int) * num_clusters);
 
 	/* Initialize centroids using k-means++ */
 	kmeanspp_init(data, nvec, dim, num_clusters, centroids_idx);
 
-	centers = (float **)palloc(sizeof(float *) * num_clusters);
+	centers = (float **) palloc(sizeof(float *) * num_clusters);
 	for (c = 0; c < num_clusters; c++)
 	{
-		centers[c] = (float *)palloc(sizeof(float) * dim);
+		centers[c] = (float *) palloc(sizeof(float) * dim);
 		memcpy(centers[c], data[centroids_idx[c]], sizeof(float) * dim);
 	}
 
@@ -196,20 +203,20 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 
 	for (iter = 0; iter < max_iters && changed; iter++)
 	{
-		int *counts;
+		int		   *counts;
 
 		changed = false;
 		/* Assignment phase - SIMD optimized */
 		for (i = 0; i < nvec; i++)
 		{
-			double min_dist = DBL_MAX;
-			int best = -1;
+			double		min_dist = DBL_MAX;
+			int			best = -1;
 
 			for (c = 0; c < num_clusters; c++)
 			{
 				/* Use SIMD-optimized L2 distance */
-				double dist = neurondb_l2_distance_squared(
-					data[i], centers[c], dim);
+				double		dist = neurondb_l2_distance_squared(
+																data[i], centers[c], dim);
 
 				if (dist < min_dist)
 				{
@@ -228,7 +235,7 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 		for (c = 0; c < num_clusters; c++)
 			memset(centers[c], 0, sizeof(float) * dim);
 
-		counts = (int *)palloc0(sizeof(int) * num_clusters);
+		counts = (int *) palloc0(sizeof(int) * num_clusters);
 
 		for (i = 0; i < nvec; i++)
 		{
@@ -249,7 +256,7 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 	}
 
 	/* Build output int array (nvec x 1) for 1-based cluster labels */
-	out_datums = (Datum *)palloc(sizeof(Datum) * nvec);
+	out_datums = (Datum *) palloc(sizeof(Datum) * nvec);
 	for (i = 0; i < nvec; i++)
 		out_datums[i] = Int32GetDatum(assignments[i] + 1);
 
@@ -277,24 +284,25 @@ static bytea *
 kmeans_model_serialize_to_bytea(float **centers, int num_clusters, int dim)
 {
 	StringInfoData buf;
-	int i, j;
-	int total_size;
-	bytea *result;
+	int			i,
+				j;
+	int			total_size;
+	bytea	   *result;
 
 	initStringInfo(&buf);
 
 	/* Write header: num_clusters, dim */
-	appendBinaryStringInfo(&buf, (char *)&num_clusters, sizeof(int));
-	appendBinaryStringInfo(&buf, (char *)&dim, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &num_clusters, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &dim, sizeof(int));
 
 	/* Write centroids */
 	for (i = 0; i < num_clusters; i++)
 		for (j = 0; j < dim; j++)
-			appendBinaryStringInfo(&buf, (char *)&centers[i][j], sizeof(float));
+			appendBinaryStringInfo(&buf, (char *) &centers[i][j], sizeof(float));
 
 	/* Convert to bytea */
 	total_size = VARHDRSZ + buf.len;
-	result = (bytea *)palloc(total_size);
+	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
@@ -306,12 +314,13 @@ kmeans_model_serialize_to_bytea(float **centers, int num_clusters, int dim)
  * Deserialize K-Means model from bytea
  */
 static int
-kmeans_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int *num_clusters_out, int *dim_out)
+kmeans_model_deserialize_from_bytea(const bytea * data, float ***centers_out, int *num_clusters_out, int *dim_out)
 {
 	const char *buf;
-	int offset = 0;
-	int i, j;
-	float **centers;
+	int			offset = 0;
+	int			i,
+				j;
+	float	  **centers;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 2)
 		return -1;
@@ -328,10 +337,10 @@ kmeans_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int
 		return -1;
 
 	/* Allocate centroids */
-	centers = (float **)palloc(sizeof(float *) * *num_clusters_out);
+	centers = (float **) palloc(sizeof(float *) * *num_clusters_out);
 	for (i = 0; i < *num_clusters_out; i++)
 	{
-		centers[i] = (float *)palloc(sizeof(float) * *dim_out);
+		centers[i] = (float *) palloc(sizeof(float) * *dim_out);
 		for (j = 0; j < *dim_out; j++)
 		{
 			memcpy(&centers[i][j], buf + offset, sizeof(float));
@@ -353,26 +362,29 @@ PG_FUNCTION_INFO_V1(train_kmeans_model_id);
 Datum
 train_kmeans_model_id(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_PP(0);
-	text *vector_col = PG_GETARG_TEXT_PP(1);
-	int32 num_clusters = PG_GETARG_INT32(2);
-	int32 max_iters = PG_GETARG_INT32(3);
+	text	   *table_name = PG_GETARG_TEXT_PP(0);
+	text	   *vector_col = PG_GETARG_TEXT_PP(1);
+	int32		num_clusters = PG_GETARG_INT32(2);
+	int32		max_iters = PG_GETARG_INT32(3);
 
-	char *tbl_str;
-	char *col_str;
-	int nvec = 0;
-	int dim = 0;
-	int *assignments = NULL;
-	int *centroids_idx = NULL;
-	float **data = NULL;
-	float **centers = NULL;
-	bool changed = false;
-	int iter, i, c, d;
-	bytea *model_data;
+	char	   *tbl_str;
+	char	   *col_str;
+	int			nvec = 0;
+	int			dim = 0;
+	int		   *assignments = NULL;
+	int		   *centroids_idx = NULL;
+	float	  **data = NULL;
+	float	  **centers = NULL;
+	bool		changed = false;
+	int			iter,
+				i,
+				c,
+				d;
+	bytea	   *model_data;
 	MLCatalogModelSpec spec;
-	Jsonb *metrics;
+	Jsonb	   *metrics;
 	StringInfoData metrics_json;
-	int32 model_id;
+	int32		model_id;
 
 	tbl_str = text_to_cstring(table_name);
 	col_str = text_to_cstring(vector_col);
@@ -382,8 +394,8 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(tbl_str);
 		NDB_SAFE_PFREE_AND_NULL(col_str);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("number of clusters must be at least 2")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("number of clusters must be at least 2")));
 	}
 	if (max_iters < 1)
 		max_iters = 100;
@@ -395,22 +407,22 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(tbl_str);
 		NDB_SAFE_PFREE_AND_NULL(col_str);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("not enough vectors for cluster count (need >= %d, have %d)",
-					num_clusters,
-					nvec)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("not enough vectors for cluster count (need >= %d, have %d)",
+						num_clusters,
+						nvec)));
 	}
 
-	assignments = (int *)palloc0(sizeof(int) * nvec);
-	centroids_idx = (int *)palloc(sizeof(int) * num_clusters);
+	assignments = (int *) palloc0(sizeof(int) * nvec);
+	centroids_idx = (int *) palloc(sizeof(int) * num_clusters);
 
 	/* Initialize centroids using k-means++ */
 	kmeanspp_init(data, nvec, dim, num_clusters, centroids_idx);
 
-	centers = (float **)palloc(sizeof(float *) * num_clusters);
+	centers = (float **) palloc(sizeof(float *) * num_clusters);
 	for (c = 0; c < num_clusters; c++)
 	{
-		centers[c] = (float *)palloc(sizeof(float) * dim);
+		centers[c] = (float *) palloc(sizeof(float) * dim);
 		memcpy(centers[c], data[centroids_idx[c]], sizeof(float) * dim);
 	}
 
@@ -421,19 +433,19 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 	/* K-Means iteration */
 	for (iter = 0; iter < max_iters && changed; iter++)
 	{
-		int *counts;
+		int		   *counts;
 
 		changed = false;
 		/* Assignment phase */
 		for (i = 0; i < nvec; i++)
 		{
-			double min_dist = DBL_MAX;
-			int best = -1;
+			double		min_dist = DBL_MAX;
+			int			best = -1;
 
 			for (c = 0; c < num_clusters; c++)
 			{
-				double dist = neurondb_l2_distance_squared(
-					data[i], centers[c], dim);
+				double		dist = neurondb_l2_distance_squared(
+																data[i], centers[c], dim);
 
 				if (dist < min_dist)
 				{
@@ -452,7 +464,7 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 		for (c = 0; c < num_clusters; c++)
 			memset(centers[c], 0, sizeof(float) * dim);
 
-		counts = (int *)palloc0(sizeof(int) * num_clusters);
+		counts = (int *) palloc0(sizeof(int) * num_clusters);
 
 		for (i = 0; i < nvec; i++)
 		{
@@ -478,7 +490,7 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 	/* Build metrics JSONB */
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json, "{\"storage\": \"cpu\", \"k\": %d, \"dim\": %d, \"max_iters\": %d, \"n_samples\": %d}",
-		num_clusters, dim, max_iters, nvec);
+					 num_clusters, dim, max_iters, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(metrics_json.data)));
 	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
 
@@ -516,12 +528,13 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 static inline double
 euclidean_distance_squared(const float *a, const float *b, int dim)
 {
-	double sum = 0.0;
-	int i;
+	double		sum = 0.0;
+	int			i;
 
 	for (i = 0; i < dim; i++)
 	{
-		double diff = (double)a[i] - (double)b[i];
+		double		diff = (double) a[i] - (double) b[i];
+
 		sum += diff * diff;
 	}
 	return sum;
@@ -549,43 +562,45 @@ PG_FUNCTION_INFO_V1(evaluate_kmeans_by_model_id);
 Datum
 evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	text *table_name;
-	text *vector_col;
-	char *tbl_str;
-	char *col_str;
-	int ret;
-	int nvec = 0;
-	int i, j, c;
-	float **data = NULL;
-	int dim = 0;
-	float **centers = NULL;
-	int num_clusters = 0;
-	int *assignments = NULL;
-	int *cluster_sizes = NULL;
-	double inertia = 0.0;
-	double silhouette = 0.0;
-	double davies_bouldin = 0.0;
-	double *cluster_scatter = NULL;
-	double *a_scores = NULL;
-	double *b_scores = NULL;
+	int32		model_id;
+	text	   *table_name;
+	text	   *vector_col;
+	char	   *tbl_str;
+	char	   *col_str;
+	int			ret;
+	int			nvec = 0;
+	int			i,
+				j,
+				c;
+	float	  **data = NULL;
+	int			dim = 0;
+	float	  **centers = NULL;
+	int			num_clusters = 0;
+	int		   *assignments = NULL;
+	int		   *cluster_sizes = NULL;
+	double		inertia = 0.0;
+	double		silhouette = 0.0;
+	double		davies_bouldin = 0.0;
+	double	   *cluster_scatter = NULL;
+	double	   *a_scores = NULL;
+	double	   *b_scores = NULL;
 	MemoryContext oldcontext;
 	StringInfoData jsonbuf;
-	Jsonb *result_jsonb = NULL;
-	bytea *model_payload = NULL;
-	Jsonb *model_metrics = NULL;
+	Jsonb	   *result_jsonb = NULL;
+	bytea	   *model_payload = NULL;
+	Jsonb	   *model_metrics = NULL;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_by_model_id: model_id is required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_by_model_id: model_id is required")));
 
 	model_id = PG_GETARG_INT32(0);
 
 	if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_by_model_id: table_name and vector_col are required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_by_model_id: table_name and vector_col are required")));
 
 	table_name = PG_GETARG_TEXT_PP(1);
 	vector_col = PG_GETARG_TEXT_PP(2);
@@ -601,9 +616,9 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(tbl_str);
 		NDB_SAFE_PFREE_AND_NULL(col_str);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_by_model_id: model %d not found",
-					model_id)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_by_model_id: model %d not found",
+						model_id)));
 	}
 
 	if (model_payload == NULL)
@@ -613,9 +628,9 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 		if (model_metrics)
 			NDB_SAFE_PFREE_AND_NULL(model_metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_by_model_id: model %d has no model_data",
-					model_id)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_by_model_id: model %d has no model_data",
+						model_id)));
 	}
 
 	/* Deserialize model */
@@ -628,8 +643,8 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 		if (model_metrics)
 			NDB_SAFE_PFREE_AND_NULL(model_metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_by_model_id: failed to deserialize model")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_by_model_id: failed to deserialize model")));
 	}
 
 	/* Connect to SPI */
@@ -645,8 +660,8 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 		if (model_metrics)
 			NDB_SAFE_PFREE_AND_NULL(model_metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: evaluate_kmeans_by_model_id: SPI_connect failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_kmeans_by_model_id: SPI_connect failed")));
 	}
 
 	/* Fetch test data */
@@ -665,22 +680,23 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 		if (model_metrics)
 			NDB_SAFE_PFREE_AND_NULL(model_metrics);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_kmeans_by_model_id: no valid data found")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_kmeans_by_model_id: no valid data found")));
 	}
 
 	/* Assign points to clusters */
-	assignments = (int *)palloc(sizeof(int) * nvec);
-	cluster_sizes = (int *)palloc0(sizeof(int) * num_clusters);
+	assignments = (int *) palloc(sizeof(int) * nvec);
+	cluster_sizes = (int *) palloc0(sizeof(int) * num_clusters);
 
 	for (i = 0; i < nvec; i++)
 	{
-		double min_dist = DBL_MAX;
-		int best = 0;
+		double		min_dist = DBL_MAX;
+		int			best = 0;
 
 		for (c = 0; c < num_clusters; c++)
 		{
-			double dist = euclidean_distance_squared(data[i], centers[c], dim);
+			double		dist = euclidean_distance_squared(data[i], centers[c], dim);
+
 			if (dist < min_dist)
 			{
 				min_dist = dist;
@@ -693,15 +709,15 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	}
 
 	/* Compute silhouette score */
-	a_scores = (double *)palloc0(sizeof(double) * nvec);
-	b_scores = (double *)palloc0(sizeof(double) * nvec);
+	a_scores = (double *) palloc0(sizeof(double) * nvec);
+	b_scores = (double *) palloc0(sizeof(double) * nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
-		int my_cluster = assignments[i];
-		int same_count = 0;
-		double same_dist = 0.0;
-		double min_other_dist = DBL_MAX;
+		int			my_cluster = assignments[i];
+		int			same_count = 0;
+		double		same_dist = 0.0;
+		double		min_other_dist = DBL_MAX;
 
 		if (cluster_sizes[my_cluster] <= 1)
 		{
@@ -722,15 +738,15 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 			}
 		}
 		if (same_count > 0)
-			a_scores[i] = same_dist / (double)same_count;
+			a_scores[i] = same_dist / (double) same_count;
 		else
 			a_scores[i] = 0.0;
 
 		/* Minimum average distance to other clusters */
 		{
-			double other_dist = 0.0;
-			int other_count = 0;
-			int other_cluster_loop;
+			double		other_dist = 0.0;
+			int			other_count = 0;
+			int			other_cluster_loop;
 
 			for (other_cluster_loop = 0; other_cluster_loop < num_clusters; other_cluster_loop++)
 			{
@@ -749,7 +765,7 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 				}
 				if (other_count > 0)
 				{
-					other_dist /= (double)other_count;
+					other_dist /= (double) other_count;
 					if (other_dist < min_other_dist)
 						min_other_dist = other_dist;
 				}
@@ -760,25 +776,27 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 
 	/* Compute average silhouette */
 	{
-		int valid_count = 0;
-		double sum_silhouette = 0.0;
+		int			valid_count = 0;
+		double		sum_silhouette = 0.0;
 
 		for (i = 0; i < nvec; i++)
 		{
-			double max_ab = (a_scores[i] > b_scores[i]) ? a_scores[i] : b_scores[i];
+			double		max_ab = (a_scores[i] > b_scores[i]) ? a_scores[i] : b_scores[i];
+
 			if (max_ab > 0.0)
 			{
-				double s = (b_scores[i] - a_scores[i]) / max_ab;
+				double		s = (b_scores[i] - a_scores[i]) / max_ab;
+
 				sum_silhouette += s;
 				valid_count++;
 			}
 		}
 		if (valid_count > 0)
-			silhouette = sum_silhouette / (double)valid_count;
+			silhouette = sum_silhouette / (double) valid_count;
 	}
 
 	/* Compute Davies-Bouldin index */
-	cluster_scatter = (double *)palloc0(sizeof(double) * num_clusters);
+	cluster_scatter = (double *) palloc0(sizeof(double) * num_clusters);
 
 	for (i = 0; i < nvec; i++)
 	{
@@ -789,24 +807,24 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	for (c = 0; c < num_clusters; c++)
 	{
 		if (cluster_sizes[c] > 0)
-			cluster_scatter[c] /= (double)cluster_sizes[c];
+			cluster_scatter[c] /= (double) cluster_sizes[c];
 	}
 
 	{
-		int valid_clusters = 0;
-		double sum_dbi = 0.0;
+		int			valid_clusters = 0;
+		double		sum_dbi = 0.0;
 
 		for (i = 0; i < num_clusters; i++)
 		{
-			double max_ratio = 0.0;
+			double		max_ratio = 0.0;
 
 			if (cluster_sizes[i] < 2)
 				continue;
 
 			for (j = 0; j < num_clusters; j++)
 			{
-				double centroid_dist;
-				double ratio;
+				double		centroid_dist;
+				double		ratio;
 
 				if (i == j || cluster_sizes[j] < 2)
 					continue;
@@ -823,34 +841,37 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 			valid_clusters++;
 		}
 		if (valid_clusters > 0)
-			davies_bouldin = sum_dbi / (double)valid_clusters;
+			davies_bouldin = sum_dbi / (double) valid_clusters;
 	}
 
 	/* Build jsonb result in old context before SPI_finish */
 	MemoryContextSwitchTo(oldcontext);
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
-		"{\"inertia\":%.6f,\"silhouette_score\":%.6f,\"davies_bouldin_index\":%.6f,\"n_samples\":%d,\"n_clusters\":%d}",
-		inertia,
-		silhouette,
-		davies_bouldin,
-		nvec,
-		num_clusters);
+					 "{\"inertia\":%.6f,\"silhouette_score\":%.6f,\"davies_bouldin_index\":%.6f,\"n_samples\":%d,\"n_clusters\":%d}",
+					 inertia,
+					 silhouette,
+					 davies_bouldin,
+					 nvec,
+					 num_clusters);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(jsonbuf.data)));
+													  CStringGetDatum(jsonbuf.data)));
 
 	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
 
-	/* Cleanup - Note: data[], centers[] allocated by neurondb_fetch_vectors_from_table 
-	 * in SPI context, will be freed by SPI_finish(). Do not double-free. */
+	/*
+	 * Cleanup - Note: data[], centers[] allocated by
+	 * neurondb_fetch_vectors_from_table in SPI context, will be freed by
+	 * SPI_finish(). Do not double-free.
+	 */
 	NDB_SAFE_PFREE_AND_NULL(tbl_str);
 	NDB_SAFE_PFREE_AND_NULL(col_str);
 	if (model_payload)
 		NDB_SAFE_PFREE_AND_NULL(model_payload);
 	if (model_metrics)
 		NDB_SAFE_PFREE_AND_NULL(model_metrics);
-	
+
 	SPI_finish();
 	PG_RETURN_JSONB_P(result_jsonb);
 }
@@ -864,34 +885,37 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 #include "neurondb_safe_memory.h"
 
 static bool
-kmeans_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
+kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 {
 	typedef struct KMeansGpuModelState
 	{
-		bytea *model_blob;
-		Jsonb *metrics;
-		int num_clusters;
-		int dim;
-		int n_samples;
-	} KMeansGpuModelState;
+		bytea	   *model_blob;
+		Jsonb	   *metrics;
+		int			num_clusters;
+		int			dim;
+		int			n_samples;
+	}			KMeansGpuModelState;
 
 	KMeansGpuModelState *state;
-	float **data = NULL;
-	float **centers = NULL;
-	int *assignments = NULL;
-	int *centroids_idx = NULL;
-	int num_clusters = 8; /* Default */
-	int max_iters = 100;
-	int nvec = 0;
-	int dim = 0;
-	bool changed = true;
-	int iter, i, c, d;
-	bytea *model_data = NULL;
-	Jsonb *metrics = NULL;
+	float	  **data = NULL;
+	float	  **centers = NULL;
+	int		   *assignments = NULL;
+	int		   *centroids_idx = NULL;
+	int			num_clusters = 8;	/* Default */
+	int			max_iters = 100;
+	int			nvec = 0;
+	int			dim = 0;
+	bool		changed = true;
+	int			iter,
+				i,
+				c,
+				d;
+	bytea	   *model_data = NULL;
+	Jsonb	   *metrics = NULL;
 	StringInfoData metrics_json;
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -905,19 +929,20 @@ kmeans_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	/* Extract hyperparameters */
 	if (spec->hyperparameters != NULL)
 	{
-		it = JsonbIteratorInit((JsonbContainer *)&spec->hyperparameters->root);
+		it = JsonbIteratorInit((JsonbContainer *) & spec->hyperparameters->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "k") == 0 && v.type == jbvNumeric)
 					num_clusters = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																	 NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
 					max_iters = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																  NumericGetDatum(v.val.numeric)));
 				NDB_SAFE_PFREE_AND_NULL(key);
 			}
 		}
@@ -941,10 +966,10 @@ kmeans_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	dim = spec->feature_dim;
 
 	/* Allocate data array */
-	data = (float **)palloc(sizeof(float *) * nvec);
+	data = (float **) palloc(sizeof(float *) * nvec);
 	for (i = 0; i < nvec; i++)
 	{
-		data[i] = (float *)palloc(sizeof(float) * dim);
+		data[i] = (float *) palloc(sizeof(float) * dim);
 		memcpy(data[i], &spec->feature_matrix[i * dim], sizeof(float) * dim);
 	}
 
@@ -958,16 +983,16 @@ kmeans_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 		return false;
 	}
 
-	assignments = (int *)palloc0(sizeof(int) * nvec);
-	centroids_idx = (int *)palloc(sizeof(int) * num_clusters);
+	assignments = (int *) palloc0(sizeof(int) * nvec);
+	centroids_idx = (int *) palloc(sizeof(int) * num_clusters);
 
 	/* Initialize centroids using k-means++ */
 	kmeanspp_init(data, nvec, dim, num_clusters, centroids_idx);
 
-	centers = (float **)palloc(sizeof(float *) * num_clusters);
+	centers = (float **) palloc(sizeof(float *) * num_clusters);
 	for (c = 0; c < num_clusters; c++)
 	{
-		centers[c] = (float *)palloc(sizeof(float) * dim);
+		centers[c] = (float *) palloc(sizeof(float) * dim);
 		memcpy(centers[c], data[centroids_idx[c]], sizeof(float) * dim);
 	}
 
@@ -978,19 +1003,20 @@ kmeans_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	/* K-Means iteration (CPU implementation) */
 	for (iter = 0; iter < max_iters && changed; iter++)
 	{
-		int *counts;
+		int		   *counts;
 
 		changed = false;
 		/* Assignment phase */
 		for (i = 0; i < nvec; i++)
 		{
-			double min_dist = DBL_MAX;
-			int best = -1;
+			double		min_dist = DBL_MAX;
+			int			best = -1;
 
 			for (c = 0; c < num_clusters; c++)
 			{
-				double dist = neurondb_l2_distance_squared(
-					data[i], centers[c], dim);
+				double		dist = neurondb_l2_distance_squared(
+																data[i], centers[c], dim);
+
 				if (dist < min_dist)
 				{
 					min_dist = dist;
@@ -1008,7 +1034,7 @@ kmeans_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 		for (c = 0; c < num_clusters; c++)
 			memset(centers[c], 0, sizeof(float) * dim);
 
-		counts = (int *)palloc0(sizeof(int) * num_clusters);
+		counts = (int *) palloc0(sizeof(int) * num_clusters);
 		for (i = 0; i < nvec; i++)
 		{
 			c = assignments[i];
@@ -1033,14 +1059,14 @@ kmeans_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	/* Build metrics JSONB */
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json,
-		"{\"storage\":\"cpu\",\"k\":%d,\"dim\":%d,\"max_iters\":%d,\"n_samples\":%d}",
-		num_clusters, dim, max_iters, nvec);
+					 "{\"storage\":\"cpu\",\"k\":%d,\"dim\":%d,\"max_iters\":%d,\"n_samples\":%d}",
+					 num_clusters, dim, max_iters, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(metrics_json.data)));
+												 CStringGetDatum(metrics_json.data)));
 	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
 
 	/* Store in model state */
-	state = (KMeansGpuModelState *)palloc0(sizeof(KMeansGpuModelState));
+	state = (KMeansGpuModelState *) palloc0(sizeof(KMeansGpuModelState));
 	state->model_blob = model_data;
 	state->metrics = metrics;
 	state->num_clusters = num_clusters;
@@ -1068,25 +1094,25 @@ kmeans_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 }
 
 static bool
-kmeans_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
-	float *output, int output_dim, char **errstr)
+kmeans_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
+				   float *output, int output_dim, char **errstr)
 {
 	typedef struct KMeansGpuModelState
 	{
-		bytea *model_blob;
-		Jsonb *metrics;
-		int num_clusters;
-		int dim;
-		int n_samples;
-	} KMeansGpuModelState;
+		bytea	   *model_blob;
+		Jsonb	   *metrics;
+		int			num_clusters;
+		int			dim;
+		int			n_samples;
+	}			KMeansGpuModelState;
 
-	const KMeansGpuModelState *state;
-	float **centers = NULL;
-	int num_clusters = 0;
-	int dim = 0;
-	int c;
-	double min_dist = DBL_MAX;
-	int best_cluster = -1;
+	const		KMeansGpuModelState *state;
+	float	  **centers = NULL;
+	int			num_clusters = 0;
+	int			dim = 0;
+	int			c;
+	double		min_dist = DBL_MAX;
+	int			best_cluster = -1;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1111,7 +1137,7 @@ kmeans_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 		return false;
 	}
 
-	state = (const KMeansGpuModelState *)model->backend_state;
+	state = (const KMeansGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 	{
 		if (errstr != NULL)
@@ -1121,7 +1147,7 @@ kmeans_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 
 	/* Deserialize model */
 	if (kmeans_model_deserialize_from_bytea(state->model_blob,
-		&centers, &num_clusters, &dim) != 0)
+											&centers, &num_clusters, &dim) != 0)
 	{
 		if (errstr != NULL)
 			*errstr = pstrdup("kmeans_gpu_predict: failed to deserialize model");
@@ -1141,7 +1167,8 @@ kmeans_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 	/* Find nearest centroid */
 	for (c = 0; c < num_clusters; c++)
 	{
-		double dist = neurondb_l2_distance_squared(input, centers[c], dim);
+		double		dist = neurondb_l2_distance_squared(input, centers[c], dim);
+
 		if (dist < min_dist)
 		{
 			min_dist = dist;
@@ -1149,7 +1176,7 @@ kmeans_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 		}
 	}
 
-	output[0] = (float)best_cluster;
+	output[0] = (float) best_cluster;
 
 	/* Cleanup */
 	for (c = 0; c < num_clusters; c++)
@@ -1160,20 +1187,20 @@ kmeans_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 }
 
 static bool
-kmeans_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
-	MLGpuMetrics *out, char **errstr)
+kmeans_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
+					MLGpuMetrics * out, char **errstr)
 {
 	typedef struct KMeansGpuModelState
 	{
-		bytea *model_blob;
-		Jsonb *metrics;
-		int num_clusters;
-		int dim;
-		int n_samples;
-	} KMeansGpuModelState;
+		bytea	   *model_blob;
+		Jsonb	   *metrics;
+		int			num_clusters;
+		int			dim;
+		int			n_samples;
+	}			KMeansGpuModelState;
 
-	const KMeansGpuModelState *state;
-	Jsonb *metrics_json;
+	const		KMeansGpuModelState *state;
+	Jsonb	   *metrics_json;
 	StringInfoData buf;
 
 	if (errstr != NULL)
@@ -1187,19 +1214,19 @@ kmeans_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 		return false;
 	}
 
-	state = (const KMeansGpuModelState *)model->backend_state;
+	state = (const KMeansGpuModelState *) model->backend_state;
 
 	/* Create metrics JSON */
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-		"{\"algorithm\":\"kmeans\",\"storage\":\"cpu\","
-		"\"k\":%d,\"dim\":%d,\"n_samples\":%d}",
-		state->num_clusters > 0 ? state->num_clusters : 0,
-		state->dim > 0 ? state->dim : 0,
-		state->n_samples > 0 ? state->n_samples : 0);
+					 "{\"algorithm\":\"kmeans\",\"storage\":\"cpu\","
+					 "\"k\":%d,\"dim\":%d,\"n_samples\":%d}",
+					 state->num_clusters > 0 ? state->num_clusters : 0,
+					 state->dim > 0 ? state->dim : 0,
+					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(buf.data)));
+													  CStringGetDatum(buf.data)));
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
 
 	if (out != NULL)
@@ -1209,21 +1236,21 @@ kmeans_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 }
 
 static bool
-kmeans_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
-	Jsonb **metadata_out, char **errstr)
+kmeans_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
+					 Jsonb * *metadata_out, char **errstr)
 {
 	typedef struct KMeansGpuModelState
 	{
-		bytea *model_blob;
-		Jsonb *metrics;
-		int num_clusters;
-		int dim;
-		int n_samples;
-	} KMeansGpuModelState;
+		bytea	   *model_blob;
+		Jsonb	   *metrics;
+		int			num_clusters;
+		int			dim;
+		int			n_samples;
+	}			KMeansGpuModelState;
 
-	const KMeansGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
+	const		KMeansGpuModelState *state;
+	bytea	   *payload_copy;
+	int			payload_size;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1238,7 +1265,7 @@ kmeans_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		return false;
 	}
 
-	state = (const KMeansGpuModelState *)model->backend_state;
+	state = (const KMeansGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 	{
 		if (errstr != NULL)
@@ -1247,7 +1274,7 @@ kmeans_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 	}
 
 	payload_size = VARSIZE(state->model_blob);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, state->model_blob, payload_size);
 
 	if (payload_out != NULL)
@@ -1256,34 +1283,34 @@ kmeans_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		NDB_SAFE_PFREE_AND_NULL(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
-		*metadata_out = (Jsonb *)PG_DETOAST_DATUM_COPY(
-			PointerGetDatum(state->metrics));
+		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
+														PointerGetDatum(state->metrics));
 
 	return true;
 }
 
 static bool
-kmeans_gpu_deserialize(MLGpuModel *model, const bytea *payload,
-	const Jsonb *metadata, char **errstr)
+kmeans_gpu_deserialize(MLGpuModel * model, const bytea * payload,
+					   const Jsonb * metadata, char **errstr)
 {
 	typedef struct KMeansGpuModelState
 	{
-		bytea *model_blob;
-		Jsonb *metrics;
-		int num_clusters;
-		int dim;
-		int n_samples;
-	} KMeansGpuModelState;
+		bytea	   *model_blob;
+		Jsonb	   *metrics;
+		int			num_clusters;
+		int			dim;
+		int			n_samples;
+	}			KMeansGpuModelState;
 
 	KMeansGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
-	float **centers = NULL;
-	int num_clusters = 0;
-	int dim = 0;
+	bytea	   *payload_copy;
+	int			payload_size;
+	float	  **centers = NULL;
+	int			num_clusters = 0;
+	int			dim = 0;
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1296,12 +1323,12 @@ kmeans_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 
 	/* Copy payload */
 	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, payload, payload_size);
 
 	/* Deserialize to get dimensions */
 	if (kmeans_model_deserialize_from_bytea(payload_copy,
-		&centers, &num_clusters, &dim) != 0)
+											&centers, &num_clusters, &dim) != 0)
 	{
 		NDB_SAFE_PFREE_AND_NULL(payload_copy);
 		if (errstr != NULL)
@@ -1315,7 +1342,7 @@ kmeans_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 	NDB_SAFE_PFREE_AND_NULL(centers);
 
 	/* Extract n_samples from metadata if available */
-	state = (KMeansGpuModelState *)palloc0(sizeof(KMeansGpuModelState));
+	state = (KMeansGpuModelState *) palloc0(sizeof(KMeansGpuModelState));
 	state->model_blob = payload_copy;
 	state->num_clusters = num_clusters;
 	state->dim = dim;
@@ -1323,26 +1350,29 @@ kmeans_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 
 	if (metadata != NULL)
 	{
-		int metadata_size = VARSIZE(metadata);
-		Jsonb *metadata_copy = (Jsonb *)palloc(metadata_size);
+		int			metadata_size = VARSIZE(metadata);
+		Jsonb	   *metadata_copy = (Jsonb *) palloc(metadata_size);
+
 		memcpy(metadata_copy, metadata, metadata_size);
 		state->metrics = metadata_copy;
 
 		/* Extract n_samples from metadata */
-		it = JsonbIteratorInit((JsonbContainer *)&metadata->root);
+		it = JsonbIteratorInit((JsonbContainer *) & metadata->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																		 NumericGetDatum(v.val.numeric)));
 				NDB_SAFE_PFREE_AND_NULL(key);
 			}
 		}
-	} else
+	}
+	else
 	{
 		state->metrics = NULL;
 	}
@@ -1358,16 +1388,16 @@ kmeans_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 }
 
 static void
-kmeans_gpu_destroy(MLGpuModel *model)
+kmeans_gpu_destroy(MLGpuModel * model)
 {
 	typedef struct KMeansGpuModelState
 	{
-		bytea *model_blob;
-		Jsonb *metrics;
-		int num_clusters;
-		int dim;
-		int n_samples;
-	} KMeansGpuModelState;
+		bytea	   *model_blob;
+		Jsonb	   *metrics;
+		int			num_clusters;
+		int			dim;
+		int			n_samples;
+	}			KMeansGpuModelState;
 
 	KMeansGpuModelState *state;
 
@@ -1376,7 +1406,7 @@ kmeans_gpu_destroy(MLGpuModel *model)
 
 	if (model->backend_state != NULL)
 	{
-		state = (KMeansGpuModelState *)model->backend_state;
+		state = (KMeansGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
 			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
 		if (state->metrics != NULL)
@@ -1403,6 +1433,7 @@ void
 neurondb_gpu_register_kmeans_model(void)
 {
 	static bool registered = false;
+
 	if (registered)
 		return;
 	ndb_gpu_register_model_ops(&kmeans_gpu_model_ops);

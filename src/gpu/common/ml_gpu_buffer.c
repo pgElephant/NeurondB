@@ -25,17 +25,17 @@ ml_gpu_dtype_size(MLGpuDType dtype)
 {
 	switch (dtype)
 	{
-	case MLGPU_DTYPE_FLOAT32:
-		return sizeof(float);
-	case MLGPU_DTYPE_FLOAT64:
-		return sizeof(double);
-	case MLGPU_DTYPE_INT32:
-		return sizeof(int32);
-	case MLGPU_DTYPE_UINT8:
-		return sizeof(uint8);
-	case MLGPU_DTYPE_INVALID:
-	default:
-		break;
+		case MLGPU_DTYPE_FLOAT32:
+			return sizeof(float);
+		case MLGPU_DTYPE_FLOAT64:
+			return sizeof(double);
+		case MLGPU_DTYPE_INT32:
+			return sizeof(int32);
+		case MLGPU_DTYPE_UINT8:
+			return sizeof(uint8);
+		case MLGPU_DTYPE_INVALID:
+		default:
+			break;
 	}
 
 	elog(ERROR, "ml_gpu_buffer: unknown dtype %d", dtype);
@@ -43,7 +43,7 @@ ml_gpu_dtype_size(MLGpuDType dtype)
 }
 
 static void
-ml_gpu_buffer_reset(MLGpuBuffer *buf)
+ml_gpu_buffer_reset(MLGpuBuffer * buf)
 {
 	Assert(buf != NULL);
 
@@ -61,15 +61,15 @@ ml_gpu_buffer_reset(MLGpuBuffer *buf)
 }
 
 void
-ml_gpu_buffer_init_owner(MLGpuBuffer *buf,
-	MLGpuContext *ctx,
-	MLGpuDType dtype,
-	int64 elem_count,
-	bool zero)
+ml_gpu_buffer_init_owner(MLGpuBuffer * buf,
+						 MLGpuContext * ctx,
+						 MLGpuDType dtype,
+						 int64 elem_count,
+						 bool zero)
 {
 	MemoryContext oldcx;
-	Size elem_size;
-	Size total_bytes;
+	Size		elem_size;
+	Size		total_bytes;
 
 	Assert(buf != NULL);
 	Assert(ctx != NULL);
@@ -78,7 +78,7 @@ ml_gpu_buffer_init_owner(MLGpuBuffer *buf,
 	ml_gpu_buffer_reset(buf);
 
 	elem_size = ml_gpu_dtype_size(dtype);
-	total_bytes = (Size)elem_count * elem_size;
+	total_bytes = (Size) elem_count * elem_size;
 
 	oldcx = MemoryContextSwitchTo(ml_gpu_context_memory(ctx));
 
@@ -99,12 +99,12 @@ ml_gpu_buffer_init_owner(MLGpuBuffer *buf,
 }
 
 void
-ml_gpu_buffer_bind_host(MLGpuBuffer *buf,
-	MLGpuContext *ctx,
-	void *host_ptr,
-	Size host_bytes,
-	int64 elem_count,
-	MLGpuDType dtype)
+ml_gpu_buffer_bind_host(MLGpuBuffer * buf,
+						MLGpuContext * ctx,
+						void *host_ptr,
+						Size host_bytes,
+						int64 elem_count,
+						MLGpuDType dtype)
 {
 	Assert(buf != NULL);
 
@@ -120,7 +120,7 @@ ml_gpu_buffer_bind_host(MLGpuBuffer *buf,
 }
 
 void
-ml_gpu_buffer_invalidate_device(MLGpuBuffer *buf)
+ml_gpu_buffer_invalidate_device(MLGpuBuffer * buf)
 {
 	if (buf == NULL)
 		return;
@@ -129,11 +129,11 @@ ml_gpu_buffer_invalidate_device(MLGpuBuffer *buf)
 }
 
 bool
-ml_gpu_buffer_ensure_device(MLGpuBuffer *buf, bool copy_from_host)
+ml_gpu_buffer_ensure_device(MLGpuBuffer * buf, bool copy_from_host)
 {
-	const ndb_gpu_backend *backend;
-	Size required;
-	void *dev_ptr;
+	const		ndb_gpu_backend *backend;
+	Size		required;
+	void	   *dev_ptr;
 
 	if (buf == NULL || buf->context == NULL)
 		return false;
@@ -165,7 +165,7 @@ ml_gpu_buffer_ensure_device(MLGpuBuffer *buf, bool copy_from_host)
 		if (backend->memcpy_h2d == NULL)
 			return false;
 		if (backend->memcpy_h2d(
-			    buf->device_ptr, buf->host_ptr, buf->host_bytes)
+								buf->device_ptr, buf->host_ptr, buf->host_bytes)
 			!= 0)
 			return false;
 		buf->device_valid = true;
@@ -175,9 +175,9 @@ ml_gpu_buffer_ensure_device(MLGpuBuffer *buf, bool copy_from_host)
 }
 
 bool
-ml_gpu_buffer_copy_to_host(MLGpuBuffer *buf)
+ml_gpu_buffer_copy_to_host(MLGpuBuffer * buf)
 {
-	const ndb_gpu_backend *backend;
+	const		ndb_gpu_backend *backend;
 
 	if (buf == NULL || buf->context == NULL)
 		return false;
@@ -200,9 +200,9 @@ ml_gpu_buffer_copy_to_host(MLGpuBuffer *buf)
 }
 
 void
-ml_gpu_buffer_release(MLGpuBuffer *buf)
+ml_gpu_buffer_release(MLGpuBuffer * buf)
 {
-	const ndb_gpu_backend *backend;
+	const		ndb_gpu_backend *backend;
 
 	if (buf == NULL)
 		return;

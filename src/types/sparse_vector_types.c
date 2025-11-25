@@ -38,15 +38,15 @@ PG_FUNCTION_INFO_V1(sparse_vector_in);
 Datum
 sparse_vector_in(PG_FUNCTION_ARGS)
 {
-	char *str = PG_GETARG_CSTRING(0);
+	char	   *str = PG_GETARG_CSTRING(0);
 	SparseVector *result;
-	int32 vocab_size = 0;
-	int32 nnz = 0;
-	uint16 model_type = 1; /* Default to SPLADE */
-	int32 *token_ids = NULL;
-	float4 *weights = NULL;
-	char *ptr;
-	int capacity = 16;
+	int32		vocab_size = 0;
+	int32		nnz = 0;
+	uint16		model_type = 1; /* Default to SPLADE */
+	int32	   *token_ids = NULL;
+	float4	   *weights = NULL;
+	char	   *ptr;
+	int			capacity = 16;
 
 	/* Simple parser - in production, use proper JSON parsing */
 	ptr = str;
@@ -68,25 +68,25 @@ sparse_vector_in(PG_FUNCTION_ARGS)
 		model_type = 2;
 
 	/* Allocate temporary arrays */
-	token_ids = (int32 *)palloc(sizeof(int32) * capacity);
-	weights = (float4 *)palloc(sizeof(float4) * capacity);
+	token_ids = (int32 *) palloc(sizeof(int32) * capacity);
+	weights = (float4 *) palloc(sizeof(float4) * capacity);
 
 	/* Parse tokens array */
 	if (strstr(ptr, "tokens:[") != NULL)
 	{
-		char *tokens_start = strstr(ptr, "tokens:[") + 8;
-		char *tokens_end = strchr(tokens_start, ']');
-		char *tok_ptr = tokens_start;
+		char	   *tokens_start = strstr(ptr, "tokens:[") + 8;
+		char	   *tokens_end = strchr(tokens_start, ']');
+		char	   *tok_ptr = tokens_start;
 
 		while (tok_ptr < tokens_end && *tok_ptr)
 		{
 			if (nnz >= capacity)
 			{
 				capacity *= 2;
-				token_ids = (int32 *)repalloc(token_ids,
-					sizeof(int32) * capacity);
-				weights = (float4 *)repalloc(weights,
-					sizeof(float4) * capacity);
+				token_ids = (int32 *) repalloc(token_ids,
+											   sizeof(int32) * capacity);
+				weights = (float4 *) repalloc(weights,
+											  sizeof(float4) * capacity);
 			}
 
 			while (*tok_ptr == ' ' || *tok_ptr == ',')
@@ -105,10 +105,10 @@ sparse_vector_in(PG_FUNCTION_ARGS)
 	/* Parse weights array */
 	if (strstr(ptr, "weights:[") != NULL)
 	{
-		char *weights_start = strstr(ptr, "weights:[") + 9;
-		char *weights_end = strchr(weights_start, ']');
-		char *wgt_ptr = weights_start;
-		int idx = 0;
+		char	   *weights_start = strstr(ptr, "weights:[") + 9;
+		char	   *weights_end = strchr(weights_start, ']');
+		char	   *wgt_ptr = weights_start;
+		int			idx = 0;
 
 		while (wgt_ptr < weights_end && *wgt_ptr && idx < nnz)
 		{
@@ -127,14 +127,14 @@ sparse_vector_in(PG_FUNCTION_ARGS)
 
 	if (nnz == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				errmsg("sparse_vector must have at least one token")));
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("sparse_vector must have at least one token")));
 
 	if (vocab_size == 0)
-		vocab_size = 30522; /* Default BERT vocab size */
+		vocab_size = 30522;		/* Default BERT vocab size */
 
 	/* Build result */
-	result = (SparseVector *)palloc0(SPARSE_VEC_SIZE(nnz));
+	result = (SparseVector *) palloc0(SPARSE_VEC_SIZE(nnz));
 	SET_VARSIZE(result, SPARSE_VEC_SIZE(nnz));
 	result->vocab_size = vocab_size;
 	result->nnz = nnz;
@@ -156,11 +156,11 @@ PG_FUNCTION_INFO_V1(sparse_vector_out);
 Datum
 sparse_vector_out(PG_FUNCTION_ARGS)
 {
-	SparseVector *sv = (SparseVector *)PG_GETARG_POINTER(0);
+	SparseVector *sv = (SparseVector *) PG_GETARG_POINTER(0);
 	StringInfoData buf;
-	int32 *token_ids;
-	float4 *weights;
-	int i;
+	int32	   *token_ids;
+	float4	   *weights;
+	int			i;
 	const char *model_name;
 
 	if (sv == NULL)
@@ -171,25 +171,25 @@ sparse_vector_out(PG_FUNCTION_ARGS)
 
 	switch (sv->model_type)
 	{
-	case 0:
-		model_name = "BM25";
-		break;
-	case 1:
-		model_name = "SPLADE";
-		break;
-	case 2:
-		model_name = "ColBERTv2";
-		break;
-	default:
-		model_name = "UNKNOWN";
-		break;
+		case 0:
+			model_name = "BM25";
+			break;
+		case 1:
+			model_name = "SPLADE";
+			break;
+		case 2:
+			model_name = "ColBERTv2";
+			break;
+		default:
+			model_name = "UNKNOWN";
+			break;
 	}
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-		"{vocab_size:%d, model:%s, tokens:[",
-		sv->vocab_size,
-		model_name);
+					 "{vocab_size:%d, model:%s, tokens:[",
+					 sv->vocab_size,
+					 model_name);
 
 	for (i = 0; i < sv->nnz; i++)
 	{
@@ -219,12 +219,12 @@ PG_FUNCTION_INFO_V1(sparse_vector_recv);
 Datum
 sparse_vector_recv(PG_FUNCTION_ARGS)
 {
-	StringInfo buf = (StringInfo)PG_GETARG_POINTER(0);
+	StringInfo	buf = (StringInfo) PG_GETARG_POINTER(0);
 	SparseVector *result;
-	int32 vocab_size;
-	int32 nnz;
-	uint16 model_type;
-	int i;
+	int32		vocab_size;
+	int32		nnz;
+	uint16		model_type;
+	int			i;
 
 	vocab_size = pq_getmsgint(buf, sizeof(int32));
 	nnz = pq_getmsgint(buf, sizeof(int32));
@@ -232,16 +232,16 @@ sparse_vector_recv(PG_FUNCTION_ARGS)
 
 	if (vocab_size <= 0 || vocab_size > 1000000)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("invalid sparse_vector vocab_size: %d",
-					vocab_size)));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("invalid sparse_vector vocab_size: %d",
+						vocab_size)));
 
 	if (nnz < 0 || nnz > 10000)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
-				errmsg("invalid sparse_vector nnz: %d", nnz)));
+				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
+				 errmsg("invalid sparse_vector nnz: %d", nnz)));
 
-	result = (SparseVector *)palloc0(SPARSE_VEC_SIZE(nnz));
+	result = (SparseVector *) palloc0(SPARSE_VEC_SIZE(nnz));
 	SET_VARSIZE(result, SPARSE_VEC_SIZE(nnz));
 	result->vocab_size = vocab_size;
 	result->nnz = nnz;
@@ -263,11 +263,11 @@ PG_FUNCTION_INFO_V1(sparse_vector_send);
 Datum
 sparse_vector_send(PG_FUNCTION_ARGS)
 {
-	SparseVector *sv = (SparseVector *)PG_GETARG_POINTER(0);
+	SparseVector *sv = (SparseVector *) PG_GETARG_POINTER(0);
 	StringInfoData buf;
-	int32 *token_ids;
-	float4 *weights;
-	int i;
+	int32	   *token_ids;
+	float4	   *weights;
+	int			i;
 
 	token_ids = SPARSE_VEC_TOKEN_IDS(sv);
 	weights = SPARSE_VEC_WEIGHTS(sv);
@@ -293,12 +293,15 @@ PG_FUNCTION_INFO_V1(sparse_vector_dot_product);
 Datum
 sparse_vector_dot_product(PG_FUNCTION_ARGS)
 {
-	SparseVector *a = (SparseVector *)PG_GETARG_POINTER(0);
-	SparseVector *b = (SparseVector *)PG_GETARG_POINTER(1);
-	int32 *a_tokens, *b_tokens;
-	float4 *a_weights, *b_weights;
-	float4 result = 0.0;
-	int i, j;
+	SparseVector *a = (SparseVector *) PG_GETARG_POINTER(0);
+	SparseVector *b = (SparseVector *) PG_GETARG_POINTER(1);
+	int32	   *a_tokens,
+			   *b_tokens;
+	float4	   *a_weights,
+			   *b_weights;
+	float4		result = 0.0;
+	int			i,
+				j;
 
 	if (a == NULL || b == NULL)
 		PG_RETURN_FLOAT4(0.0);
@@ -323,4 +326,3 @@ sparse_vector_dot_product(PG_FUNCTION_ARGS)
 
 	PG_RETURN_FLOAT4(result);
 }
-

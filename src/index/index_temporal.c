@@ -43,7 +43,7 @@ static char *VectorToLiteral(Vector *v);
 static char *
 get_temporal_index_table(const char *table, const char *col)
 {
-	char   *buf;
+	char	   *buf;
 
 	buf = palloc(strlen(table) + strlen(col) + 32);
 	snprintf(buf,
@@ -59,7 +59,7 @@ get_temporal_index_table(const char *table, const char *col)
  *	  Create temporal vector index table.
  *
  * Sets up a separate index table holding (id, vector, insert_ts) for the
- * specified table/column. Metadata could be extended to store decay rate 
+ * specified table/column. Metadata could be extended to store decay rate
  * per index.
  */
 PG_FUNCTION_INFO_V1(temporal_index_create);
@@ -161,27 +161,27 @@ PG_FUNCTION_INFO_V1(temporal_knn_search);
 Datum
 temporal_knn_search(PG_FUNCTION_ARGS)
 {
-	FuncCallContext	   *funcctx;
-	TupleDesc			tupdesc;
-	MemoryContext		oldcontext;
+	FuncCallContext *funcctx;
+	TupleDesc	tupdesc;
+	MemoryContext oldcontext;
 
 	if (SRF_IS_FIRSTCALL())
 	{
-		Vector		   *query;
-		int32			k;
-		TimestampTz		cutoff_time;
-		text		   *table_name;
-		text		   *vector_col;
-		text		   *ts_col;
-		float8			decay_rate;
-		char		   *tbl_str;
-		char		   *vec_str;
-		char		   *idx_tbl;
-		StringInfoData	sql;
-		int				ret;
+		Vector	   *query;
+		int32		k;
+		TimestampTz cutoff_time;
+		text	   *table_name;
+		text	   *vector_col;
+		text	   *ts_col;
+		float8		decay_rate;
+		char	   *tbl_str;
+		char	   *vec_str;
+		char	   *idx_tbl;
+		StringInfoData sql;
+		int			ret;
 
 		query = PG_GETARG_VECTOR_P(0);
-  NDB_CHECK_VECTOR_VALID(query);
+		NDB_CHECK_VECTOR_VALID(query);
 		k = PG_GETARG_INT32(1);
 		cutoff_time = PG_GETARG_TIMESTAMPTZ(2);
 		table_name = PG_GETARG_TEXT_PP(3);
@@ -189,7 +189,7 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 		ts_col = PG_GETARG_TEXT_PP(5);
 		decay_rate = PG_GETARG_FLOAT8(6);
 
-		(void) ts_col; /* possibly unused */
+		(void) ts_col;			/* possibly unused */
 
 		tbl_str = text_to_cstring(table_name);
 		vec_str = text_to_cstring(vector_col);
@@ -226,7 +226,7 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 						 k);
 
 		ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		if (ret != SPI_OK_SELECT)
 			elog(ERROR, "Failed temporal index scan: %s", sql.data);
 
@@ -240,9 +240,9 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 	funcctx = SRF_PERCALL_SETUP();
 
 	{
-		uint64			call_cntr;
-		uint64			max_calls;
-		SPITupleTable  *tuptable;
+		uint64		call_cntr;
+		uint64		max_calls;
+		SPITupleTable *tuptable;
 
 		call_cntr = funcctx->call_cntr;
 		max_calls = SPI_processed;
@@ -250,11 +250,11 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 
 		if (call_cntr < max_calls)
 		{
-			HeapTuple		spi_tuple;
-			Datum			values[3];
-			bool			nulls[3] = { false, false, false };
-			bool			isnull;
-			HeapTuple		result_tuple;
+			HeapTuple	spi_tuple;
+			Datum		values[3];
+			bool		nulls[3] = {false, false, false};
+			bool		isnull;
+			HeapTuple	result_tuple;
 
 			spi_tuple = tuptable->vals[call_cntr];
 			values[0] = SPI_getbinval(spi_tuple, tuptable->tupdesc, 1, &isnull);
@@ -292,8 +292,8 @@ Datum
 temporal_score(PG_FUNCTION_ARGS)
 {
 	float4		base_score = PG_GETARG_FLOAT4(0);
-	TimestampTz	insert_time = PG_GETARG_TIMESTAMPTZ(1);
-	TimestampTz	current_time = PG_GETARG_TIMESTAMPTZ(2);
+	TimestampTz insert_time = PG_GETARG_TIMESTAMPTZ(1);
+	TimestampTz current_time = PG_GETARG_TIMESTAMPTZ(2);
 	float8		decay_rate = PG_GETARG_FLOAT8(3);
 	float8		age_days;
 	float8		decay_factor;
@@ -314,8 +314,8 @@ temporal_score(PG_FUNCTION_ARGS)
 static char *
 VectorToLiteral(Vector *v)
 {
-	char   *out;
-	char   *buf;
+	char	   *out;
+	char	   *buf;
 
 	out = vector_out_internal(v);
 	buf = palloc(strlen(out) + 4);
@@ -348,7 +348,8 @@ vector_l2(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < a->dim; i++)
 	{
-		float4 d = a->data[i] - b->data[i];
+		float4		d = a->data[i] - b->data[i];
+
 		sum += d * d;
 	}
 

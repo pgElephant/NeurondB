@@ -39,51 +39,54 @@ PG_FUNCTION_INFO_V1(generate_text_embedding);
 Datum
 generate_text_embedding(PG_FUNCTION_ARGS)
 {
-	text *input_text = PG_GETARG_TEXT_PP(0);
-	text *model_name = PG_ARGISNULL(1) ? NULL : PG_GETARG_TEXT_PP(1);
-	int32 embedding_dim = PG_ARGISNULL(2) ? 384 : PG_GETARG_INT32(2);
+	text	   *input_text = PG_GETARG_TEXT_PP(0);
+	text	   *model_name = PG_ARGISNULL(1) ? NULL : PG_GETARG_TEXT_PP(1);
+	int32		embedding_dim = PG_ARGISNULL(2) ? 384 : PG_GETARG_INT32(2);
 
-	char *text_str = text_to_cstring(input_text);
-	char *model_str =
+	char	   *text_str = text_to_cstring(input_text);
+	char	   *model_str =
 		model_name ? text_to_cstring(model_name) : pstrdup("default");
-	ArrayType *result_array;
-	float *embedding;
-	Datum *elems;
-	int i;
-	int text_len = strlen(text_str);
+	ArrayType  *result_array;
+	float	   *embedding;
+	Datum	   *elems;
+	int			i;
+	int			text_len = strlen(text_str);
 
 	/* Validate parameters */
 	if (embedding_dim <= 0 || embedding_dim > 4096)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("embedding_dim must be between 1 and "
-				       "4096")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("embedding_dim must be between 1 and "
+						"4096")));
 
-	/* Generate embedding (simplified - production would use transformer models) */
-	embedding = (float *)palloc(embedding_dim * sizeof(float));
+	/*
+	 * Generate embedding (simplified - production would use transformer
+	 * models)
+	 */
+	embedding = (float *) palloc(embedding_dim * sizeof(float));
 
 	/* Simple deterministic embedding based on text content */
 	for (i = 0; i < embedding_dim; i++)
 	{
-		float val = 0.0f;
-		int j;
+		float		val = 0.0f;
+		int			j;
 
 		for (j = 0; j < text_len && j < 100; j++)
 		{
-			unsigned char c = (unsigned char)text_str[j];
+			unsigned char c = (unsigned char) text_str[j];
 
-			val += (float)c * sinf((float)(i + j + 1));
+			val += (float) c * sinf((float) (i + j + 1));
 		}
 		embedding[i] = tanhf(val / 100.0f);
 	}
 
 	/* Build result array */
-	elems = (Datum *)palloc(embedding_dim * sizeof(Datum));
+	elems = (Datum *) palloc(embedding_dim * sizeof(Datum));
 	for (i = 0; i < embedding_dim; i++)
 		elems[i] = Float4GetDatum(embedding[i]);
 
 	result_array = construct_array(
-		elems, embedding_dim, FLOAT4OID, sizeof(float4), true, 'i');
+								   elems, embedding_dim, FLOAT4OID, sizeof(float4), true, 'i');
 
 	NDB_SAFE_PFREE_AND_NULL(embedding);
 	NDB_SAFE_PFREE_AND_NULL(elems);
@@ -101,18 +104,18 @@ PG_FUNCTION_INFO_V1(classify_text_production);
 Datum
 classify_text_production(PG_FUNCTION_ARGS)
 {
-	text *input_text = PG_GETARG_TEXT_PP(0);
-	ArrayType *labels_array = PG_GETARG_ARRAYTYPE_P(1);
-	int32 model_id = PG_ARGISNULL(2) ? 0 : PG_GETARG_INT32(2);
+	text	   *input_text = PG_GETARG_TEXT_PP(0);
+	ArrayType  *labels_array = PG_GETARG_ARRAYTYPE_P(1);
+	int32		model_id = PG_ARGISNULL(2) ? 0 : PG_GETARG_INT32(2);
 
-	char *text_str = text_to_cstring(input_text);
-	int n_labels;
-	int text_len = strlen(text_str);
-	int best_label_idx = 0;
-	float best_score = 0.0f;
-	ArrayType *result_array;
-	Datum *result_elems;
-	int i;
+	char	   *text_str = text_to_cstring(input_text);
+	int			n_labels;
+	int			text_len = strlen(text_str);
+	int			best_label_idx = 0;
+	float		best_score = 0.0f;
+	ArrayType  *result_array;
+	Datum	   *result_elems;
+	int			i;
 
 	/* Get number of labels */
 	n_labels =
@@ -120,15 +123,15 @@ classify_text_production(PG_FUNCTION_ARGS)
 
 	if (n_labels == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("labels array cannot be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("labels array cannot be empty")));
 
 	/* Classify (simplified - production would use trained model) */
-	(void)model_id;
+	(void) model_id;
 
 	for (i = 0; i < n_labels; i++)
 	{
-		float score = (float)(text_len % (i + 1)) / text_len;
+		float		score = (float) (text_len % (i + 1)) / text_len;
 
 		if (score > best_score)
 		{
@@ -138,12 +141,12 @@ classify_text_production(PG_FUNCTION_ARGS)
 	}
 
 	/* Return label index and confidence as array */
-	result_elems = (Datum *)palloc(2 * sizeof(Datum));
+	result_elems = (Datum *) palloc(2 * sizeof(Datum));
 	result_elems[0] = Int32GetDatum(best_label_idx);
 	result_elems[1] = Float8GetDatum(best_score);
 
 	result_array = construct_array(
-		result_elems, 2, INT4OID, sizeof(int32), true, 'i');
+								   result_elems, 2, INT4OID, sizeof(int32), true, 'i');
 
 	NDB_SAFE_PFREE_AND_NULL(result_elems);
 	NDB_SAFE_PFREE_AND_NULL(text_str);
@@ -159,22 +162,22 @@ PG_FUNCTION_INFO_V1(analyze_sentiment_advanced);
 Datum
 analyze_sentiment_advanced(PG_FUNCTION_ARGS)
 {
-	text *input_text = PG_GETARG_TEXT_PP(0);
-	bool return_aspects = PG_ARGISNULL(1) ? false : PG_GETARG_BOOL(1);
+	text	   *input_text = PG_GETARG_TEXT_PP(0);
+	bool		return_aspects = PG_ARGISNULL(1) ? false : PG_GETARG_BOOL(1);
 
-	char *text_str = text_to_cstring(input_text);
-	char *lower_text;
-	int text_len = strlen(text_str);
-	float sentiment_score = 0.0f;
-	int positive_words = 0;
-	int negative_words = 0;
+	char	   *text_str = text_to_cstring(input_text);
+	char	   *lower_text;
+	int			text_len = strlen(text_str);
+	float		sentiment_score = 0.0f;
+	int			positive_words = 0;
+	int			negative_words = 0;
 	StringInfoData result;
-	int i;
+	int			i;
 
 	/* Convert to lowercase for analysis */
-	lower_text = (char *)palloc(text_len + 1);
+	lower_text = (char *) palloc(text_len + 1);
 	for (i = 0; i < text_len; i++)
-		lower_text[i] = tolower((unsigned char)text_str[i]);
+		lower_text[i] = tolower((unsigned char) text_str[i]);
 	lower_text[text_len] = '\0';
 
 	/* Simple keyword-based sentiment (production would use ML model) */
@@ -195,7 +198,7 @@ analyze_sentiment_advanced(PG_FUNCTION_ARGS)
 		}
 	}
 
-	sentiment_score = (float)(positive_words - negative_words)
+	sentiment_score = (float) (positive_words - negative_words)
 		/ (positive_words + negative_words + 1);
 
 	/* Build result */
@@ -203,13 +206,14 @@ analyze_sentiment_advanced(PG_FUNCTION_ARGS)
 	if (return_aspects)
 	{
 		appendStringInfo(&result,
-			"{\"score\": %.3f, \"positive\": %d, \"negative\": %d, "
-			"\"neutral\": %d}",
-			sentiment_score,
-			positive_words,
-			negative_words,
-			(positive_words == 0 && negative_words == 0) ? 1 : 0);
-	} else
+						 "{\"score\": %.3f, \"positive\": %d, \"negative\": %d, "
+						 "\"neutral\": %d}",
+						 sentiment_score,
+						 positive_words,
+						 negative_words,
+						 (positive_words == 0 && negative_words == 0) ? 1 : 0);
+	}
+	else
 	{
 		appendStringInfo(&result, "%.3f", sentiment_score);
 	}
@@ -228,22 +232,22 @@ PG_FUNCTION_INFO_V1(extract_entities);
 Datum
 extract_entities(PG_FUNCTION_ARGS)
 {
-	text *input_text = PG_GETARG_TEXT_PP(0);
-	ArrayType *entity_types =
+	text	   *input_text = PG_GETARG_TEXT_PP(0);
+	ArrayType  *entity_types =
 		PG_ARGISNULL(1) ? NULL : PG_GETARG_ARRAYTYPE_P(1);
 
-	char *text_str = text_to_cstring(input_text);
+	char	   *text_str = text_to_cstring(input_text);
 	StringInfoData result;
 
 	/* Simple entity extraction (production would use NER model) */
-	(void)entity_types;
+	(void) entity_types;
 
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"[{\"entity\": \"PostgreSQL\", \"type\": \"TECHNOLOGY\", "
-		"\"confidence\": 0.95},"
-		" {\"entity\": \"NeuronDB\", \"type\": \"PRODUCT\", "
-		"\"confidence\": 0.98}]");
+					 "[{\"entity\": \"PostgreSQL\", \"type\": \"TECHNOLOGY\", "
+					 "\"confidence\": 0.95},"
+					 " {\"entity\": \"NeuronDB\", \"type\": \"PRODUCT\", "
+					 "\"confidence\": 0.98}]");
 
 	NDB_SAFE_PFREE_AND_NULL(text_str);
 
@@ -258,27 +262,31 @@ PG_FUNCTION_INFO_V1(summarize_text);
 Datum
 summarize_text(PG_FUNCTION_ARGS)
 {
-	text *input_text = PG_GETARG_TEXT_PP(0);
-	int32 max_length = PG_ARGISNULL(1) ? 100 : PG_GETARG_INT32(1);
+	text	   *input_text = PG_GETARG_TEXT_PP(0);
+	int32		max_length = PG_ARGISNULL(1) ? 100 : PG_GETARG_INT32(1);
 
-	char *text_str = text_to_cstring(input_text);
-	int text_len = strlen(text_str);
-	char *summary;
+	char	   *text_str = text_to_cstring(input_text);
+	int			text_len = strlen(text_str);
+	char	   *summary;
 
 	/* Validate */
 	if (max_length <= 0 || max_length > 10000)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("max_length must be between 1 and "
-				       "10000")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("max_length must be between 1 and "
+						"10000")));
 
-	/* Simple summarization - take first N characters (production would use abstractive summarization) */
+	/*
+	 * Simple summarization - take first N characters (production would use
+	 * abstractive summarization)
+	 */
 	if (text_len <= max_length)
 	{
 		summary = pstrdup(text_str);
-	} else
+	}
+	else
 	{
-		summary = (char *)palloc(max_length + 4);
+		summary = (char *) palloc(max_length + 4);
 		memcpy(summary, text_str, max_length);
 		strcpy(summary + max_length, "...");
 	}
@@ -296,24 +304,25 @@ PG_FUNCTION_INFO_V1(text_similarity_semantic);
 Datum
 text_similarity_semantic(PG_FUNCTION_ARGS)
 {
-	text *text1 = PG_GETARG_TEXT_PP(0);
-	text *text2 = PG_GETARG_TEXT_PP(1);
+	text	   *text1 = PG_GETARG_TEXT_PP(0);
+	text	   *text2 = PG_GETARG_TEXT_PP(1);
 
-	char *str1 = text_to_cstring(text1);
-	char *str2 = text_to_cstring(text2);
-	float similarity;
-	int len1 = strlen(str1);
-	int len2 = strlen(str2);
-	int common_chars = 0;
-	int i, j;
+	char	   *str1 = text_to_cstring(text1);
+	char	   *str2 = text_to_cstring(text2);
+	float		similarity;
+	int			len1 = strlen(str1);
+	int			len2 = strlen(str2);
+	int			common_chars = 0;
+	int			i,
+				j;
 
 	/* Simple character-based similarity (production would use embeddings) */
 	for (i = 0; i < len1 && i < 1000; i++)
 	{
 		for (j = 0; j < len2 && j < 1000; j++)
 		{
-			if (tolower((unsigned char)str1[i])
-				== tolower((unsigned char)str2[j]))
+			if (tolower((unsigned char) str1[i])
+				== tolower((unsigned char) str2[j]))
 			{
 				common_chars++;
 				break;
@@ -321,7 +330,7 @@ text_similarity_semantic(PG_FUNCTION_ARGS)
 		}
 	}
 
-	similarity = (float)common_chars / (len1 + len2 - common_chars + 1);
+	similarity = (float) common_chars / (len1 + len2 - common_chars + 1);
 
 	NDB_SAFE_PFREE_AND_NULL(str1);
 	NDB_SAFE_PFREE_AND_NULL(str2);
@@ -337,18 +346,21 @@ PG_FUNCTION_INFO_V1(detect_language);
 Datum
 detect_language(PG_FUNCTION_ARGS)
 {
-	text *input_text = PG_GETARG_TEXT_PP(0);
-	char *text_str = text_to_cstring(input_text);
-	char *language;
+	text	   *input_text = PG_GETARG_TEXT_PP(0);
+	char	   *text_str = text_to_cstring(input_text);
+	char	   *language;
 
-	/* Simple detection based on character patterns (production would use trained model) */
-	int ascii_count = 0;
-	int len = strlen(text_str);
-	int i;
+	/*
+	 * Simple detection based on character patterns (production would use
+	 * trained model)
+	 */
+	int			ascii_count = 0;
+	int			len = strlen(text_str);
+	int			i;
 
 	for (i = 0; i < len; i++)
 	{
-		if ((unsigned char)text_str[i] < 128)
+		if ((unsigned char) text_str[i] < 128)
 			ascii_count++;
 	}
 
@@ -370,21 +382,21 @@ PG_FUNCTION_INFO_V1(answer_question);
 Datum
 answer_question(PG_FUNCTION_ARGS)
 {
-	text *context = PG_GETARG_TEXT_PP(0);
-	text *question = PG_GETARG_TEXT_PP(1);
+	text	   *context = PG_GETARG_TEXT_PP(0);
+	text	   *question = PG_GETARG_TEXT_PP(1);
 
-	char *context_str = text_to_cstring(context);
-	char *question_str = text_to_cstring(question);
+	char	   *context_str = text_to_cstring(context);
+	char	   *question_str = text_to_cstring(question);
 	StringInfoData answer;
 
 	/* Simple QA (production would use transformer model) */
-	(void)context_str;
-	(void)question_str;
+	(void) context_str;
+	(void) question_str;
 
 	initStringInfo(&answer);
 	appendStringInfo(&answer,
-		"Based on the context, the answer is: [extracted answer would "
-		"appear here]");
+					 "Based on the context, the answer is: [extracted answer would "
+					 "appear here]");
 
 	NDB_SAFE_PFREE_AND_NULL(context_str);
 	NDB_SAFE_PFREE_AND_NULL(question_str);
@@ -402,33 +414,33 @@ answer_question(PG_FUNCTION_ARGS)
 
 typedef struct NLPProductionGpuModelState
 {
-	bytea *model_blob;
-	Jsonb *metrics;
-	int vocab_size;
-	int embedding_dim;
-	int max_seq_len;
-	int n_samples;
-	char model_type[32];
-} NLPProductionGpuModelState;
+	bytea	   *model_blob;
+	Jsonb	   *metrics;
+	int			vocab_size;
+	int			embedding_dim;
+	int			max_seq_len;
+	int			n_samples;
+	char		model_type[32];
+}			NLPProductionGpuModelState;
 
 static bytea *
 nlp_production_model_serialize_to_bytea(int vocab_size, int embedding_dim, int max_seq_len, const char *model_type)
 {
 	StringInfoData buf;
-	int total_size;
-	bytea *result;
-	int model_type_len;
+	int			total_size;
+	bytea	   *result;
+	int			model_type_len;
 
 	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf, (char *)&vocab_size, sizeof(int));
-	appendBinaryStringInfo(&buf, (char *)&embedding_dim, sizeof(int));
-	appendBinaryStringInfo(&buf, (char *)&max_seq_len, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &vocab_size, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &embedding_dim, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &max_seq_len, sizeof(int));
 	model_type_len = strlen(model_type);
-	appendBinaryStringInfo(&buf, (char *)&model_type_len, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &model_type_len, sizeof(int));
 	appendBinaryStringInfo(&buf, model_type, model_type_len);
 
 	total_size = VARHDRSZ + buf.len;
-	result = (bytea *)palloc(total_size);
+	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
@@ -437,11 +449,11 @@ nlp_production_model_serialize_to_bytea(int vocab_size, int embedding_dim, int m
 }
 
 static int
-nlp_production_model_deserialize_from_bytea(const bytea *data, int *vocab_size_out, int *embedding_dim_out, int *max_seq_len_out, char *model_type_out, int model_type_max)
+nlp_production_model_deserialize_from_bytea(const bytea * data, int *vocab_size_out, int *embedding_dim_out, int *max_seq_len_out, char *model_type_out, int model_type_max)
 {
 	const char *buf;
-	int offset = 0;
-	int model_type_len;
+	int			offset = 0;
+	int			model_type_len;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 4)
 		return -1;
@@ -465,20 +477,20 @@ nlp_production_model_deserialize_from_bytea(const bytea *data, int *vocab_size_o
 }
 
 static bool
-nlp_production_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
+nlp_production_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 {
 	NLPProductionGpuModelState *state;
-	int vocab_size = 30000;
-	int embedding_dim = 384;
-	int max_seq_len = 512;
-	char model_type[32] = "bert";
-	int nvec = 0;
-	bytea *model_data = NULL;
-	Jsonb *metrics = NULL;
+	int			vocab_size = 30000;
+	int			embedding_dim = 384;
+	int			max_seq_len = 512;
+	char		model_type[32] = "bert";
+	int			nvec = 0;
+	bytea	   *model_data = NULL;
+	Jsonb	   *metrics = NULL;
 	StringInfoData metrics_json;
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -492,22 +504,23 @@ nlp_production_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **e
 	/* Extract hyperparameters */
 	if (spec->hyperparameters != NULL)
 	{
-		it = JsonbIteratorInit((JsonbContainer *)&spec->hyperparameters->root);
+		it = JsonbIteratorInit((JsonbContainer *) & spec->hyperparameters->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "vocab_size") == 0 && v.type == jbvNumeric)
 					vocab_size = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																   NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "embedding_dim") == 0 && v.type == jbvNumeric)
 					embedding_dim = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																	  NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "max_seq_len") == 0 && v.type == jbvNumeric)
 					max_seq_len = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																	NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "model_type") == 0 && v.type == jbvString)
 					strncpy(model_type, v.val.string.val, sizeof(model_type) - 1);
 				NDB_SAFE_PFREE_AND_NULL(key);
@@ -539,13 +552,13 @@ nlp_production_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **e
 	/* Build metrics */
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json,
-		"{\"storage\":\"cpu\",\"vocab_size\":%d,\"embedding_dim\":%d,\"max_seq_len\":%d,\"model_type\":\"%s\",\"n_samples\":%d}",
-		vocab_size, embedding_dim, max_seq_len, model_type, nvec);
+					 "{\"storage\":\"cpu\",\"vocab_size\":%d,\"embedding_dim\":%d,\"max_seq_len\":%d,\"model_type\":\"%s\",\"n_samples\":%d}",
+					 vocab_size, embedding_dim, max_seq_len, model_type, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(metrics_json.data)));
+												 CStringGetDatum(metrics_json.data)));
 	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
 
-	state = (NLPProductionGpuModelState *)palloc0(sizeof(NLPProductionGpuModelState));
+	state = (NLPProductionGpuModelState *) palloc0(sizeof(NLPProductionGpuModelState));
 	state->model_blob = model_data;
 	state->metrics = metrics;
 	state->vocab_size = vocab_size;
@@ -565,11 +578,11 @@ nlp_production_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **e
 }
 
 static bool
-nlp_production_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
-	float *output, int output_dim, char **errstr)
+nlp_production_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
+						   float *output, int output_dim, char **errstr)
 {
-	const NLPProductionGpuModelState *state;
-	int i;
+	const		NLPProductionGpuModelState *state;
+	int			i;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -594,7 +607,7 @@ nlp_production_gpu_predict(const MLGpuModel *model, const float *input, int inpu
 		return false;
 	}
 
-	state = (const NLPProductionGpuModelState *)model->backend_state;
+	state = (const NLPProductionGpuModelState *) model->backend_state;
 
 	/* Generate embeddings: normalize and transform input */
 	for (i = 0; i < input_dim && i < output_dim && i < state->embedding_dim; i++)
@@ -610,11 +623,11 @@ nlp_production_gpu_predict(const MLGpuModel *model, const float *input, int inpu
 }
 
 static bool
-nlp_production_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
-	MLGpuMetrics *out, char **errstr)
+nlp_production_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
+							MLGpuMetrics * out, char **errstr)
 {
-	const NLPProductionGpuModelState *state;
-	Jsonb *metrics_json;
+	const		NLPProductionGpuModelState *state;
+	Jsonb	   *metrics_json;
 	StringInfoData buf;
 
 	if (errstr != NULL)
@@ -628,20 +641,20 @@ nlp_production_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 		return false;
 	}
 
-	state = (const NLPProductionGpuModelState *)model->backend_state;
+	state = (const NLPProductionGpuModelState *) model->backend_state;
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-		"{\"algorithm\":\"nlp_production\",\"storage\":\"cpu\","
-		"\"vocab_size\":%d,\"embedding_dim\":%d,\"max_seq_len\":%d,\"model_type\":\"%s\",\"n_samples\":%d}",
-		state->vocab_size > 0 ? state->vocab_size : 30000,
-		state->embedding_dim > 0 ? state->embedding_dim : 384,
-		state->max_seq_len > 0 ? state->max_seq_len : 512,
-		state->model_type[0] ? state->model_type : "bert",
-		state->n_samples > 0 ? state->n_samples : 0);
+					 "{\"algorithm\":\"nlp_production\",\"storage\":\"cpu\","
+					 "\"vocab_size\":%d,\"embedding_dim\":%d,\"max_seq_len\":%d,\"model_type\":\"%s\",\"n_samples\":%d}",
+					 state->vocab_size > 0 ? state->vocab_size : 30000,
+					 state->embedding_dim > 0 ? state->embedding_dim : 384,
+					 state->max_seq_len > 0 ? state->max_seq_len : 512,
+					 state->model_type[0] ? state->model_type : "bert",
+					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(buf.data)));
+													  CStringGetDatum(buf.data)));
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
 
 	if (out != NULL)
@@ -651,12 +664,12 @@ nlp_production_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 }
 
 static bool
-nlp_production_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
-	Jsonb **metadata_out, char **errstr)
+nlp_production_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
+							 Jsonb * *metadata_out, char **errstr)
 {
-	const NLPProductionGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
+	const		NLPProductionGpuModelState *state;
+	bytea	   *payload_copy;
+	int			payload_size;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -671,7 +684,7 @@ nlp_production_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		return false;
 	}
 
-	state = (const NLPProductionGpuModelState *)model->backend_state;
+	state = (const NLPProductionGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 	{
 		if (errstr != NULL)
@@ -680,7 +693,7 @@ nlp_production_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 	}
 
 	payload_size = VARSIZE(state->model_blob);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, state->model_blob, payload_size);
 
 	if (payload_out != NULL)
@@ -689,26 +702,26 @@ nlp_production_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		NDB_SAFE_PFREE_AND_NULL(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
-		*metadata_out = (Jsonb *)PG_DETOAST_DATUM_COPY(
-			PointerGetDatum(state->metrics));
+		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
+														PointerGetDatum(state->metrics));
 
 	return true;
 }
 
 static bool
-nlp_production_gpu_deserialize(MLGpuModel *model, const bytea *payload,
-	const Jsonb *metadata, char **errstr)
+nlp_production_gpu_deserialize(MLGpuModel * model, const bytea * payload,
+							   const Jsonb * metadata, char **errstr)
 {
 	NLPProductionGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
-	int vocab_size = 0;
-	int embedding_dim = 0;
-	int max_seq_len = 0;
-	char model_type[32];
+	bytea	   *payload_copy;
+	int			payload_size;
+	int			vocab_size = 0;
+	int			embedding_dim = 0;
+	int			max_seq_len = 0;
+	char		model_type[32];
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -720,7 +733,7 @@ nlp_production_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 	}
 
 	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, payload, payload_size);
 
 	if (nlp_production_model_deserialize_from_bytea(payload_copy, &vocab_size, &embedding_dim, &max_seq_len, model_type, sizeof(model_type)) != 0)
@@ -731,7 +744,7 @@ nlp_production_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 		return false;
 	}
 
-	state = (NLPProductionGpuModelState *)palloc0(sizeof(NLPProductionGpuModelState));
+	state = (NLPProductionGpuModelState *) palloc0(sizeof(NLPProductionGpuModelState));
 	state->model_blob = payload_copy;
 	state->vocab_size = vocab_size;
 	state->embedding_dim = embedding_dim;
@@ -741,25 +754,28 @@ nlp_production_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 
 	if (metadata != NULL)
 	{
-		int metadata_size = VARSIZE(metadata);
-		Jsonb *metadata_copy = (Jsonb *)palloc(metadata_size);
+		int			metadata_size = VARSIZE(metadata);
+		Jsonb	   *metadata_copy = (Jsonb *) palloc(metadata_size);
+
 		memcpy(metadata_copy, metadata, metadata_size);
 		state->metrics = metadata_copy;
 
-		it = JsonbIteratorInit((JsonbContainer *)&metadata->root);
+		it = JsonbIteratorInit((JsonbContainer *) & metadata->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																		 NumericGetDatum(v.val.numeric)));
 				NDB_SAFE_PFREE_AND_NULL(key);
 			}
 		}
-	} else
+	}
+	else
 	{
 		state->metrics = NULL;
 	}
@@ -775,7 +791,7 @@ nlp_production_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 }
 
 static void
-nlp_production_gpu_destroy(MLGpuModel *model)
+nlp_production_gpu_destroy(MLGpuModel * model)
 {
 	NLPProductionGpuModelState *state;
 
@@ -784,7 +800,7 @@ nlp_production_gpu_destroy(MLGpuModel *model)
 
 	if (model->backend_state != NULL)
 	{
-		state = (NLPProductionGpuModelState *)model->backend_state;
+		state = (NLPProductionGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
 			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
 		if (state->metrics != NULL)
@@ -811,6 +827,7 @@ void
 neurondb_gpu_register_nlp_production_model(void)
 {
 	static bool registered = false;
+
 	if (registered)
 		return;
 	ndb_gpu_register_model_ops(&nlp_production_gpu_model_ops);

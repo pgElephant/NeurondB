@@ -50,9 +50,9 @@ PG_FUNCTION_INFO_V1(vector_lt);
 Datum
 vector_lt(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
@@ -77,9 +77,9 @@ PG_FUNCTION_INFO_V1(vector_le);
 Datum
 vector_le(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
@@ -104,9 +104,9 @@ PG_FUNCTION_INFO_V1(vector_gt);
 Datum
 vector_gt(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
@@ -131,9 +131,9 @@ PG_FUNCTION_INFO_V1(vector_ge);
 Datum
 vector_ge(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
@@ -163,12 +163,12 @@ PG_FUNCTION_INFO_V1(vector_cosine_similarity);
 Datum
 vector_cosine_similarity(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	float4 dot = 0.0f;
-	float4 na = 0.0f;
-	float4 nb = 0.0f;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	float4		dot = 0.0f;
+	float4		na = 0.0f;
+	float4		nb = 0.0f;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -177,21 +177,21 @@ vector_cosine_similarity(PG_FUNCTION_ARGS)
 
 	if (a == NULL || b == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot compute cosine similarity with NULL vectors")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot compute cosine similarity with NULL vectors")));
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector dimensions must match: %d vs %d",
-					a->dim,
-					b->dim)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("vector dimensions must match: %d vs %d",
+						a->dim,
+						b->dim)));
 
 	if (a->dim <= 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("cannot compute cosine similarity for vector with dimension %d",
-					a->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("cannot compute cosine similarity for vector with dimension %d",
+						a->dim)));
 
 	for (i = 0; i < a->dim; i++)
 	{
@@ -202,8 +202,8 @@ vector_cosine_similarity(PG_FUNCTION_ARGS)
 
 	if (na == 0.0f || nb == 0.0f)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("cannot compute cosine similarity with zero vector")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("cannot compute cosine similarity with zero vector")));
 
 	PG_RETURN_FLOAT4(dot / (sqrtf(na) * sqrtf(nb)));
 }
@@ -220,10 +220,10 @@ PG_FUNCTION_INFO_V1(vector_dot_product);
 Datum
 vector_dot_product(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	float4 result = 0.0f;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	float4		result = 0.0f;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -249,9 +249,11 @@ PG_FUNCTION_INFO_V1(vector_div);
 Datum
 vector_div(PG_FUNCTION_ARGS)
 {
-	Vector *a, *b, *res;
-	int i;
-	size_t bytes;
+	Vector	   *a,
+			   *b,
+			   *res;
+	int			i;
+	size_t		bytes;
 
 	a = PG_GETARG_VECTOR_P(0);
 	b = PG_GETARG_VECTOR_P(1);
@@ -263,7 +265,7 @@ vector_div(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 
 	bytes = VARHDRSZ + sizeof(int32) + sizeof(float4) * a->dim;
-	res = (Vector *)palloc0(bytes);
+	res = (Vector *) palloc0(bytes);
 	SET_VARSIZE(res, bytes);
 	res->dim = a->dim;
 
@@ -288,10 +290,13 @@ PG_FUNCTION_INFO_V1(vector_avg);
 Datum
 vector_avg(PG_FUNCTION_ARGS)
 {
-	ArrayType *input;
-	int nvec, i, j, count = 0;
-	Vector *sumvec = NULL;
-	bool sum_allocated = false;
+	ArrayType  *input;
+	int			nvec,
+				i,
+				j,
+				count = 0;
+	Vector	   *sumvec = NULL;
+	bool		sum_allocated = false;
 
 	input = PG_GETARG_ARRAYTYPE_P(0);
 	nvec = ArrayGetNItems(ARR_NDIM(input), ARR_DIMS(input));
@@ -301,30 +306,33 @@ vector_avg(PG_FUNCTION_ARGS)
 
 	for (i = 1; i <= nvec; i++)
 	{
-		bool isnull = false;
-		Datum vectdat =
+		bool		isnull = false;
+		Datum		vectdat =
 			array_ref(input, 1, &i, -1, -1, false, 'd', &isnull);
 
 		if (isnull)
 			continue;
 
 		{
-			Vector *vec = DatumGetVector(vectdat);
+			Vector	   *vec = DatumGetVector(vectdat);
+
 			if (vec == NULL)
 				continue;
 
 			if (!sum_allocated)
 			{
-				size_t bytes = VARHDRSZ + sizeof(int32)
+				size_t		bytes = VARHDRSZ + sizeof(int32)
 					+ sizeof(float4) * vec->dim;
-				sumvec = (Vector *)palloc0(bytes);
+
+				sumvec = (Vector *) palloc0(bytes);
 				SET_VARSIZE(sumvec, bytes);
 				sumvec->dim = vec->dim;
 				memcpy(sumvec->data,
-					vec->data,
-					sizeof(float4) * vec->dim);
+					   vec->data,
+					   sizeof(float4) * vec->dim);
 				sum_allocated = true;
-			} else
+			}
+			else
 			{
 				if (vec->dim != sumvec->dim)
 					continue;
@@ -339,7 +347,7 @@ vector_avg(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 
 	for (i = 0; i < sumvec->dim; i++)
-		sumvec->data[i] /= (float4)count;
+		sumvec->data[i] /= (float4) count;
 
 	PG_RETURN_VECTOR_P(sumvec);
 }
@@ -352,9 +360,13 @@ PG_FUNCTION_INFO_V1(vector_contains);
 Datum
 vector_contains(PG_FUNCTION_ARGS)
 {
-	ArrayType *set1 = PG_GETARG_ARRAYTYPE_P(0);
-	ArrayType *set2 = PG_GETARG_ARRAYTYPE_P(1);
-	int n1, n2, i2, i1, d;
+	ArrayType  *set1 = PG_GETARG_ARRAYTYPE_P(0);
+	ArrayType  *set2 = PG_GETARG_ARRAYTYPE_P(1);
+	int			n1,
+				n2,
+				i2,
+				i1,
+				d;
 
 	if (set1 == NULL || set2 == NULL)
 		PG_RETURN_BOOL(false);
@@ -367,11 +379,12 @@ vector_contains(PG_FUNCTION_ARGS)
 
 	for (i2 = 1; i2 <= n2; i2++)
 	{
-		bool isnull2 = false;
-		bool found = false;
-		Vector *v2;
-		Datum d2 =
+		bool		isnull2 = false;
+		bool		found = false;
+		Vector	   *v2;
+		Datum		d2 =
 			array_ref(set2, 1, &i2, -1, -1, false, 'd', &isnull2);
+
 		if (isnull2)
 			continue;
 
@@ -382,10 +395,11 @@ vector_contains(PG_FUNCTION_ARGS)
 		/* Search for v2 in set1 */
 		for (i1 = 1; i1 <= n1; i1++)
 		{
-			bool isnull1 = false;
-			Vector *v1;
-			Datum d1 = array_ref(
-				set1, 1, &i1, -1, -1, false, 'd', &isnull1);
+			bool		isnull1 = false;
+			Vector	   *v1;
+			Datum		d1 = array_ref(
+									   set1, 1, &i1, -1, -1, false, 'd', &isnull1);
+
 			if (isnull1)
 				continue;
 			v1 = DatumGetVector(d1);
@@ -414,9 +428,13 @@ PG_FUNCTION_INFO_V1(vector_overlap);
 Datum
 vector_overlap(PG_FUNCTION_ARGS)
 {
-	ArrayType *set1 = PG_GETARG_ARRAYTYPE_P(0);
-	ArrayType *set2 = PG_GETARG_ARRAYTYPE_P(1);
-	int n1, n2, i1, i2, d;
+	ArrayType  *set1 = PG_GETARG_ARRAYTYPE_P(0);
+	ArrayType  *set2 = PG_GETARG_ARRAYTYPE_P(1);
+	int			n1,
+				n2,
+				i1,
+				i2,
+				d;
 
 	if (set1 == NULL || set2 == NULL)
 		PG_RETURN_BOOL(false);
@@ -429,10 +447,11 @@ vector_overlap(PG_FUNCTION_ARGS)
 
 	for (i1 = 1; i1 <= n1; i1++)
 	{
-		bool isnull1 = false;
-		Vector *v1;
-		Datum d1 =
+		bool		isnull1 = false;
+		Vector	   *v1;
+		Datum		d1 =
 			array_ref(set1, 1, &i1, -1, -1, false, 'd', &isnull1);
+
 		if (isnull1)
 			continue;
 		v1 = DatumGetVector(d1);
@@ -441,11 +460,12 @@ vector_overlap(PG_FUNCTION_ARGS)
 
 		for (i2 = 1; i2 <= n2; i2++)
 		{
-			bool isnull2 = false;
-			bool match = true;
-			Vector *v2;
-			Datum d2 = array_ref(
-				set2, 1, &i2, -1, -1, false, 'd', &isnull2);
+			bool		isnull2 = false;
+			bool		match = true;
+			Vector	   *v2;
+			Datum		d2 = array_ref(
+									   set2, 1, &i2, -1, -1, false, 'd', &isnull2);
+
 			if (isnull2)
 				continue;
 			v2 = DatumGetVector(d2);
@@ -486,11 +506,11 @@ vec_join(PG_FUNCTION_ARGS)
 	typedef struct vec_join_fctx
 	{
 		SPITupleTable *tuptable;
-		uint64 ntuples;
-		uint64 current;
-		float4 threshold;
+		uint64		ntuples;
+		uint64		current;
+		float4		threshold;
 		MemoryContext fn_mcxt;
-	} vec_join_fctx;
+	}			vec_join_fctx;
 
 	FuncCallContext *funcctx;
 	vec_join_fctx *state;
@@ -498,13 +518,15 @@ vec_join(PG_FUNCTION_ARGS)
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
-		text *left_table_text;
-		text *right_table_text;
-		text *join_pred_text;
-		char *left_table = NULL, *right_table = NULL, *join_pred = NULL;
-		char querybuf[2048];
-		int spi_ret;
-		TupleDesc tupdesc;
+		text	   *left_table_text;
+		text	   *right_table_text;
+		text	   *join_pred_text;
+		char	   *left_table = NULL,
+				   *right_table = NULL,
+				   *join_pred = NULL;
+		char		querybuf[2048];
+		int			spi_ret;
+		TupleDesc	tupdesc;
 		vec_join_fctx *newstate;
 
 		funcctx = SRF_FIRSTCALL_INIT();
@@ -520,15 +542,15 @@ vec_join(PG_FUNCTION_ARGS)
 		join_pred = text_to_cstring(join_pred_text);
 
 		snprintf(querybuf,
-			sizeof(querybuf),
-			"SELECT l.id AS left_rowid, r.id AS right_rowid, "
-			"l.vector AS left_vector, r.vector AS right_vector "
-			"FROM %s AS l JOIN %s AS r ON (%s)",
-			left_table,
-			right_table,
-			join_pred);
+				 sizeof(querybuf),
+				 "SELECT l.id AS left_rowid, r.id AS right_rowid, "
+				 "l.vector AS left_vector, r.vector AS right_vector "
+				 "FROM %s AS l JOIN %s AS r ON (%s)",
+				 left_table,
+				 right_table,
+				 join_pred);
 
-		newstate = (vec_join_fctx *)palloc0(sizeof(vec_join_fctx));
+		newstate = (vec_join_fctx *) palloc0(sizeof(vec_join_fctx));
 		newstate->fn_mcxt = funcctx->multi_call_memory_ctx;
 		newstate->threshold = PG_GETARG_FLOAT4(3);
 		newstate->ntuples = 0;
@@ -548,7 +570,7 @@ vec_join(PG_FUNCTION_ARGS)
 			}
 
 			spi_ret = ndb_spi_execute_safe(querybuf, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+			NDB_CHECK_SPI_TUPTABLE();
 			if (spi_ret != SPI_OK_SELECT)
 			{
 				SPI_finish();
@@ -580,11 +602,11 @@ vec_join(PG_FUNCTION_ARGS)
 
 		tupdesc = CreateTemplateTupleDesc(3);
 		TupleDescInitEntry(
-			tupdesc, (AttrNumber)1, "left_rowid", INT4OID, -1, 0);
+						   tupdesc, (AttrNumber) 1, "left_rowid", INT4OID, -1, 0);
 		TupleDescInitEntry(
-			tupdesc, (AttrNumber)2, "right_rowid", INT4OID, -1, 0);
+						   tupdesc, (AttrNumber) 2, "right_rowid", INT4OID, -1, 0);
 		TupleDescInitEntry(
-			tupdesc, (AttrNumber)3, "distance", FLOAT4OID, -1, 0);
+						   tupdesc, (AttrNumber) 3, "distance", FLOAT4OID, -1, 0);
 
 		funcctx->user_fctx = newstate;
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
@@ -597,27 +619,31 @@ vec_join(PG_FUNCTION_ARGS)
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
-	state = (vec_join_fctx *)funcctx->user_fctx;
+	state = (vec_join_fctx *) funcctx->user_fctx;
 
 	while (state->current < state->ntuples)
 	{
-		HeapTuple tuple;
-		Datum left_id, right_id, left_vec_d, right_vec_d;
-		bool isnull[4] = { false, false, false, false };
-		Vector *vec1 = NULL, *vec2 = NULL;
-		float4 dist = 0.0f;
-		int j;
+		HeapTuple	tuple;
+		Datum		left_id,
+					right_id,
+					left_vec_d,
+					right_vec_d;
+		bool		isnull[4] = {false, false, false, false};
+		Vector	   *vec1 = NULL,
+				   *vec2 = NULL;
+		float4		dist = 0.0f;
+		int			j;
 
 		tuple = state->tuptable->vals[state->current];
 
 		left_id = SPI_getbinval(
-			tuple, state->tuptable->tupdesc, 1, &isnull[0]);
+								tuple, state->tuptable->tupdesc, 1, &isnull[0]);
 		right_id = SPI_getbinval(
-			tuple, state->tuptable->tupdesc, 2, &isnull[1]);
+								 tuple, state->tuptable->tupdesc, 2, &isnull[1]);
 		left_vec_d = SPI_getbinval(
-			tuple, state->tuptable->tupdesc, 3, &isnull[2]);
+								   tuple, state->tuptable->tupdesc, 3, &isnull[2]);
 		right_vec_d = SPI_getbinval(
-			tuple, state->tuptable->tupdesc, 4, &isnull[3]);
+									tuple, state->tuptable->tupdesc, 4, &isnull[3]);
 
 		state->current++;
 
@@ -635,7 +661,8 @@ vec_join(PG_FUNCTION_ARGS)
 		dist = 0.0f;
 		for (j = 0; j < vec1->dim; j++)
 		{
-			float4 diff = vec1->data[j] - vec2->data[j];
+			float4		diff = vec1->data[j] - vec2->data[j];
+
 			dist += diff * diff;
 		}
 		dist = sqrtf(dist);
@@ -644,16 +671,16 @@ vec_join(PG_FUNCTION_ARGS)
 			continue;
 
 		{
-			Datum values[3];
-			bool nulls[3] = { false, false, false };
-			HeapTuple rettup;
+			Datum		values[3];
+			bool		nulls[3] = {false, false, false};
+			HeapTuple	rettup;
 
 			values[0] = left_id;
 			values[1] = right_id;
 			values[2] = Float4GetDatum(dist);
 
 			rettup = heap_form_tuple(
-				funcctx->tuple_desc, values, nulls);
+									 funcctx->tuple_desc, values, nulls);
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(rettup));
 		}
 	}
@@ -681,13 +708,13 @@ graph_knn(PG_FUNCTION_ARGS)
 	typedef struct graph_knn_fctx
 	{
 		SPITupleTable *tuptable;
-		uint64 ntuples;
-		uint64 current;
+		uint64		ntuples;
+		uint64		current;
 		MemoryContext fn_mcxt;
-		int32 *hop_counts; /* Store computed hop counts */
-		int32 max_hops;
-		Vector *query_vec;
-	} graph_knn_fctx;
+		int32	   *hop_counts; /* Store computed hop counts */
+		int32		max_hops;
+		Vector	   *query_vec;
+	}			graph_knn_fctx;
 
 	FuncCallContext *funcctx;
 	graph_knn_fctx *state;
@@ -695,18 +722,18 @@ graph_knn(PG_FUNCTION_ARGS)
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
-		Vector *query_vec;
-		text *graph_col_text;
-		char *graph_col_cstr = NULL;
-		ArrayType *edge_labels;
-		int32 max_hops;
-		int32 k;
-		char querybuf[2048];
+		Vector	   *query_vec;
+		text	   *graph_col_text;
+		char	   *graph_col_cstr = NULL;
+		ArrayType  *edge_labels;
+		int32		max_hops;
+		int32		k;
+		char		querybuf[2048];
 		graph_knn_fctx *newstate;
-		TupleDesc tupdesc;
+		TupleDesc	tupdesc;
 
 		query_vec = PG_GETARG_VECTOR_P(0);
-  NDB_CHECK_VECTOR_VALID(query_vec);
+		NDB_CHECK_VECTOR_VALID(query_vec);
 		graph_col_text = PG_GETARG_TEXT_PP(1);
 		edge_labels = PG_GETARG_ARRAYTYPE_P(3);
 		max_hops = PG_GETARG_INT32(2);
@@ -725,10 +752,10 @@ graph_knn(PG_FUNCTION_ARGS)
 			ereport(ERROR, (errmsg("k must be positive")));
 
 		elog(DEBUG1,
-			"Graph KNN: query_dim=%d, max_hops=%d, k=%d",
-			query_vec->dim,
-			max_hops,
-			k);
+			 "Graph KNN: query_dim=%d, max_hops=%d, k=%d",
+			 query_vec->dim,
+			 max_hops,
+			 k);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext =
@@ -736,11 +763,11 @@ graph_knn(PG_FUNCTION_ARGS)
 
 		graph_col_cstr = text_to_cstring(graph_col_text);
 		snprintf(querybuf,
-			sizeof(querybuf),
-			"SELECT id, vector, %s FROM nodes",
-			graph_col_cstr);
+				 sizeof(querybuf),
+				 "SELECT id, vector, %s FROM nodes",
+				 graph_col_cstr);
 
-		newstate = (graph_knn_fctx *)palloc0(sizeof(graph_knn_fctx));
+		newstate = (graph_knn_fctx *) palloc0(sizeof(graph_knn_fctx));
 		newstate->fn_mcxt = funcctx->multi_call_memory_ctx;
 
 		PG_TRY();
@@ -779,11 +806,11 @@ graph_knn(PG_FUNCTION_ARGS)
 
 		tupdesc = CreateTemplateTupleDesc(3);
 		TupleDescInitEntry(
-			tupdesc, (AttrNumber)1, "id", INT4OID, -1, 0);
+						   tupdesc, (AttrNumber) 1, "id", INT4OID, -1, 0);
 		TupleDescInitEntry(
-			tupdesc, (AttrNumber)2, "distance", FLOAT4OID, -1, 0);
+						   tupdesc, (AttrNumber) 2, "distance", FLOAT4OID, -1, 0);
 		TupleDescInitEntry(
-			tupdesc, (AttrNumber)3, "hops", INT4OID, -1, 0);
+						   tupdesc, (AttrNumber) 3, "hops", INT4OID, -1, 0);
 
 		funcctx->user_fctx = newstate;
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
@@ -794,26 +821,28 @@ graph_knn(PG_FUNCTION_ARGS)
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
-	state = (graph_knn_fctx *)funcctx->user_fctx;
+	state = (graph_knn_fctx *) funcctx->user_fctx;
 
 	while (state->current < state->ntuples)
 	{
-		HeapTuple tuple;
-		Datum id, vector_d;
-		bool isnull1 = false, isnull2 = false;
-		Vector *item_vec = NULL;
-		Vector *query_vec;
-		float4 dist = 0.0f;
-		int j;
+		HeapTuple	tuple;
+		Datum		id,
+					vector_d;
+		bool		isnull1 = false,
+					isnull2 = false;
+		Vector	   *item_vec = NULL;
+		Vector	   *query_vec;
+		float4		dist = 0.0f;
+		int			j;
 
 		query_vec = PG_GETARG_VECTOR_P(0);
 		NDB_CHECK_VECTOR_VALID(query_vec);
 
 		tuple = state->tuptable->vals[state->current++];
 		id = SPI_getbinval(
-			tuple, state->tuptable->tupdesc, 1, &isnull1);
+						   tuple, state->tuptable->tupdesc, 1, &isnull1);
 		vector_d = SPI_getbinval(
-			tuple, state->tuptable->tupdesc, 2, &isnull2);
+								 tuple, state->tuptable->tupdesc, 2, &isnull2);
 
 		if (isnull1 || isnull2)
 			continue;
@@ -826,18 +855,20 @@ graph_knn(PG_FUNCTION_ARGS)
 			dist = 0.0f;
 			for (j = 0; j < item_vec->dim; j++)
 			{
-				float4 tmp =
+				float4		tmp =
 					item_vec->data[j] - query_vec->data[j];
+
 				dist += tmp * tmp;
 			}
 			dist = sqrtf(dist);
-		} else
+		}
+		else
 			dist = FLT_MAX;
 
 		{
-			Datum values[3];
-			bool nulls[3] = { false, false, false };
-			HeapTuple rettup;
+			Datum		values[3];
+			bool		nulls[3] = {false, false, false};
+			HeapTuple	rettup;
 
 			values[0] = id;
 			values[1] = Float4GetDatum(dist);
@@ -848,7 +879,7 @@ graph_knn(PG_FUNCTION_ARGS)
 				values[2] = Int32GetDatum(state->max_hops); /* Fallback */
 
 			rettup = heap_form_tuple(
-				funcctx->tuple_desc, values, nulls);
+									 funcctx->tuple_desc, values, nulls);
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(rettup));
 		}
 	}
@@ -863,22 +894,22 @@ PG_FUNCTION_INFO_V1(hybrid_rank);
 Datum
 hybrid_rank(PG_FUNCTION_ARGS)
 {
-	text *relation_name;
-	Vector *query_vec;
-	text *query_text;
+	text	   *relation_name;
+	Vector	   *query_vec;
+	text	   *query_text;
 
-	char *rel_str = NULL;
-	char *txt_str = NULL;
-	float4 vector_score = 0.0f;
-	float4 lexical_score = 0.0f;
-	float4 alpha = 0.5f;
-	float4 beta = 0.5f;
-	int d;
+	char	   *rel_str = NULL;
+	char	   *txt_str = NULL;
+	float4		vector_score = 0.0f;
+	float4		lexical_score = 0.0f;
+	float4		alpha = 0.5f;
+	float4		beta = 0.5f;
+	int			d;
 
 	/* Get arguments */
 	relation_name = PG_GETARG_TEXT_PP(0);
 	query_vec = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(query_vec);
+	NDB_CHECK_VECTOR_VALID(query_vec);
 	query_text = PG_GETARG_TEXT_PP(2);
 
 	if (relation_name == NULL || query_vec == NULL || query_text == NULL)
@@ -887,13 +918,13 @@ hybrid_rank(PG_FUNCTION_ARGS)
 	/* Validate query vector */
 	if (query_vec->dim <= 0)
 		ereport(ERROR,
-			(errmsg("query vector dimension must be positive")));
+				(errmsg("query vector dimension must be positive")));
 
 	elog(DEBUG1,
-		"Hybrid rank: relation=%s, query_dim=%d, text_len=%zu",
-		text_to_cstring(relation_name),
-		query_vec->dim,
-		strlen(text_to_cstring(query_text)));
+		 "Hybrid rank: relation=%s, query_dim=%d, text_len=%zu",
+		 text_to_cstring(relation_name),
+		 query_vec->dim,
+		 strlen(text_to_cstring(query_text)));
 
 	rel_str = text_to_cstring(relation_name);
 	txt_str = text_to_cstring(query_text);
@@ -902,32 +933,33 @@ hybrid_rank(PG_FUNCTION_ARGS)
 	if (SPI_connect() == SPI_OK_CONNECT)
 	{
 		StringInfoData sql;
-		int spi_rc;
+		int			spi_rc;
 
 		PG_TRY();
 		{
 			initStringInfo(&sql);
 			appendStringInfo(&sql,
-				"SELECT alpha, beta FROM neurondb_hybrid_weights WHERE "
-				"relation = '%s'",
-				rel_str);
+							 "SELECT alpha, beta FROM neurondb_hybrid_weights WHERE "
+							 "relation = '%s'",
+							 rel_str);
 
 			spi_rc = ndb_spi_execute_safe(sql.data, true, 1);
 			NDB_CHECK_SPI_TUPTABLE();
 			if (spi_rc == SPI_OK_SELECT && SPI_processed == 1)
 			{
-				bool isnull1 = false;
-				bool isnull2 = false;
-				float4 aval = DatumGetFloat4(
-					SPI_getbinval(SPI_tuptable->vals[0],
-						SPI_tuptable->tupdesc,
-						1,
-						&isnull1));
-				float4 bval = DatumGetFloat4(
-					SPI_getbinval(SPI_tuptable->vals[0],
-						SPI_tuptable->tupdesc,
-						2,
-						&isnull2));
+				bool		isnull1 = false;
+				bool		isnull2 = false;
+				float4		aval = DatumGetFloat4(
+												  SPI_getbinval(SPI_tuptable->vals[0],
+																SPI_tuptable->tupdesc,
+																1,
+																&isnull1));
+				float4		bval = DatumGetFloat4(
+												  SPI_getbinval(SPI_tuptable->vals[0],
+																SPI_tuptable->tupdesc,
+																2,
+																&isnull2));
+
 				if (!isnull1)
 					alpha = aval;
 				if (!isnull2)
@@ -953,8 +985,8 @@ hybrid_rank(PG_FUNCTION_ARGS)
 	/* This is a normalized score - in a real implementation, this would */
 	/* compare against vectors in the relation table */
 	{
-		float4 query_norm = 0.0f;
-		float4 query_sum = 0.0f;
+		float4		query_norm = 0.0f;
+		float4		query_sum = 0.0f;
 
 		/* Compute query vector norm for normalization */
 		for (d = 0; d < query_vec->dim; ++d)
@@ -968,9 +1000,13 @@ hybrid_rank(PG_FUNCTION_ARGS)
 		/* Range: [0, 1] based on vector characteristics */
 		if (query_norm > 0.0f && query_vec->dim > 0)
 		{
-			/* Use normalized dot product with unit vector as similarity measure */
-			float4 normalized_sum = query_sum / (query_norm * (float4)query_vec->dim);
-			vector_score = (normalized_sum + 1.0f) / 2.0f; /* Normalize to [0, 1] */
+			/*
+			 * Use normalized dot product with unit vector as similarity
+			 * measure
+			 */
+			float4		normalized_sum = query_sum / (query_norm * (float4) query_vec->dim);
+
+			vector_score = (normalized_sum + 1.0f) / 2.0f;	/* Normalize to [0, 1] */
 		}
 		else
 		{
@@ -979,18 +1015,24 @@ hybrid_rank(PG_FUNCTION_ARGS)
 	}
 
 	/* Compute lexical score based on text length (normalized) */
-	/* Longer text typically has more matches, normalize by reasonable max length */
+
+	/*
+	 * Longer text typically has more matches, normalize by reasonable max
+	 * length
+	 */
 	{
-		size_t text_len = strlen(txt_str);
-		float4 max_text_len = 1000.0f; /* Reasonable max text length */
-		lexical_score = (float4)text_len / max_text_len;
+		size_t		text_len = strlen(txt_str);
+		float4		max_text_len = 1000.0f; /* Reasonable max text length */
+
+		lexical_score = (float4) text_len / max_text_len;
 		if (lexical_score > 1.0f)
 			lexical_score = 1.0f;
 	}
 
 	{
-		float4 final_score =
+		float4		final_score =
 			alpha * lexical_score + beta * vector_score;
+
 		NDB_SAFE_PFREE_AND_NULL(rel_str);
 		NDB_SAFE_PFREE_AND_NULL(txt_str);
 		PG_RETURN_FLOAT4(final_score);
@@ -1004,14 +1046,14 @@ PG_FUNCTION_INFO_V1(vec_window_rank);
 Datum
 vec_window_rank(PG_FUNCTION_ARGS)
 {
-	Vector *ref_vector;
-	text *partition_col;
-	char *part_str;
+	Vector	   *ref_vector;
+	text	   *partition_col;
+	char	   *part_str;
 	const char *p;
-	uint64 hash = UINT64CONST(5381);
+	uint64		hash = UINT64CONST(5381);
 
 	ref_vector = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(ref_vector);
+	NDB_CHECK_VECTOR_VALID(ref_vector);
 	partition_col = PG_GETARG_TEXT_PP(1);
 
 	if (partition_col == NULL)
@@ -1022,16 +1064,16 @@ vec_window_rank(PG_FUNCTION_ARGS)
 	/* Validate ref_vector */
 	if (ref_vector->dim <= 0)
 		ereport(ERROR,
-			(errmsg("reference vector dimension must be "
-				"positive")));
+				(errmsg("reference vector dimension must be "
+						"positive")));
 
 	part_str = text_to_cstring(partition_col);
 
 	for (p = part_str; *p; ++p)
-		hash = ((hash << 5) + hash) + (unsigned char)*p;
+		hash = ((hash << 5) + hash) + (unsigned char) *p;
 	NDB_SAFE_PFREE_AND_NULL(part_str);
 
-	PG_RETURN_INT64((int64)(hash % 10 + 1));
+	PG_RETURN_INT64((int64) (hash % 10 + 1));
 }
 
 /*----------------------------------------------------------------------------
@@ -1041,15 +1083,18 @@ PG_FUNCTION_INFO_V1(vec_route);
 Datum
 vec_route(PG_FUNCTION_ARGS)
 {
-	Vector *query;
-	ArrayType *shard_centroids;
-	bool fallback_global;
-	int nshards, i, j, best_shard_id = -1;
-	Vector *centroid = NULL;
-	double min_dist = -1.0;
+	Vector	   *query;
+	ArrayType  *shard_centroids;
+	bool		fallback_global;
+	int			nshards,
+				i,
+				j,
+				best_shard_id = -1;
+	Vector	   *centroid = NULL;
+	double		min_dist = -1.0;
 
 	query = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(query);
+	NDB_CHECK_VECTOR_VALID(query);
 	shard_centroids = PG_GETARG_ARRAYTYPE_P(1);
 	fallback_global = PG_GETARG_BOOL(2);
 
@@ -1057,19 +1102,19 @@ vec_route(PG_FUNCTION_ARGS)
 		PG_RETURN_INT32(0);
 
 	nshards = ArrayGetNItems(
-		ARR_NDIM(shard_centroids), ARR_DIMS(shard_centroids));
+							 ARR_NDIM(shard_centroids), ARR_DIMS(shard_centroids));
 
 	if (nshards < 1)
 		PG_RETURN_INT32(0);
 
 	for (i = 1; i <= nshards; ++i)
 	{
-		bool isnull = false;
-		Datum cent_dat;
-		double local_dist = 0.0;
+		bool		isnull = false;
+		Datum		cent_dat;
+		double		local_dist = 0.0;
 
 		cent_dat = array_ref(
-			shard_centroids, 1, &i, -1, -1, false, 'd', &isnull);
+							 shard_centroids, 1, &i, -1, -1, false, 'd', &isnull);
 		if (isnull)
 			continue;
 		centroid = DatumGetVector(cent_dat);
@@ -1079,7 +1124,8 @@ vec_route(PG_FUNCTION_ARGS)
 		local_dist = 0.0;
 		for (j = 0; j < query->dim; ++j)
 		{
-			double d = query->data[j] - centroid->data[j];
+			double		d = query->data[j] - centroid->data[j];
+
 			local_dist += d * d;
 		}
 		local_dist = sqrt(local_dist);
@@ -1090,7 +1136,7 @@ vec_route(PG_FUNCTION_ARGS)
 			best_shard_id = i - 1;
 		}
 
-		if ((Pointer)centroid != DatumGetPointer(cent_dat))
+		if ((Pointer) centroid != DatumGetPointer(cent_dat))
 		{
 			NDB_SAFE_PFREE_AND_NULL(centroid);
 		}

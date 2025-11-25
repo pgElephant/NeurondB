@@ -37,9 +37,9 @@ PG_MODULE_MAGIC;
  * ------------------------
  */
 
-int neurondb_hnsw_ef_search;
-int neurondb_ivf_probes;
-int neurondb_ef_construction;
+int			neurondb_hnsw_ef_search;
+int			neurondb_ivf_probes;
+int			neurondb_ef_construction;
 
 extern void neurondb_worker_fini(void);
 
@@ -50,22 +50,22 @@ extern void neurondb_worker_fini(void);
 Vector *
 new_vector(int dim)
 {
-	Vector *result;
-	int size;
+	Vector	   *result;
+	int			size;
 
 	if (dim < 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector dimension must be at least 1")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector dimension must be at least 1")));
 
 	if (dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("vector dimension cannot exceed %d",
-					VECTOR_MAX_DIM)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vector dimension cannot exceed %d",
+						VECTOR_MAX_DIM)));
 
 	size = VECTOR_SIZE(dim);
-	result = (Vector *)palloc0(size);
+	result = (Vector *) palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = dim;
 
@@ -75,22 +75,22 @@ new_vector(int dim)
 Vector *
 copy_vector(Vector *vector)
 {
-	Vector *result;
-	int size;
+	Vector	   *result;
+	int			size;
 
 	if (vector == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot copy NULL vector")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot copy NULL vector")));
 
 	size = VARSIZE_ANY(vector);
 
-	if (size < (int)offsetof(Vector, data) || size > (int)(offsetof(Vector, data) + sizeof(float4) * VECTOR_MAX_DIM))
+	if (size < (int) offsetof(Vector, data) || size > (int) (offsetof(Vector, data) + sizeof(float4) * VECTOR_MAX_DIM))
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_CORRUPTED),
-				errmsg("invalid vector size: %d", size)));
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg("invalid vector size: %d", size)));
 
-	result = (Vector *)palloc(size);
+	result = (Vector *) palloc(size);
 	memcpy(result, vector, size);
 	return result;
 }
@@ -102,24 +102,24 @@ copy_vector(Vector *vector)
 Vector *
 vector_in_internal(char *str, int *out_dim, bool check)
 {
-	char *ptr = str;
-	float4 *data;
-	int dim = 0;
-	int capacity = 16;
-	Vector *result;
-	char *endptr;
+	char	   *ptr = str;
+	float4	   *data;
+	int			dim = 0;
+	int			capacity = 16;
+	Vector	   *result;
+	char	   *endptr;
 
-	while (isspace((unsigned char)*ptr))
+	while (isspace((unsigned char) *ptr))
 		ptr++;
 
 	if (*ptr == '[' || *ptr == '{')
 		ptr++;
 
-	data = (float4 *)palloc(sizeof(float4) * capacity);
+	data = (float4 *) palloc(sizeof(float4) * capacity);
 
 	while (*ptr && *ptr != ']' && *ptr != '}')
 	{
-		while (isspace((unsigned char)*ptr) || *ptr == ',')
+		while (isspace((unsigned char) *ptr) || *ptr == ',')
 			ptr++;
 
 		if (*ptr == ']' || *ptr == '}' || *ptr == '\0')
@@ -128,23 +128,23 @@ vector_in_internal(char *str, int *out_dim, bool check)
 		if (dim >= capacity)
 		{
 			capacity *= 2;
-			data = (float4 *)repalloc(
-				data, sizeof(float4) * capacity);
+			data = (float4 *) repalloc(
+									   data, sizeof(float4) * capacity);
 		}
 
 		data[dim] = strtof(ptr, &endptr);
 		if (ptr == endptr)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					errmsg("invalid input syntax for type "
-					       "vector: \"%s\"",
-						str)));
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("invalid input syntax for type "
+							"vector: \"%s\"",
+							str)));
 
 		if (check && (isinf(data[dim]) || isnan(data[dim])))
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					errmsg("vector values cannot be NaN or "
-					       "Infinity")));
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("vector values cannot be NaN or "
+							"Infinity")));
 
 		ptr = endptr;
 		dim++;
@@ -152,9 +152,9 @@ vector_in_internal(char *str, int *out_dim, bool check)
 
 	if (dim == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				errmsg("vector must have at least 1 "
-				       "dimension")));
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("vector must have at least 1 "
+						"dimension")));
 
 	result = new_vector(dim);
 	memcpy(result->data, data, sizeof(float4) * dim);
@@ -170,7 +170,7 @@ char *
 vector_out_internal(Vector *vector)
 {
 	StringInfoData buf;
-	int i;
+	int			i;
 
 	initStringInfo(&buf);
 	appendStringInfoChar(&buf, '[');
@@ -194,19 +194,20 @@ PG_FUNCTION_INFO_V1(vector_in);
 Datum
 vector_in(PG_FUNCTION_ARGS)
 {
-	char *str = PG_GETARG_CSTRING(0);
-	Vector *result = vector_in_internal(str, NULL, true);
+	char	   *str = PG_GETARG_CSTRING(0);
+	Vector	   *result = vector_in_internal(str, NULL, true);
 
 	if (PG_NARGS() >= 3)
 	{
-		int32 typmod = PG_GETARG_INT32(2);
+		int32		typmod = PG_GETARG_INT32(2);
+
 		if (typmod >= 0 && result->dim != typmod)
 			ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-					errmsg("vector dimension %d does not "
-					       "match type modifier %d",
-						result->dim,
-						typmod)));
+					(errcode(ERRCODE_DATA_EXCEPTION),
+					 errmsg("vector dimension %d does not "
+							"match type modifier %d",
+							result->dim,
+							typmod)));
 	}
 
 	PG_RETURN_VECTOR_P(result);
@@ -216,8 +217,8 @@ PG_FUNCTION_INFO_V1(vector_out);
 Datum
 vector_out(PG_FUNCTION_ARGS)
 {
-	Vector *vector;
-	char *result;
+	Vector	   *vector;
+	char	   *result;
 
 	vector = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(vector);
@@ -230,10 +231,10 @@ PG_FUNCTION_INFO_V1(vector_recv);
 Datum
 vector_recv(PG_FUNCTION_ARGS)
 {
-	StringInfo buf = (StringInfo)PG_GETARG_POINTER(0);
-	Vector *result;
-	int16 dim;
-	int i;
+	StringInfo	buf = (StringInfo) PG_GETARG_POINTER(0);
+	Vector	   *result;
+	int16		dim;
+	int			i;
 
 	dim = pq_getmsgint(buf, sizeof(int16));
 	result = new_vector(dim);
@@ -243,14 +244,15 @@ vector_recv(PG_FUNCTION_ARGS)
 
 	if (PG_NARGS() >= 3)
 	{
-		int32 typmod = PG_GETARG_INT32(2);
+		int32		typmod = PG_GETARG_INT32(2);
+
 		if (typmod >= 0 && result->dim != typmod)
 			ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-					errmsg("vector dimension %d does not "
-					       "match type modifier %d",
-						result->dim,
-						typmod)));
+					(errcode(ERRCODE_DATA_EXCEPTION),
+					 errmsg("vector dimension %d does not "
+							"match type modifier %d",
+							result->dim,
+							typmod)));
 	}
 
 	PG_RETURN_VECTOR_P(result);
@@ -260,9 +262,9 @@ PG_FUNCTION_INFO_V1(vector_send);
 Datum
 vector_send(PG_FUNCTION_ARGS)
 {
-	Vector *vec;
+	Vector	   *vec;
 	StringInfoData buf;
-	int i;
+	int			i;
 
 	vec = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(vec);
@@ -280,8 +282,9 @@ PG_FUNCTION_INFO_V1(vector_dims);
 Datum
 vector_dims(PG_FUNCTION_ARGS)
 {
-	Vector *vector = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(vector);
+	Vector	   *vector = PG_GETARG_VECTOR_P(0);
+
+	NDB_CHECK_VECTOR_VALID(vector);
 
 	PG_RETURN_INT32(vector->dim);
 }
@@ -290,31 +293,32 @@ PG_FUNCTION_INFO_V1(vector_norm);
 Datum
 vector_norm(PG_FUNCTION_ARGS)
 {
-	Vector *vector;
-	double sum = 0.0;
-	int i;
+	Vector	   *vector;
+	double		sum = 0.0;
+	int			i;
 
 	vector = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(vector);
 
 	if (vector == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot compute norm of NULL vector")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot compute norm of NULL vector")));
 
 	if (vector->dim <= 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("cannot compute norm of vector with dimension %d",
-					vector->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("cannot compute norm of vector with dimension %d",
+						vector->dim)));
 
 	for (i = 0; i < vector->dim; i++)
 	{
-		double val = (double)vector->data[i];
+		double		val = (double) vector->data[i];
+
 		if (isnan(val) || isinf(val))
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("cannot compute norm of vector containing NaN or Infinity")));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("cannot compute norm of vector containing NaN or Infinity")));
 		sum += val * val;
 	}
 
@@ -324,27 +328,28 @@ vector_norm(PG_FUNCTION_ARGS)
 void
 normalize_vector(Vector *v)
 {
-	double norm = 0.0;
-	int i;
+	double		norm = 0.0;
+	int			i;
 
 	if (v == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot normalize NULL vector")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot normalize NULL vector")));
 
 	if (v->dim <= 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("cannot normalize vector with dimension %d",
-					v->dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("cannot normalize vector with dimension %d",
+						v->dim)));
 
 	for (i = 0; i < v->dim; i++)
 	{
-		double val = (double)v->data[i];
+		double		val = (double) v->data[i];
+
 		if (isnan(val) || isinf(val))
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("cannot normalize vector containing NaN or Infinity")));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("cannot normalize vector containing NaN or Infinity")));
 		norm += val * val;
 	}
 
@@ -362,12 +367,12 @@ normalize_vector(Vector *v)
 Vector *
 normalize_vector_new(Vector *v)
 {
-	Vector *result;
+	Vector	   *result;
 
 	if (v == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot normalize NULL vector")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot normalize NULL vector")));
 
 	result = copy_vector(v);
 	normalize_vector(result);
@@ -378,8 +383,8 @@ PG_FUNCTION_INFO_V1(vector_normalize);
 Datum
 vector_normalize(PG_FUNCTION_ARGS)
 {
-	Vector *v;
-	Vector *result;
+	Vector	   *v;
+	Vector	   *result;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
@@ -392,10 +397,10 @@ PG_FUNCTION_INFO_V1(vector_concat);
 Datum
 vector_concat(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	Vector *result;
-	int new_dim;
+	Vector	   *a;
+	Vector	   *b;
+	Vector	   *result;
+	int			new_dim;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -404,15 +409,15 @@ vector_concat(PG_FUNCTION_ARGS)
 
 	if (a == NULL || b == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot concatenate NULL vectors")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot concatenate NULL vectors")));
 
 	if (a->dim > VECTOR_MAX_DIM - b->dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				errmsg("concatenated vector dimension %d would exceed maximum %d",
-					a->dim + b->dim,
-					VECTOR_MAX_DIM)));
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("concatenated vector dimension %d would exceed maximum %d",
+						a->dim + b->dim,
+						VECTOR_MAX_DIM)));
 
 	new_dim = a->dim + b->dim;
 	result = new_vector(new_dim);
@@ -426,10 +431,10 @@ PG_FUNCTION_INFO_V1(vector_add);
 Datum
 vector_add(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	Vector *result;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	Vector	   *result;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -438,25 +443,26 @@ vector_add(PG_FUNCTION_ARGS)
 
 	if (a == NULL || b == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot add NULL vectors")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot add NULL vectors")));
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector dimensions must match: %d vs %d",
-					a->dim,
-					b->dim)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("vector dimensions must match: %d vs %d",
+						a->dim,
+						b->dim)));
 
 	result = new_vector(a->dim);
 	for (i = 0; i < a->dim; i++)
 	{
-		double sum = (double)a->data[i] + (double)b->data[i];
+		double		sum = (double) a->data[i] + (double) b->data[i];
+
 		if (isinf(sum))
 			ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-					errmsg("vector addition resulted in infinity at index %d", i)));
-		result->data[i] = (float4)sum;
+					(errcode(ERRCODE_DATA_EXCEPTION),
+					 errmsg("vector addition resulted in infinity at index %d", i)));
+		result->data[i] = (float4) sum;
 	}
 
 	PG_RETURN_VECTOR_P(result);
@@ -466,10 +472,10 @@ PG_FUNCTION_INFO_V1(vector_sub);
 Datum
 vector_sub(PG_FUNCTION_ARGS)
 {
-	Vector *a;
-	Vector *b;
-	Vector *result;
-	int i;
+	Vector	   *a;
+	Vector	   *b;
+	Vector	   *result;
+	int			i;
 
 	a = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(a);
@@ -478,25 +484,26 @@ vector_sub(PG_FUNCTION_ARGS)
 
 	if (a == NULL || b == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot subtract NULL vectors")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot subtract NULL vectors")));
 
 	if (a->dim != b->dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector dimensions must match: %d vs %d",
-					a->dim,
-					b->dim)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("vector dimensions must match: %d vs %d",
+						a->dim,
+						b->dim)));
 
 	result = new_vector(a->dim);
 	for (i = 0; i < a->dim; i++)
 	{
-		double diff = (double)a->data[i] - (double)b->data[i];
+		double		diff = (double) a->data[i] - (double) b->data[i];
+
 		if (isinf(diff))
 			ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-					errmsg("vector subtraction resulted in infinity at index %d", i)));
-		result->data[i] = (float4)diff;
+					(errcode(ERRCODE_DATA_EXCEPTION),
+					 errmsg("vector subtraction resulted in infinity at index %d", i)));
+		result->data[i] = (float4) diff;
 	}
 
 	PG_RETURN_VECTOR_P(result);
@@ -506,10 +513,10 @@ PG_FUNCTION_INFO_V1(vector_mul);
 Datum
 vector_mul(PG_FUNCTION_ARGS)
 {
-	Vector *v;
-	float8 scalar;
-	Vector *result;
-	int i;
+	Vector	   *v;
+	float8		scalar;
+	Vector	   *result;
+	int			i;
 
 	v = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(v);
@@ -517,23 +524,24 @@ vector_mul(PG_FUNCTION_ARGS)
 
 	if (v == NULL)
 		ereport(ERROR,
-			(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				errmsg("cannot multiply NULL vector")));
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("cannot multiply NULL vector")));
 
 	if (isnan(scalar) || isinf(scalar))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("scalar multiplier cannot be NaN or Infinity")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("scalar multiplier cannot be NaN or Infinity")));
 
 	result = new_vector(v->dim);
 	for (i = 0; i < v->dim; i++)
 	{
-		double product = (double)v->data[i] * scalar;
+		double		product = (double) v->data[i] * scalar;
+
 		if (isinf(product))
 			ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-					errmsg("vector multiplication resulted in infinity at index %d", i)));
-		result->data[i] = (float4)product;
+					(errcode(ERRCODE_DATA_EXCEPTION),
+					 errmsg("vector multiplication resulted in infinity at index %d", i)));
+		result->data[i] = (float4) product;
 	}
 
 	PG_RETURN_VECTOR_P(result);
@@ -543,31 +551,31 @@ PG_FUNCTION_INFO_V1(array_to_vector);
 Datum
 array_to_vector(PG_FUNCTION_ARGS)
 {
-	ArrayType *array = PG_GETARG_ARRAYTYPE_P(0);
-	Vector *result;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
-	Datum *elems;
-	bool *nulls;
-	int nelems;
-	int i;
+	ArrayType  *array = PG_GETARG_ARRAYTYPE_P(0);
+	Vector	   *result;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	Datum	   *elems;
+	bool	   *nulls;
+	int			nelems;
+	int			i;
 
 	if (ARR_NDIM(array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("array must be one-dimensional")));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("array must be one-dimensional")));
 
 	get_typlenbyvalalign(
-		ARR_ELEMTYPE(array), &typlen, &typbyval, &typalign);
+						 ARR_ELEMTYPE(array), &typlen, &typbyval, &typalign);
 	deconstruct_array(array,
-		ARR_ELEMTYPE(array),
-		typlen,
-		typbyval,
-		typalign,
-		&elems,
-		&nulls,
-		&nelems);
+					  ARR_ELEMTYPE(array),
+					  typlen,
+					  typbyval,
+					  typalign,
+					  &elems,
+					  &nulls,
+					  &nelems);
 
 	result = new_vector(nelems);
 
@@ -575,9 +583,9 @@ array_to_vector(PG_FUNCTION_ARGS)
 	{
 		if (nulls[i])
 			ereport(ERROR,
-				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-					errmsg("array must not contain "
-					       "nulls")));
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("array must not contain "
+							"nulls")));
 
 		result->data[i] = DatumGetFloat4(elems[i]);
 	}
@@ -594,46 +602,46 @@ PG_FUNCTION_INFO_V1(vector_typmod_in);
 Datum
 vector_typmod_in(PG_FUNCTION_ARGS)
 {
-	ArrayType *ta = (ArrayType *)PG_GETARG_POINTER(0);
-	Datum *elem_values;
-	int nelems;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
-	char *s;
-	long dim;
+	ArrayType  *ta = (ArrayType *) PG_GETARG_POINTER(0);
+	Datum	   *elem_values;
+	int			nelems;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	char	   *s;
+	long		dim;
 
 	get_typlenbyvalalign(CSTRINGOID, &typlen, &typbyval, &typalign);
 	deconstruct_array(ta,
-		CSTRINGOID,
-		typlen,
-		typbyval,
-		typalign,
-		&elem_values,
-		NULL,
-		&nelems);
+					  CSTRINGOID,
+					  typlen,
+					  typbyval,
+					  typalign,
+					  &elem_values,
+					  NULL,
+					  &nelems);
 
 	if (nelems != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("vector typmod requires a single "
-				       "dimension argument")));
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("vector typmod requires a single "
+						"dimension argument")));
 
 	s = DatumGetCString(elem_values[0]);
 	dim = strtol(s, NULL, 10);
 	if (dim <= 0 || dim > VECTOR_MAX_DIM)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid vector dimension %ld", dim)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid vector dimension %ld", dim)));
 
-	PG_RETURN_INT32((int32)dim);
+	PG_RETURN_INT32((int32) dim);
 }
 
 PG_FUNCTION_INFO_V1(vector_typmod_out);
 Datum
 vector_typmod_out(PG_FUNCTION_ARGS)
 {
-	int32 typmod = PG_GETARG_INT32(0);
+	int32		typmod = PG_GETARG_INT32(0);
 	StringInfoData buf;
 
 	if (typmod < 0)
@@ -646,21 +654,21 @@ vector_typmod_out(PG_FUNCTION_ARGS)
 Datum
 vector_to_array(PG_FUNCTION_ARGS)
 {
-	Vector *vec;
-	Datum *elems;
-	ArrayType *result;
-	int i;
+	Vector	   *vec;
+	Datum	   *elems;
+	ArrayType  *result;
+	int			i;
 
 	vec = PG_GETARG_VECTOR_P(0);
 	NDB_CHECK_VECTOR_VALID(vec);
 
-	elems = (Datum *)palloc(sizeof(Datum) * vec->dim);
+	elems = (Datum *) palloc(sizeof(Datum) * vec->dim);
 
 	for (i = 0; i < vec->dim; i++)
 		elems[i] = Float4GetDatum(vec->data[i]);
 
 	result = construct_array(
-		elems, vec->dim, FLOAT4OID, sizeof(float4), true, 'i');
+							 elems, vec->dim, FLOAT4OID, sizeof(float4), true, 'i');
 
 	NDB_SAFE_PFREE_AND_NULL(elems);
 

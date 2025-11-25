@@ -28,15 +28,15 @@
  */
 typedef struct VectorPacked
 {
-	int32 vl_len_; /* varlena header */
-	uint32 fingerprint; /* CRC32 of dimensions for validation */
-	uint16 version; /* Schema version */
-	uint16 dim; /* Number of dimensions */
-	uint8 endian_guard; /* 0x01 for little, 0x10 for big */
-	uint8 flags; /* Reserved for future use */
-	uint16 unused; /* Alignment padding */
-	float4 data[FLEXIBLE_ARRAY_MEMBER];
-} VectorPacked;
+	int32		vl_len_;		/* varlena header */
+	uint32		fingerprint;	/* CRC32 of dimensions for validation */
+	uint16		version;		/* Schema version */
+	uint16		dim;			/* Number of dimensions */
+	uint8		endian_guard;	/* 0x01 for little, 0x10 for big */
+	uint8		flags;			/* Reserved for future use */
+	uint16		unused;			/* Alignment padding */
+	float4		data[FLEXIBLE_ARRAY_MEMBER];
+}			VectorPacked;
 
 /*
  * vecmap: Sparse high-dimensional map
@@ -46,11 +46,11 @@ typedef struct VectorPacked
  */
 typedef struct VectorMap
 {
-	int32 vl_len_;
-	int32 total_dim; /* Total dimensionality */
-	int32 nnz; /* Number of non-zero entries */
+	int32		vl_len_;
+	int32		total_dim;		/* Total dimensionality */
+	int32		nnz;			/* Number of non-zero entries */
 	/* Followed by parallel arrays: int32 indices[], float4 values[] */
-} VectorMap;
+}			VectorMap;
 
 /*
  * rtext: Retrievable text with token metadata
@@ -60,18 +60,17 @@ typedef struct VectorMap
  */
 typedef struct RetrievableText
 {
-	int32 vl_len_;
-	uint32 text_len; /* Length of text in bytes */
-	uint16 num_tokens; /* Number of tokens */
-	uint8 lang_tag; /* Language code (ISO 639-1) */
-	uint8 flags; /* Encoding, case sensitivity, etc */
+	int32		vl_len_;
+	uint32		text_len;		/* Length of text in bytes */
+	uint16		num_tokens;		/* Number of tokens */
+	uint8		lang_tag;		/* Language code (ISO 639-1) */
+	uint8		flags;			/* Encoding, case sensitivity, etc */
+
 	/*
-	 * Layout:
-	 * - char text[text_len]
-	 * - uint32 token_offsets[num_tokens]
-	 * - uint16 section_ids[num_tokens]
+	 * Layout: - char text[text_len] - uint32 token_offsets[num_tokens] -
+	 * uint16 section_ids[num_tokens]
 	 */
-} RetrievableText;
+}			RetrievableText;
 
 /*
  * vgraph: Compact graph storage
@@ -81,27 +80,26 @@ typedef struct RetrievableText
  */
 typedef struct VectorGraph
 {
-	int32 vl_len_;
-	int32 num_nodes;
-	int32 num_edges;
-	uint16 edge_types; /* Number of edge type labels */
-	uint16 unused;
+	int32		vl_len_;
+	int32		num_nodes;
+	int32		num_edges;
+	uint16		edge_types;		/* Number of edge type labels */
+	uint16		unused;
+
 	/*
-	 * Layout:
-	 * - int64 node_ids[num_nodes]
-	 * - Edge edges[num_edges] (src, dst, type, weight)
-	 * - char type_labels[][16]
+	 * Layout: - int64 node_ids[num_nodes] - Edge edges[num_edges] (src, dst,
+	 * type, weight) - char type_labels[][16]
 	 */
-} VectorGraph;
+}			VectorGraph;
 
 typedef struct GraphEdge
 {
-	int32 src_idx; /* Index into node_ids */
-	int32 dst_idx;
-	uint16 edge_type;
-	uint16 unused;
-	float4 weight;
-} GraphEdge;
+	int32		src_idx;		/* Index into node_ids */
+	int32		dst_idx;
+	uint16		edge_type;
+	uint16		unused;
+	float4		weight;
+}			GraphEdge;
 
 #define VECTORP_SIZE(dim) \
 	(offsetof(VectorPacked, data) + sizeof(float4) * (dim))
@@ -115,4 +113,4 @@ typedef struct GraphEdge
 #define VGRAPH_NODES(vg) ((int64 *)(((char *)(vg)) + sizeof(VectorGraph)))
 #define VGRAPH_EDGES(vg) ((GraphEdge *)(VGRAPH_NODES(vg) + (vg)->num_nodes))
 
-#endif /* NEURONDB_TYPES_H */
+#endif							/* NEURONDB_TYPES_H */

@@ -72,6 +72,7 @@ euclidean_distance(const float *a, const float *b, int dim)
 	for (i = 0; i < dim; i++)
 	{
 		double		diff = (double) a[i] - (double) b[i];
+
 		sum += diff * diff;
 	}
 
@@ -119,8 +120,8 @@ similarity_histogram(PG_FUNCTION_ARGS)
 	tbl_str = text_to_cstring(table_name);
 	vec_col_str = text_to_cstring(vector_column);
 
-		 elog(DEBUG1,
-		 	"neurondb: Computing similarity histogram (%d samples)",
+	elog(DEBUG1,
+		 "neurondb: Computing similarity histogram (%d samples)",
 		 num_samples);
 
 	/* Fetch vectors */
@@ -135,8 +136,8 @@ similarity_histogram(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < num_samples; i++)
 	{
-		int	idx1 = rand() % nvec;
-		int	idx2 = rand() % nvec;
+		int			idx1 = rand() % nvec;
+		int			idx2 = rand() % nvec;
 
 		while (idx2 == idx1)
 			idx2 = rand() % nvec;
@@ -160,6 +161,7 @@ similarity_histogram(PG_FUNCTION_ARGS)
 	for (i = 0; i < num_samples; i++)
 	{
 		double		diff = distances[i] - mean_dist;
+
 		stddev_dist += diff * diff;
 	}
 	stddev_dist = sqrt(stddev_dist / (double) num_samples);
@@ -170,8 +172,8 @@ similarity_histogram(PG_FUNCTION_ARGS)
 	p95 = distances[(int) (num_samples * 0.95)];
 	p99 = distances[(int) (num_samples * 0.99)];
 
-		 elog(DEBUG1,
-		 	"neurondb: Distance stats: min=%.4f, max=%.4f, mean=%.4f, p50=%.4f",
+	elog(DEBUG1,
+		 "neurondb: Distance stats: min=%.4f, max=%.4f, mean=%.4f, p50=%.4f",
 		 min_dist, max_dist, mean_dist, p50);
 
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)

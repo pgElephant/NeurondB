@@ -34,21 +34,22 @@
 /* Queue structure for BFS */
 typedef struct QueueNode
 {
-	int32 node_idx;
+	int32		node_idx;
 	struct QueueNode *next;
-} QueueNode;
+}			QueueNode;
 
 typedef struct Queue
 {
-	QueueNode *front;
-	QueueNode *rear;
-	int size;
-} Queue;
+	QueueNode  *front;
+	QueueNode  *rear;
+	int			size;
+}			Queue;
 
 static Queue *
 queue_create(void)
 {
-	Queue *q = (Queue *)palloc(sizeof(Queue));
+	Queue	   *q = (Queue *) palloc(sizeof(Queue));
+
 	q->front = NULL;
 	q->rear = NULL;
 	q->size = 0;
@@ -56,9 +57,10 @@ queue_create(void)
 }
 
 static void
-queue_enqueue(Queue *q, int32 node_idx)
+queue_enqueue(Queue * q, int32 node_idx)
 {
-	QueueNode *node = (QueueNode *)palloc(sizeof(QueueNode));
+	QueueNode  *node = (QueueNode *) palloc(sizeof(QueueNode));
+
 	node->node_idx = node_idx;
 	node->next = NULL;
 
@@ -76,10 +78,10 @@ queue_enqueue(Queue *q, int32 node_idx)
 }
 
 static int32
-queue_dequeue(Queue *q)
+queue_dequeue(Queue * q)
 {
-	QueueNode *node;
-	int32 node_idx;
+	QueueNode  *node;
+	int32		node_idx;
 
 	if (q->front == NULL)
 		return -1;
@@ -97,7 +99,7 @@ queue_dequeue(Queue *q)
 }
 
 static void
-queue_free(Queue *q)
+queue_free(Queue * q)
 {
 	while (q->front != NULL)
 		queue_dequeue(q);
@@ -107,29 +109,31 @@ queue_free(Queue *q)
 /* Stack structure for DFS */
 typedef struct StackNode
 {
-	int32 node_idx;
+	int32		node_idx;
 	struct StackNode *next;
-} StackNode;
+}			StackNode;
 
 typedef struct Stack
 {
-	StackNode *top;
-	int size;
-} Stack;
+	StackNode  *top;
+	int			size;
+}			Stack;
 
 static Stack *
 stack_create(void)
 {
-	Stack *s = (Stack *)palloc(sizeof(Stack));
+	Stack	   *s = (Stack *) palloc(sizeof(Stack));
+
 	s->top = NULL;
 	s->size = 0;
 	return s;
 }
 
 static void
-stack_push(Stack *s, int32 node_idx)
+stack_push(Stack * s, int32 node_idx)
 {
-	StackNode *node = (StackNode *)palloc(sizeof(StackNode));
+	StackNode  *node = (StackNode *) palloc(sizeof(StackNode));
+
 	node->node_idx = node_idx;
 	node->next = s->top;
 	s->top = node;
@@ -137,10 +141,10 @@ stack_push(Stack *s, int32 node_idx)
 }
 
 static int32
-stack_pop(Stack *s)
+stack_pop(Stack * s)
 {
-	StackNode *node;
-	int32 node_idx;
+	StackNode  *node;
+	int32		node_idx;
 
 	if (s->top == NULL)
 		return -1;
@@ -155,7 +159,7 @@ stack_pop(Stack *s)
 }
 
 static void
-stack_free(Stack *s)
+stack_free(Stack * s)
 {
 	while (s->top != NULL)
 		stack_pop(s);
@@ -170,31 +174,31 @@ PG_FUNCTION_INFO_V1(vgraph_bfs);
 Datum
 vgraph_bfs(PG_FUNCTION_ARGS)
 {
-	VectorGraph *graph = (VectorGraph *)PG_GETARG_POINTER(0);
-	int32 start_node_idx = PG_GETARG_INT32(1);
-	int32 max_depth = PG_ARGISNULL(2) ? -1 : PG_GETARG_INT32(2);
+	VectorGraph *graph = (VectorGraph *) PG_GETARG_POINTER(0);
+	int32		start_node_idx = PG_GETARG_INT32(1);
+	int32		max_depth = PG_ARGISNULL(2) ? -1 : PG_GETARG_INT32(2);
 	FuncCallContext *funcctx;
 	typedef struct bfs_fctx
 	{
-		int32 *visited;
-		int32 *depth;
-		int32 *parent;
-		Queue *queue;
-		int32 *result_nodes;
-		int32 *result_depths;
-		int32 *result_parents;
-		int result_count;
-		int current_idx;
-	} bfs_fctx;
+		int32	   *visited;
+		int32	   *depth;
+		int32	   *parent;
+		Queue	   *queue;
+		int32	   *result_nodes;
+		int32	   *result_depths;
+		int32	   *result_parents;
+		int			result_count;
+		int			current_idx;
+	}			bfs_fctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
-		bfs_fctx *fctx;
-		GraphEdge *edges;
-		int32 i;
-		int32 current_node;
-		int32 max_result_size;
+		bfs_fctx   *fctx;
+		GraphEdge  *edges;
+		int32		i;
+		int32		current_node;
+		int32		max_result_size;
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
@@ -202,15 +206,15 @@ vgraph_bfs(PG_FUNCTION_ARGS)
 		/* Validate start node */
 		if (start_node_idx < 0 || start_node_idx >= graph->num_nodes)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("start_node_idx out of range: %d (max: %d)",
-						start_node_idx,
-						graph->num_nodes - 1)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("start_node_idx out of range: %d (max: %d)",
+							start_node_idx,
+							graph->num_nodes - 1)));
 
-		fctx = (bfs_fctx *)palloc0(sizeof(bfs_fctx));
-		fctx->visited = (int32 *)palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->depth = (int32 *)palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->parent = (int32 *)palloc0(sizeof(int32) * graph->num_nodes);
+		fctx = (bfs_fctx *) palloc0(sizeof(bfs_fctx));
+		fctx->visited = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
+		fctx->depth = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
+		fctx->parent = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
 
 		/* Initialize depth and parent arrays */
 		for (i = 0; i < graph->num_nodes; i++)
@@ -229,9 +233,9 @@ vgraph_bfs(PG_FUNCTION_ARGS)
 		queue_enqueue(fctx->queue, start_node_idx);
 
 		max_result_size = graph->num_nodes;
-		fctx->result_nodes = (int32 *)palloc(sizeof(int32) * max_result_size);
-		fctx->result_depths = (int32 *)palloc(sizeof(int32) * max_result_size);
-		fctx->result_parents = (int32 *)palloc(sizeof(int32) * max_result_size);
+		fctx->result_nodes = (int32 *) palloc(sizeof(int32) * max_result_size);
+		fctx->result_depths = (int32 *) palloc(sizeof(int32) * max_result_size);
+		fctx->result_parents = (int32 *) palloc(sizeof(int32) * max_result_size);
 		fctx->result_count = 0;
 
 		/* BFS traversal */
@@ -254,7 +258,7 @@ vgraph_bfs(PG_FUNCTION_ARGS)
 			{
 				if (edges[i].src_idx == current_node)
 				{
-					int32 neighbor = edges[i].dst_idx;
+					int32		neighbor = edges[i].dst_idx;
 
 					if (!fctx->visited[neighbor])
 					{
@@ -277,19 +281,19 @@ vgraph_bfs(PG_FUNCTION_ARGS)
 		if (get_call_result_type(fcinfo, NULL, &funcctx->tuple_desc)
 			!= TYPEFUNC_COMPOSITE)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-					errmsg("return type must be a composite type")));
+					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
+					 errmsg("return type must be a composite type")));
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
 	{
-		bfs_fctx *fctx;
-		HeapTuple tuple;
-		Datum values[3];
-		bool nulls[3] = {false, false, false};
+		bfs_fctx   *fctx;
+		HeapTuple	tuple;
+		Datum		values[3];
+		bool		nulls[3] = {false, false, false};
 
-		fctx = (bfs_fctx *)funcctx->user_fctx;
+		fctx = (bfs_fctx *) funcctx->user_fctx;
 
 		if (fctx->current_idx < fctx->result_count)
 		{
@@ -314,33 +318,33 @@ PG_FUNCTION_INFO_V1(vgraph_dfs);
 Datum
 vgraph_dfs(PG_FUNCTION_ARGS)
 {
-	VectorGraph *graph = (VectorGraph *)PG_GETARG_POINTER(0);
-	int32 start_node_idx = PG_GETARG_INT32(1);
+	VectorGraph *graph = (VectorGraph *) PG_GETARG_POINTER(0);
+	int32		start_node_idx = PG_GETARG_INT32(1);
 	FuncCallContext *funcctx;
 	typedef struct dfs_fctx
 	{
-		int32 *visited;
-		int32 *discovery_time;
-		int32 *finish_time;
-		int32 *parent;
-		int32 *result_nodes;
-		int32 *result_discovery;
-		int32 *result_finish;
-		int32 *result_parents;
-		int result_count;
-		int current_idx;
-		int time_counter;
-	} dfs_fctx;
+		int32	   *visited;
+		int32	   *discovery_time;
+		int32	   *finish_time;
+		int32	   *parent;
+		int32	   *result_nodes;
+		int32	   *result_discovery;
+		int32	   *result_finish;
+		int32	   *result_parents;
+		int			result_count;
+		int			current_idx;
+		int			time_counter;
+	}			dfs_fctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
-		dfs_fctx *fctx;
-		GraphEdge *edges;
-		Stack *stack;
-		int32 current_node;
-		int32 i;
-		int32 max_result_size;
+		dfs_fctx   *fctx;
+		GraphEdge  *edges;
+		Stack	   *stack;
+		int32		current_node;
+		int32		i;
+		int32		max_result_size;
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
@@ -348,16 +352,16 @@ vgraph_dfs(PG_FUNCTION_ARGS)
 		/* Validate start node */
 		if (start_node_idx < 0 || start_node_idx >= graph->num_nodes)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("start_node_idx out of range: %d (max: %d)",
-						start_node_idx,
-						graph->num_nodes - 1)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("start_node_idx out of range: %d (max: %d)",
+							start_node_idx,
+							graph->num_nodes - 1)));
 
-		fctx = (dfs_fctx *)palloc0(sizeof(dfs_fctx));
-		fctx->visited = (int32 *)palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->discovery_time = (int32 *)palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->finish_time = (int32 *)palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->parent = (int32 *)palloc0(sizeof(int32) * graph->num_nodes);
+		fctx = (dfs_fctx *) palloc0(sizeof(dfs_fctx));
+		fctx->visited = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
+		fctx->discovery_time = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
+		fctx->finish_time = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
+		fctx->parent = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
 
 		/* Initialize arrays */
 		for (i = 0; i < graph->num_nodes; i++)
@@ -372,10 +376,10 @@ vgraph_dfs(PG_FUNCTION_ARGS)
 		fctx->time_counter = 0;
 
 		max_result_size = graph->num_nodes;
-		fctx->result_nodes = (int32 *)palloc(sizeof(int32) * max_result_size);
-		fctx->result_discovery = (int32 *)palloc(sizeof(int32) * max_result_size);
-		fctx->result_finish = (int32 *)palloc(sizeof(int32) * max_result_size);
-		fctx->result_parents = (int32 *)palloc(sizeof(int32) * max_result_size);
+		fctx->result_nodes = (int32 *) palloc(sizeof(int32) * max_result_size);
+		fctx->result_discovery = (int32 *) palloc(sizeof(int32) * max_result_size);
+		fctx->result_finish = (int32 *) palloc(sizeof(int32) * max_result_size);
+		fctx->result_parents = (int32 *) palloc(sizeof(int32) * max_result_size);
 		fctx->result_count = 0;
 
 		/* DFS traversal using iterative approach */
@@ -416,7 +420,7 @@ vgraph_dfs(PG_FUNCTION_ARGS)
 			{
 				if (edges[i].src_idx == current_node)
 				{
-					int32 neighbor = edges[i].dst_idx;
+					int32		neighbor = edges[i].dst_idx;
 
 					if (!fctx->visited[neighbor])
 					{
@@ -437,19 +441,19 @@ vgraph_dfs(PG_FUNCTION_ARGS)
 		if (get_call_result_type(fcinfo, NULL, &funcctx->tuple_desc)
 			!= TYPEFUNC_COMPOSITE)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-					errmsg("return type must be a composite type")));
+					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
+					 errmsg("return type must be a composite type")));
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
 	{
-		dfs_fctx *fctx;
-		HeapTuple tuple;
-		Datum values[4];
-		bool nulls[4] = {false, false, false, false};
+		dfs_fctx   *fctx;
+		HeapTuple	tuple;
+		Datum		values[4];
+		bool		nulls[4] = {false, false, false, false};
 
-		fctx = (dfs_fctx *)funcctx->user_fctx;
+		fctx = (dfs_fctx *) funcctx->user_fctx;
 
 		if (fctx->current_idx < fctx->result_count)
 		{
@@ -475,45 +479,45 @@ PG_FUNCTION_INFO_V1(vgraph_pagerank);
 Datum
 vgraph_pagerank(PG_FUNCTION_ARGS)
 {
-	VectorGraph *graph = (VectorGraph *)PG_GETARG_POINTER(0);
-	float8 damping_factor = PG_ARGISNULL(1) ? 0.85 : PG_GETARG_FLOAT8(1);
-	int32 max_iterations = PG_ARGISNULL(2) ? 100 : PG_GETARG_INT32(2);
-	float8 tolerance = PG_ARGISNULL(3) ? 1e-6 : PG_GETARG_FLOAT8(3);
+	VectorGraph *graph = (VectorGraph *) PG_GETARG_POINTER(0);
+	float8		damping_factor = PG_ARGISNULL(1) ? 0.85 : PG_GETARG_FLOAT8(1);
+	int32		max_iterations = PG_ARGISNULL(2) ? 100 : PG_GETARG_INT32(2);
+	float8		tolerance = PG_ARGISNULL(3) ? 1e-6 : PG_GETARG_FLOAT8(3);
 	FuncCallContext *funcctx;
 	typedef struct pagerank_fctx
 	{
-		double *scores;
-		double *new_scores;
-		int32 *out_degree;
-		int32 *result_nodes;
-		double *result_scores;
-		int result_count;
-		int current_idx;
-	} pagerank_fctx;
+		double	   *scores;
+		double	   *new_scores;
+		int32	   *out_degree;
+		int32	   *result_nodes;
+		double	   *result_scores;
+		int			result_count;
+		int			current_idx;
+	}			pagerank_fctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
 		pagerank_fctx *fctx;
-		GraphEdge *edges;
-		int32 i;
-		int32 iter;
-		double diff;
-		double initial_score;
-		double damping_sum;
+		GraphEdge  *edges;
+		int32		i;
+		int32		iter;
+		double		diff;
+		double		initial_score;
+		double		damping_sum;
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		if (damping_factor < 0.0 || damping_factor > 1.0)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					errmsg("damping_factor must be between 0 and 1")));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("damping_factor must be between 0 and 1")));
 
-		fctx = (pagerank_fctx *)palloc0(sizeof(pagerank_fctx));
-		fctx->scores = (double *)palloc0(sizeof(double) * graph->num_nodes);
-		fctx->new_scores = (double *)palloc0(sizeof(double) * graph->num_nodes);
-		fctx->out_degree = (int32 *)palloc0(sizeof(int32) * graph->num_nodes);
+		fctx = (pagerank_fctx *) palloc0(sizeof(pagerank_fctx));
+		fctx->scores = (double *) palloc0(sizeof(double) * graph->num_nodes);
+		fctx->new_scores = (double *) palloc0(sizeof(double) * graph->num_nodes);
+		fctx->out_degree = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
 		edges = VGRAPH_EDGES(graph);
 
 		/* Compute out-degrees */
@@ -524,7 +528,7 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 		}
 
 		/* Initialize PageRank scores */
-		initial_score = 1.0 / (double)graph->num_nodes;
+		initial_score = 1.0 / (double) graph->num_nodes;
 		for (i = 0; i < graph->num_nodes; i++)
 		{
 			fctx->scores[i] = initial_score;
@@ -535,15 +539,15 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 		for (iter = 0; iter < max_iterations; iter++)
 		{
 			/* Reset new scores */
-			damping_sum = (1.0 - damping_factor) / (double)graph->num_nodes;
+			damping_sum = (1.0 - damping_factor) / (double) graph->num_nodes;
 			for (i = 0; i < graph->num_nodes; i++)
 				fctx->new_scores[i] = damping_sum;
 
 			/* Distribute PageRank */
 			for (i = 0; i < graph->num_edges; i++)
 			{
-				int32 src = edges[i].src_idx;
-				int32 dst = edges[i].dst_idx;
+				int32		src = edges[i].src_idx;
+				int32		dst = edges[i].dst_idx;
 
 				if (src >= 0 && src < graph->num_nodes
 					&& dst >= 0 && dst < graph->num_nodes)
@@ -552,7 +556,7 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 					{
 						fctx->new_scores[dst] +=
 							damping_factor * fctx->scores[src] /
-							(double)fctx->out_degree[src];
+							(double) fctx->out_degree[src];
 					}
 				}
 			}
@@ -561,7 +565,8 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 			diff = 0.0;
 			for (i = 0; i < graph->num_nodes; i++)
 			{
-				double change = fabs(fctx->new_scores[i] - fctx->scores[i]);
+				double		change = fabs(fctx->new_scores[i] - fctx->scores[i]);
+
 				if (change > diff)
 					diff = change;
 			}
@@ -569,7 +574,8 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 			/* Swap scores */
 			for (i = 0; i < graph->num_nodes; i++)
 			{
-				double temp = fctx->scores[i];
+				double		temp = fctx->scores[i];
+
 				fctx->scores[i] = fctx->new_scores[i];
 				fctx->new_scores[i] = temp;
 			}
@@ -579,8 +585,8 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 		}
 
 		/* Prepare results */
-		fctx->result_nodes = (int32 *)palloc(sizeof(int32) * graph->num_nodes);
-		fctx->result_scores = (double *)palloc(sizeof(double) * graph->num_nodes);
+		fctx->result_nodes = (int32 *) palloc(sizeof(int32) * graph->num_nodes);
+		fctx->result_scores = (double *) palloc(sizeof(double) * graph->num_nodes);
 		fctx->result_count = graph->num_nodes;
 
 		for (i = 0; i < graph->num_nodes; i++)
@@ -598,19 +604,19 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 		if (get_call_result_type(fcinfo, NULL, &funcctx->tuple_desc)
 			!= TYPEFUNC_COMPOSITE)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-					errmsg("return type must be a composite type")));
+					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
+					 errmsg("return type must be a composite type")));
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
 	{
 		pagerank_fctx *fctx;
-		HeapTuple tuple;
-		Datum values[2];
-		bool nulls[2] = {false, false};
+		HeapTuple	tuple;
+		Datum		values[2];
+		bool		nulls[2] = {false, false};
 
-		fctx = (pagerank_fctx *)funcctx->user_fctx;
+		fctx = (pagerank_fctx *) funcctx->user_fctx;
 
 		if (fctx->current_idx < fctx->result_count)
 		{
@@ -634,54 +640,54 @@ PG_FUNCTION_INFO_V1(vgraph_community_detection);
 Datum
 vgraph_community_detection(PG_FUNCTION_ARGS)
 {
-	VectorGraph *graph = (VectorGraph *)PG_GETARG_POINTER(0);
-	int32 max_iterations = PG_ARGISNULL(1) ? 10 : PG_GETARG_INT32(1);
+	VectorGraph *graph = (VectorGraph *) PG_GETARG_POINTER(0);
+	int32		max_iterations = PG_ARGISNULL(1) ? 10 : PG_GETARG_INT32(1);
 	FuncCallContext *funcctx;
 	typedef struct community_fctx
 	{
-		int32 *communities;
-		int32 *result_nodes;
-		int32 *result_communities;
-		double *result_modularity;
-		int result_count;
-		int current_idx;
-	} community_fctx;
+		int32	   *communities;
+		int32	   *result_nodes;
+		int32	   *result_communities;
+		double	   *result_modularity;
+		int			result_count;
+		int			current_idx;
+	}			community_fctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
 		community_fctx *fctx;
-		GraphEdge *edges;
-		int32 i;
-		int32 iter;
-		double total_edges;
-		double modularity;
+		GraphEdge  *edges;
+		int32		i;
+		int32		iter;
+		double		total_edges;
+		double		modularity;
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-		fctx = (community_fctx *)palloc0(sizeof(community_fctx));
-		fctx->communities = (int32 *)palloc(sizeof(int32) * graph->num_nodes);
+		fctx = (community_fctx *) palloc0(sizeof(community_fctx));
+		fctx->communities = (int32 *) palloc(sizeof(int32) * graph->num_nodes);
 		edges = VGRAPH_EDGES(graph);
 
 		/* Initialize: each node in its own community */
 		for (i = 0; i < graph->num_nodes; i++)
 			fctx->communities[i] = i;
 
-		total_edges = (double)graph->num_edges;
+		total_edges = (double) graph->num_edges;
 
 		/* Simplified community detection: merge communities greedily */
 		for (iter = 0; iter < max_iterations; iter++)
 		{
-			bool changed = false;
-			int32 j;
+			bool		changed = false;
+			int32		j;
 
 			/* For each node, try moving to neighbor's community */
 			for (i = 0; i < graph->num_nodes; i++)
 			{
-				int32 best_community = fctx->communities[i];
-				double best_modularity = 0.0;
-				int32 neighbor_community;
+				int32		best_community = fctx->communities[i];
+				double		best_modularity = 0.0;
+				int32		neighbor_community;
 
 				/* Check neighbors */
 				for (j = 0; j < graph->num_edges; j++)
@@ -694,13 +700,14 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 						if (neighbor_community != fctx->communities[i])
 						{
 							/* Try this community */
-							int32 old_comm = fctx->communities[i];
+							int32		old_comm = fctx->communities[i];
+
 							fctx->communities[i] = neighbor_community;
 
 							/* Compute modularity (simplified) */
 							{
-								double mod = 0.0;
-								int32 k;
+								double		mod = 0.0;
+								int32		k;
 
 								for (k = 0; k < graph->num_edges; k++)
 								{
@@ -735,8 +742,8 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 
 		/* Compute final modularity */
 		{
-			double mod = 0.0;
-			int32 j;
+			double		mod = 0.0;
+			int32		j;
 
 			for (j = 0; j < graph->num_edges; j++)
 			{
@@ -748,9 +755,9 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 		}
 
 		/* Prepare results */
-		fctx->result_nodes = (int32 *)palloc(sizeof(int32) * graph->num_nodes);
-		fctx->result_communities = (int32 *)palloc(sizeof(int32) * graph->num_nodes);
-		fctx->result_modularity = (double *)palloc(sizeof(double) * graph->num_nodes);
+		fctx->result_nodes = (int32 *) palloc(sizeof(int32) * graph->num_nodes);
+		fctx->result_communities = (int32 *) palloc(sizeof(int32) * graph->num_nodes);
+		fctx->result_modularity = (double *) palloc(sizeof(double) * graph->num_nodes);
 		fctx->result_count = graph->num_nodes;
 
 		for (i = 0; i < graph->num_nodes; i++)
@@ -769,19 +776,19 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 		if (get_call_result_type(fcinfo, NULL, &funcctx->tuple_desc)
 			!= TYPEFUNC_COMPOSITE)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-					errmsg("return type must be a composite type")));
+					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
+					 errmsg("return type must be a composite type")));
 		BlessTupleDesc(funcctx->tuple_desc);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
 	{
 		community_fctx *fctx;
-		HeapTuple tuple;
-		Datum values[3];
-		bool nulls[3] = {false, false, false};
+		HeapTuple	tuple;
+		Datum		values[3];
+		bool		nulls[3] = {false, false, false};
 
-		fctx = (community_fctx *)funcctx->user_fctx;
+		fctx = (community_fctx *) funcctx->user_fctx;
 
 		if (fctx->current_idx < fctx->result_count)
 		{
@@ -797,4 +804,3 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 
 	SRF_RETURN_DONE(funcctx);
 }
-

@@ -14,10 +14,10 @@
 #include "neurondb_gpu_backend.h"
 
 void
-ml_gpu_call_begin(MLGpuCallState *state,
-	const char *tag,
-	const char *kernel_name,
-	bool must_have_kernel)
+ml_gpu_call_begin(MLGpuCallState * state,
+				  const char *tag,
+				  const char *kernel_name,
+				  bool must_have_kernel)
 {
 	Assert(state != NULL);
 
@@ -39,24 +39,24 @@ ml_gpu_call_begin(MLGpuCallState *state,
 	{
 		if (kernel_name)
 			ereport(ERROR,
-				(errmsg("GPU kernel \"%s\" unavailable for %s",
-					kernel_name,
-					tag ? tag : "ML call")));
+					(errmsg("GPU kernel \"%s\" unavailable for %s",
+							kernel_name,
+							tag ? tag : "ML call")));
 		else
 			ereport(ERROR,
-				(errmsg("GPU unavailable for %s",
-					tag ? tag : "ML call")));
+					(errmsg("GPU unavailable for %s",
+							tag ? tag : "ML call")));
 	}
 }
 
 bool
-ml_gpu_call_use_gpu(const MLGpuCallState *state)
+ml_gpu_call_use_gpu(const MLGpuCallState * state)
 {
 	return state && state->use_gpu;
 }
 
 MLGpuContext *
-ml_gpu_call_context(const MLGpuCallState *state)
+ml_gpu_call_context(const MLGpuCallState * state)
 {
 	if (state == NULL)
 		return NULL;
@@ -64,7 +64,7 @@ ml_gpu_call_context(const MLGpuCallState *state)
 }
 
 void
-ml_gpu_call_end(MLGpuCallState *state)
+ml_gpu_call_end(MLGpuCallState * state)
 {
 	if (state == NULL)
 		return;

@@ -59,40 +59,40 @@
 /* IVF structures (from ivf_am.c) */
 typedef struct IvfCentroidData
 {
-	int listId; /* Inverted list ID */
-	int dim; /* Vector dimension */
-	int64 memberCount; /* Vectors in this list */
-	BlockNumber firstBlock; /* First block of inverted list */
+	int			listId;			/* Inverted list ID */
+	int			dim;			/* Vector dimension */
+	int64		memberCount;	/* Vectors in this list */
+	BlockNumber firstBlock;		/* First block of inverted list */
 	/* Followed by float4 centroid[dim] */
-} IvfCentroidData;
+}			IvfCentroidData;
 
-typedef IvfCentroidData *IvfCentroid;
+typedef IvfCentroidData * IvfCentroid;
 
 typedef struct HnswMetaPageData
 {
-	uint32 magicNumber;
-	uint32 version;
+	uint32		magicNumber;
+	uint32		version;
 	BlockNumber entryPoint;
-	int entryLevel;
-	int maxLevel;
-	int16 m;
-	int16 efConstruction;
-	int16 efSearch;
-	float4 ml;
-	int64 insertedVectors;
-} HnswMetaPageData;
+	int			entryLevel;
+	int			maxLevel;
+	int16		m;
+	int16		efConstruction;
+	int16		efSearch;
+	float4		ml;
+	int64		insertedVectors;
+}			HnswMetaPageData;
 
-typedef HnswMetaPageData *HnswMetaPage;
+typedef HnswMetaPageData * HnswMetaPage;
 
 typedef struct HnswNodeData
 {
 	ItemPointerData heapPtr;
-	int level;
-	int16 dim;
-	int16 neighborCount[HNSW_MAX_LEVEL];
-} HnswNodeData;
+	int			level;
+	int16		dim;
+	int16		neighborCount[HNSW_MAX_LEVEL];
+}			HnswNodeData;
 
-typedef HnswNodeData *HnswNode;
+typedef HnswNodeData * HnswNode;
 
 #define HnswGetNeighbors(node, lev) \
 	((BlockNumber *)((char *)(node) + MAXALIGN(sizeof(HnswNodeData)) \
@@ -102,51 +102,51 @@ typedef HnswNodeData *HnswNode;
 /* IVF structures (from ivf_am.c) */
 typedef struct IvfMetaPageData
 {
-	uint32 magicNumber;
-	uint32 version;
-	int nlists;
-	int nprobe;
-	int dim;
+	uint32		magicNumber;
+	uint32		version;
+	int			nlists;
+	int			nprobe;
+	int			dim;
 	BlockNumber centroidsBlock;
-	int64 insertedVectors;
-} IvfMetaPageData;
+	int64		insertedVectors;
+}			IvfMetaPageData;
 
-typedef IvfMetaPageData *IvfMetaPage;
+typedef IvfMetaPageData * IvfMetaPage;
 
 /*
  * Validation result structure
  */
 typedef struct ValidateResult
 {
-	bool valid;
-	int errors;
-	int warnings;
+	bool		valid;
+	int			errors;
+	int			warnings;
 	StringInfoData messages;
-} ValidateResult;
+}			ValidateResult;
 
 /*
  * Diagnostic metrics structure
  */
 typedef struct DiagResult
 {
-	char *index_name;
-	char *index_type;
-	int64 total_tuples;
-	int64 dead_tuples;
-	int64 orphan_nodes;
-	float4 avg_connectivity;
-	float4 fragmentation;
-	int64 size_bytes;
-	char *health_status;
+	char	   *index_name;
+	char	   *index_type;
+	int64		total_tuples;
+	int64		dead_tuples;
+	int64		orphan_nodes;
+	float4		avg_connectivity;
+	float4		fragmentation;
+	int64		size_bytes;
+	char	   *health_status;
 	StringInfoData recommendations;
-} DiagResult;
+}			DiagResult;
 
 /* Forward declarations */
-static ValidateResult *validate_hnsw_index(Relation index);
-static ValidateResult *validate_ivf_index(Relation index);
-static DiagResult *diagnose_index(Relation index);
-static void check_hnsw_connectivity(Relation index, ValidateResult *result);
-static void check_dead_tuples(Relation index, ValidateResult *result);
+static ValidateResult * validate_hnsw_index(Relation index);
+static ValidateResult * validate_ivf_index(Relation index);
+static DiagResult * diagnose_index(Relation index);
+static void check_hnsw_connectivity(Relation index, ValidateResult * result);
+static void check_dead_tuples(Relation index, ValidateResult * result);
 static float4 compute_fragmentation(Relation index);
 
 /*
@@ -159,13 +159,13 @@ PG_FUNCTION_INFO_V1(neurondb_validate);
 Datum
 neurondb_validate(PG_FUNCTION_ARGS)
 {
-	Oid indexOid;
-	Relation indexRel;
+	Oid			indexOid;
+	Relation	indexRel;
 	ValidateResult *result;
-	TupleDesc tupdesc;
-	Datum values[5];
-	bool nulls[5];
-	HeapTuple tuple;
+	TupleDesc	tupdesc;
+	Datum		values[5];
+	bool		nulls[5];
+	HeapTuple	tuple;
 
 	/* Get index OID */
 	indexOid = PG_GETARG_OID(0);
@@ -176,8 +176,8 @@ neurondb_validate(PG_FUNCTION_ARGS)
 	/* Check if it's a NeurondB index */
 	if (!RelationIsValid(indexRel))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: invalid index OID")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: invalid index OID")));
 
 	/* Determine index type and validate */
 	/* For now, assume HNSW - would need to check relam */
@@ -186,10 +186,10 @@ neurondb_validate(PG_FUNCTION_ARGS)
 	/* Build result tuple */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("function returning record called in "
-				       "context that cannot accept type "
-				       "record")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("function returning record called in "
+						"context that cannot accept type "
+						"record")));
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
@@ -218,30 +218,30 @@ PG_FUNCTION_INFO_V1(neurondb_diag);
 Datum
 neurondb_diag(PG_FUNCTION_ARGS)
 {
-	Oid indexOid;
-	Relation indexRel;
+	Oid			indexOid;
+	Relation	indexRel;
 	DiagResult *diag;
-	TupleDesc tupdesc;
-	Datum values[9];
-	bool nulls[9];
-	HeapTuple tuple;
+	TupleDesc	tupdesc;
+	Datum		values[9];
+	bool		nulls[9];
+	HeapTuple	tuple;
 
 	indexOid = PG_GETARG_OID(0);
 	indexRel = index_open(indexOid, AccessShareLock);
 
 	if (!RelationIsValid(indexRel))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: invalid index OID")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: invalid index OID")));
 
 	diag = diagnose_index(indexRel);
 
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("function returning record called in "
-				       "context that cannot accept type "
-				       "record")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("function returning record called in "
+						"context that cannot accept type "
+						"record")));
 
 	tupdesc = BlessTupleDesc(tupdesc);
 
@@ -272,36 +272,36 @@ validate_hnsw_index(Relation index)
 {
 	ValidateResult *result;
 
-	result = (ValidateResult *)palloc0(sizeof(ValidateResult));
+	result = (ValidateResult *) palloc0(sizeof(ValidateResult));
 	initStringInfo(&result->messages);
 	result->valid = true;
 	result->errors = 0;
 	result->warnings = 0;
 
 	elog(INFO,
-		"neurondb: Validating HNSW index %s",
-		RelationGetRelationName(index));
+		 "neurondb: Validating HNSW index %s",
+		 RelationGetRelationName(index));
 
 	/* Check metadata page */
 	appendStringInfo(&result->messages, "Checking metadata page... ");
 	{
-		Buffer metaBuf;
-		Page metaPage;
+		Buffer		metaBuf;
+		Page		metaPage;
 		HnswMetaPage meta;
 
 		metaBuf = ReadBuffer(index, 0);
-  if (!BufferIsValid(metaBuf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(metaBuf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(metaBuf, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuf);
-		meta = (HnswMetaPage)PageGetContents(metaPage);
+		meta = (HnswMetaPage) PageGetContents(metaPage);
 
 		/* Validate magic number */
-		if (meta->magicNumber != 0x484E5357) /* "HNSW" */
+		if (meta->magicNumber != 0x484E5357)	/* "HNSW" */
 		{
 			appendStringInfo(&result->messages, "ERROR: Invalid magic number\n");
 			result->errors++;
@@ -336,39 +336,39 @@ validate_hnsw_index(Relation index)
 	/* Check layer structure */
 	appendStringInfo(&result->messages, "Checking layer structure... ");
 	{
-		Buffer metaBuf;
-		Page metaPage;
+		Buffer		metaBuf;
+		Page		metaPage;
 		HnswMetaPage meta;
 		BlockNumber blkno;
-		int maxLevelFound = -1;
-		int nodeCount = 0;
+		int			maxLevelFound = -1;
+		int			nodeCount = 0;
 
 		metaBuf = ReadBuffer(index, 0);
-  if (!BufferIsValid(metaBuf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(metaBuf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(metaBuf, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuf);
-		meta = (HnswMetaPage)PageGetContents(metaPage);
+		meta = (HnswMetaPage) PageGetContents(metaPage);
 
 		/* Scan all nodes and check levels */
 		for (blkno = 1; blkno < RelationGetNumberOfBlocks(index); blkno++)
 		{
-			Buffer nodeBuf;
-			Page nodePage;
+			Buffer		nodeBuf;
+			Page		nodePage;
 			OffsetNumber maxoff;
 			OffsetNumber offnum;
 
 			nodeBuf = ReadBuffer(index, blkno);
-   if (!BufferIsValid(nodeBuf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed for buffer")));
-   	}
+			if (!BufferIsValid(nodeBuf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed for buffer")));
+			}
 			LockBuffer(nodeBuf, BUFFER_LOCK_SHARE);
 			nodePage = BufferGetPage(nodeBuf);
 
@@ -381,19 +381,21 @@ validate_hnsw_index(Relation index)
 			maxoff = PageGetMaxOffsetNumber(nodePage);
 			for (offnum = FirstOffsetNumber; offnum <= maxoff; offnum++)
 			{
-				ItemId itemId = PageGetItemId(nodePage, offnum);
+				ItemId		itemId = PageGetItemId(nodePage, offnum);
+
 				if (!ItemIdIsValid(itemId) || ItemIdIsDead(itemId))
 					continue;
 
 				{
-					HnswNode node = (HnswNode)PageGetItem(nodePage, itemId);
+					HnswNode	node = (HnswNode) PageGetItem(nodePage, itemId);
+
 					if (node->level > maxLevelFound)
 						maxLevelFound = node->level;
 					if (node->level < 0 || node->level >= HNSW_MAX_LEVEL)
 					{
 						appendStringInfo(&result->messages,
-							"ERROR: Invalid node level %d\n",
-							node->level);
+										 "ERROR: Invalid node level %d\n",
+										 node->level);
 						result->errors++;
 						result->valid = false;
 					}
@@ -409,9 +411,9 @@ validate_hnsw_index(Relation index)
 		if (maxLevelFound > meta->maxLevel)
 		{
 			appendStringInfo(&result->messages,
-				"WARN: Max level mismatch (found %d, meta says %d)\n",
-				maxLevelFound,
-				meta->maxLevel);
+							 "WARN: Max level mismatch (found %d, meta says %d)\n",
+							 maxLevelFound,
+							 meta->maxLevel);
 			result->warnings++;
 		}
 
@@ -422,12 +424,13 @@ validate_hnsw_index(Relation index)
 	if (result->errors == 0 && result->warnings == 0)
 	{
 		appendStringInfo(&result->messages, "\nIndex is HEALTHY\n");
-	} else
+	}
+	else
 	{
 		appendStringInfo(&result->messages,
-			"\nFound %d errors, %d warnings\n",
-			result->errors,
-			result->warnings);
+						 "\nFound %d errors, %d warnings\n",
+						 result->errors,
+						 result->warnings);
 		result->valid = false;
 	}
 
@@ -442,51 +445,52 @@ validate_ivf_index(Relation index)
 {
 	ValidateResult *result;
 
-	result = (ValidateResult *)palloc0(sizeof(ValidateResult));
+	result = (ValidateResult *) palloc0(sizeof(ValidateResult));
 	initStringInfo(&result->messages);
 	result->valid = true;
 	result->errors = 0;
 	result->warnings = 0;
 
 	elog(INFO,
-		"neurondb: Validating IVF index %s",
-		RelationGetRelationName(index));
+		 "neurondb: Validating IVF index %s",
+		 RelationGetRelationName(index));
 
 	appendStringInfo(&result->messages, "Checking centroids... ");
 	{
-		Buffer metaBuf;
-		Page metaPage;
+		Buffer		metaBuf;
+		Page		metaPage;
 		IvfMetaPage meta;
-		Buffer centroidsBuf;
-		Page centroidsPage;
+		Buffer		centroidsBuf;
+		Page		centroidsPage;
 		OffsetNumber maxoff;
-		int centroidCount = 0;
+		int			centroidCount = 0;
 
 		metaBuf = ReadBuffer(index, 0);
-  if (!BufferIsValid(metaBuf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(metaBuf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(metaBuf, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuf);
-		meta = (IvfMetaPage)PageGetContents(metaPage);
+		meta = (IvfMetaPage) PageGetContents(metaPage);
 
 		if (meta->centroidsBlock == InvalidBlockNumber)
 		{
 			appendStringInfo(&result->messages, "ERROR: No centroids block\n");
 			result->errors++;
 			result->valid = false;
-		} else
+		}
+		else
 		{
 			centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
-   if (!BufferIsValid(centroidsBuf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed for buffer")));
-   	}
+			if (!BufferIsValid(centroidsBuf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed for buffer")));
+			}
 			LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
 			centroidsPage = BufferGetPage(centroidsBuf);
 			maxoff = PageGetMaxOffsetNumber(centroidsPage);
@@ -495,9 +499,9 @@ validate_ivf_index(Relation index)
 			if (centroidCount != meta->nlists)
 			{
 				appendStringInfo(&result->messages,
-					"WARN: Centroid count mismatch (%d vs %d)\n",
-					centroidCount,
-					meta->nlists);
+								 "WARN: Centroid count mismatch (%d vs %d)\n",
+								 centroidCount,
+								 meta->nlists);
 				result->warnings++;
 			}
 
@@ -510,43 +514,43 @@ validate_ivf_index(Relation index)
 
 	appendStringInfo(&result->messages, "Checking inverted lists... ");
 	{
-		Buffer metaBuf;
-		Page metaPage;
+		Buffer		metaBuf;
+		Page		metaPage;
 		IvfMetaPage meta;
-		Buffer centroidsBuf;
-		Page centroidsPage;
+		Buffer		centroidsBuf;
+		Page		centroidsPage;
 		OffsetNumber maxoff;
-		int i;
-		int totalMembers = 0;
+		int			i;
+		int			totalMembers = 0;
 
 		metaBuf = ReadBuffer(index, 0);
-  if (!BufferIsValid(metaBuf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(metaBuf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(metaBuf, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuf);
-		meta = (IvfMetaPage)PageGetContents(metaPage);
+		meta = (IvfMetaPage) PageGetContents(metaPage);
 
 		if (meta->centroidsBlock != InvalidBlockNumber)
 		{
 			centroidsBuf = ReadBuffer(index, meta->centroidsBlock);
-   if (!BufferIsValid(centroidsBuf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed for buffer")));
-   	}
+			if (!BufferIsValid(centroidsBuf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed for buffer")));
+			}
 			LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
 			centroidsPage = BufferGetPage(centroidsBuf);
 			maxoff = PageGetMaxOffsetNumber(centroidsPage);
 
 			for (i = 0; i < meta->nlists && i < maxoff; i++)
 			{
-				IvfCentroid centroid = (IvfCentroid)PageGetItem(centroidsPage,
-					PageGetItemId(centroidsPage, FirstOffsetNumber + i));
+				IvfCentroid centroid = (IvfCentroid) PageGetItem(centroidsPage,
+																 PageGetItemId(centroidsPage, FirstOffsetNumber + i));
 
 				if (centroid != NULL && centroid->firstBlock != InvalidBlockNumber)
 				{
@@ -562,9 +566,9 @@ validate_ivf_index(Relation index)
 		if (totalMembers != meta->insertedVectors)
 		{
 			appendStringInfo(&result->messages,
-				"WARN: Member count mismatch (%d vs %ld)\n",
-				totalMembers,
-				(long)meta->insertedVectors);
+							 "WARN: Member count mismatch (%d vs %ld)\n",
+							 totalMembers,
+							 (long) meta->insertedVectors);
 			result->warnings++;
 		}
 
@@ -583,70 +587,70 @@ validate_ivf_index(Relation index)
  * Check HNSW graph connectivity
  */
 static void
-check_hnsw_connectivity(Relation index, ValidateResult *result)
+check_hnsw_connectivity(Relation index, ValidateResult * result)
 {
-	int orphanCount = 0;
-	int totalNodes = 0;
+	int			orphanCount = 0;
+	int			totalNodes = 0;
 
 	appendStringInfo(&result->messages, "Checking graph connectivity... ");
 
 	{
-		Buffer metaBuf;
-		Page metaPage;
+		Buffer		metaBuf;
+		Page		metaPage;
 		HnswMetaPage meta;
-		bool *visited;
-		int visitedSize;
+		bool	   *visited;
+		int			visitedSize;
 		BlockNumber entryPoint;
 		BlockNumber blkno;
 
 		metaBuf = ReadBuffer(index, 0);
-  if (!BufferIsValid(metaBuf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(metaBuf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(metaBuf, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuf);
-		meta = (HnswMetaPage)PageGetContents(metaPage);
+		meta = (HnswMetaPage) PageGetContents(metaPage);
 		entryPoint = meta->entryPoint;
 		UnlockReleaseBuffer(metaBuf);
 
 		/* Allocate visited array */
 		totalNodes = RelationGetNumberOfBlocks(index);
 		visitedSize = totalNodes * sizeof(bool);
-		visited = (bool *)palloc0(visitedSize);
+		visited = (bool *) palloc0(visitedSize);
 
 		/* Traverse from entry point using BFS */
 		if (entryPoint != InvalidBlockNumber)
 		{
 			BlockNumber *queue;
-			int queueHead = 0;
-			int queueTail = 0;
-			int queueSize = totalNodes;
+			int			queueHead = 0;
+			int			queueTail = 0;
+			int			queueSize = totalNodes;
 
-			queue = (BlockNumber *)palloc(queueSize * sizeof(BlockNumber));
+			queue = (BlockNumber *) palloc(queueSize * sizeof(BlockNumber));
 			queue[queueTail++] = entryPoint;
 			visited[entryPoint] = true;
 
 			while (queueHead < queueTail)
 			{
 				BlockNumber current = queue[queueHead++];
-				Buffer nodeBuf;
-				Page nodePage;
-				HnswNode node;
+				Buffer		nodeBuf;
+				Page		nodePage;
+				HnswNode	node;
 				BlockNumber *neighbors;
-				int level;
-				int16 neighborCount;
-				int j;
+				int			level;
+				int16		neighborCount;
+				int			j;
 
 				nodeBuf = ReadBuffer(index, current);
-    if (!BufferIsValid(nodeBuf))
-    	{
-    		ereport(ERROR,
-    			(errcode(ERRCODE_INTERNAL_ERROR),
-    			 errmsg("neurondb: ReadBuffer failed for buffer")));
-    	}
+				if (!BufferIsValid(nodeBuf))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_INTERNAL_ERROR),
+							 errmsg("neurondb: ReadBuffer failed for buffer")));
+				}
 				LockBuffer(nodeBuf, BUFFER_LOCK_SHARE);
 				nodePage = BufferGetPage(nodeBuf);
 
@@ -656,8 +660,8 @@ check_hnsw_connectivity(Relation index, ValidateResult *result)
 					continue;
 				}
 
-				node = (HnswNode)PageGetItem(nodePage,
-					PageGetItemId(nodePage, FirstOffsetNumber));
+				node = (HnswNode) PageGetItem(nodePage,
+											  PageGetItemId(nodePage, FirstOffsetNumber));
 
 				/* Visit neighbors at all levels */
 				for (level = 0; level <= node->level; level++)
@@ -687,8 +691,8 @@ check_hnsw_connectivity(Relation index, ValidateResult *result)
 		/* Count unreachable nodes */
 		for (blkno = 1; blkno < totalNodes; blkno++)
 		{
-			Buffer nodeBuf;
-			Page nodePage;
+			Buffer		nodeBuf;
+			Page		nodePage;
 			OffsetNumber maxoff;
 			OffsetNumber offnum;
 
@@ -696,12 +700,12 @@ check_hnsw_connectivity(Relation index, ValidateResult *result)
 				continue;
 
 			nodeBuf = ReadBuffer(index, blkno);
-   if (!BufferIsValid(nodeBuf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed for buffer")));
-   	}
+			if (!BufferIsValid(nodeBuf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed for buffer")));
+			}
 			LockBuffer(nodeBuf, BUFFER_LOCK_SHARE);
 			nodePage = BufferGetPage(nodeBuf);
 
@@ -714,11 +718,12 @@ check_hnsw_connectivity(Relation index, ValidateResult *result)
 			maxoff = PageGetMaxOffsetNumber(nodePage);
 			for (offnum = FirstOffsetNumber; offnum <= maxoff; offnum++)
 			{
-				ItemId itemId = PageGetItemId(nodePage, offnum);
+				ItemId		itemId = PageGetItemId(nodePage, offnum);
+
 				if (ItemIdIsValid(itemId) && !ItemIdIsDead(itemId))
 				{
 					orphanCount++;
-					break; /* Count block once */
+					break;		/* Count block once */
 				}
 			}
 
@@ -731,14 +736,15 @@ check_hnsw_connectivity(Relation index, ValidateResult *result)
 	if (orphanCount > 0)
 	{
 		appendStringInfo(&result->messages,
-			"WARN: Found %d orphan nodes\n",
-			orphanCount);
+						 "WARN: Found %d orphan nodes\n",
+						 orphanCount);
 		result->warnings++;
-	} else
+	}
+	else
 	{
 		appendStringInfo(&result->messages,
-			"OK (checked %d nodes)\n",
-			totalNodes);
+						 "OK (checked %d nodes)\n",
+						 totalNodes);
 	}
 }
 
@@ -746,21 +752,21 @@ check_hnsw_connectivity(Relation index, ValidateResult *result)
  * Check for dead tuples
  */
 static void
-check_dead_tuples(Relation index, ValidateResult *result)
+check_dead_tuples(Relation index, ValidateResult * result)
 {
-	int deadCount = 0;
-	int totalChecked = 0;
-	Relation heapRel;
-	Snapshot snapshot;
+	int			deadCount = 0;
+	int			totalChecked = 0;
+	Relation	heapRel;
+	Snapshot	snapshot;
 	BlockNumber blkno;
-	Buffer buf;
-	Page page;
+	Buffer		buf;
+	Page		page;
 	OffsetNumber maxoff;
 	OffsetNumber offnum;
-	ItemId itemId;
+	ItemId		itemId;
 	HeapTupleData tupleData;
-	HeapTuple tuple = &tupleData;
-	bool found;
+	HeapTuple	tuple = &tupleData;
+	bool		found;
 
 	appendStringInfo(&result->messages, "Checking for dead tuples... ");
 
@@ -774,12 +780,12 @@ check_dead_tuples(Relation index, ValidateResult *result)
 	for (blkno = 1; blkno < RelationGetNumberOfBlocks(index); blkno++)
 	{
 		buf = ReadBuffer(index, blkno);
-  if (!BufferIsValid(buf))
-  	{
-  		ereport(ERROR,
-  			(errcode(ERRCODE_INTERNAL_ERROR),
-  			 errmsg("neurondb: ReadBuffer failed for buffer")));
-  	}
+		if (!BufferIsValid(buf))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: ReadBuffer failed for buffer")));
+		}
 		LockBuffer(buf, BUFFER_LOCK_SHARE);
 		page = BufferGetPage(buf);
 
@@ -799,24 +805,25 @@ check_dead_tuples(Relation index, ValidateResult *result)
 			if (!ItemIdIsValid(itemId) || ItemIdIsDead(itemId))
 				continue;
 
-		/* Check if heap tuple is visible */
-		{
-			Buffer heapBuf;
-
-			found = heap_fetch(heapRel, snapshot, tuple, &heapBuf, false);
-			if (found && HeapTupleIsValid(tuple))
+			/* Check if heap tuple is visible */
 			{
-				/* Check visibility */
-				if (!HeapTupleSatisfiesVisibility(tuple, snapshot, heapBuf))
+				Buffer		heapBuf;
+
+				found = heap_fetch(heapRel, snapshot, tuple, &heapBuf, false);
+				if (found && HeapTupleIsValid(tuple))
 				{
+					/* Check visibility */
+					if (!HeapTupleSatisfiesVisibility(tuple, snapshot, heapBuf))
+					{
+						deadCount++;
+					}
+				}
+				else
+				{
+					/* Tuple not found or invalid - dead reference */
 					deadCount++;
 				}
-			} else
-			{
-				/* Tuple not found or invalid - dead reference */
-				deadCount++;
 			}
-		}
 
 			totalChecked++;
 		}
@@ -830,11 +837,12 @@ check_dead_tuples(Relation index, ValidateResult *result)
 	if (deadCount > 0)
 	{
 		appendStringInfo(&result->messages,
-			"WARN: Found %d dead tuples out of %d checked (consider VACUUM)\n",
-			deadCount,
-			totalChecked);
+						 "WARN: Found %d dead tuples out of %d checked (consider VACUUM)\n",
+						 deadCount,
+						 totalChecked);
 		result->warnings++;
-	} else
+	}
+	else
 	{
 		appendStringInfo(&result->messages, "OK (checked %d tuples)\n", totalChecked);
 	}
@@ -848,27 +856,27 @@ diagnose_index(Relation index)
 {
 	DiagResult *diag;
 
-	diag = (DiagResult *)palloc0(sizeof(DiagResult));
+	diag = (DiagResult *) palloc0(sizeof(DiagResult));
 	initStringInfo(&diag->recommendations);
 
 	diag->index_name = pstrdup(RelationGetRelationName(index));
 	diag->index_type = pstrdup("HNSW"); /* Would check actual type */
-	
+
 	/* Get actual statistics from index */
 	{
 		BlockNumber blkno;
-		Buffer buf;
-		Page page;
+		Buffer		buf;
+		Page		page;
 		OffsetNumber maxoff;
 		OffsetNumber offnum;
-		ItemId itemId;
-		int64 totalTuples = 0;
-		int64 deadTuples = 0;
-		Relation heapRel;
-		Snapshot snapshot;
+		ItemId		itemId;
+		int64		totalTuples = 0;
+		int64		deadTuples = 0;
+		Relation	heapRel;
+		Snapshot	snapshot;
 		HeapTupleData tupleData;
-		HeapTuple tuple = &tupleData;
-		bool found;
+		HeapTuple	tuple = &tupleData;
+		bool		found;
 
 		heapRel = index_open(IndexGetRelation(index->rd_id, false), AccessShareLock);
 		snapshot = GetActiveSnapshot();
@@ -876,12 +884,12 @@ diagnose_index(Relation index)
 		for (blkno = 1; blkno < RelationGetNumberOfBlocks(index); blkno++)
 		{
 			buf = ReadBuffer(index, blkno);
-   if (!BufferIsValid(buf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed for buffer")));
-   	}
+			if (!BufferIsValid(buf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed for buffer")));
+			}
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
 			page = BufferGetPage(buf);
 
@@ -909,22 +917,23 @@ diagnose_index(Relation index)
 
 				totalTuples++;
 
-			/* Check if heap tuple is visible */
-			{
-				Buffer heapBuf;
-
-				found = heap_fetch(heapRel, snapshot, tuple, &heapBuf, false);
-				if (found && HeapTupleIsValid(tuple))
+				/* Check if heap tuple is visible */
 				{
-					if (!HeapTupleSatisfiesVisibility(tuple, snapshot, heapBuf))
+					Buffer		heapBuf;
+
+					found = heap_fetch(heapRel, snapshot, tuple, &heapBuf, false);
+					if (found && HeapTupleIsValid(tuple))
+					{
+						if (!HeapTupleSatisfiesVisibility(tuple, snapshot, heapBuf))
+						{
+							deadTuples++;
+						}
+					}
+					else
 					{
 						deadTuples++;
 					}
-				} else
-				{
-					deadTuples++;
 				}
-			}
 			}
 
 			UnlockReleaseBuffer(buf);
@@ -936,7 +945,7 @@ diagnose_index(Relation index)
 		diag->dead_tuples = deadTuples;
 	}
 	diag->orphan_nodes = 0;
-	diag->avg_connectivity = 16.0; /* M parameter */
+	diag->avg_connectivity = 16.0;	/* M parameter */
 	diag->fragmentation = compute_fragmentation(index);
 	diag->size_bytes = RelationGetNumberOfBlocks(index) * BLCKSZ;
 
@@ -945,18 +954,21 @@ diagnose_index(Relation index)
 	{
 		diag->health_status = pstrdup("NEEDS_VACUUM");
 		appendStringInfo(&diag->recommendations,
-			"Run VACUUM to clean dead tuples. ");
-	} else if (diag->fragmentation > 0.3)
+						 "Run VACUUM to clean dead tuples. ");
+	}
+	else if (diag->fragmentation > 0.3)
 	{
 		diag->health_status = pstrdup("FRAGMENTED");
 		appendStringInfo(&diag->recommendations,
-			"Consider REINDEX to reduce fragmentation. ");
-	} else if (diag->orphan_nodes > 0)
+						 "Consider REINDEX to reduce fragmentation. ");
+	}
+	else if (diag->orphan_nodes > 0)
 	{
 		diag->health_status = pstrdup("DEGRADED");
 		appendStringInfo(&diag->recommendations,
-			"Orphan nodes detected, rebuild recommended. ");
-	} else
+						 "Orphan nodes detected, rebuild recommended. ");
+	}
+	else
 	{
 		diag->health_status = pstrdup("HEALTHY");
 		appendStringInfo(&diag->recommendations, "No issues detected.");
@@ -973,25 +985,25 @@ compute_fragmentation(Relation index)
 {
 	BlockNumber totalBlocks;
 	BlockNumber usedBlocks;
-	float4 fragmentation;
+	float4		fragmentation;
 
 	totalBlocks = RelationGetNumberOfBlocks(index);
 	/* Count actually used blocks */
 	{
 		BlockNumber blkno;
-		Buffer buf;
-		Page page;
-		int64 used = 0;
+		Buffer		buf;
+		Page		page;
+		int64		used = 0;
 
 		for (blkno = 0; blkno < totalBlocks; blkno++)
 		{
 			buf = ReadBuffer(index, blkno);
-   if (!BufferIsValid(buf))
-   	{
-   		ereport(ERROR,
-   			(errcode(ERRCODE_INTERNAL_ERROR),
-   			 errmsg("neurondb: ReadBuffer failed for buffer")));
-   	}
+			if (!BufferIsValid(buf))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: ReadBuffer failed for buffer")));
+			}
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
 			page = BufferGetPage(buf);
 
@@ -1001,12 +1013,13 @@ compute_fragmentation(Relation index)
 				/* Further check: has at least one valid item */
 				OffsetNumber maxoff = PageGetMaxOffsetNumber(page);
 				OffsetNumber offnum;
-				bool hasValidItem = false;
+				bool		hasValidItem = false;
 
 				for (offnum = FirstOffsetNumber; offnum <= maxoff;
 					 offnum = OffsetNumberNext(offnum))
 				{
-					ItemId itemId = PageGetItemId(page, offnum);
+					ItemId		itemId = PageGetItemId(page, offnum);
+
 					if (ItemIdIsValid(itemId))
 					{
 						hasValidItem = true;
@@ -1027,7 +1040,7 @@ compute_fragmentation(Relation index)
 	if (totalBlocks == 0)
 		return 0.0;
 
-	fragmentation = 1.0 - ((float4)usedBlocks / totalBlocks);
+	fragmentation = 1.0 - ((float4) usedBlocks / totalBlocks);
 
 	return fragmentation;
 }
@@ -1042,22 +1055,22 @@ PG_FUNCTION_INFO_V1(neurondb_rebuild_index);
 Datum
 neurondb_rebuild_index(PG_FUNCTION_ARGS)
 {
-	Oid indexOid;
-	Relation indexRel;
+	Oid			indexOid;
+	Relation	indexRel;
 
 	indexOid = PG_GETARG_OID(0);
 	indexRel = index_open(indexOid, AccessExclusiveLock);
 
 	elog(INFO,
-		"neurondb: Rebuilding index %s",
-		RelationGetRelationName(indexRel));
+		 "neurondb: Rebuilding index %s",
+		 RelationGetRelationName(indexRel));
 
 	/* Get heap relation and index info for rebuild */
 	{
-		Relation heapRel;
-		IndexInfo *indexInfo;
-		Oid heapOid;
-		char *indexName = NULL;
+		Relation	heapRel;
+		IndexInfo  *indexInfo;
+		Oid			heapOid;
+		char	   *indexName = NULL;
 		StringInfoData sql;
 		TimestampTz rebuildTime;
 
@@ -1067,9 +1080,9 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 		{
 			index_close(indexRel, AccessExclusiveLock);
 			ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-					errmsg("neurondb: Cannot find heap relation for index %s",
-						RelationGetRelationName(indexRel))));
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("neurondb: Cannot find heap relation for index %s",
+							RelationGetRelationName(indexRel))));
 		}
 
 		heapRel = relation_open(heapOid, AccessShareLock);
@@ -1081,9 +1094,9 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 			relation_close(heapRel, AccessShareLock);
 			index_close(indexRel, AccessExclusiveLock);
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("neurondb: Failed to build IndexInfo for index %s",
-						RelationGetRelationName(indexRel))));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: Failed to build IndexInfo for index %s",
+							RelationGetRelationName(indexRel))));
 		}
 
 		/* Get current timestamp for rebuild history */
@@ -1095,8 +1108,8 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 
 		/* Perform the actual rebuild using REINDEX via SPI */
 		{
-			char *inner_indexName;
-			char *rebuildCmd;
+			char	   *inner_indexName;
+			char	   *rebuildCmd;
 			StringInfoData cmd;
 
 			inner_indexName = pstrdup(RelationGetRelationName(indexRel));
@@ -1110,8 +1123,8 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 				NDB_SAFE_PFREE_AND_NULL(inner_indexName);
 				NDB_SAFE_PFREE_AND_NULL(rebuildCmd);
 				ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("neurondb: SPI_connect failed during index rebuild")));
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: SPI_connect failed during index rebuild")));
 			}
 
 			ndb_spi_execute_safe(rebuildCmd, false, 0);
@@ -1122,8 +1135,8 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 			NDB_SAFE_PFREE_AND_NULL(rebuildCmd);
 
 			elog(INFO,
-				"neurondb: Index %s rebuilt successfully",
-				RelationGetRelationName(indexRel));
+				 "neurondb: Index %s rebuilt successfully",
+				 RelationGetRelationName(indexRel));
 		}
 
 		/* Reopen index to get updated relation for tracking */
@@ -1138,41 +1151,42 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 			index_close(indexRel, AccessExclusiveLock);
 			NDB_SAFE_PFREE_AND_NULL(indexName);
 			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-					errmsg("neurondb: SPI_connect failed during rebuild history tracking")));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: SPI_connect failed during rebuild history tracking")));
 		}
 
 		/* Create rebuild history table if it doesn't exist */
 		{
 			initStringInfo(&sql);
 			appendStringInfo(&sql,
-				"CREATE TABLE IF NOT EXISTS neurondb_index_rebuild_history ("
-				"index_oid OID PRIMARY KEY, "
-				"index_name TEXT NOT NULL, "
-				"last_rebuild_time TIMESTAMPTZ NOT NULL, "
-				"rebuild_count BIGINT DEFAULT 1)");
-			(void)ndb_spi_execute_safe(sql.data, false, 0);
+							 "CREATE TABLE IF NOT EXISTS neurondb_index_rebuild_history ("
+							 "index_oid OID PRIMARY KEY, "
+							 "index_name TEXT NOT NULL, "
+							 "last_rebuild_time TIMESTAMPTZ NOT NULL, "
+							 "rebuild_count BIGINT DEFAULT 1)");
+			(void) ndb_spi_execute_safe(sql.data, false, 0);
 			NDB_CHECK_SPI_TUPTABLE();
 			NDB_SAFE_PFREE_AND_NULL(sql.data);
 		}
 		/* Upsert rebuild history */
 		{
-			char *rebuildTimeStr;
-			Datum rebuildTimeDatum = TimestampTzGetDatum(rebuildTime);
+			char	   *rebuildTimeStr;
+			Datum		rebuildTimeDatum = TimestampTzGetDatum(rebuildTime);
+
 			rebuildTimeStr = DatumGetCString(DirectFunctionCall1(timestamptz_out, rebuildTimeDatum));
 
 			initStringInfo(&sql);
 			appendStringInfo(&sql,
-				"INSERT INTO neurondb_index_rebuild_history "
-				"(index_oid, index_name, last_rebuild_time, rebuild_count) "
-				"VALUES (%u, %s, %s::timestamptz, 1) "
-				"ON CONFLICT (index_oid) DO UPDATE SET "
-				"last_rebuild_time = EXCLUDED.last_rebuild_time, "
-				"rebuild_count = neurondb_index_rebuild_history.rebuild_count + 1",
-				indexOid,
-				quote_literal_cstr(indexName),
-				quote_literal_cstr(rebuildTimeStr));
-			(void)ndb_spi_execute_safe(sql.data, false, 0);
+							 "INSERT INTO neurondb_index_rebuild_history "
+							 "(index_oid, index_name, last_rebuild_time, rebuild_count) "
+							 "VALUES (%u, %s, %s::timestamptz, 1) "
+							 "ON CONFLICT (index_oid) DO UPDATE SET "
+							 "last_rebuild_time = EXCLUDED.last_rebuild_time, "
+							 "rebuild_count = neurondb_index_rebuild_history.rebuild_count + 1",
+							 indexOid,
+							 quote_literal_cstr(indexName),
+							 quote_literal_cstr(rebuildTimeStr));
+			(void) ndb_spi_execute_safe(sql.data, false, 0);
 			NDB_CHECK_SPI_TUPTABLE();
 			NDB_SAFE_PFREE_AND_NULL(sql.data);
 			NDB_SAFE_PFREE_AND_NULL(rebuildTimeStr);
@@ -1198,29 +1212,29 @@ PG_FUNCTION_INFO_V1(index_statistics);
 Datum
 index_statistics(PG_FUNCTION_ARGS)
 {
-	text *index_name = PG_GETARG_TEXT_P(0);
-	char *idx_name;
-	Oid indexOid;
-	Relation indexRel;
+	text	   *index_name = PG_GETARG_TEXT_P(0);
+	char	   *idx_name;
+	Oid			indexOid;
+	Relation	indexRel;
 	DiagResult *diag;
 	StringInfoData json_buf;
-	Jsonb *result_jsonb;
-	int64 total_blocks;
-	int64 index_size_bytes;
-	int64 heap_size_bytes;
-	int64 total_tuples;
-	int64 dead_tuples;
-	float4 fragmentation;
-	char *index_type = "unknown";
+	Jsonb	   *result_jsonb;
+	int64		total_blocks;
+	int64		index_size_bytes;
+	int64		heap_size_bytes;
+	int64		total_tuples;
+	int64		dead_tuples;
+	float4		fragmentation;
+	char	   *index_type = "unknown";
 
 	idx_name = text_to_cstring(index_name);
 
 	/* Look up index OID */
 	{
-		Oid namespaceOid;
-		HeapTuple nstuple;
+		Oid			namespaceOid;
+		HeapTuple	nstuple;
 		Form_pg_namespace nsform;
-		
+
 		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetDatum("public"));
 		if (HeapTupleIsValid(nstuple))
 		{
@@ -1236,8 +1250,8 @@ index_statistics(PG_FUNCTION_ARGS)
 	}
 	if (!OidIsValid(indexOid))
 		ereport(ERROR,
-			(errcode(ERRCODE_UNDEFINED_OBJECT),
-				errmsg("index \"%s\" does not exist", idx_name)));
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("index \"%s\" does not exist", idx_name)));
 
 	indexRel = index_open(indexOid, AccessShareLock);
 
@@ -1246,16 +1260,16 @@ index_statistics(PG_FUNCTION_ARGS)
 		index_close(indexRel, AccessShareLock);
 		NDB_SAFE_PFREE_AND_NULL(idx_name);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid index: %s", idx_name)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid index: %s", idx_name)));
 	}
 
 	/* Get index type */
 	{
-		Oid amOid = indexRel->rd_rel->relam;
-		HeapTuple amtup;
-		Form_pg_am amform;
-		
+		Oid			amOid = indexRel->rd_rel->relam;
+		HeapTuple	amtup;
+		Form_pg_am	amform;
+
 		amtup = SearchSysCache1(AMOID, ObjectIdGetDatum(amOid));
 		if (HeapTupleIsValid(amtup))
 		{
@@ -1276,10 +1290,12 @@ index_statistics(PG_FUNCTION_ARGS)
 
 	/* Get heap relation stats */
 	{
-		Oid heapOid = indexRel->rd_index->indrelid;
+		Oid			heapOid = indexRel->rd_index->indrelid;
+
 		if (OidIsValid(heapOid))
 		{
-			Relation heapRel = relation_open(heapOid, AccessShareLock);
+			Relation	heapRel = relation_open(heapOid, AccessShareLock);
+
 			heap_size_bytes = RelationGetNumberOfBlocks(heapRel) * BLCKSZ;
 			relation_close(heapRel, AccessShareLock);
 		}
@@ -1296,33 +1312,33 @@ index_statistics(PG_FUNCTION_ARGS)
 	/* Build JSONB result */
 	initStringInfo(&json_buf);
 	appendStringInfo(&json_buf,
-		"{\"index_name\":\"%s\","
-		"\"index_type\":\"%s\","
-		"\"index_size_bytes\":%lld,"
-		"\"index_size_mb\":%.2f,"
-		"\"heap_size_bytes\":%lld,"
-		"\"heap_size_mb\":%.2f,"
-		"\"total_tuples\":%lld,"
-		"\"dead_tuples\":%lld,"
-		"\"live_tuples\":%lld,"
-		"\"fragmentation\":%.4f,"
-		"\"avg_connectivity\":%.2f,"
-		"\"orphan_nodes\":%lld}",
-		idx_name,
-		index_type,
-		(long long)index_size_bytes,
-		(double)index_size_bytes / (1024.0 * 1024.0),
-		(long long)heap_size_bytes,
-		(double)heap_size_bytes / (1024.0 * 1024.0),
-		(long long)total_tuples,
-		(long long)dead_tuples,
-		(long long)(total_tuples - dead_tuples),
-		fragmentation,
-		diag->avg_connectivity,
-		(long long)diag->orphan_nodes);
+					 "{\"index_name\":\"%s\","
+					 "\"index_type\":\"%s\","
+					 "\"index_size_bytes\":%lld,"
+					 "\"index_size_mb\":%.2f,"
+					 "\"heap_size_bytes\":%lld,"
+					 "\"heap_size_mb\":%.2f,"
+					 "\"total_tuples\":%lld,"
+					 "\"dead_tuples\":%lld,"
+					 "\"live_tuples\":%lld,"
+					 "\"fragmentation\":%.4f,"
+					 "\"avg_connectivity\":%.2f,"
+					 "\"orphan_nodes\":%lld}",
+					 idx_name,
+					 index_type,
+					 (long long) index_size_bytes,
+					 (double) index_size_bytes / (1024.0 * 1024.0),
+					 (long long) heap_size_bytes,
+					 (double) heap_size_bytes / (1024.0 * 1024.0),
+					 (long long) total_tuples,
+					 (long long) dead_tuples,
+					 (long long) (total_tuples - dead_tuples),
+					 fragmentation,
+					 diag->avg_connectivity,
+					 (long long) diag->orphan_nodes);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-		jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetDatum(json_buf.data)));
 
 	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
 	NDB_SAFE_PFREE_AND_NULL(idx_name);
@@ -1340,28 +1356,28 @@ PG_FUNCTION_INFO_V1(index_health);
 Datum
 index_health(PG_FUNCTION_ARGS)
 {
-	text *index_name = PG_GETARG_TEXT_P(0);
-	char *idx_name;
-	Oid indexOid;
-	Relation indexRel;
+	text	   *index_name = PG_GETARG_TEXT_P(0);
+	char	   *idx_name;
+	Oid			indexOid;
+	Relation	indexRel;
 	DiagResult *diag;
 	StringInfoData json_buf;
-	Jsonb *result_jsonb;
-	float4 health_score;
-	char *health_status;
-	int64 total_tuples;
-	int64 dead_tuples;
-	float4 fragmentation;
-	int64 orphan_nodes;
+	Jsonb	   *result_jsonb;
+	float4		health_score;
+	char	   *health_status;
+	int64		total_tuples;
+	int64		dead_tuples;
+	float4		fragmentation;
+	int64		orphan_nodes;
 
 	idx_name = text_to_cstring(index_name);
 
 	/* Look up index OID */
 	{
-		Oid namespaceOid;
-		HeapTuple nstuple;
+		Oid			namespaceOid;
+		HeapTuple	nstuple;
 		Form_pg_namespace nsform;
-		
+
 		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetDatum("public"));
 		if (HeapTupleIsValid(nstuple))
 		{
@@ -1377,8 +1393,8 @@ index_health(PG_FUNCTION_ARGS)
 	}
 	if (!OidIsValid(indexOid))
 		ereport(ERROR,
-			(errcode(ERRCODE_UNDEFINED_OBJECT),
-				errmsg("index \"%s\" does not exist", idx_name)));
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("index \"%s\" does not exist", idx_name)));
 
 	indexRel = index_open(indexOid, AccessShareLock);
 
@@ -1387,8 +1403,8 @@ index_health(PG_FUNCTION_ARGS)
 		index_close(indexRel, AccessShareLock);
 		NDB_SAFE_PFREE_AND_NULL(idx_name);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid index: %s", idx_name)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid index: %s", idx_name)));
 	}
 
 	diag = diagnose_index(indexRel);
@@ -1402,35 +1418,36 @@ index_health(PG_FUNCTION_ARGS)
 	health_score = 1.0f;
 	if (total_tuples > 0)
 	{
-		float4 dead_ratio = (float4)dead_tuples / (float4)total_tuples;
-		health_score -= dead_ratio * 0.4f; /* Dead tuples reduce score */
+		float4		dead_ratio = (float4) dead_tuples / (float4) total_tuples;
+
+		health_score -= dead_ratio * 0.4f;	/* Dead tuples reduce score */
 	}
-	health_score -= fragmentation * 0.3f; /* Fragmentation reduces score */
+	health_score -= fragmentation * 0.3f;	/* Fragmentation reduces score */
 	if (orphan_nodes > 0)
-		health_score -= 0.3f; /* Orphan nodes reduce score */
+		health_score -= 0.3f;	/* Orphan nodes reduce score */
 	if (health_score < 0.0f)
 		health_score = 0.0f;
 
 	/* Build JSONB result */
 	initStringInfo(&json_buf);
 	appendStringInfo(&json_buf,
-		"{\"index_name\":\"%s\","
-		"\"health_status\":\"%s\","
-		"\"health_score\":%.3f,"
-		"\"dead_tuple_ratio\":%.4f,"
-		"\"fragmentation\":%.4f,"
-		"\"orphan_nodes\":%lld,"
-		"\"recommendations\":\"%s\"}",
-		idx_name,
-		health_status,
-		health_score,
-		total_tuples > 0 ? ((float4)dead_tuples / (float4)total_tuples) : 0.0f,
-		fragmentation,
-		(long long)orphan_nodes,
-		diag->recommendations.data);
+					 "{\"index_name\":\"%s\","
+					 "\"health_status\":\"%s\","
+					 "\"health_score\":%.3f,"
+					 "\"dead_tuple_ratio\":%.4f,"
+					 "\"fragmentation\":%.4f,"
+					 "\"orphan_nodes\":%lld,"
+					 "\"recommendations\":\"%s\"}",
+					 idx_name,
+					 health_status,
+					 health_score,
+					 total_tuples > 0 ? ((float4) dead_tuples / (float4) total_tuples) : 0.0f,
+					 fragmentation,
+					 (long long) orphan_nodes,
+					 diag->recommendations.data);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-		jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetDatum(json_buf.data)));
 
 	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
 	NDB_SAFE_PFREE_AND_NULL(idx_name);
@@ -1448,29 +1465,29 @@ PG_FUNCTION_INFO_V1(index_rebuild_recommendation);
 Datum
 index_rebuild_recommendation(PG_FUNCTION_ARGS)
 {
-	text *index_name = PG_GETARG_TEXT_P(0);
-	char *idx_name;
-	Oid indexOid;
-	Relation indexRel;
+	text	   *index_name = PG_GETARG_TEXT_P(0);
+	char	   *idx_name;
+	Oid			indexOid;
+	Relation	indexRel;
 	DiagResult *diag;
 	StringInfoData json_buf;
-	Jsonb *result_jsonb;
-	bool should_rebuild = false;
-	char *rebuild_reason = NULL;
-	float4 dead_ratio;
-	float4 fragmentation;
-	int64 orphan_nodes;
-	int64 days_since_last_rebuild = 0;
+	Jsonb	   *result_jsonb;
+	bool		should_rebuild = false;
+	char	   *rebuild_reason = NULL;
+	float4		dead_ratio;
+	float4		fragmentation;
+	int64		orphan_nodes;
+	int64		days_since_last_rebuild = 0;
 	TimestampTz last_rebuild_time = 0;
 
 	idx_name = text_to_cstring(index_name);
 
 	/* Look up index OID */
 	{
-		Oid namespaceOid;
-		HeapTuple nstuple;
+		Oid			namespaceOid;
+		HeapTuple	nstuple;
 		Form_pg_namespace nsform;
-		
+
 		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetDatum("public"));
 		if (HeapTupleIsValid(nstuple))
 		{
@@ -1486,8 +1503,8 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 	}
 	if (!OidIsValid(indexOid))
 		ereport(ERROR,
-			(errcode(ERRCODE_UNDEFINED_OBJECT),
-				errmsg("index \"%s\" does not exist", idx_name)));
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("index \"%s\" does not exist", idx_name)));
 
 	indexRel = index_open(indexOid, AccessShareLock);
 
@@ -1496,38 +1513,39 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 		index_close(indexRel, AccessShareLock);
 		NDB_SAFE_PFREE_AND_NULL(idx_name);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("invalid index: %s", idx_name)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid index: %s", idx_name)));
 	}
 
 	diag = diagnose_index(indexRel);
 	dead_ratio = diag->total_tuples > 0
-		? ((float4)diag->dead_tuples / (float4)diag->total_tuples)
+		? ((float4) diag->dead_tuples / (float4) diag->total_tuples)
 		: 0.0f;
 	fragmentation = diag->fragmentation;
 	orphan_nodes = diag->orphan_nodes;
 
 	/* Query rebuild history to get last rebuild time */
 	{
-		int ret;
+		int			ret;
 		StringInfoData sql;
 
 		if (SPI_connect() == SPI_OK_CONNECT)
 		{
 			initStringInfo(&sql);
 			appendStringInfo(&sql,
-				"SELECT last_rebuild_time FROM neurondb_index_rebuild_history "
-				"WHERE index_oid = %u",
-				indexOid);
+							 "SELECT last_rebuild_time FROM neurondb_index_rebuild_history "
+							 "WHERE index_oid = %u",
+							 indexOid);
 			ret = ndb_spi_execute_safe(sql.data, true, 0);
 			NDB_CHECK_SPI_TUPTABLE();
 			if (ret == SPI_OK_SELECT && SPI_processed > 0)
 			{
-				bool isnull;
-				Datum rebuildTimeDatum = SPI_getbinval(SPI_tuptable->vals[0],
-					SPI_tuptable->tupdesc,
-					1,
-					&isnull);
+				bool		isnull;
+				Datum		rebuildTimeDatum = SPI_getbinval(SPI_tuptable->vals[0],
+															 SPI_tuptable->tupdesc,
+															 1,
+															 &isnull);
+
 				if (!isnull)
 				{
 					last_rebuild_time = DatumGetTimestampTz(rebuildTimeDatum);
@@ -1544,19 +1562,23 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 	{
 		should_rebuild = true;
 		rebuild_reason = "Orphan nodes detected";
-	} else if (dead_ratio > 0.2f)
+	}
+	else if (dead_ratio > 0.2f)
 	{
 		should_rebuild = true;
 		rebuild_reason = "High dead tuple ratio (>20%)";
-	} else if (fragmentation > 0.3f)
+	}
+	else if (fragmentation > 0.3f)
 	{
 		should_rebuild = true;
 		rebuild_reason = "High fragmentation (>30%)";
-	} else if (days_since_last_rebuild > 90)
+	}
+	else if (days_since_last_rebuild > 90)
 	{
 		should_rebuild = true;
 		rebuild_reason = "Index age (>90 days since last rebuild)";
-	} else
+	}
+	else
 	{
 		should_rebuild = false;
 		rebuild_reason = "Index is healthy, no rebuild needed";
@@ -1565,25 +1587,25 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 	/* Build JSONB result */
 	initStringInfo(&json_buf);
 	appendStringInfo(&json_buf,
-		"{\"index_name\":\"%s\","
-		"\"should_rebuild\":%s,"
-		"\"rebuild_reason\":\"%s\","
-		"\"dead_tuple_ratio\":%.4f,"
-		"\"fragmentation\":%.4f,"
-		"\"orphan_nodes\":%lld,"
-		"\"days_since_last_rebuild\":%lld,"
-		"\"priority\":\"%s\"}",
-		idx_name,
-		should_rebuild ? "true" : "false",
-		rebuild_reason,
-		dead_ratio,
-		fragmentation,
-		(long long)orphan_nodes,
-		(long long)days_since_last_rebuild,
-		should_rebuild ? (orphan_nodes > 0 ? "high" : (dead_ratio > 0.3f ? "high" : "medium")) : "low");
+					 "{\"index_name\":\"%s\","
+					 "\"should_rebuild\":%s,"
+					 "\"rebuild_reason\":\"%s\","
+					 "\"dead_tuple_ratio\":%.4f,"
+					 "\"fragmentation\":%.4f,"
+					 "\"orphan_nodes\":%lld,"
+					 "\"days_since_last_rebuild\":%lld,"
+					 "\"priority\":\"%s\"}",
+					 idx_name,
+					 should_rebuild ? "true" : "false",
+					 rebuild_reason,
+					 dead_ratio,
+					 fragmentation,
+					 (long long) orphan_nodes,
+					 (long long) days_since_last_rebuild,
+					 should_rebuild ? (orphan_nodes > 0 ? "high" : (dead_ratio > 0.3f ? "high" : "medium")) : "low");
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-		jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetDatum(json_buf.data)));
 
 	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
 	NDB_SAFE_PFREE_AND_NULL(idx_name);

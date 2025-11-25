@@ -74,7 +74,7 @@ extern float fp16_to_float(uint16 h);
 #define HNSW_VERSION			1
 
 /* Reloption kind - registered in _PG_init() */
-extern int relopt_kind_hnsw;
+extern int	relopt_kind_hnsw;
 
 typedef struct HnswOptions
 {
@@ -82,13 +82,13 @@ typedef struct HnswOptions
 	int			m;
 	int			ef_construction;
 	int			ef_search;
-} HnswOptions;
+}			HnswOptions;
 
 typedef struct HnswMetaPageData
 {
 	uint32		magicNumber;
 	uint32		version;
-	BlockNumber	entryPoint;
+	BlockNumber entryPoint;
 	int			entryLevel;
 	int			maxLevel;
 	int16		m;
@@ -96,23 +96,23 @@ typedef struct HnswMetaPageData
 	int16		efSearch;
 	float4		ml;
 	int64		insertedVectors;
-} HnswMetaPageData;
+}			HnswMetaPageData;
 
-typedef HnswMetaPageData *HnswMetaPage;
+typedef HnswMetaPageData * HnswMetaPage;
 
 typedef struct HnswNodeData
 {
-	ItemPointerData	heapPtr;
-	int				level;
-	int16			dim;
-	int16			neighborCount[HNSW_MAX_LEVEL];
-	/* Followed by:
-	 *	float4 vector[dim];
-	 *	BlockNumber neighbors[level+1][M*2];
-	 */
-} HnswNodeData;
+	ItemPointerData heapPtr;
+	int			level;
+	int16		dim;
+	int16		neighborCount[HNSW_MAX_LEVEL];
 
-typedef HnswNodeData *HnswNode;
+	/*
+	 * Followed by: float4 vector[dim]; BlockNumber neighbors[level+1][M*2];
+	 */
+}			HnswNodeData;
+
+typedef HnswNodeData * HnswNode;
 
 #define HnswNodeSize(dim, level) \
 	(MAXALIGN(sizeof(HnswNodeData) + (dim) * sizeof(float4) \
@@ -133,77 +133,77 @@ typedef struct HnswBuildState
 {
 	Relation	heap;
 	Relation	index;
-	IndexInfo   *indexInfo;
-	HnswMetaPage	metaPage;
+	IndexInfo  *indexInfo;
+	HnswMetaPage metaPage;
 	double		indtuples;
 	Buffer		metaBuffer;
-	MemoryContext	tmpCtx;
-} HnswBuildState;
+	MemoryContext tmpCtx;
+}			HnswBuildState;
 
 /*
  * Opaque for scan state
  */
 typedef struct HnswScanOpaqueData
 {
-	int				efSearch;
-	int				strategy;
-	Vector		   *queryVector;
-	int				k;
-	bool			firstCall;
-	int				resultCount;
-	BlockNumber    *results;
-	float4		   *distances;
-	int				currentResult;
-} HnswScanOpaqueData;
+	int			efSearch;
+	int			strategy;
+	Vector	   *queryVector;
+	int			k;
+	bool		firstCall;
+	int			resultCount;
+	BlockNumber *results;
+	float4	   *distances;
+	int			currentResult;
+}			HnswScanOpaqueData;
 
-typedef HnswScanOpaqueData *HnswScanOpaque;
+typedef HnswScanOpaqueData * HnswScanOpaque;
 
 /*
  * Forward declarations
  */
-static IndexBuildResult *hnswbuild(Relation heap, Relation index, IndexInfo *indexInfo);
-static void		  hnswbuildempty(Relation index);
-static bool		  hnswinsert(Relation index, Datum *values, bool *isnull, ItemPointer ht_ctid,
-							 Relation heapRel, IndexUniqueCheck checkUnique,
-							 bool indexUnchanged, struct IndexInfo *indexInfo);
-static IndexBulkDeleteResult *hnswbulkdelete(IndexVacuumInfo *info,
-											 IndexBulkDeleteResult *stats,
-											 IndexBulkDeleteCallback callback,
-											 void *callback_state);
-static IndexBulkDeleteResult *hnswvacuumcleanup(IndexVacuumInfo *info,
-												IndexBulkDeleteResult *stats);
-static bool		  hnswdelete(Relation index, ItemPointer tid, Datum *values, bool *isnull,
-							 Relation heapRel, struct IndexInfo *indexInfo) __attribute__((unused));
-static bool		  hnswupdate(Relation index, ItemPointer tid, Datum *values, bool *isnull,
-							  ItemPointer otid, Relation heapRel, struct IndexInfo *indexInfo) __attribute__((unused));
-static void		  hnswcostestimate(struct PlannerInfo *root, struct IndexPath *path, double loop_count,
-								   Cost *indexStartupCost, Cost *indexTotalCost,
-								   Selectivity *indexSelectivity, double *indexCorrelation,
-								   double *indexPages);
-static bytea	 *hnswoptions(Datum reloptions, bool validate);
-static void		  hnswRemoveNodeFromNeighbor(Relation index,
-								BlockNumber neighborBlkno,
-								BlockNumber nodeBlkno,
-								int level);
-static bool		  hnswproperty(Oid index_oid, int attno, IndexAMProperty prop,
-							  const char *propname, bool *res, bool *isnull);
+static IndexBuildResult * hnswbuild(Relation heap, Relation index, IndexInfo * indexInfo);
+static void hnswbuildempty(Relation index);
+static bool hnswinsert(Relation index, Datum *values, bool *isnull, ItemPointer ht_ctid,
+					   Relation heapRel, IndexUniqueCheck checkUnique,
+					   bool indexUnchanged, struct IndexInfo *indexInfo);
+static IndexBulkDeleteResult * hnswbulkdelete(IndexVacuumInfo * info,
+											  IndexBulkDeleteResult * stats,
+											  IndexBulkDeleteCallback callback,
+											  void *callback_state);
+static IndexBulkDeleteResult * hnswvacuumcleanup(IndexVacuumInfo * info,
+												 IndexBulkDeleteResult * stats);
+static bool hnswdelete(Relation index, ItemPointer tid, Datum *values, bool *isnull,
+					   Relation heapRel, struct IndexInfo *indexInfo) __attribute__((unused));
+static bool hnswupdate(Relation index, ItemPointer tid, Datum *values, bool *isnull,
+					   ItemPointer otid, Relation heapRel, struct IndexInfo *indexInfo) __attribute__((unused));
+static void hnswcostestimate(struct PlannerInfo *root, struct IndexPath *path, double loop_count,
+							 Cost * indexStartupCost, Cost * indexTotalCost,
+							 Selectivity * indexSelectivity, double *indexCorrelation,
+							 double *indexPages);
+static bytea * hnswoptions(Datum reloptions, bool validate);
+static void hnswRemoveNodeFromNeighbor(Relation index,
+									   BlockNumber neighborBlkno,
+									   BlockNumber nodeBlkno,
+									   int level);
+static bool hnswproperty(Oid index_oid, int attno, IndexAMProperty prop,
+						 const char *propname, bool *res, bool *isnull);
 static IndexScanDesc hnswbeginscan(Relation index, int nkeys, int norderbys);
-static void		  hnswrescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys, int norderbys);
-static bool		  hnswgettuple(IndexScanDesc scan, ScanDirection dir);
-static void		  hnswendscan(IndexScanDesc scan);
+static void hnswrescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys, int norderbys);
+static bool hnswgettuple(IndexScanDesc scan, ScanDirection dir);
+static void hnswendscan(IndexScanDesc scan);
 
-static void		  hnswInitMetaPage(Buffer metaBuffer, int16 m, int16 efConstruction, int16 efSearch, float4 ml);
-static int		  hnswGetRandomLevel(float4 ml);
-static float4	  hnswComputeDistance(const float4 *vec1, const float4 *vec2, int dim, int strategy) __attribute__((unused));
-static void		  hnswSearch(Relation index, HnswMetaPage metaPage, const float4 *query,
-							  int dim, int strategy, int efSearch, int k,
-							  BlockNumber **results, float4 **distances, int *resultCount);
-static void		  hnswInsertNode(Relation index, HnswMetaPage metaPage,
-								  const float4 *vector, int dim, ItemPointer heapPtr);
-static float4	 *hnswExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx);
-static Oid		  hnswGetKeyType(Relation index, int attno);
-static void		  hnswBuildCallback(Relation index, ItemPointer tid, Datum *values,
-								  bool *isnull, bool tupleIsAlive, void *state);
+static void hnswInitMetaPage(Buffer metaBuffer, int16 m, int16 efConstruction, int16 efSearch, float4 ml);
+static int	hnswGetRandomLevel(float4 ml);
+static float4 hnswComputeDistance(const float4 * vec1, const float4 * vec2, int dim, int strategy) __attribute__((unused));
+static void hnswSearch(Relation index, HnswMetaPage metaPage, const float4 * query,
+					   int dim, int strategy, int efSearch, int k,
+					   BlockNumber * *results, float4 * *distances, int *resultCount);
+static void hnswInsertNode(Relation index, HnswMetaPage metaPage,
+						   const float4 * vector, int dim, ItemPointer heapPtr);
+static float4 * hnswExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx);
+static Oid hnswGetKeyType(Relation index, int attno);
+static void hnswBuildCallback(Relation index, ItemPointer tid, Datum *values,
+							  bool *isnull, bool tupleIsAlive, void *state);
 
 /*
  * SQL-callable handler function
@@ -267,14 +267,16 @@ hnsw_handler(PG_FUNCTION_ARGS)
  * Index Build
  */
 static IndexBuildResult *
-hnswbuild(Relation heap, Relation index, IndexInfo *indexInfo)
+hnswbuild(Relation heap, Relation index, IndexInfo * indexInfo)
 {
 	IndexBuildResult *result;
 	HnswBuildState buildstate;
-	Buffer metaBuffer;
-	Page metaPage;
+	Buffer		metaBuffer;
+	Page		metaPage;
 	HnswOptions *options;
-	int m, ef_construction, ef_search;
+	int			m,
+				ef_construction,
+				ef_search;
 
 	elog(INFO, "neurondb: Building HNSW index on %s", RelationGetRelationName(index));
 
@@ -290,7 +292,7 @@ hnswbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	LockBuffer(metaBuffer, BUFFER_LOCK_EXCLUSIVE);
 	metaPage = BufferGetPage(metaBuffer);
 
-	options = (HnswOptions *)indexInfo->ii_AmCache;
+	options = (HnswOptions *) indexInfo->ii_AmCache;
 	if (options == NULL)
 	{
 		static const relopt_parse_elt tab[] = {
@@ -298,11 +300,12 @@ hnswbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 			{"ef_construction", RELOPT_TYPE_INT, offsetof(HnswOptions, ef_construction)},
 			{"ef_search", RELOPT_TYPE_INT, offsetof(HnswOptions, ef_search)}
 		};
-		Datum relopts = PointerGetDatum(index->rd_options);
-		options = (HnswOptions *)build_reloptions(relopts, false,
-												  relopt_kind_hnsw,
-												  sizeof(HnswOptions), tab, lengthof(tab));
-		indexInfo->ii_AmCache = (void *)options;
+		Datum		relopts = PointerGetDatum(index->rd_options);
+
+		options = (HnswOptions *) build_reloptions(relopts, false,
+												   relopt_kind_hnsw,
+												   sizeof(HnswOptions), tab, lengthof(tab));
+		indexInfo->ii_AmCache = (void *) options;
 	}
 	m = options ? options->m : HNSW_DEFAULT_M;
 	ef_construction = options ? options->ef_construction : HNSW_DEFAULT_EF_CONSTRUCTION;
@@ -311,7 +314,7 @@ hnswbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	hnswInitMetaPage(metaBuffer, m, ef_construction, ef_search, HNSW_DEFAULT_ML);
 
 	buildstate.metaBuffer = metaBuffer;
-	buildstate.metaPage = (HnswMetaPage)PageGetContents(metaPage);
+	buildstate.metaPage = (HnswMetaPage) PageGetContents(metaPage);
 
 	MarkBufferDirty(metaBuffer);
 	UnlockReleaseBuffer(metaBuffer);
@@ -319,9 +322,9 @@ hnswbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	/* Use parallel scan if available */
 	buildstate.indtuples = table_index_build_scan(heap, index, indexInfo,
 												  true, true, hnswBuildCallback,
-												  (void *)&buildstate, NULL);
+												  (void *) &buildstate, NULL);
 
-	result = (IndexBuildResult *)palloc(sizeof(IndexBuildResult));
+	result = (IndexBuildResult *) palloc(sizeof(IndexBuildResult));
 	result->heap_tuples = buildstate.indtuples;
 	result->index_tuples = buildstate.indtuples;
 
@@ -336,7 +339,7 @@ static void
 hnswBuildCallback(Relation index, ItemPointer tid, Datum *values,
 				  bool *isnull, bool tupleIsAlive, void *state)
 {
-	HnswBuildState *buildstate = (HnswBuildState *)state;
+	HnswBuildState *buildstate = (HnswBuildState *) state;
 
 	hnswinsert(index, values, isnull, tid, buildstate->heap,
 			   UNIQUE_CHECK_NO, true, buildstate->indexInfo);
@@ -347,7 +350,7 @@ hnswBuildCallback(Relation index, ItemPointer tid, Datum *values,
 static void
 hnswbuildempty(Relation index)
 {
-	Buffer metaBuffer;
+	Buffer		metaBuffer;
 
 	metaBuffer = ReadBuffer(index, P_NEW);
 	LockBuffer(metaBuffer, BUFFER_LOCK_EXCLUSIVE);
@@ -376,7 +379,7 @@ hnswinsert(Relation index,
 	int			dim;
 	Buffer		metaBuffer;
 	Page		metaPage;
-	HnswMetaPage	meta;
+	HnswMetaPage meta;
 	Oid			keyType;
 	MemoryContext oldctx;
 
@@ -398,7 +401,7 @@ hnswinsert(Relation index,
 		metaBuffer = ReadBuffer(index, 0);
 		LockBuffer(metaBuffer, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuffer);
-		meta = (HnswMetaPage)PageGetContents(metaPage);
+		meta = (HnswMetaPage) PageGetContents(metaPage);
 
 		hnswInsertNode(index, meta, vectorData, dim, ht_ctid);
 
@@ -431,36 +434,36 @@ hnswinsert(Relation index,
  * from HNSW graph structure.
  */
 static IndexBulkDeleteResult *
-hnswbulkdelete(IndexVacuumInfo *info,
-			   IndexBulkDeleteResult *stats,
+hnswbulkdelete(IndexVacuumInfo * info,
+			   IndexBulkDeleteResult * stats,
 			   IndexBulkDeleteCallback callback,
 			   void *callback_state)
 {
-	Relation index = info->index;
+	Relation	index = info->index;
 	BlockNumber blkno;
-	Buffer metaBuffer;
-	Page metaPage;
+	Buffer		metaBuffer;
+	Page		metaPage;
 	HnswMetaPage meta;
-	Buffer nodeBuf;
-	Page nodePage;
+	Buffer		nodeBuf;
+	Page		nodePage;
 	OffsetNumber maxoff;
 	OffsetNumber offnum;
-	HnswNode node;
+	HnswNode	node;
 	BlockNumber *neighbors;
-	int16 neighborCount;
-	int level;
-	int i;
-	bool foundNewEntry;
-	ItemId itemId;
+	int16		neighborCount;
+	int			level;
+	int			i;
+	bool		foundNewEntry;
+	ItemId		itemId;
 
 	if (stats == NULL)
-		stats = (IndexBulkDeleteResult *)palloc0(sizeof(IndexBulkDeleteResult));
+		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
 
 	/* Read metadata page */
 	metaBuffer = ReadBuffer(index, 0);
 	LockBuffer(metaBuffer, BUFFER_LOCK_EXCLUSIVE);
 	metaPage = BufferGetPage(metaBuffer);
-	meta = (HnswMetaPage)PageGetContents(metaPage);
+	meta = (HnswMetaPage) PageGetContents(metaPage);
 
 	/* Scan all pages in the index */
 	for (blkno = 1; blkno < RelationGetNumberOfBlocks(index); blkno++)
@@ -484,7 +487,7 @@ hnswbulkdelete(IndexVacuumInfo *info,
 			if (!ItemIdIsValid(itemId) || ItemIdIsDead(itemId))
 				continue;
 
-			node = (HnswNode)PageGetItem(nodePage, itemId);
+			node = (HnswNode) PageGetItem(nodePage, itemId);
 
 			/* Check callback to see if this tuple should be deleted */
 			if (callback(&node->heapPtr, callback_state))
@@ -502,9 +505,9 @@ hnswbulkdelete(IndexVacuumInfo *info,
 						if (neighbors[i] != InvalidBlockNumber)
 						{
 							hnswRemoveNodeFromNeighbor(index,
-								neighbors[i],
-								blkno,
-								level);
+													   neighbors[i],
+													   blkno,
+													   level);
 						}
 					}
 				}
@@ -529,18 +532,18 @@ hnswbulkdelete(IndexVacuumInfo *info,
 								meta->entryPoint = neighbors[i];
 								/* Find actual level of neighbor */
 								{
-									Buffer tmpBuf;
-									Page tmpPage;
-									HnswNode tmpNode;
+									Buffer		tmpBuf;
+									Page		tmpPage;
+									HnswNode	tmpNode;
 
 									tmpBuf = ReadBuffer(index, neighbors[i]);
 									LockBuffer(tmpBuf, BUFFER_LOCK_SHARE);
 									tmpPage = BufferGetPage(tmpBuf);
 									if (!PageIsEmpty(tmpPage))
 									{
-										tmpNode = (HnswNode)PageGetItem(tmpPage,
-											PageGetItemId(tmpPage,
-												FirstOffsetNumber));
+										tmpNode = (HnswNode) PageGetItem(tmpPage,
+																		 PageGetItemId(tmpPage,
+																					   FirstOffsetNumber));
 										meta->entryLevel = tmpNode->level;
 									}
 									UnlockReleaseBuffer(tmpBuf);
@@ -586,10 +589,10 @@ hnswbulkdelete(IndexVacuumInfo *info,
  * Vacuum cleanup: just create result if stats not provided
  */
 static IndexBulkDeleteResult *
-hnswvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
+hnswvacuumcleanup(IndexVacuumInfo * info, IndexBulkDeleteResult * stats)
 {
 	if (stats == NULL)
-		stats = (IndexBulkDeleteResult *)palloc0(sizeof(IndexBulkDeleteResult));
+		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
 	return stats;
 }
 
@@ -597,9 +600,9 @@ static void
 hnswcostestimate(struct PlannerInfo *root,
 				 struct IndexPath *path,
 				 double loop_count,
-				 Cost *indexStartupCost,
-				 Cost *indexTotalCost,
-				 Selectivity *indexSelectivity,
+				 Cost * indexStartupCost,
+				 Cost * indexTotalCost,
+				 Selectivity * indexSelectivity,
 				 double *indexCorrelation,
 				 double *indexPages)
 {
@@ -642,7 +645,7 @@ hnswbeginscan(Relation index, int nkeys, int norderbys)
 	HnswScanOpaque so;
 
 	scan = RelationGetIndexScan(index, nkeys, norderbys);
-	so = (HnswScanOpaque)palloc0(sizeof(HnswScanOpaqueData));
+	so = (HnswScanOpaque) palloc0(sizeof(HnswScanOpaqueData));
 	so->efSearch = HNSW_DEFAULT_EF_SEARCH;
 	so->strategy = 1;
 	so->firstCall = true;
@@ -659,8 +662,9 @@ hnswrescan(IndexScanDesc scan,
 		   ScanKey orderbys,
 		   int norderbys)
 {
-	extern int neurondb_hnsw_ef_search;
-	HnswScanOpaque so = (HnswScanOpaque)scan->opaque;
+	extern int	neurondb_hnsw_ef_search;
+	HnswScanOpaque so = (HnswScanOpaque) scan->opaque;
+
 	so->firstCall = true;
 	so->currentResult = 0;
 	so->resultCount = 0;
@@ -680,7 +684,7 @@ hnswrescan(IndexScanDesc scan,
 
 		LockBuffer(metaBuffer, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuffer);
-		meta = (HnswMetaPage)PageGetContents(metaPage);
+		meta = (HnswMetaPage) PageGetContents(metaPage);
 		so->efSearch = meta->efSearch;
 		UnlockReleaseBuffer(metaBuffer);
 	}
@@ -705,7 +709,7 @@ hnswrescan(IndexScanDesc scan,
 				NDB_SAFE_PFREE_AND_NULL(so->queryVector);
 				so->queryVector = NULL;
 			}
-			so->queryVector = (Vector *)palloc(VECTOR_SIZE(dim));
+			so->queryVector = (Vector *) palloc(VECTOR_SIZE(dim));
 			SET_VARSIZE(so->queryVector, VECTOR_SIZE(dim));
 			so->queryVector->dim = dim;
 			memcpy(so->queryVector->data, vectorData, dim * sizeof(float4));
@@ -719,9 +723,9 @@ hnswrescan(IndexScanDesc scan,
 static bool
 hnswgettuple(IndexScanDesc scan, ScanDirection dir)
 {
-	HnswScanOpaque so = (HnswScanOpaque)scan->opaque;
-	Buffer metaBuffer;
-	Page metaPage;
+	HnswScanOpaque so = (HnswScanOpaque) scan->opaque;
+	Buffer		metaBuffer;
+	Page		metaPage;
 	HnswMetaPage meta;
 
 	if (so->firstCall)
@@ -729,7 +733,7 @@ hnswgettuple(IndexScanDesc scan, ScanDirection dir)
 		metaBuffer = ReadBuffer(scan->indexRelation, 0);
 		LockBuffer(metaBuffer, BUFFER_LOCK_SHARE);
 		metaPage = BufferGetPage(metaBuffer);
-		meta = (HnswMetaPage)PageGetContents(metaPage);
+		meta = (HnswMetaPage) PageGetContents(metaPage);
 
 		if (!so->queryVector)
 		{
@@ -751,9 +755,9 @@ hnswgettuple(IndexScanDesc scan, ScanDirection dir)
 	{
 		/* Set scan->xs_heaptid for identified tuple */
 		BlockNumber resultBlkno = so->results[so->currentResult];
-		Buffer buf;
-		Page page;
-		HnswNode node;
+		Buffer		buf;
+		Page		page;
+		HnswNode	node;
 
 		/* Read the node to get its heap pointer */
 		buf = ReadBuffer(scan->indexRelation, resultBlkno);
@@ -762,7 +766,7 @@ hnswgettuple(IndexScanDesc scan, ScanDirection dir)
 
 		if (!PageIsEmpty(page))
 		{
-			node = (HnswNode)PageGetItem(page, PageGetItemId(page, FirstOffsetNumber));
+			node = (HnswNode) PageGetItem(page, PageGetItemId(page, FirstOffsetNumber));
 			scan->xs_heaptid = node->heapPtr;
 		}
 
@@ -777,7 +781,7 @@ hnswgettuple(IndexScanDesc scan, ScanDirection dir)
 static void
 hnswendscan(IndexScanDesc scan)
 {
-	HnswScanOpaque so = (HnswScanOpaque)scan->opaque;
+	HnswScanOpaque so = (HnswScanOpaque) scan->opaque;
 
 	if (so == NULL)
 		return;
@@ -807,13 +811,13 @@ hnswendscan(IndexScanDesc scan)
 static void
 hnswInitMetaPage(Buffer metaBuffer, int16 m, int16 efConstruction, int16 efSearch, float4 ml)
 {
-	Page			page;
-	HnswMetaPage	meta;
+	Page		page;
+	HnswMetaPage meta;
 
 	page = BufferGetPage(metaBuffer);
 	PageInit(page, BufferGetPageSize(metaBuffer), sizeof(HnswMetaPageData));
 
-	meta = (HnswMetaPage)PageGetContents(page);
+	meta = (HnswMetaPage) PageGetContents(page);
 	meta->magicNumber = HNSW_MAGIC_NUMBER;
 	meta->version = HNSW_VERSION;
 	meta->entryPoint = InvalidBlockNumber;
@@ -832,11 +836,11 @@ hnswGetRandomLevel(float4 ml)
 	double		r;
 	int			level;
 
-	r = (double)random() / (double)RAND_MAX;
+	r = (double) random() / (double) RAND_MAX;
 	while (r == 0.0)
-		r = (double)random() / (double)RAND_MAX;
+		r = (double) random() / (double) RAND_MAX;
 
-	level = (int)(-log(r) * ml);
+	level = (int) (-log(r) * ml);
 
 	if (level > HNSW_MAX_LEVEL - 1)
 		level = HNSW_MAX_LEVEL - 1;
@@ -850,22 +854,26 @@ hnswGetRandomLevel(float4 ml)
  * Distance computation for L2, Cosine, or negative-InnerProduct distances
  */
 static float4
-hnswComputeDistance(const float4 *vec1, const float4 *vec2, int dim, int strategy)
+hnswComputeDistance(const float4 * vec1, const float4 * vec2, int dim, int strategy)
 {
-	int		i;
-	double	sum = 0.0, dot_product = 0.0, norm1 = 0.0, norm2 = 0.0;
+	int			i;
+	double		sum = 0.0,
+				dot_product = 0.0,
+				norm1 = 0.0,
+				norm2 = 0.0;
 
 	switch (strategy)
 	{
-		case 1: /* L2 */
+		case 1:					/* L2 */
 			for (i = 0; i < dim; i++)
 			{
-				double d = vec1[i] - vec2[i];
+				double		d = vec1[i] - vec2[i];
+
 				sum += d * d;
 			}
-			return (float4)sqrt(sum);
+			return (float4) sqrt(sum);
 
-		case 2: /* Cosine */
+		case 2:					/* Cosine */
 			for (i = 0; i < dim; i++)
 			{
 				dot_product += vec1[i] * vec2[i];
@@ -876,17 +884,17 @@ hnswComputeDistance(const float4 *vec1, const float4 *vec2, int dim, int strateg
 			norm2 = sqrt(norm2);
 			if (norm1 == 0.0 || norm2 == 0.0)
 				return 2.0f;
-			return (float4)(1.0f - (dot_product / (norm1 * norm2)));
+			return (float4) (1.0f - (dot_product / (norm1 * norm2)));
 
-		case 3: /* Negative inner product */
+		case 3:					/* Negative inner product */
 			for (i = 0; i < dim; i++)
 				dot_product += vec1[i] * vec2[i];
-			return (float4)(-dot_product);
+			return (float4) (-dot_product);
 
 		default:
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("hnsw: unsupported distance strategy %d", strategy)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("hnsw: unsupported distance strategy %d", strategy)));
 			return 0.0f;
 	}
 }
@@ -898,14 +906,18 @@ static float4 *
 hnswExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 {
 	MemoryContext oldctx;
-	Oid vectorOid, halfvecOid, sparsevecOid, bitOid;
-	float4 *result = NULL;
-	int i;
+	Oid			vectorOid,
+				halfvecOid,
+				sparsevecOid,
+				bitOid;
+	float4	   *result = NULL;
+	int			i;
 
 	oldctx = MemoryContextSwitchTo(ctx);
 
 	{
-		List *names;
+		List	   *names;
+
 		names = list_make2(makeString("public"), makeString("vector"));
 		vectorOid = LookupTypeNameOid(NULL, makeTypeNameFromNameList(names), false);
 		list_free(names);
@@ -920,75 +932,81 @@ hnswExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 
 	if (typeOid == vectorOid)
 	{
-		Vector *v = DatumGetVector(value);
+		Vector	   *v = DatumGetVector(value);
+
 		NDB_CHECK_VECTOR_VALID(v);
 		*out_dim = v->dim;
-		NDB_CHECK_ALLOC_SIZE((size_t)v->dim * sizeof(float4), "vector data");
-		result = (float4 *)palloc(v->dim * sizeof(float4));
+		NDB_CHECK_ALLOC_SIZE((size_t) v->dim * sizeof(float4), "vector data");
+		result = (float4 *) palloc(v->dim * sizeof(float4));
 		NDB_CHECK_ALLOC(result, "vector data");
 		for (i = 0; i < v->dim; i++)
 			result[i] = v->data[i];
 	}
 	else if (typeOid == halfvecOid)
 	{
-		VectorF16 *hv = (VectorF16 *)PG_DETOAST_DATUM(value);
+		VectorF16  *hv = (VectorF16 *) PG_DETOAST_DATUM(value);
+
 		NDB_CHECK_NULL(hv, "halfvec");
 		if (hv->dim <= 0 || hv->dim > 32767)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("hnsw: invalid halfvec dimension %d", hv->dim)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("hnsw: invalid halfvec dimension %d", hv->dim)));
 		*out_dim = hv->dim;
-		NDB_CHECK_ALLOC_SIZE((size_t)hv->dim * sizeof(float4), "halfvec data");
-		result = (float4 *)palloc(hv->dim * sizeof(float4));
+		NDB_CHECK_ALLOC_SIZE((size_t) hv->dim * sizeof(float4), "halfvec data");
+		result = (float4 *) palloc(hv->dim * sizeof(float4));
 		NDB_CHECK_ALLOC(result, "halfvec data");
 		for (i = 0; i < hv->dim; i++)
 			result[i] = fp16_to_float(hv->data[i]);
 	}
 	else if (typeOid == sparsevecOid)
 	{
-		VectorMap *sv = (VectorMap *)PG_DETOAST_DATUM(value);
+		VectorMap  *sv = (VectorMap *) PG_DETOAST_DATUM(value);
+
 		NDB_CHECK_NULL(sv, "sparsevec");
 		if (sv->total_dim <= 0 || sv->total_dim > 32767)
 			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("hnsw: invalid sparsevec total_dim %d", sv->total_dim)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("hnsw: invalid sparsevec total_dim %d", sv->total_dim)));
 		{
-			int32 *indices = VECMAP_INDICES(sv);
-			float4 *values = VECMAP_VALUES(sv);
+			int32	   *indices = VECMAP_INDICES(sv);
+			float4	   *values = VECMAP_VALUES(sv);
+
 			*out_dim = sv->total_dim;
-		NDB_CHECK_ALLOC_SIZE((size_t)sv->total_dim * sizeof(float4), "sparsevec data");
-		result = (float4 *)palloc0(sv->total_dim * sizeof(float4));
-		NDB_CHECK_ALLOC(result, "sparsevec data");
-		for (i = 0; i < sv->nnz; i++)
-		{
-			if (indices[i] >= 0 && indices[i] < sv->total_dim)
-				result[indices[i]] = values[i];
-		}
+			NDB_CHECK_ALLOC_SIZE((size_t) sv->total_dim * sizeof(float4), "sparsevec data");
+			result = (float4 *) palloc0(sv->total_dim * sizeof(float4));
+			NDB_CHECK_ALLOC(result, "sparsevec data");
+			for (i = 0; i < sv->nnz; i++)
+			{
+				if (indices[i] >= 0 && indices[i] < sv->total_dim)
+					result[indices[i]] = values[i];
+			}
 		}
 	}
 	else if (typeOid == bitOid)
 	{
-		VarBit *bit_vec = (VarBit *)PG_DETOAST_DATUM(value);
+		VarBit	   *bit_vec = (VarBit *) PG_DETOAST_DATUM(value);
+
 		NDB_CHECK_NULL(bit_vec, "bit vector");
 		{
-			int nbits;
-			bits8 *bit_data;
+			int			nbits;
+			bits8	   *bit_data;
 
 			nbits = VARBITLEN(bit_vec);
 			if (nbits <= 0 || nbits > 32767)
 				ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("hnsw: invalid bit vector length %d", nbits)));
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("hnsw: invalid bit vector length %d", nbits)));
 			bit_data = VARBITS(bit_vec);
 			*out_dim = nbits;
-			NDB_CHECK_ALLOC_SIZE((size_t)nbits * sizeof(float4), "bit vector data");
-			result = (float4 *)palloc(nbits * sizeof(float4));
+			NDB_CHECK_ALLOC_SIZE((size_t) nbits * sizeof(float4), "bit vector data");
+			result = (float4 *) palloc(nbits * sizeof(float4));
 			NDB_CHECK_ALLOC(result, "bit vector data");
 			for (i = 0; i < nbits; i++)
 			{
-				int byte_idx = i / BITS_PER_BYTE;
-				int bit_idx = i % BITS_PER_BYTE;
-				int bit_val = (bit_data[byte_idx] >> (BITS_PER_BYTE - 1 - bit_idx)) & 1;
+				int			byte_idx = i / BITS_PER_BYTE;
+				int			bit_idx = i % BITS_PER_BYTE;
+				int			bit_val = (bit_data[byte_idx] >> (BITS_PER_BYTE - 1 - bit_idx)) & 1;
+
 				result[i] = bit_val ? 1.0f : -1.0f;
 			}
 		}
@@ -997,8 +1015,8 @@ hnswExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 	{
 		MemoryContextSwitchTo(oldctx);
 		ereport(ERROR,
-			(errcode(ERRCODE_DATATYPE_MISMATCH),
-			 errmsg("hnsw: unsupported type OID %u", typeOid)));
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("hnsw: unsupported type OID %u", typeOid)));
 	}
 	MemoryContextSwitchTo(oldctx);
 	return result;
@@ -1007,13 +1025,13 @@ hnswExtractVectorData(Datum value, Oid typeOid, int *out_dim, MemoryContext ctx)
 static Oid
 hnswGetKeyType(Relation index, int attno)
 {
-	TupleDesc indexDesc = RelationGetDescr(index);
+	TupleDesc	indexDesc = RelationGetDescr(index);
 	Form_pg_attribute attr;
 
 	if (attno < 1 || attno > indexDesc->natts)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("hnsw: invalid attribute number %d", attno)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("hnsw: invalid attribute number %d", attno)));
 
 	attr = TupleDescAttr(indexDesc, attno - 1);
 	return attr->atttypid;
@@ -1030,36 +1048,36 @@ hnswGetKeyType(Relation index, int attno)
  */
 static void
 hnswSearch(Relation index,
-	   HnswMetaPage metaPage,
-	   const float4 *query,
-	   int dim,
-	   int strategy,
-	   int efSearch,
-	   int k,
-	   BlockNumber **results,
-	   float4 **distances,
-	   int *resultCount)
+		   HnswMetaPage metaPage,
+		   const float4 * query,
+		   int dim,
+		   int strategy,
+		   int efSearch,
+		   int k,
+		   BlockNumber * *results,
+		   float4 * *distances,
+		   int *resultCount)
 {
-	BlockNumber		current;
+	BlockNumber current;
 	int			currentLevel;
-	volatile Buffer	nodeBuf = InvalidBuffer;
+	volatile	Buffer nodeBuf = InvalidBuffer;
 	Page		nodePage;
-	HnswNode		node;
+	HnswNode	node;
 	float4	   *nodeVector;
 	float4		currentDist;
 	int			level;
 	int			i,
 				j;
-	BlockNumber    *candidates = NULL;
+	BlockNumber *candidates = NULL;
 	float4	   *candidateDists = NULL;
 	int			candidateCount = 0;
-	BlockNumber    *visited = NULL;
+	BlockNumber *visited = NULL;
 	int			visitedCount = 0;
 	int			visitedCapacity = 0;
 	bool	   *visitedSet = NULL;
-	BlockNumber    *neighbors;
+	BlockNumber *neighbors;
 	int16		neighborCount;
-	BlockNumber    *topK = NULL;
+	BlockNumber *topK = NULL;
 	float4	   *topKDists = NULL;
 	int			topKCount = 0;
 	int		   *indices = NULL;
@@ -1096,7 +1114,7 @@ hnswSearch(Relation index,
 		/* Step 1: Greedy search - entry at top down to level 1 */
 		for (level = currentLevel; level > 0; level--)
 		{
-			bool foundBetter;
+			bool		foundBetter;
 
 			do
 			{
@@ -1105,7 +1123,7 @@ hnswSearch(Relation index,
 				LockBuffer(nodeBuf, BUFFER_LOCK_SHARE);
 				nodePage = BufferGetPage(nodeBuf);
 				node = (HnswNode) PageGetItem(nodePage,
-					PageGetItemId(nodePage, FirstOffsetNumber));
+											  PageGetItemId(nodePage, FirstOffsetNumber));
 				nodeVector = HnswGetVector(node);
 				currentDist = hnswComputeDistance(query, nodeVector, dim, strategy);
 
@@ -1116,11 +1134,11 @@ hnswSearch(Relation index,
 
 					for (i = 0; i < neighborCount; i++)
 					{
-						Buffer	neighborBuf;
-						Page	neighborPage;
-						HnswNode neighbor;
-						float4  *neighborVector;
-						float4	neighborDist;
+						Buffer		neighborBuf;
+						Page		neighborPage;
+						HnswNode	neighbor;
+						float4	   *neighborVector;
+						float4		neighborDist;
 
 						if (neighbors[i] == InvalidBlockNumber)
 							continue;
@@ -1129,7 +1147,7 @@ hnswSearch(Relation index,
 						LockBuffer(neighborBuf, BUFFER_LOCK_SHARE);
 						neighborPage = BufferGetPage(neighborBuf);
 						neighbor = (HnswNode) PageGetItem(neighborPage,
-								PageGetItemId(neighborPage, FirstOffsetNumber));
+														  PageGetItemId(neighborPage, FirstOffsetNumber));
 						neighborVector = HnswGetVector(neighbor);
 						neighborDist = hnswComputeDistance(query, neighborVector, dim, strategy);
 
@@ -1153,7 +1171,7 @@ hnswSearch(Relation index,
 		LockBuffer(nodeBuf, BUFFER_LOCK_SHARE);
 		nodePage = BufferGetPage(nodeBuf);
 		node = (HnswNode) PageGetItem(nodePage,
-				PageGetItemId(nodePage, FirstOffsetNumber));
+									  PageGetItemId(nodePage, FirstOffsetNumber));
 		nodeVector = HnswGetVector(node);
 		candidateDists[0] = hnswComputeDistance(query, nodeVector, dim, strategy);
 		candidateCount = 1;
@@ -1170,13 +1188,13 @@ hnswSearch(Relation index,
 			LockBuffer(nodeBuf, BUFFER_LOCK_SHARE);
 			nodePage = BufferGetPage(nodeBuf);
 			node = (HnswNode) PageGetItem(nodePage,
-					PageGetItemId(nodePage, FirstOffsetNumber));
+										  PageGetItemId(nodePage, FirstOffsetNumber));
 			neighbors = HnswGetNeighbors(node, 0);
 			neighborCount = node->neighborCount[0];
 
 			for (j = 0; j < neighborCount; j++)
 			{
-				Buffer 		neighborBuf;
+				Buffer		neighborBuf;
 				Page		neighborPage;
 				HnswNode	neighbor;
 				float4	   *neighborVector;
@@ -1193,7 +1211,7 @@ hnswSearch(Relation index,
 				LockBuffer(neighborBuf, BUFFER_LOCK_SHARE);
 				neighborPage = BufferGetPage(neighborBuf);
 				neighbor = (HnswNode) PageGetItem(neighborPage,
-						PageGetItemId(neighborPage, FirstOffsetNumber));
+												  PageGetItemId(neighborPage, FirstOffsetNumber));
 				neighborVector = HnswGetVector(neighbor);
 				neighborDist = hnswComputeDistance(query, neighborVector, dim, strategy);
 				UnlockReleaseBuffer(neighborBuf);
@@ -1205,7 +1223,7 @@ hnswSearch(Relation index,
 				{
 					visitedCapacity = Max(32, visitedCapacity * 2);
 					visited = (BlockNumber *) repalloc(visited,
-							visitedCapacity * sizeof(BlockNumber));
+													   visitedCapacity * sizeof(BlockNumber));
 				}
 
 				if (candidateCount < efSearch)
@@ -1352,7 +1370,7 @@ hnswSearch(Relation index,
 static void
 hnswInsertNode(Relation index,
 			   HnswMetaPage metaPage,
-			   const float4 *vector,
+			   const float4 * vector,
 			   int dim,
 			   ItemPointer heapPtr)
 {
@@ -1360,7 +1378,7 @@ hnswInsertNode(Relation index,
 	Buffer		buf = InvalidBuffer;
 	Page		page;
 	HnswNode	node;
-	BlockNumber	blkno;
+	BlockNumber blkno;
 	Size		nodeSize;
 	int			i;
 
@@ -1407,7 +1425,7 @@ hnswInsertNode(Relation index,
 				LockBuffer(entryBuf, BUFFER_LOCK_SHARE);
 				entryPage = BufferGetPage(entryBuf);
 				entryNode = (HnswNode) PageGetItem(entryPage,
-								   PageGetItemId(entryPage, FirstOffsetNumber));
+												   PageGetItemId(entryPage, FirstOffsetNumber));
 
 				if (entryNode->level >= level)
 				{
@@ -1448,7 +1466,7 @@ hnswInsertNode(Relation index,
 							}
 
 							neighbor = (HnswNode) PageGetItem(neighborPage,
-											 PageGetItemId(neighborPage, FirstOffsetNumber));
+															  PageGetItemId(neighborPage, FirstOffsetNumber));
 							if (neighbor == NULL)
 							{
 								UnlockReleaseBuffer(neighborBuf);
@@ -1540,7 +1558,8 @@ hnswInsertNode(Relation index,
 		Buffer		newNodeBuf;
 		Page		newNodePage;
 		HnswNode	newNode;
-		int			idx, j;
+		int			idx,
+					j;
 
 		if (blkno == InvalidBlockNumber ||
 			blkno >= RelationGetNumberOfBlocks(index))
@@ -1561,7 +1580,7 @@ hnswInsertNode(Relation index,
 					 errmsg("hnsw: newly inserted page is empty at block %u", blkno)));
 		}
 		newNode = (HnswNode) PageGetItem(newNodePage,
-				 PageGetItemId(newNodePage, FirstOffsetNumber));
+										 PageGetItemId(newNodePage, FirstOffsetNumber));
 		if (newNode == NULL)
 		{
 			UnlockReleaseBuffer(newNodeBuf);
@@ -1583,7 +1602,7 @@ hnswInsertNode(Relation index,
 					   metaPage,
 					   vector,
 					   dim,
-					   1, /* L2 distance */
+					   1,		/* L2 distance */
 					   efConstruction,
 					   efConstruction,
 					   &candidates,
@@ -1597,8 +1616,8 @@ hnswInsertNode(Relation index,
 			/* Sort by distance: select top m */
 			for (idx = 0; idx < selectedCount; idx++)
 			{
-				int		bestIdx = idx;
-				float4	bestDist = candidateDistances[idx];
+				int			bestIdx = idx;
+				float4		bestDist = candidateDistances[idx];
 
 				for (j = idx + 1; j < candidateCount; j++)
 				{
@@ -1612,6 +1631,7 @@ hnswInsertNode(Relation index,
 				{
 					BlockNumber tempBlk = candidates[idx];
 					float4		tempDist = candidateDistances[idx];
+
 					candidates[idx] = candidates[bestIdx];
 					candidateDistances[idx] = candidateDistances[bestIdx];
 					candidates[bestIdx] = tempBlk;
@@ -1621,7 +1641,10 @@ hnswInsertNode(Relation index,
 				selectedDistances[idx] = candidateDistances[idx];
 			}
 
-			/* Link new node to neighbors, and each neighbor back (bidirectional) */
+			/*
+			 * Link new node to neighbors, and each neighbor back
+			 * (bidirectional)
+			 */
 			newNodeNeighbors = HnswGetNeighbors(newNode, currentLevel);
 			for (idx = 0; idx < selectedCount; idx++)
 			{
@@ -1671,10 +1694,10 @@ hnswInsertNode(Relation index,
 
 				if (needsPruning)
 				{
-					float4 *neighborVector = HnswGetVector(neighborNode);
-					float4 *neighborDists = (float4 *)
+					float4	   *neighborVector = HnswGetVector(neighborNode);
+					float4	   *neighborDists = (float4 *)
 						palloc(neighborNode->neighborCount[currentLevel] * sizeof(float4));
-					int   *neighborIndices = (int *)
+					int		   *neighborIndices = (int *)
 						palloc(neighborNode->neighborCount[currentLevel] * sizeof(int));
 
 					for (j = 0; j < neighborNode->neighborCount[currentLevel]; j++)
@@ -1686,10 +1709,10 @@ hnswInsertNode(Relation index,
 							neighborDists[j] = selectedDistances[idx];
 						else
 						{
-							Buffer otherBuf;
-							Page otherPage;
-							HnswNode otherNode;
-							float4 *otherVector;
+							Buffer		otherBuf;
+							Page		otherPage;
+							HnswNode	otherNode;
+							float4	   *otherVector;
 
 							otherBuf = ReadBuffer(index, neighborNeighbors[j]);
 							LockBuffer(otherBuf, BUFFER_LOCK_SHARE);
@@ -1704,13 +1727,15 @@ hnswInsertNode(Relation index,
 					}
 					for (j = 0; j < neighborNode->neighborCount[currentLevel] - 1; j++)
 					{
-						int k;
+						int			k;
+
 						for (k = j + 1; k < neighborNode->neighborCount[currentLevel]; k++)
 						{
 							if (neighborDists[k] < neighborDists[j])
 							{
-								float4 tmpDist = neighborDists[j];
-								int	   tmpIdx = neighborIndices[j];
+								float4		tmpDist = neighborDists[j];
+								int			tmpIdx = neighborIndices[j];
+
 								neighborDists[j] = neighborDists[k];
 								neighborIndices[j] = neighborIndices[k];
 								neighborDists[k] = tmpDist;
@@ -1779,15 +1804,15 @@ hnswInsertNode(Relation index,
 static bool
 hnswFindNodeByTid(Relation index,
 				  ItemPointer tid,
-				  BlockNumber *outBlkno,
-				  OffsetNumber *outOffset)
+				  BlockNumber * outBlkno,
+				  OffsetNumber * outOffset)
 {
 	BlockNumber blkno;
-	Buffer buf;
-	Page page;
+	Buffer		buf;
+	Page		page;
 	OffsetNumber maxoff;
 	OffsetNumber offnum;
-	HnswNode node;
+	HnswNode	node;
 
 	*outBlkno = InvalidBlockNumber;
 	*outOffset = InvalidOffsetNumber;
@@ -1808,12 +1833,12 @@ hnswFindNodeByTid(Relation index,
 		maxoff = PageGetMaxOffsetNumber(page);
 		for (offnum = FirstOffsetNumber; offnum <= maxoff; offnum = OffsetNumberNext(offnum))
 		{
-			ItemId itemId = PageGetItemId(page, offnum);
+			ItemId		itemId = PageGetItemId(page, offnum);
 
 			if (!ItemIdIsValid(itemId))
 				continue;
 
-			node = (HnswNode)PageGetItem(page, itemId);
+			node = (HnswNode) PageGetItem(page, itemId);
 
 			/* Check if this node matches the ItemPointer */
 			if (ItemPointerEquals(&node->heapPtr, tid))
@@ -1836,17 +1861,18 @@ hnswFindNodeByTid(Relation index,
  */
 static void
 hnswRemoveNodeFromNeighbor(Relation index,
-							BlockNumber neighborBlkno,
-							BlockNumber nodeBlkno,
-							int level)
+						   BlockNumber neighborBlkno,
+						   BlockNumber nodeBlkno,
+						   int level)
 {
-	Buffer buf;
-	Page page;
-	HnswNode neighbor;
+	Buffer		buf;
+	Page		page;
+	HnswNode	neighbor;
 	BlockNumber *neighbors;
-	int16 neighborCount;
-	int i, j;
-	bool found = false;
+	int16		neighborCount;
+	int			i,
+				j;
+	bool		found = false;
 
 	buf = ReadBuffer(index, neighborBlkno);
 	LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
@@ -1859,7 +1885,7 @@ hnswRemoveNodeFromNeighbor(Relation index,
 		return;
 	}
 
-	neighbor = (HnswNode)PageGetItem(page, PageGetItemId(page, FirstOffsetNumber));
+	neighbor = (HnswNode) PageGetItem(page, PageGetItemId(page, FirstOffsetNumber));
 	neighbors = HnswGetNeighbors(neighbor, level);
 	neighborCount = neighbor->neighborCount[level];
 
@@ -1896,16 +1922,16 @@ hnswdelete(Relation index,
 {
 	BlockNumber nodeBlkno;
 	OffsetNumber nodeOffset;
-	Buffer nodeBuf;
-	Page nodePage;
-	HnswNode node;
-	Buffer metaBuffer;
-	Page metaPage;
+	Buffer		nodeBuf;
+	Page		nodePage;
+	HnswNode	node;
+	Buffer		metaBuffer;
+	Page		metaPage;
 	HnswMetaPage meta;
-	int level;
-	int i;
+	int			level;
+	int			i;
 	BlockNumber *neighbors;
-	int16 neighborCount;
+	int16		neighborCount;
 
 	/* Find the node by ItemPointer */
 	if (!hnswFindNodeByTid(index, tid, &nodeBlkno, &nodeOffset))
@@ -1918,15 +1944,18 @@ hnswdelete(Relation index,
 	metaBuffer = ReadBuffer(index, 0);
 	LockBuffer(metaBuffer, BUFFER_LOCK_EXCLUSIVE);
 	metaPage = BufferGetPage(metaBuffer);
-	meta = (HnswMetaPage)PageGetContents(metaPage);
+	meta = (HnswMetaPage) PageGetContents(metaPage);
 
 	/* Read the node to be deleted */
 	nodeBuf = ReadBuffer(index, nodeBlkno);
 	LockBuffer(nodeBuf, BUFFER_LOCK_EXCLUSIVE);
 	nodePage = BufferGetPage(nodeBuf);
-	node = (HnswNode)PageGetItem(nodePage, PageGetItemId(nodePage, nodeOffset));
+	node = (HnswNode) PageGetItem(nodePage, PageGetItemId(nodePage, nodeOffset));
 
-	/* For each level where this node exists, remove it from neighbor connections */
+	/*
+	 * For each level where this node exists, remove it from neighbor
+	 * connections
+	 */
 	for (level = 0; level <= node->level; level++)
 	{
 		neighbors = HnswGetNeighbors(node, level);
@@ -1945,8 +1974,8 @@ hnswdelete(Relation index,
 	/* Update entry point if this node was the entry point */
 	if (meta->entryPoint == nodeBlkno)
 	{
-		bool foundNewEntry = false;
-		int bestLevel = -1;
+		bool		foundNewEntry = false;
+		int			bestLevel = -1;
 		BlockNumber bestEntry = InvalidBlockNumber;
 
 		/* Find the highest level neighbor to use as new entry point */
@@ -1959,10 +1988,10 @@ hnswdelete(Relation index,
 				if (neighbors[i] != InvalidBlockNumber)
 				{
 					/* Check the actual level of this neighbor */
-					Buffer neighborBuf;
-					Page neighborPage;
-					HnswNode neighborNode;
-					ItemId neighborItemId;
+					Buffer		neighborBuf;
+					Page		neighborPage;
+					HnswNode	neighborNode;
+					ItemId		neighborItemId;
 
 					neighborBuf = ReadBuffer(index, neighbors[i]);
 					LockBuffer(neighborBuf, BUFFER_LOCK_SHARE);
@@ -1973,7 +2002,7 @@ hnswdelete(Relation index,
 						neighborItemId = PageGetItemId(neighborPage, FirstOffsetNumber);
 						if (ItemIdIsValid(neighborItemId))
 						{
-							neighborNode = (HnswNode)PageGetItem(neighborPage, neighborItemId);
+							neighborNode = (HnswNode) PageGetItem(neighborPage, neighborItemId);
 							if (neighborNode->level > bestLevel)
 							{
 								bestLevel = neighborNode->level;
@@ -2005,7 +2034,7 @@ hnswdelete(Relation index,
 	/* Mark node page for deletion (actual deletion handled by vacuum) */
 	/* For now, we mark the item as deleted */
 	{
-		ItemId itemId = PageGetItemId(nodePage, nodeOffset);
+		ItemId		itemId = PageGetItemId(nodePage, nodeOffset);
 
 		if (ItemIdIsValid(itemId))
 		{
@@ -2040,26 +2069,32 @@ hnswupdate(Relation index,
 		   Relation heapRel,
 		   struct IndexInfo *indexInfo)
 {
-	bool deleteResult;
-	bool insertResult;
+	bool		deleteResult;
+	bool		insertResult;
 
 	/*
-	 * Generic HNSW update = delete old, insert new.
-	 * First delete the old value, then insert the new one.
+	 * Generic HNSW update = delete old, insert new. First delete the old
+	 * value, then insert the new one.
 	 */
 	deleteResult = hnswdelete(index, otid, values, isnull, heapRel, indexInfo);
 	if (!deleteResult)
 	{
-		/* If delete failed (e.g., old node not found), still try to insert new value */
+		/*
+		 * If delete failed (e.g., old node not found), still try to insert
+		 * new value
+		 */
 		elog(DEBUG1,
-			"neurondb: HNSW update: delete of old value failed (may not exist), "
-			"proceeding with insert");
+			 "neurondb: HNSW update: delete of old value failed (may not exist), "
+			 "proceeding with insert");
 	}
 
 	/* Insert the new value */
 	insertResult = hnswinsert(index, values, isnull, tid, heapRel,
 							  UNIQUE_CHECK_NO, false, indexInfo);
 
-	/* Update succeeds if insert succeeds (delete failure is acceptable if node didn't exist) */
+	/*
+	 * Update succeeds if insert succeeds (delete failure is acceptable if
+	 * node didn't exist)
+	 */
 	return insertResult;
 }

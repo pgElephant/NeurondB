@@ -53,30 +53,30 @@
  */
 typedef struct HybridScanState
 {
-	CustomScanState css; /* Must be first */
+	CustomScanState css;		/* Must be first */
 
 	/* Query parameters */
-	Vector *queryVector; /* Vector query */
-	char *ftsQuery; /* FTS query string */
-	List *filters; /* Metadata filters */
-	float4 vectorWeight; /* Hybrid weight: 0..1 */
-	float4 ftsWeight; /* 1 - vectorWeight */
-	int k; /* Target results */
+	Vector	   *queryVector;	/* Vector query */
+	char	   *ftsQuery;		/* FTS query string */
+	List	   *filters;		/* Metadata filters */
+	float4		vectorWeight;	/* Hybrid weight: 0..1 */
+	float4		ftsWeight;		/* 1 - vectorWeight */
+	int			k;				/* Target results */
 
 	/* Candidate management */
 	TupleTableSlot **candidates;
-	float4 *scores; /* Hybrid scores */
-	int candidateCount;
-	int currentPos;
+	float4	   *scores;			/* Hybrid scores */
+	int			candidateCount;
+	int			currentPos;
 
 	/* Sub-scans */
 	IndexScanDesc vectorScan;
 	IndexScanDesc ftsScan;
 	TableScanDesc heapScan;
 
-	bool vectorDone;
-	bool ftsDone;
-} HybridScanState;
+	bool		vectorDone;
+	bool		ftsDone;
+}			HybridScanState;
 
 /*
  * Plan-time data
@@ -84,37 +84,40 @@ typedef struct HybridScanState
  */
 typedef struct HybridScanPlanData
 {
-	Oid vectorIndexOid;
-	Oid ftsIndexOid;
-	Oid relationOid;
-	float4 vectorWeight;
-	float4 ftsWeight;
-	int k;
+	Oid			vectorIndexOid;
+	Oid			ftsIndexOid;
+	Oid			relationOid;
+	float4		vectorWeight;
+	float4		ftsWeight;
+	int			k;
 	/* Query data would be stored separately or evaluated at runtime */
-} HybridScanPlanData;
+}			HybridScanPlanData;
 
 /* CustomScan method declarations */
-static Node *hybrid_create_scan_state(CustomScan *cscan);
-static void hybrid_begin(CustomScanState *node, EState *estate, int eflags);
-static TupleTableSlot *hybrid_exec(CustomScanState *node);
-static void hybrid_end(CustomScanState *node);
-static void hybrid_rescan(CustomScanState *node);
+static Node * hybrid_create_scan_state(CustomScan * cscan);
+static void hybrid_begin(CustomScanState * node, EState * estate, int eflags);
+static TupleTableSlot * hybrid_exec(CustomScanState * node);
+static void hybrid_end(CustomScanState * node);
+static void hybrid_rescan(CustomScanState * node);
 static void
-hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es);
+			hybrid_explain(CustomScanState * node, List * ancestors, ExplainState * es);
 
 /* Helper functions */
 static float4
 compute_hybrid_score(float4 vectorDist, float4 ftsScore, float4 vectorWeight);
-static void merge_candidates(HybridScanState *state);
-static void sort_indices_by_scores(int *indices, float4 *scores, int count);
+static void merge_candidates(HybridScanState * state);
+static void sort_indices_by_scores(int *indices, float4 * scores, int count);
 
 /* CustomScan methods table */
-static CustomExecMethods hybrid_exec_methods = { .CustomName = "HybridScan",
-	.BeginCustomScan = hybrid_begin,
-	.ExecCustomScan = hybrid_exec,
-	.EndCustomScan = hybrid_end,
-	.ReScanCustomScan = hybrid_rescan,
-	.ExplainCustomScan = hybrid_explain };
+static CustomExecMethods hybrid_exec_methods =
+{
+	.CustomName = "HybridScan",
+		.BeginCustomScan = hybrid_begin,
+		.ExecCustomScan = hybrid_exec,
+		.EndCustomScan = hybrid_end,
+		.ReScanCustomScan = hybrid_rescan,
+		.ExplainCustomScan = hybrid_explain
+};
 
 /*
  * Create a hybrid scan custom path
@@ -140,46 +143,46 @@ create_hybrid_scan_path(PG_FUNCTION_ARGS)
  * an unused-function warning.
  */
 __attribute__((unused)) static Node *
-hybrid_create_scan_state(CustomScan *cscan)
+hybrid_create_scan_state(CustomScan * cscan)
 {
 	HybridScanState *state;
 
-	state = (HybridScanState *)newNode(
-		sizeof(HybridScanState), T_CustomScanState);
+	state = (HybridScanState *) newNode(
+										sizeof(HybridScanState), T_CustomScanState);
 	state->css.methods = &hybrid_exec_methods;
 	state->vectorDone = false;
 	state->ftsDone = false;
 	state->currentPos = 0;
 	state->candidateCount = 0;
 
-	return (Node *)state;
+	return (Node *) state;
 }
 
 /*
  * Begin execution
  */
 static void
-hybrid_begin(CustomScanState *node, EState *estate, int eflags)
+hybrid_begin(CustomScanState * node, EState * estate, int eflags)
 {
-	HybridScanState *state = (HybridScanState *)node;
-	Relation heapRel;
-	Relation vectorIndexRel = NULL;
-	Relation ftsIndexRel = NULL;
-	Oid vectorIndexOid = InvalidOid;
-	Oid ftsIndexOid = InvalidOid;
-	int nkeys = 0;
-	int norderbys = 0;
+	HybridScanState *state = (HybridScanState *) node;
+	Relation	heapRel;
+	Relation	vectorIndexRel = NULL;
+	Relation	ftsIndexRel = NULL;
+	Oid			vectorIndexOid = InvalidOid;
+	Oid			ftsIndexOid = InvalidOid;
+	int			nkeys = 0;
+	int			norderbys = 0;
 
 	/* Get heap relation */
 	heapRel = node->ss.ss_currentRelation;
 	if (!heapRel)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("hybrid_begin: no heap relation")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("hybrid_begin: no heap relation")));
 
 	/* Extract parameters from plan */
 	{
-		CustomScan *cscan = (CustomScan *)node->ss.ps.plan;
+		CustomScan *cscan = (CustomScan *) node->ss.ps.plan;
 		HybridScanPlanData *planData = NULL;
 
 		/* Try to extract plan data from custom_private */
@@ -200,7 +203,8 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 			state->k = planData->k;
 			vectorIndexOid = planData->vectorIndexOid;
 			ftsIndexOid = planData->ftsIndexOid;
-		} else
+		}
+		else
 		{
 			/* Use defaults if plan data not available */
 			state->vectorWeight = 0.5;
@@ -208,29 +212,30 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 			state->k = 100;
 		}
 
-		state->queryVector = NULL; /* Would be extracted from plan or evaluated */
+		state->queryVector = NULL;	/* Would be extracted from plan or
+									 * evaluated */
 		state->ftsQuery = NULL; /* Would be extracted from plan or evaluated */
 	}
 
 	/* Try to find vector and FTS indexes on this relation */
 	/* If not in plan, scan all indexes as fallback */
 	{
-		List *indexOidList;
-		ListCell *lc;
+		List	   *indexOidList;
+		ListCell   *lc;
 
 		indexOidList = RelationGetIndexList(heapRel);
-		foreach (lc, indexOidList)
+		foreach(lc, indexOidList)
 		{
-			Oid indexOid = lfirst_oid(lc);
-			Relation idxRel;
-			Form_pg_am amform;
-			HeapTuple amtup;
+			Oid			indexOid = lfirst_oid(lc);
+			Relation	idxRel;
+			Form_pg_am	amform;
+			HeapTuple	amtup;
 
 			idxRel = index_open(indexOid, AccessShareLock);
 			amtup = SearchSysCache1(AMOID, ObjectIdGetDatum(idxRel->rd_rel->relam));
 			if (HeapTupleIsValid(amtup))
 			{
-				amform = (Form_pg_am)GETSTRUCT(amtup);
+				amform = (Form_pg_am) GETSTRUCT(amtup);
 				if (strcmp(NameStr(amform->amname), "hnsw") == 0 ||
 					strcmp(NameStr(amform->amname), "ivfflat") == 0)
 				{
@@ -238,27 +243,32 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 					{
 						vectorIndexOid = indexOid;
 						vectorIndexRel = idxRel;
-					} else
+					}
+					else
 					{
 						index_close(idxRel, AccessShareLock);
 					}
-				} else if (strcmp(NameStr(amform->amname), "gin") == 0 ||
-					strcmp(NameStr(amform->amname), "gist") == 0)
+				}
+				else if (strcmp(NameStr(amform->amname), "gin") == 0 ||
+						 strcmp(NameStr(amform->amname), "gist") == 0)
 				{
 					if (!OidIsValid(ftsIndexOid))
 					{
 						ftsIndexOid = indexOid;
 						ftsIndexRel = idxRel;
-					} else
+					}
+					else
 					{
 						index_close(idxRel, AccessShareLock);
 					}
-				} else
+				}
+				else
 				{
 					index_close(idxRel, AccessShareLock);
 				}
 				ReleaseSysCache(amtup);
-			} else
+			}
+			else
 			{
 				index_close(idxRel, AccessShareLock);
 			}
@@ -268,9 +278,9 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 
 	/* Allocate candidate arrays */
 	state->candidates =
-		(TupleTableSlot **)palloc(state->k * sizeof(TupleTableSlot *));
-	state->scores = (float4 *)palloc(state->k * sizeof(float4));
- NDB_CHECK_ALLOC(state, "state");
+		(TupleTableSlot * *) palloc(state->k * sizeof(TupleTableSlot *));
+	state->scores = (float4 *) palloc(state->k * sizeof(float4));
+	NDB_CHECK_ALLOC(state, "state");
 
 	/* Open vector index scan if available */
 	if (OidIsValid(vectorIndexOid) && vectorIndexRel)
@@ -278,17 +288,18 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 		/* Create scan keys for vector search */
 		/* For now, use empty scan keys - query vector would come from plan */
 		state->vectorScan = index_beginscan(heapRel,
-			vectorIndexRel,
-			GetActiveSnapshot(),
-			NULL,
-			nkeys,
-			norderbys);
+											vectorIndexRel,
+											GetActiveSnapshot(),
+											NULL,
+											nkeys,
+											norderbys);
 		/* Set up order-by keys with query vector if available */
 		if (state->queryVector)
 		{
 			/* Would set up orderbys here with query vector */
 		}
-	} else
+	}
+	else
 	{
 		state->vectorScan = NULL;
 		state->vectorDone = true;
@@ -299,24 +310,25 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
 	{
 		/* Create scan keys for FTS search */
 		state->ftsScan = index_beginscan(heapRel,
-			ftsIndexRel,
-			GetActiveSnapshot(),
-			NULL,
-			nkeys,
-			norderbys);
+										 ftsIndexRel,
+										 GetActiveSnapshot(),
+										 NULL,
+										 nkeys,
+										 norderbys);
 		/* Set up scan keys with FTS query if available */
 		if (state->ftsQuery)
 		{
 			/* Would set up scan keys here with FTS query */
 		}
-	} else
+	}
+	else
 	{
 		state->ftsScan = NULL;
 		state->ftsDone = true;
 	}
 
 	/* Store heap relation for tuple fetching */
-	state->heapScan = NULL; /* Will be used if needed for heap access */
+	state->heapScan = NULL;		/* Will be used if needed for heap access */
 
 	/* Initialize state */
 	state->vectorDone = (state->vectorScan == NULL);
@@ -329,18 +341,18 @@ hybrid_begin(CustomScanState *node, EState *estate, int eflags)
  * Execute scan - return next tuple
  */
 static TupleTableSlot *
-hybrid_exec(CustomScanState *node)
+hybrid_exec(CustomScanState * node)
 {
-	HybridScanState *state = (HybridScanState *)node;
+	HybridScanState *state = (HybridScanState *) node;
 	TupleTableSlot *slot = node->ss.ss_ScanTupleSlot;
-	Relation heapRel = node->ss.ss_currentRelation;
+	Relation	heapRel = node->ss.ss_currentRelation;
 	ItemPointerData *vectorItems = NULL;
-	float4 *vectorDistances = NULL;
-	int vectorCount = 0;
+	float4	   *vectorDistances = NULL;
+	int			vectorCount = 0;
 	ItemPointerData *ftsItems = NULL;
-	float4 *ftsScores = NULL;
-	int ftsCount = 0;
-	int i;
+	float4	   *ftsScores = NULL;
+	int			ftsCount = 0;
+	int			i;
 
 	/* On first call, gather all candidates */
 	if (state->currentPos == 0 && state->candidateCount == 0)
@@ -349,20 +361,20 @@ hybrid_exec(CustomScanState *node)
 		if (state->vectorScan && !state->vectorDone)
 		{
 			/* Collect vector candidates */
-			vectorItems = (ItemPointerData *)palloc(state->k * sizeof(ItemPointerData));
-   NDB_CHECK_ALLOC(vectorItems, "vectorItems");
-			vectorDistances = (float4 *)palloc(state->k * sizeof(float4));
-   NDB_CHECK_ALLOC(vectorDistances, "vectorDistances");
+			vectorItems = (ItemPointerData *) palloc(state->k * sizeof(ItemPointerData));
+			NDB_CHECK_ALLOC(vectorItems, "vectorItems");
+			vectorDistances = (float4 *) palloc(state->k * sizeof(float4));
+			NDB_CHECK_ALLOC(vectorDistances, "vectorDistances");
 
 			while (vectorCount < state->k)
 			{
-				bool found;
+				bool		found;
 				ItemPointer tid;
-				float4 distance = 0.0f;
+				float4		distance = 0.0f;
 
 				found = index_getnext_slot(state->vectorScan,
-					ForwardScanDirection,
-					slot);
+										   ForwardScanDirection,
+										   slot);
 				if (!found)
 				{
 					state->vectorDone = true;
@@ -373,7 +385,10 @@ hybrid_exec(CustomScanState *node)
 				tid = &slot->tts_tid;
 				if (ItemPointerIsValid(tid))
 				{
-					/* For HNSW/IVF, distance is typically in scan->xs_orderbyvals */
+					/*
+					 * For HNSW/IVF, distance is typically in
+					 * scan->xs_orderbyvals
+					 */
 					/* Simplified: assume distance is available */
 					if (state->vectorScan->xs_orderbyvals != NULL)
 					{
@@ -391,20 +406,20 @@ hybrid_exec(CustomScanState *node)
 		if (state->ftsScan && !state->ftsDone)
 		{
 			/* Collect FTS candidates */
-			ftsItems = (ItemPointerData *)palloc(state->k * sizeof(ItemPointerData));
-   NDB_CHECK_ALLOC(ftsItems, "ftsItems");
-			ftsScores = (float4 *)palloc(state->k * sizeof(float4));
-   NDB_CHECK_ALLOC(ftsScores, "ftsScores");
+			ftsItems = (ItemPointerData *) palloc(state->k * sizeof(ItemPointerData));
+			NDB_CHECK_ALLOC(ftsItems, "ftsItems");
+			ftsScores = (float4 *) palloc(state->k * sizeof(float4));
+			NDB_CHECK_ALLOC(ftsScores, "ftsScores");
 
 			while (ftsCount < state->k)
 			{
-				bool found;
+				bool		found;
 				ItemPointer tid;
-				float4 score = 0.0f;
+				float4		score = 0.0f;
 
 				found = index_getnext_slot(state->ftsScan,
-					ForwardScanDirection,
-					slot);
+										   ForwardScanDirection,
+										   slot);
 				if (!found)
 				{
 					state->ftsDone = true;
@@ -420,9 +435,10 @@ hybrid_exec(CustomScanState *node)
 					if (state->ftsScan->xs_orderbyvals != NULL)
 					{
 						score = DatumGetFloat4(state->ftsScan->xs_orderbyvals[0]);
-					} else
+					}
+					else
 					{
-						score = 1.0f; /* Default relevance */
+						score = 1.0f;	/* Default relevance */
 					}
 
 					ftsItems[ftsCount] = *tid;
@@ -436,21 +452,21 @@ hybrid_exec(CustomScanState *node)
 		{
 			/* Allocate arrays for merged candidates */
 			ItemPointerData *mergedItems;
-			float4 *mergedScores;
-			int mergedCount = 0;
-			int maxCandidates = vectorCount + ftsCount;
+			float4	   *mergedScores;
+			int			mergedCount = 0;
+			int			maxCandidates = vectorCount + ftsCount;
 
-			mergedItems = (ItemPointerData *)palloc(maxCandidates * sizeof(ItemPointerData));
-   NDB_CHECK_ALLOC(mergedItems, "mergedItems");
-			mergedScores = (float4 *)palloc(maxCandidates * sizeof(float4));
-   NDB_CHECK_ALLOC(mergedScores, "mergedScores");
+			mergedItems = (ItemPointerData *) palloc(maxCandidates * sizeof(ItemPointerData));
+			NDB_CHECK_ALLOC(mergedItems, "mergedItems");
+			mergedScores = (float4 *) palloc(maxCandidates * sizeof(float4));
+			NDB_CHECK_ALLOC(mergedScores, "mergedScores");
 
 			/* Create a hash table or sorted list for deduplication */
 			/* Simplified: use a simple array and check duplicates */
 			for (i = 0; i < vectorCount; i++)
 			{
-				int j;
-				bool found = false;
+				int			j;
+				bool		found = false;
 
 				/* Check if already in merged list */
 				for (j = 0; j < mergedCount; j++)
@@ -459,9 +475,9 @@ hybrid_exec(CustomScanState *node)
 					{
 						/* Update score with hybrid formula */
 						mergedScores[j] = compute_hybrid_score(
-							vectorDistances[i],
-							mergedScores[j], /* Existing FTS score */
-							state->vectorWeight);
+															   vectorDistances[i],
+															   mergedScores[j], /* Existing FTS score */
+															   state->vectorWeight);
 						found = true;
 						break;
 					}
@@ -470,7 +486,8 @@ hybrid_exec(CustomScanState *node)
 				if (!found)
 				{
 					/* Add new candidate */
-					float4 vectorScore = 1.0f / (1.0f + vectorDistances[i]);
+					float4		vectorScore = 1.0f / (1.0f + vectorDistances[i]);
+
 					mergedItems[mergedCount] = vectorItems[i];
 					mergedScores[mergedCount] = vectorScore * state->vectorWeight;
 					mergedCount++;
@@ -480,8 +497,8 @@ hybrid_exec(CustomScanState *node)
 			/* Add FTS candidates */
 			for (i = 0; i < ftsCount; i++)
 			{
-				int j;
-				bool found = false;
+				int			j;
+				bool		found = false;
 
 				/* Check if already in merged list */
 				for (j = 0; j < mergedCount; j++)
@@ -490,9 +507,10 @@ hybrid_exec(CustomScanState *node)
 					{
 						/* Update score with hybrid formula */
 						mergedScores[j] = compute_hybrid_score(
-							0.0f, /* No vector distance for FTS-only */
-							ftsScores[i],
-							state->vectorWeight);
+															   0.0f,	/* No vector distance
+																		 * for FTS-only */
+															   ftsScores[i],
+															   state->vectorWeight);
 						found = true;
 						break;
 					}
@@ -509,8 +527,9 @@ hybrid_exec(CustomScanState *node)
 
 			/* Sort by score (descending) */
 			{
-				int *indices = (int *)palloc(mergedCount * sizeof(int));
-    NDB_CHECK_ALLOC(indices, "indices");
+				int		   *indices = (int *) palloc(mergedCount * sizeof(int));
+
+				NDB_CHECK_ALLOC(indices, "indices");
 				for (i = 0; i < mergedCount; i++)
 					indices[i] = i;
 
@@ -521,22 +540,22 @@ hybrid_exec(CustomScanState *node)
 				state->candidateCount = Min(mergedCount, state->k);
 				for (i = 0; i < state->candidateCount; i++)
 				{
-					int idx = indices[i];
+					int			idx = indices[i];
 					TupleTableSlot *candidateSlot;
 
 					candidateSlot = MakeTupleTableSlot(node->ss.ss_currentRelation->rd_att,
-						&TTSOpsHeapTuple);
+													   &TTSOpsHeapTuple);
 					/* Fetch tuple from heap */
 					{
 						HeapTupleData tuple;
-						HeapTuple tupleptr = &tuple;
-						Buffer buffer;
+						HeapTuple	tupleptr = &tuple;
+						Buffer		buffer;
 
 						if (heap_fetch(heapRel,
-							GetActiveSnapshot(),
-							tupleptr,
-							&buffer,
-							false))
+									   GetActiveSnapshot(),
+									   tupleptr,
+									   &buffer,
+									   false))
 						{
 							ExecStoreHeapTuple(tupleptr, candidateSlot, false);
 							ReleaseBuffer(buffer);
@@ -582,10 +601,10 @@ hybrid_exec(CustomScanState *node)
  * End scan
  */
 static void
-hybrid_end(CustomScanState *node)
+hybrid_end(CustomScanState * node)
 {
-	HybridScanState *state = (HybridScanState *)node;
-	int i;
+	HybridScanState *state = (HybridScanState *) node;
+	int			i;
 
 	/* Close scans */
 	if (state->vectorScan)
@@ -623,10 +642,10 @@ hybrid_end(CustomScanState *node)
  * Rescan
  */
 static void
-hybrid_rescan(CustomScanState *node)
+hybrid_rescan(CustomScanState * node)
 {
-	HybridScanState *state = (HybridScanState *)node;
-	int i;
+	HybridScanState *state = (HybridScanState *) node;
+	int			i;
 
 	/* Free existing candidate slots */
 	if (state->candidates)
@@ -654,9 +673,9 @@ hybrid_rescan(CustomScanState *node)
  * Explain plan
  */
 static void
-hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es)
+hybrid_explain(CustomScanState * node, List * ancestors, ExplainState * es)
 {
-	HybridScanState *state = (HybridScanState *)node;
+	HybridScanState *state = (HybridScanState *) node;
 
 #if PG_VERSION_NUM >= 180000
 	/* PG18 removed ExplainProperty* functions - use appendStringInfo instead */
@@ -666,10 +685,10 @@ hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 		appendStringInfo(es->str, "Hybrid Scan Type: Vector+FTS\n");
 		appendStringInfoSpaces(es->str, es->indent * 2);
 		appendStringInfo(
-			es->str, "Vector Weight: %.2f\n", state->vectorWeight);
+						 es->str, "Vector Weight: %.2f\n", state->vectorWeight);
 		appendStringInfoSpaces(es->str, es->indent * 2);
 		appendStringInfo(
-			es->str, "FTS Weight: %.2f\n", state->ftsWeight);
+						 es->str, "FTS Weight: %.2f\n", state->ftsWeight);
 		appendStringInfoSpaces(es->str, es->indent * 2);
 		appendStringInfo(es->str, "Target Results: %d\n", state->k);
 	}
@@ -689,8 +708,8 @@ hybrid_explain(CustomScanState *node, List *ancestors, ExplainState *es)
 __attribute__((unused)) static float4
 compute_hybrid_score(float4 vectorDist, float4 ftsScore, float4 vectorWeight)
 {
-	float4 vectorScore;
-	float4 hybridScore;
+	float4		vectorScore;
+	float4		hybridScore;
 
 	/* Normalize vector distance to score (0..1, higher is better) */
 	vectorScore = 1.0 / (1.0 + vectorDist);
@@ -709,7 +728,7 @@ compute_hybrid_score(float4 vectorDist, float4 ftsScore, float4 vectorWeight)
  * Keeping this stub for potential future use or refactoring.
  */
 __attribute__((unused)) static void
-merge_candidates(HybridScanState *state)
+merge_candidates(HybridScanState * state)
 {
 	/* Merging is now done inline in hybrid_exec() for better performance */
 	/* This function is kept for potential future refactoring */
@@ -719,10 +738,11 @@ merge_candidates(HybridScanState *state)
  * Helper: Sort indices by scores (descending)
  */
 static void
-sort_indices_by_scores(int *indices, float4 *scores, int count)
+sort_indices_by_scores(int *indices, float4 * scores, int count)
 {
-	int i, j;
-	int temp;
+	int			i,
+				j;
+	int			temp;
 
 	/* Simple bubble sort by score (descending) */
 	for (i = 0; i < count - 1; i++)
@@ -748,11 +768,16 @@ void
 register_hybrid_scan_provider(void)
 {
 	/* Register custom scan methods with PostgreSQL */
-	/* Note: PostgreSQL's CustomScan API requires registration via
-	 * planner hooks. For now, we register the execution methods.
-	 * Full planner integration would require a planner hook to inject
-	 * CustomPath nodes during query planning. */
+	/*
+	 * Note: PostgreSQL's CustomScan API requires registration via planner
+	 * hooks. For now, we register the execution methods. Full planner
+	 * integration would require a planner hook to inject CustomPath nodes
+	 * during query planning.
+	 */
 	elog(DEBUG1, "neurondb: Hybrid scan provider registered");
-	/* The methods table is static and will be used when CustomScan
-	 * nodes are created. Planner hook integration is handled separately. */
+
+	/*
+	 * The methods table is static and will be used when CustomScan nodes are
+	 * created. Planner hook integration is handled separately.
+	 */
 }

@@ -47,24 +47,24 @@ PG_FUNCTION_INFO_V1(import_pytorch_model);
 Datum
 import_pytorch_model(PG_FUNCTION_ARGS)
 {
-	text *model_path = PG_GETARG_TEXT_PP(0);
-	text *model_name = PG_GETARG_TEXT_PP(1);
-	text *model_type = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
+	text	   *model_path = PG_GETARG_TEXT_PP(0);
+	text	   *model_name = PG_GETARG_TEXT_PP(1);
+	text	   *model_type = PG_ARGISNULL(2) ? NULL : PG_GETARG_TEXT_PP(2);
 
-	char *path = text_to_cstring(model_path);
-	char *name = text_to_cstring(model_name);
-	char *type = model_type ? text_to_cstring(model_type)
-				: pstrdup("classifier");
+	char	   *path = text_to_cstring(model_path);
+	char	   *name = text_to_cstring(model_name);
+	char	   *type = model_type ? text_to_cstring(model_type)
+		: pstrdup("classifier");
 	StringInfoData result;
-	int model_id;
+	int			model_id;
 
 	/* Validate model type */
 	if (strcmp(type, "classifier") != 0 && strcmp(type, "regressor") != 0
 		&& strcmp(type, "transformer") != 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("model_type must be 'classifier', "
-				       "'regressor', or 'transformer'")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("model_type must be 'classifier', "
+						"'regressor', or 'transformer'")));
 
 	/* Defensive: validate model path */
 	if (path == NULL || strlen(path) == 0)
@@ -142,10 +142,10 @@ import_pytorch_model(PG_FUNCTION_ARGS)
 
 	initStringInfo(&result);
 	elog(DEBUG1,
-			"PyTorch model '%s' imported with ID %d (type: %s)",
-		name,
-		model_id,
-		type);
+		 "PyTorch model '%s' imported with ID %d (type: %s)",
+		 name,
+		 model_id,
+		 type);
 
 	NDB_SAFE_PFREE_AND_NULL(path);
 	NDB_SAFE_PFREE_AND_NULL(name);
@@ -163,15 +163,15 @@ PG_FUNCTION_INFO_V1(import_tensorflow_model);
 Datum
 import_tensorflow_model(PG_FUNCTION_ARGS)
 {
-	text *model_path = PG_GETARG_TEXT_PP(0);
-	text *model_name = PG_GETARG_TEXT_PP(1);
-	ArrayType *input_shapes =
+	text	   *model_path = PG_GETARG_TEXT_PP(0);
+	text	   *model_name = PG_GETARG_TEXT_PP(1);
+	ArrayType  *input_shapes =
 		PG_ARGISNULL(2) ? NULL : PG_GETARG_ARRAYTYPE_P(2);
 
-	char *path = text_to_cstring(model_path);
-	char *name = text_to_cstring(model_name);
+	char	   *path = text_to_cstring(model_path);
+	char	   *name = text_to_cstring(model_name);
 	StringInfoData result;
-	int model_id;
+	int			model_id;
 
 	/* Defensive: validate model path */
 	if (path == NULL || strlen(path) == 0)
@@ -183,7 +183,10 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 				 errmsg("import_tensorflow_model: model_path cannot be empty")));
 	}
 
-	/* Defensive: check if directory exists (TensorFlow SavedModel is a directory) */
+	/*
+	 * Defensive: check if directory exists (TensorFlow SavedModel is a
+	 * directory)
+	 */
 	{
 		struct stat st;
 
@@ -250,9 +253,9 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 
 	initStringInfo(&result);
 	elog(DEBUG1,
-			"TensorFlow model '%s' imported with ID %d",
-		name,
-		model_id);
+		 "TensorFlow model '%s' imported with ID %d",
+		 name,
+		 model_id);
 
 	NDB_SAFE_PFREE_AND_NULL(path);
 	NDB_SAFE_PFREE_AND_NULL(name);
@@ -268,14 +271,14 @@ PG_FUNCTION_INFO_V1(import_onnx_model);
 Datum
 import_onnx_model(PG_FUNCTION_ARGS)
 {
-	text *model_path = PG_GETARG_TEXT_PP(0);
-	text *model_name = PG_GETARG_TEXT_PP(1);
-	bool optimize = PG_ARGISNULL(2) ? true : PG_GETARG_BOOL(2);
+	text	   *model_path = PG_GETARG_TEXT_PP(0);
+	text	   *model_name = PG_GETARG_TEXT_PP(1);
+	bool		optimize = PG_ARGISNULL(2) ? true : PG_GETARG_BOOL(2);
 
-	char *path = text_to_cstring(model_path);
-	char *name = text_to_cstring(model_name);
+	char	   *path = text_to_cstring(model_path);
+	char	   *name = text_to_cstring(model_name);
 	StringInfoData result;
-	int model_id;
+	int			model_id;
 
 	/* Defensive: validate model path */
 	if (path == NULL || strlen(path) == 0)
@@ -351,10 +354,10 @@ import_onnx_model(PG_FUNCTION_ARGS)
 
 	initStringInfo(&result);
 	elog(DEBUG1,
-			"ONNX model '%s' imported with ID %d (optimized: %s)",
-		name,
-		model_id,
-		optimize ? "yes" : "no");
+		 "ONNX model '%s' imported with ID %d (optimized: %s)",
+		 name,
+		 model_id,
+		 optimize ? "yes" : "no");
 
 	NDB_SAFE_PFREE_AND_NULL(path);
 	NDB_SAFE_PFREE_AND_NULL(name);
@@ -370,18 +373,18 @@ PG_FUNCTION_INFO_V1(dl_predict);
 Datum
 dl_predict(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	ArrayType *input_data = PG_GETARG_ARRAYTYPE_P(1);
-	bool return_probabilities = PG_ARGISNULL(2) ? false : PG_GETARG_BOOL(2);
+	int32		model_id = PG_GETARG_INT32(0);
+	ArrayType  *input_data = PG_GETARG_ARRAYTYPE_P(1);
+	bool		return_probabilities = PG_ARGISNULL(2) ? false : PG_GETARG_BOOL(2);
 
-	int n_inputs;
-	ArrayType *result_array;
-	float *predictions;
-	Datum *elems;
-	int i;
-	int n_outputs = 10;
+	int			n_inputs;
+	ArrayType  *result_array;
+	float	   *predictions;
+	Datum	   *elems;
+	int			i;
+	int			n_outputs = 10;
 #ifdef HAVE_ONNX_RUNTIME
-	ONNXTensor *output_tensor = NULL; /* ONNX output tensor */
+	ONNXTensor *output_tensor = NULL;	/* ONNX output tensor */
 #endif
 
 	/* Get input size */
@@ -389,8 +392,8 @@ dl_predict(PG_FUNCTION_ARGS)
 
 	if (n_inputs == 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("input_data cannot be empty")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("input_data cannot be empty")));
 
 	/* Defensive: validate model_id */
 	if (model_id <= 0)
@@ -425,7 +428,7 @@ dl_predict(PG_FUNCTION_ARGS)
 			{
 				if (r == WJB_KEY)
 				{
-					char   *key = pnstrdup(v.val.string.val, v.val.string.len);
+					char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
 
 					r = JsonbIteratorNext(&it, &v, false);
 					if (strcmp(key, "framework") == 0 && v.type == jbvString)
@@ -445,8 +448,8 @@ dl_predict(PG_FUNCTION_ARGS)
 #ifdef HAVE_ONNX_RUNTIME
 					ONNXModelSession *session = NULL;
 					ONNXTensor *input_tensor = NULL;
-					char model_name_str[256];
-					int d;
+					char		model_name_str[256];
+					int			d;
 
 					/* Construct model name from model_id */
 					snprintf(model_name_str, sizeof(model_name_str), "dl_model_%d", model_id);
@@ -459,27 +462,30 @@ dl_predict(PG_FUNCTION_ARGS)
 						if (model_data != NULL)
 						{
 							/* Model data should contain ONNX model bytes */
-							/* For now, use default output size if model not loaded */
+							/*
+							 * For now, use default output size if model not
+							 * loaded
+							 */
 							elog(WARNING,
-								"dl_predict: ONNX model %d not loaded, using default output size", model_id);
+								 "dl_predict: ONNX model %d not loaded, using default output size", model_id);
 							n_outputs = 10;
 						}
 						else
 						{
 							elog(WARNING,
-								"dl_predict: ONNX model %d not found, using default output size", model_id);
+								 "dl_predict: ONNX model %d not found, using default output size", model_id);
 							n_outputs = 10;
 						}
 					}
 					else
 					{
 						/* Create input tensor from input_data array */
-						input_tensor = (ONNXTensor *)palloc0(sizeof(ONNXTensor));
+						input_tensor = (ONNXTensor *) palloc0(sizeof(ONNXTensor));
 						input_tensor->ndim = 1;
-						input_tensor->shape = (int64 *)palloc(sizeof(int64) * 1);
+						input_tensor->shape = (int64 *) palloc(sizeof(int64) * 1);
 						input_tensor->shape[0] = n_inputs;
 						input_tensor->size = n_inputs;
-						input_tensor->data = (float *)palloc(sizeof(float) * n_inputs);
+						input_tensor->data = (float *) palloc(sizeof(float) * n_inputs);
 
 						/* Copy input data */
 						for (d = 0; d < n_inputs; d++)
@@ -491,11 +497,11 @@ dl_predict(PG_FUNCTION_ARGS)
 						{
 							/* Determine output size from tensor shape */
 							if (output_tensor->ndim == 1)
-								n_outputs = (int)output_tensor->shape[0];
+								n_outputs = (int) output_tensor->shape[0];
 							else if (output_tensor->ndim == 2)
-								n_outputs = (int)output_tensor->shape[output_tensor->ndim - 1];
+								n_outputs = (int) output_tensor->shape[output_tensor->ndim - 1];
 							else
-								n_outputs = (int)output_tensor->size;
+								n_outputs = (int) output_tensor->size;
 
 							if (n_outputs <= 0 || n_outputs > 10000)
 							{
@@ -503,58 +509,71 @@ dl_predict(PG_FUNCTION_ARGS)
 								if (output_tensor)
 									neurondb_onnx_free_tensor(output_tensor);
 								ereport(ERROR,
-									(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-										errmsg("dl_predict: invalid output dimension %d from ONNX model", n_outputs)));
+										(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+										 errmsg("dl_predict: invalid output dimension %d from ONNX model", n_outputs)));
 							}
 
 							/* Store output for later use */
-							/* predictions will be set from output_tensor->data below */
+
+							/*
+							 * predictions will be set from
+							 * output_tensor->data below
+							 */
 							neurondb_onnx_free_tensor(input_tensor);
-							/* output_tensor will be used below to fill predictions array */
+
+							/*
+							 * output_tensor will be used below to fill
+							 * predictions array
+							 */
 						}
 						else
 						{
 							neurondb_onnx_free_tensor(input_tensor);
 							ereport(ERROR,
-								(errcode(ERRCODE_INTERNAL_ERROR),
-									errmsg("dl_predict: ONNX inference failed for model %d", model_id)));
+									(errcode(ERRCODE_INTERNAL_ERROR),
+									 errmsg("dl_predict: ONNX inference failed for model %d", model_id)));
 						}
 					}
 
 					elog(DEBUG1,
-						"dl_predict: Using ONNX runtime for inference, output_dim=%d", n_outputs);
+						 "dl_predict: Using ONNX runtime for inference, output_dim=%d", n_outputs);
 #else
 					elog(WARNING,
-						"dl_predict: ONNX runtime not available, using placeholder");
+						 "dl_predict: ONNX runtime not available, using placeholder");
 					n_outputs = 10;
 #endif
-				} else if (strcmp(framework, "pytorch") == 0)
+				}
+				else if (strcmp(framework, "pytorch") == 0)
 				{
 					/* PyTorch inference - would use libtorch */
 					elog(DEBUG1,
-						"dl_predict: PyTorch framework detected (inference not yet implemented)");
+						 "dl_predict: PyTorch framework detected (inference not yet implemented)");
 					n_outputs = 10;
-				} else if (strcmp(framework, "tensorflow") == 0)
+				}
+				else if (strcmp(framework, "tensorflow") == 0)
 				{
 					/* TensorFlow inference - would use TensorFlow C API */
 					elog(DEBUG1,
-						"dl_predict: TensorFlow framework detected (inference not yet implemented)");
+						 "dl_predict: TensorFlow framework detected (inference not yet implemented)");
 					n_outputs = 10;
-				} else
+				}
+				else
 				{
 					elog(WARNING,
-						"dl_predict: Unknown framework '%s', using placeholder",
-						framework);
+						 "dl_predict: Unknown framework '%s', using placeholder",
+						 framework);
 					n_outputs = 10;
 				}
 
 				if (framework)
 				{
-					void *ptr = (void *)framework;
+					void	   *ptr = (void *) framework;
+
 					ndb_safe_pfree(ptr);
 					framework = NULL;
 				}
-			} else
+			}
+			else
 			{
 				/* No framework specified, use default */
 				n_outputs = 10;
@@ -563,21 +582,21 @@ dl_predict(PG_FUNCTION_ARGS)
 	}
 
 	/* Generate predictions */
-	predictions = (float *)palloc(n_outputs * sizeof(float));
+	predictions = (float *) palloc(n_outputs * sizeof(float));
 #ifdef HAVE_ONNX_RUNTIME
 	/* If we have ONNX output, use it */
 	if (output_tensor != NULL && output_tensor->data != NULL)
 	{
 		/* Copy output tensor data to predictions */
-		for (i = 0; i < n_outputs && i < (int)output_tensor->size; i++)
+		for (i = 0; i < n_outputs && i < (int) output_tensor->size; i++)
 			predictions[i] = output_tensor->data[i];
 
 		/* If return_probabilities, apply softmax */
 		if (return_probabilities)
 		{
-			float sum_exp = 0.0f;
-			float max_val = predictions[0];
-			int j;
+			float		sum_exp = 0.0f;
+			float		max_val = predictions[0];
+			int			j;
 
 			/* Find max for numerical stability */
 			for (j = 1; j < n_outputs; j++)
@@ -610,22 +629,22 @@ dl_predict(PG_FUNCTION_ARGS)
 	{
 		/* Return uniform probability distribution */
 		for (i = 0; i < n_outputs; i++)
-			predictions[i] = 1.0f / (float)n_outputs;
+			predictions[i] = 1.0f / (float) n_outputs;
 	}
 	else
 	{
 		/* Return class indices */
 		for (i = 0; i < n_outputs; i++)
-			predictions[i] = (float)i;
+			predictions[i] = (float) i;
 	}
 
 	/* Build result array */
-	elems = (Datum *)palloc(n_outputs * sizeof(Datum));
+	elems = (Datum *) palloc(n_outputs * sizeof(Datum));
 	for (i = 0; i < n_outputs; i++)
 		elems[i] = Float4GetDatum(predictions[i]);
 
 	result_array = construct_array(
-		elems, n_outputs, FLOAT4OID, sizeof(float4), true, 'i');
+								   elems, n_outputs, FLOAT4OID, sizeof(float4), true, 'i');
 
 	NDB_SAFE_PFREE_AND_NULL(predictions);
 	NDB_SAFE_PFREE_AND_NULL(elems);
@@ -641,35 +660,35 @@ PG_FUNCTION_INFO_V1(finetune_dl_model);
 Datum
 finetune_dl_model(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	text *training_table = PG_GETARG_TEXT_PP(1);
-	int32 epochs = PG_ARGISNULL(2) ? 5 : PG_GETARG_INT32(2);
-	float8 learning_rate = PG_ARGISNULL(3) ? 0.0001 : PG_GETARG_FLOAT8(3);
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *training_table = PG_GETARG_TEXT_PP(1);
+	int32		epochs = PG_ARGISNULL(2) ? 5 : PG_GETARG_INT32(2);
+	float8		learning_rate = PG_ARGISNULL(3) ? 0.0001 : PG_GETARG_FLOAT8(3);
 
-	char *table = text_to_cstring(training_table);
+	char	   *table = text_to_cstring(training_table);
 	StringInfoData result;
 
 	/* Validate */
 	if (epochs <= 0 || epochs > 1000)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("epochs must be between 1 and 1000")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("epochs must be between 1 and 1000")));
 
 	if (learning_rate <= 0.0 || learning_rate > 1.0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("learning_rate must be between 0 and "
-				       "1")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("learning_rate must be between 0 and "
+						"1")));
 
 	/* Fine-tune model (production would perform transfer learning) */
-	(void)model_id;
-	(void)table;
+	(void) model_id;
+	(void) table;
 
 	initStringInfo(&result);
 	elog(DEBUG1,
-			"Model fine-tuned for %d epochs with learning rate %.6f",
-		epochs,
-		learning_rate);
+		 "Model fine-tuned for %d epochs with learning rate %.6f",
+		 epochs,
+		 learning_rate);
 
 	NDB_SAFE_PFREE_AND_NULL(table);
 
@@ -684,29 +703,29 @@ PG_FUNCTION_INFO_V1(export_dl_model);
 Datum
 export_dl_model(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	text *export_format = PG_GETARG_TEXT_PP(1);
-	text *output_path = PG_GETARG_TEXT_PP(2);
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *export_format = PG_GETARG_TEXT_PP(1);
+	text	   *output_path = PG_GETARG_TEXT_PP(2);
 
-	char *format = text_to_cstring(export_format);
-	char *path = text_to_cstring(output_path);
+	char	   *format = text_to_cstring(export_format);
+	char	   *path = text_to_cstring(output_path);
 	StringInfoData result;
 
 	/* Validate format */
 	if (strcmp(format, "onnx") != 0 && strcmp(format, "torchscript") != 0
 		&& strcmp(format, "savedmodel") != 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("export_format must be 'onnx', "
-				       "'torchscript', or 'savedmodel'")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("export_format must be 'onnx', "
+						"'torchscript', or 'savedmodel'")));
 
 	/* Export model (production would convert and save) */
-	(void)model_id;
-	(void)path;
+	(void) model_id;
+	(void) path;
 
 	initStringInfo(&result);
 	appendStringInfo(
-		&result, "Model exported to %s format at: %s", format, path);
+					 &result, "Model exported to %s format at: %s", format, path);
 
 	NDB_SAFE_PFREE_AND_NULL(format);
 	NDB_SAFE_PFREE_AND_NULL(path);
@@ -722,21 +741,21 @@ PG_FUNCTION_INFO_V1(describe_dl_model);
 Datum
 describe_dl_model(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
+	int32		model_id = PG_GETARG_INT32(0);
 	StringInfoData result;
 
 	/* Get model info (production would inspect model structure) */
-	(void)model_id;
+	(void) model_id;
 
 	initStringInfo(&result);
 	appendStringInfo(&result,
-		"{\"model_id\": %d, "
-		"\"framework\": \"PyTorch\", "
-		"\"architecture\": \"ResNet50\", "
-		"\"parameters\": 25557032, "
-		"\"input_shape\": [3, 224, 224], "
-		"\"output_classes\": 1000}",
-		model_id);
+					 "{\"model_id\": %d, "
+					 "\"framework\": \"PyTorch\", "
+					 "\"architecture\": \"ResNet50\", "
+					 "\"parameters\": 25557032, "
+					 "\"input_shape\": [3, 224, 224], "
+					 "\"output_classes\": 1000}",
+					 model_id);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -749,21 +768,21 @@ PG_FUNCTION_INFO_V1(dl_predict_batch);
 Datum
 dl_predict_batch(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	text *input_table = PG_GETARG_TEXT_PP(1);
-	text *output_table = PG_GETARG_TEXT_PP(2);
-	int32 batch_size = PG_ARGISNULL(3) ? 32 : PG_GETARG_INT32(3);
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *input_table = PG_GETARG_TEXT_PP(1);
+	text	   *output_table = PG_GETARG_TEXT_PP(2);
+	int32		batch_size = PG_ARGISNULL(3) ? 32 : PG_GETARG_INT32(3);
 
-	char *in_table = text_to_cstring(input_table);
-	char *out_table = text_to_cstring(output_table);
-	int processed_rows = 0;
+	char	   *in_table = text_to_cstring(input_table);
+	char	   *out_table = text_to_cstring(output_table);
+	int			processed_rows = 0;
 
 	/* Validate */
 	if (batch_size <= 0 || batch_size > 10000)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("batch_size must be between 1 and "
-				       "10000")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("batch_size must be between 1 and "
+						"10000")));
 
 	/* Defensive: validate model_id */
 	if (model_id <= 0)
@@ -796,12 +815,12 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 			const char *in_table_quoted = quote_identifier(in_table);
 
 			appendStringInfo(&sql,
-				"SELECT COUNT(*) FROM %s",
-				in_table_quoted);
+							 "SELECT COUNT(*) FROM %s",
+							 in_table_quoted);
 		}
 
 		ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		NDB_SAFE_PFREE_AND_NULL(sql.data);
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
@@ -809,10 +828,10 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 			bool		isnull;
 
 			total_rows = DatumGetInt32(
-				SPI_getbinval(SPI_tuptable->vals[0],
-							  SPI_tuptable->tupdesc,
-							  1,
-							  &isnull));
+									   SPI_getbinval(SPI_tuptable->vals[0],
+													 SPI_tuptable->tupdesc,
+													 1,
+													 &isnull));
 		}
 
 		/* Create output table if it doesn't exist */
@@ -829,7 +848,7 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 		}
 
 		ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+		NDB_CHECK_SPI_TUPTABLE();
 		NDB_SAFE_PFREE_AND_NULL(sql.data);
 
 		/* Process in batches */
@@ -852,7 +871,7 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 								 out_table_quoted, in_table_quoted, batch_size, offset);
 
 				ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+				NDB_CHECK_SPI_TUPTABLE();
 				NDB_SAFE_PFREE_AND_NULL(sql.data);
 
 				if (ret == SPI_OK_INSERT || ret == SPI_OK_INSERT_RETURNING)
@@ -881,32 +900,32 @@ PG_FUNCTION_INFO_V1(quantize_dl_model);
 Datum
 quantize_dl_model(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	text *quantization_type = PG_ARGISNULL(1) ? NULL : PG_GETARG_TEXT_PP(1);
+	int32		model_id = PG_GETARG_INT32(0);
+	text	   *quantization_type = PG_ARGISNULL(1) ? NULL : PG_GETARG_TEXT_PP(1);
 
-	char *quant_type = quantization_type
+	char	   *quant_type = quantization_type
 		? text_to_cstring(quantization_type)
 		: pstrdup("int8");
 	StringInfoData result;
-	int quantized_model_id;
+	int			quantized_model_id;
 
 	/* Validate */
 	if (strcmp(quant_type, "int8") != 0 && strcmp(quant_type, "fp16") != 0
 		&& strcmp(quant_type, "dynamic") != 0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("quantization_type must be 'int8', "
-				       "'fp16', or 'dynamic'")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("quantization_type must be 'int8', "
+						"'fp16', or 'dynamic'")));
 
 	/* Quantize model (production would apply quantization) */
-	(void)model_id;
+	(void) model_id;
 	quantized_model_id = model_id + 10000;
 
 	initStringInfo(&result);
 	elog(DEBUG1,
-			"Model quantized to %s, new model ID: %d",
-		quant_type,
-		quantized_model_id);
+		 "Model quantized to %s, new model ID: %d",
+		 quant_type,
+		 quantized_model_id);
 
 	NDB_SAFE_PFREE_AND_NULL(quant_type);
 

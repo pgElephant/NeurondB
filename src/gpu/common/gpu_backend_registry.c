@@ -39,13 +39,17 @@
 
 typedef struct NDBGpuBackendRegistry
 {
-	const ndb_gpu_backend *backends[NDB_GPU_MAX_BACKENDS];
-	int count;
-} NDBGpuBackendRegistry;
+	const		ndb_gpu_backend *backends[NDB_GPU_MAX_BACKENDS];
+	int			count;
+}			NDBGpuBackendRegistry;
 
-static NDBGpuBackendRegistry registry = {
-	.backends = { NULL },
-	.count = 0,
+static NDBGpuBackendRegistry registry =
+{
+	.backends =
+	{
+		NULL
+	},
+		.count = 0,
 };
 
 static const ndb_gpu_backend *active_backend = NULL;
@@ -55,19 +59,19 @@ ndb_backend_priority(NDBGpuBackendKind kind)
 {
 	switch (kind)
 	{
-	case NDB_GPU_BACKEND_METAL:
-		return 100;
-	case NDB_GPU_BACKEND_CUDA:
-		return 90;
-	case NDB_GPU_BACKEND_ROCM:
-		return 80;
-	default:
-		return 0;
+		case NDB_GPU_BACKEND_METAL:
+			return 100;
+		case NDB_GPU_BACKEND_CUDA:
+			return 90;
+		case NDB_GPU_BACKEND_ROCM:
+			return 80;
+		default:
+			return 0;
 	}
 }
 
 static int
-ndb_backend_is_available(const ndb_gpu_backend *backend)
+ndb_backend_is_available(const ndb_gpu_backend * backend)
 {
 	if (backend == NULL)
 		return 0;
@@ -79,22 +83,22 @@ ndb_backend_is_available(const ndb_gpu_backend *backend)
 }
 
 int
-ndb_gpu_register_backend(const ndb_gpu_backend *backend)
+ndb_gpu_register_backend(const ndb_gpu_backend * backend)
 {
-	int i;
+	int			i;
 
 	if (backend == NULL)
 	{
 		elog(DEBUG1,
-			"neurondb: attempted to register NULL GPU backend");
+			 "neurondb: attempted to register NULL GPU backend");
 		return -1;
 	}
 
 	if (registry.count >= NDB_GPU_MAX_BACKENDS)
 	{
 		elog(DEBUG1,
-			"neurondb: GPU backend registry full; ignoring '%s'",
-			backend->name ? backend->name : "unknown");
+			 "neurondb: GPU backend registry full; ignoring '%s'",
+			 backend->name ? backend->name : "unknown");
 		return -1;
 	}
 
@@ -103,9 +107,9 @@ ndb_gpu_register_backend(const ndb_gpu_backend *backend)
 		if (registry.backends[i]->kind == backend->kind)
 		{
 			elog(DEBUG1,
-				"neurondb: GPU backend kind %d already "
-				"registered; keeping existing entry",
-				backend->kind);
+				 "neurondb: GPU backend kind %d already "
+				 "registered; keeping existing entry",
+				 backend->kind);
 			return 0;
 		}
 	}
@@ -113,9 +117,9 @@ ndb_gpu_register_backend(const ndb_gpu_backend *backend)
 	registry.backends[registry.count++] = backend;
 
 	elog(DEBUG1,
-		"neurondb: GPU backend registered: %s (%s)",
-		backend->name ? backend->name : "unnamed",
-		backend->provider ? backend->provider : "unknown");
+		 "neurondb: GPU backend registered: %s (%s)",
+		 backend->name ? backend->name : "unnamed",
+		 backend->provider ? backend->provider : "unknown");
 
 	return 0;
 }
@@ -123,14 +127,14 @@ ndb_gpu_register_backend(const ndb_gpu_backend *backend)
 static const ndb_gpu_backend *
 ndb_gpu_select_best_internal(void)
 {
-	const ndb_gpu_backend *best = NULL;
-	int best_priority = -1;
-	int i;
+	const		ndb_gpu_backend *best = NULL;
+	int			best_priority = -1;
+	int			i;
 
 	for (i = 0; i < registry.count; i++)
 	{
-		const ndb_gpu_backend *candidate = registry.backends[i];
-		int priority;
+		const		ndb_gpu_backend *candidate = registry.backends[i];
+		int			priority;
 
 		if (!ndb_backend_is_available(candidate))
 			continue;
@@ -150,10 +154,10 @@ ndb_gpu_select_best_internal(void)
 }
 
 int
-ndb_gpu_set_active_backend(const ndb_gpu_backend *backend)
+ndb_gpu_set_active_backend(const ndb_gpu_backend * backend)
 {
-	int rc;
-	
+	int			rc;
+
 	if (active_backend == backend)
 		return 0;
 
@@ -165,7 +169,8 @@ ndb_gpu_set_active_backend(const ndb_gpu_backend *backend)
 	if (backend && backend->init)
 	{
 		/* Initialize GPU backend - temporarily ignore SIGPIPE */
-		sigset_t old_sigset, new_sigset;
+		sigset_t	old_sigset,
+					new_sigset;
 
 		sigemptyset(&new_sigset);
 		sigaddset(&new_sigset, SIGPIPE);
@@ -188,10 +193,10 @@ ndb_gpu_set_active_backend(const ndb_gpu_backend *backend)
 		if (rc != 0)
 		{
 			elog(WARNING,
-				"neurondb: failed to initialise GPU backend "
-				"'%s' (rc=%d)",
-				backend->name ? backend->name : "unknown",
-				rc);
+				 "neurondb: failed to initialise GPU backend "
+				 "'%s' (rc=%d)",
+				 backend->name ? backend->name : "unknown",
+				 rc);
 
 			if (backend->shutdown)
 				backend->shutdown();
@@ -206,7 +211,7 @@ ndb_gpu_set_active_backend(const ndb_gpu_backend *backend)
 	return 0;
 }
 
-const ndb_gpu_backend *
+const		ndb_gpu_backend *
 ndb_gpu_get_active_backend(void)
 {
 	return active_backend;
@@ -214,50 +219,50 @@ ndb_gpu_get_active_backend(void)
 
 int
 ndb_gpu_rf_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	int class_count,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				 const double *labels,
+				 int n_samples,
+				 int feature_dim,
+				 int class_count,
+				 const Jsonb * hyperparams,
+				 bytea * *model_data,
+				 Jsonb * *metrics,
+				 char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->rf_train == NULL)
 		return -1;
 	return active_backend->rf_train(features,
-		labels,
-		n_samples,
-		feature_dim,
-		class_count,
-		hyperparams,
-		model_data,
-		metrics,
-		errstr);
+									labels,
+									n_samples,
+									feature_dim,
+									class_count,
+									hyperparams,
+									model_data,
+									metrics,
+									errstr);
 }
 
 int
-ndb_gpu_rf_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	int *class_out,
-	char **errstr)
+ndb_gpu_rf_predict(const bytea * model_data,
+				   const float *input,
+				   int feature_dim,
+				   int *class_out,
+				   char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->rf_predict == NULL)
 		return -1;
 	return active_backend->rf_predict(
-		model_data, input, feature_dim, class_out, errstr);
+									  model_data, input, feature_dim, class_out, errstr);
 }
 
 int
-ndb_gpu_rf_pack_model(const RFModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+ndb_gpu_rf_pack_model(const RFModel * model,
+					  bytea * *model_data,
+					  Jsonb * *metrics,
+					  char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
@@ -268,15 +273,15 @@ ndb_gpu_rf_pack_model(const RFModel *model,
 
 int
 ndb_gpu_lr_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				 const double *labels,
+				 int n_samples,
+				 int feature_dim,
+				 const Jsonb * hyperparams,
+				 bytea * *model_data,
+				 Jsonb * *metrics,
+				 char **errstr)
 {
-	int rc;
+	int			rc;
 
 	if (errstr)
 		*errstr = NULL;
@@ -284,43 +289,43 @@ ndb_gpu_lr_train(const float *features,
 		return -1;
 
 	elog(DEBUG1,
-		"ndb_gpu_lr_train: calling backend->lr_train, metrics=%p",
-		(void *)metrics);
+		 "ndb_gpu_lr_train: calling backend->lr_train, metrics=%p",
+		 (void *) metrics);
 	rc = active_backend->lr_train(features,
-		labels,
-		n_samples,
-		feature_dim,
-		hyperparams,
-		model_data,
-		metrics,
-		errstr);
+								  labels,
+								  n_samples,
+								  feature_dim,
+								  hyperparams,
+								  model_data,
+								  metrics,
+								  errstr);
 	elog(DEBUG1,
-		"ndb_gpu_lr_train: backend->lr_train returned %d, *metrics=%p",
-		rc,
-		metrics ? (void *)*metrics : NULL);
+		 "ndb_gpu_lr_train: backend->lr_train returned %d, *metrics=%p",
+		 rc,
+		 metrics ? (void *) *metrics : NULL);
 	return rc;
 }
 
 int
-ndb_gpu_lr_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	double *probability_out,
-	char **errstr)
+ndb_gpu_lr_predict(const bytea * model_data,
+				   const float *input,
+				   int feature_dim,
+				   double *probability_out,
+				   char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->lr_predict == NULL)
 		return -1;
 	return active_backend->lr_predict(
-		model_data, input, feature_dim, probability_out, errstr);
+									  model_data, input, feature_dim, probability_out, errstr);
 }
 
 int
-ndb_gpu_lr_pack_model(const LRModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+ndb_gpu_lr_pack_model(const LRModel * model,
+					  bytea * *model_data,
+					  Jsonb * *metrics,
+					  char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
@@ -331,48 +336,48 @@ ndb_gpu_lr_pack_model(const LRModel *model,
 
 int
 ndb_gpu_linreg_train(const float *features,
-	const double *targets,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+					 const double *targets,
+					 int n_samples,
+					 int feature_dim,
+					 const Jsonb * hyperparams,
+					 bytea * *model_data,
+					 Jsonb * *metrics,
+					 char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->linreg_train == NULL)
 		return -1;
 	return active_backend->linreg_train(features,
-		targets,
-		n_samples,
-		feature_dim,
-		hyperparams,
-		model_data,
-		metrics,
-		errstr);
+										targets,
+										n_samples,
+										feature_dim,
+										hyperparams,
+										model_data,
+										metrics,
+										errstr);
 }
 
 int
-ndb_gpu_linreg_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	double *prediction_out,
-	char **errstr)
+ndb_gpu_linreg_predict(const bytea * model_data,
+					   const float *input,
+					   int feature_dim,
+					   double *prediction_out,
+					   char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->linreg_predict == NULL)
 		return -1;
 	return active_backend->linreg_predict(
-		model_data, input, feature_dim, prediction_out, errstr);
+										  model_data, input, feature_dim, prediction_out, errstr);
 }
 
 int
-ndb_gpu_linreg_pack_model(const LinRegModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+ndb_gpu_linreg_pack_model(const LinRegModel * model,
+						  bytea * *model_data,
+						  Jsonb * *metrics,
+						  char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
@@ -383,53 +388,53 @@ ndb_gpu_linreg_pack_model(const LinRegModel *model,
 
 int
 ndb_gpu_svm_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				  const double *labels,
+				  int n_samples,
+				  int feature_dim,
+				  const Jsonb * hyperparams,
+				  bytea * *model_data,
+				  Jsonb * *metrics,
+				  char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->svm_train == NULL)
 		return -1;
 	return active_backend->svm_train(features,
-		labels,
-		n_samples,
-		feature_dim,
-		hyperparams,
-		model_data,
-		metrics,
-		errstr);
+									 labels,
+									 n_samples,
+									 feature_dim,
+									 hyperparams,
+									 model_data,
+									 metrics,
+									 errstr);
 }
 
 int
-ndb_gpu_svm_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	int *class_out,
-	double *confidence_out,
-	char **errstr)
+ndb_gpu_svm_predict(const bytea * model_data,
+					const float *input,
+					int feature_dim,
+					int *class_out,
+					double *confidence_out,
+					char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->svm_predict == NULL)
 		return -1;
 	return active_backend->svm_predict(model_data,
-		input,
-		feature_dim,
-		class_out,
-		confidence_out,
-		errstr);
+									   input,
+									   feature_dim,
+									   class_out,
+									   confidence_out,
+									   errstr);
 }
 
 int
-ndb_gpu_svm_pack_model(const SVMModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+ndb_gpu_svm_pack_model(const SVMModel * model,
+					   bytea * *model_data,
+					   Jsonb * *metrics,
+					   char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
@@ -439,15 +444,15 @@ ndb_gpu_svm_pack_model(const SVMModel *model,
 }
 
 int
-ndb_gpu_svm_predict_double(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	double *prediction_out,
-	char **errstr)
+ndb_gpu_svm_predict_double(const bytea * model_data,
+						   const float *input,
+						   int feature_dim,
+						   double *prediction_out,
+						   char **errstr)
 {
-	int class_out;
-	double confidence_out;
-	int rc;
+	int			class_out;
+	double		confidence_out;
+	int			rc;
 
 	if (errstr)
 		*errstr = NULL;
@@ -455,63 +460,63 @@ ndb_gpu_svm_predict_double(const bytea *model_data,
 		return -1;
 
 	rc = ndb_gpu_svm_predict(model_data,
-		input,
-		feature_dim,
-		&class_out,
-		&confidence_out,
-		errstr);
+							 input,
+							 feature_dim,
+							 &class_out,
+							 &confidence_out,
+							 errstr);
 	if (rc != 0)
 		return rc;
 
 	/* Return class as double (0.0 or 1.0) */
-	*prediction_out = (double)class_out;
+	*prediction_out = (double) class_out;
 	return 0;
 }
 
 int
 ndb_gpu_dt_train(const float *features,
-	const double *labels,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+				 const double *labels,
+				 int n_samples,
+				 int feature_dim,
+				 const Jsonb * hyperparams,
+				 bytea * *model_data,
+				 Jsonb * *metrics,
+				 char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->dt_train == NULL)
 		return -1;
 	return active_backend->dt_train(features,
-		labels,
-		n_samples,
-		feature_dim,
-		hyperparams,
-		model_data,
-		metrics,
-		errstr);
+									labels,
+									n_samples,
+									feature_dim,
+									hyperparams,
+									model_data,
+									metrics,
+									errstr);
 }
 
 int
-ndb_gpu_dt_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	double *prediction_out,
-	char **errstr)
+ndb_gpu_dt_predict(const bytea * model_data,
+				   const float *input,
+				   int feature_dim,
+				   double *prediction_out,
+				   char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->dt_predict == NULL)
 		return -1;
 	return active_backend->dt_predict(
-		model_data, input, feature_dim, prediction_out, errstr);
+									  model_data, input, feature_dim, prediction_out, errstr);
 }
 
 int
 ndb_gpu_dt_pack_model(const struct DTModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+					  bytea * *model_data,
+					  Jsonb * *metrics,
+					  char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
@@ -522,13 +527,13 @@ ndb_gpu_dt_pack_model(const struct DTModel *model,
 
 int
 ndb_gpu_ridge_train(const float *features,
-	const double *targets,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+					const double *targets,
+					int n_samples,
+					int feature_dim,
+					const Jsonb * hyperparams,
+					bytea * *model_data,
+					Jsonb * *metrics,
+					char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
@@ -542,39 +547,39 @@ ndb_gpu_ridge_train(const float *features,
 	{
 		if (errstr)
 			*errstr = psprintf("GPU backend '%s' does not support ridge_train",
-				active_backend->name ? active_backend->name : "unknown");
+							   active_backend->name ? active_backend->name : "unknown");
 		return -1;
 	}
 	return active_backend->ridge_train(features,
-		targets,
-		n_samples,
-		feature_dim,
-		hyperparams,
-		model_data,
-		metrics,
-		errstr);
+									   targets,
+									   n_samples,
+									   feature_dim,
+									   hyperparams,
+									   model_data,
+									   metrics,
+									   errstr);
 }
 
 int
-ndb_gpu_ridge_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	double *prediction_out,
-	char **errstr)
+ndb_gpu_ridge_predict(const bytea * model_data,
+					  const float *input,
+					  int feature_dim,
+					  double *prediction_out,
+					  char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->ridge_predict == NULL)
 		return -1;
 	return active_backend->ridge_predict(
-		model_data, input, feature_dim, prediction_out, errstr);
+										 model_data, input, feature_dim, prediction_out, errstr);
 }
 
 int
 ndb_gpu_ridge_pack_model(const struct RidgeModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+						 bytea * *model_data,
+						 Jsonb * *metrics,
+						 char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
@@ -585,13 +590,13 @@ ndb_gpu_ridge_pack_model(const struct RidgeModel *model,
 
 int
 ndb_gpu_lasso_train(const float *features,
-	const double *targets,
-	int n_samples,
-	int feature_dim,
-	const Jsonb *hyperparams,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+					const double *targets,
+					int n_samples,
+					int feature_dim,
+					const Jsonb * hyperparams,
+					bytea * *model_data,
+					Jsonb * *metrics,
+					char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
@@ -609,35 +614,35 @@ ndb_gpu_lasso_train(const float *features,
 		return -1;
 	}
 	return active_backend->lasso_train(features,
-		targets,
-		n_samples,
-		feature_dim,
-		hyperparams,
-		model_data,
-		metrics,
-		errstr);
+									   targets,
+									   n_samples,
+									   feature_dim,
+									   hyperparams,
+									   model_data,
+									   metrics,
+									   errstr);
 }
 
 int
-ndb_gpu_lasso_predict(const bytea *model_data,
-	const float *input,
-	int feature_dim,
-	double *prediction_out,
-	char **errstr)
+ndb_gpu_lasso_predict(const bytea * model_data,
+					  const float *input,
+					  int feature_dim,
+					  double *prediction_out,
+					  char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend || active_backend->lasso_predict == NULL)
 		return -1;
 	return active_backend->lasso_predict(
-		model_data, input, feature_dim, prediction_out, errstr);
+										 model_data, input, feature_dim, prediction_out, errstr);
 }
 
 int
 ndb_gpu_lasso_pack_model(const struct LassoModel *model,
-	bytea **model_data,
-	Jsonb **metrics,
-	char **errstr)
+						 bytea * *model_data,
+						 Jsonb * *metrics,
+						 char **errstr)
 {
 	if (errstr)
 		*errstr = NULL;
@@ -646,11 +651,11 @@ ndb_gpu_lasso_pack_model(const struct LassoModel *model,
 	return active_backend->lasso_pack(model, model_data, metrics, errstr);
 }
 
-const ndb_gpu_backend *
+const		ndb_gpu_backend *
 ndb_gpu_select_backend(const char *name)
 {
-	const ndb_gpu_backend *chosen = NULL;
-	int i;
+	const		ndb_gpu_backend *chosen = NULL;
+	int			i;
 
 	if (registry.count == 0)
 	{
@@ -663,14 +668,15 @@ ndb_gpu_select_backend(const char *name)
 		if (!chosen)
 		{
 			elog(DEBUG1,
-				"neurondb: no suitable GPU backend available");
+				 "neurondb: no suitable GPU backend available");
 			return NULL;
 		}
-	} else
+	}
+	else
 	{
 		for (i = 0; i < registry.count; i++)
 		{
-			const ndb_gpu_backend *candidate = registry.backends[i];
+			const		ndb_gpu_backend *candidate = registry.backends[i];
 
 			if (pg_strcasecmp(candidate->name, name) != 0)
 				continue;
@@ -678,9 +684,9 @@ ndb_gpu_select_backend(const char *name)
 			if (!ndb_backend_is_available(candidate))
 			{
 				elog(DEBUG1,
-					"neurondb: GPU backend '%s' not "
-					"available",
-					name);
+					 "neurondb: GPU backend '%s' not "
+					 "available",
+					 name);
 				return NULL;
 			}
 
@@ -691,8 +697,8 @@ ndb_gpu_select_backend(const char *name)
 		if (chosen == NULL)
 		{
 			elog(DEBUG1,
-				"neurondb: GPU backend '%s' not found",
-				name);
+				 "neurondb: GPU backend '%s' not found",
+				 name);
 			return NULL;
 		}
 	}
@@ -708,24 +714,24 @@ ndb_gpu_select_backend(const char *name)
 void
 ndb_gpu_list_backends(void)
 {
-	int i;
+	int			i;
 
 	elog(LOG, "neurondb: GPU backends registered: %d", registry.count);
 
 	for (i = 0; i < registry.count; i++)
 	{
-		const ndb_gpu_backend *backend = registry.backends[i];
+		const		ndb_gpu_backend *backend = registry.backends[i];
 		const char *name = backend->name ? backend->name : "unknown";
 		const char *provider =
 			backend->provider ? backend->provider : "unknown";
-		bool available = ndb_backend_is_available(backend) != 0;
+		bool		available = ndb_backend_is_available(backend) != 0;
 
 		elog(LOG,
-			"  [%d] %s (%s) - %s",
-			i + 1,
-			name,
-			provider,
-			available ? "available" : "unavailable");
+			 "  [%d] %s (%s) - %s",
+			 i + 1,
+			 name,
+			 provider,
+			 available ? "available" : "unavailable");
 	}
 }
 
@@ -737,74 +743,88 @@ PG_FUNCTION_INFO_V1(neurondb_gpu_backends);
 Datum
 neurondb_gpu_backends(PG_FUNCTION_ARGS)
 {
-	ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
-	TupleDesc tupdesc;
-	int i;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	TupleDesc	tupdesc;
+	int			i;
 
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
-			(errmsg("neurondb_gpu_backends: invalid resultinfo")));
+				(errmsg("neurondb_gpu_backends: invalid resultinfo")));
 
 	if (rsinfo->expectedDesc != NULL)
 		tupdesc = rsinfo->expectedDesc;
 	else
 	{
 		tupdesc = CreateTemplateTupleDesc(5);
-		TupleDescInitEntry(tupdesc, (AttrNumber)1, "name", TEXTOID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "name", TEXTOID, -1, 0);
 		TupleDescInitEntry(tupdesc,
-			(AttrNumber)2,
-			"provider",
-			TEXTOID,
-			-1,
-			0);
+						   (AttrNumber) 2,
+						   "provider",
+						   TEXTOID,
+						   -1,
+						   0);
 		TupleDescInitEntry(tupdesc,
-			(AttrNumber)3,
-			"available",
-			BOOLOID,
-			-1,
-			0);
+						   (AttrNumber) 3,
+						   "available",
+						   BOOLOID,
+						   -1,
+						   0);
 		TupleDescInitEntry(tupdesc,
-			(AttrNumber)4,
-			"priority",
-			INT4OID,
-			-1,
-			0);
-		TupleDescInitEntry(tupdesc, (AttrNumber)5, "kind", TEXTOID, -1, 0);
+						   (AttrNumber) 4,
+						   "priority",
+						   INT4OID,
+						   -1,
+						   0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 5, "kind", TEXTOID, -1, 0);
 		BlessTupleDesc(tupdesc);
+		rsinfo->expectedDesc = tupdesc;
 	}
+	tupdesc = rsinfo->expectedDesc;
 
-	InitMaterializedSRF(fcinfo, 0);
+	/* Initialize materialized SRF */
+	{
+		MemoryContext per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
+		MemoryContext oldcontext = MemoryContextSwitchTo(per_query_ctx);
+		Tuplestorestate *tupstore = tuplestore_begin_heap(true, false, 1024);
+
+		rsinfo->returnMode = SFRM_Materialize;
+		rsinfo->setResult = tupstore;
+		rsinfo->setDesc = tupdesc;
+
+		MemoryContextSwitchTo(oldcontext);
+	}
 
 	for (i = 0; i < registry.count; i++)
 	{
-		const ndb_gpu_backend *backend = registry.backends[i];
-		Datum values[5];
-		bool nulls[5] = {false, false, false, false, false};
+		const		ndb_gpu_backend *backend = registry.backends[i];
+		Datum		values[5];
+		bool		nulls[5] = {false, false, false, false, false};
 		const char *name =
 			backend && backend->name ? backend->name : "unknown";
 		const char *provider = backend && backend->provider
 			? backend->provider
 			: "unknown";
-		bool available =
+		bool		available =
 			backend ? (ndb_backend_is_available(backend) != 0) : false;
-		int32 priority = backend ? ndb_backend_priority(backend->kind) : 0;
+		int32		priority = backend ? ndb_backend_priority(backend->kind) : 0;
 		const char *kind_str = "unknown";
+
 		if (backend)
 		{
 			switch (backend->kind)
 			{
-			case NDB_GPU_BACKEND_METAL:
-				kind_str = "metal";
-				break;
-			case NDB_GPU_BACKEND_CUDA:
-				kind_str = "cuda";
-				break;
-			case NDB_GPU_BACKEND_ROCM:
-				kind_str = "rocm";
-				break;
-			default:
-				kind_str = "none";
-				break;
+				case NDB_GPU_BACKEND_METAL:
+					kind_str = "metal";
+					break;
+				case NDB_GPU_BACKEND_CUDA:
+					kind_str = "cuda";
+					break;
+				case NDB_GPU_BACKEND_ROCM:
+					kind_str = "rocm";
+					break;
+				default:
+					kind_str = "none";
+					break;
 			}
 		}
 
@@ -815,10 +835,10 @@ neurondb_gpu_backends(PG_FUNCTION_ARGS)
 		values[4] = CStringGetTextDatum(kind_str);
 
 		tuplestore_putvalues(rsinfo->setResult,
-			rsinfo->setDesc ? rsinfo->setDesc : tupdesc,
-			values,
-			nulls);
+							 rsinfo->setDesc ? rsinfo->setDesc : tupdesc,
+							 values,
+							 nulls);
 	}
 
-	return (Datum)0;
+	return (Datum) 0;
 }

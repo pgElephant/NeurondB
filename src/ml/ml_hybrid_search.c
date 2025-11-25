@@ -43,11 +43,11 @@
  */
 typedef struct HybridScore
 {
-	int32 doc_id;
-	double lexical_score;
-	double semantic_score;
-	double hybrid_score;
-} HybridScore;
+	int32		doc_id;
+	double		lexical_score;
+	double		semantic_score;
+	double		hybrid_score;
+}			HybridScore;
 
 /*
  * Comparison for sorting (descending by hybrid score)
@@ -55,8 +55,8 @@ typedef struct HybridScore
 static int
 hybrid_score_cmp(const void *a, const void *b)
 {
-	const HybridScore *ha = (const HybridScore *)a;
-	const HybridScore *hb = (const HybridScore *)b;
+	const		HybridScore *ha = (const HybridScore *) a;
+	const		HybridScore *hb = (const HybridScore *) b;
 
 	if (ha->hybrid_score > hb->hybrid_score)
 		return -1;
@@ -116,23 +116,26 @@ PG_FUNCTION_INFO_V1(hybrid_search_fusion);
 Datum
 hybrid_search_fusion(PG_FUNCTION_ARGS)
 {
-	ArrayType *doc_ids_array;
-	ArrayType *semantic_scores_array;
-	ArrayType *lexical_scores_array;
-	double semantic_weight;
-	bool normalize;
-	int32 *doc_ids;
-	float8 *semantic_scores;
-	float8 *lexical_scores;
-	int num_docs;
+	ArrayType  *doc_ids_array;
+	ArrayType  *semantic_scores_array;
+	ArrayType  *lexical_scores_array;
+	double		semantic_weight;
+	bool		normalize;
+	int32	   *doc_ids;
+	float8	   *semantic_scores;
+	float8	   *lexical_scores;
+	int			num_docs;
 	HybridScore *scores;
-	double sem_min, sem_max, lex_min, lex_max;
-	int i;
-	ArrayType *result;
-	Datum *result_datums;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
+	double		sem_min,
+				sem_max,
+				lex_min,
+				lex_max;
+	int			i;
+	ArrayType  *result;
+	Datum	   *result_datums;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
 
 	/* Parse arguments */
 	doc_ids_array = PG_GETARG_ARRAYTYPE_P(0);
@@ -145,33 +148,33 @@ hybrid_search_fusion(PG_FUNCTION_ARGS)
 	if (ARR_NDIM(doc_ids_array) != 1 || ARR_NDIM(semantic_scores_array) != 1
 		|| ARR_NDIM(lexical_scores_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("All arrays must be 1-dimensional")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("All arrays must be 1-dimensional")));
 
 	num_docs = ARR_DIMS(doc_ids_array)[0];
 
 	if (ARR_DIMS(semantic_scores_array)[0] != num_docs
 		|| ARR_DIMS(lexical_scores_array)[0] != num_docs)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("All arrays must have same length")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("All arrays must have same length")));
 
 	if (semantic_weight < 0.0 || semantic_weight > 1.0)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("semantic_weight must be between 0 and "
-				       "1")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("semantic_weight must be between 0 and "
+						"1")));
 
-	doc_ids = (int32 *)ARR_DATA_PTR(doc_ids_array);
-	semantic_scores = (float8 *)ARR_DATA_PTR(semantic_scores_array);
-	lexical_scores = (float8 *)ARR_DATA_PTR(lexical_scores_array);
+	doc_ids = (int32 *) ARR_DATA_PTR(doc_ids_array);
+	semantic_scores = (float8 *) ARR_DATA_PTR(semantic_scores_array);
+	lexical_scores = (float8 *) ARR_DATA_PTR(lexical_scores_array);
 
-		elog(DEBUG1,
-			"neurondb: Hybrid search fusion (%d docs, weight=%.2f)",
-		num_docs,
-		semantic_weight);
+	elog(DEBUG1,
+		 "neurondb: Hybrid search fusion (%d docs, weight=%.2f)",
+		 num_docs,
+		 semantic_weight);
 
-	scores = (HybridScore *)palloc(sizeof(HybridScore) * num_docs);
+	scores = (HybridScore *) palloc(sizeof(HybridScore) * num_docs);
 
 	/* Initialize scores */
 	for (i = 0; i < num_docs; i++)
@@ -208,10 +211,10 @@ hybrid_search_fusion(PG_FUNCTION_ARGS)
 
 		/* Normalize to [0, 1] */
 		{
-			double sem_range = (sem_max - sem_min) < 1e-10
+			double		sem_range = (sem_max - sem_min) < 1e-10
 				? 1.0
 				: (sem_max - sem_min);
-			double lex_range = (lex_max - lex_min) < 1e-10
+			double		lex_range = (lex_max - lex_min) < 1e-10
 				? 1.0
 				: (lex_max - lex_min);
 
@@ -229,7 +232,7 @@ hybrid_search_fusion(PG_FUNCTION_ARGS)
 
 	/* Compute hybrid scores (weighted fusion) */
 	{
-		double lexical_weight = 1.0 - semantic_weight;
+		double		lexical_weight = 1.0 - semantic_weight;
 
 		for (i = 0; i < num_docs; i++)
 		{
@@ -243,13 +246,13 @@ hybrid_search_fusion(PG_FUNCTION_ARGS)
 	qsort(scores, num_docs, sizeof(HybridScore), hybrid_score_cmp);
 
 	/* Build result */
-	result_datums = (Datum *)palloc(sizeof(Datum) * num_docs);
+	result_datums = (Datum *) palloc(sizeof(Datum) * num_docs);
 	for (i = 0; i < num_docs; i++)
 		result_datums[i] = Int32GetDatum(scores[i].doc_id);
 
 	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
 	result = construct_array(
-		result_datums, num_docs, INT4OID, typlen, typbyval, typalign);
+							 result_datums, num_docs, INT4OID, typlen, typbyval, typalign);
 
 	NDB_SAFE_PFREE_AND_NULL(scores);
 	NDB_SAFE_PFREE_AND_NULL(result_datums);

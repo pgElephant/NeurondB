@@ -35,7 +35,7 @@
 #define DBSCAN_UNDEFINED		-2
 
 /* Forward declaration */
-static int dbscan_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int *n_clusters_out, int *dim_out, double *eps_out, int *min_pts_out);
+static int	dbscan_model_deserialize_from_bytea(const bytea * data, float ***centers_out, int *n_clusters_out, int *dim_out, double *eps_out, int *min_pts_out);
 
 typedef struct DBSCANState
 {
@@ -46,14 +46,14 @@ typedef struct DBSCANState
 	int			min_pts;
 	int		   *labels;
 	int			next_cluster;
-} DBSCANState;
+}			DBSCANState;
 
 /*
  * dbscan_region_query
  *	  Find neighbors within eps
  */
 static int *
-dbscan_region_query(const DBSCANState *state, int idx, int *neighbor_count)
+dbscan_region_query(const DBSCANState * state, int idx, int *neighbor_count)
 {
 	int		   *neighbors;
 	int			capacity;
@@ -89,11 +89,11 @@ dbscan_region_query(const DBSCANState *state, int idx, int *neighbor_count)
  *	  Expand cluster from seed point
  */
 static void
-dbscan_expand_cluster(DBSCANState *state,
-					 int point_idx,
-					 int *neighbors,
-					 int neighbor_count,
-					 int cluster_id)
+dbscan_expand_cluster(DBSCANState * state,
+					  int point_idx,
+					  int *neighbors,
+					  int neighbor_count,
+					  int cluster_id)
 {
 	int		   *seeds;
 	int			seed_count;
@@ -108,10 +108,10 @@ dbscan_expand_cluster(DBSCANState *state,
 
 	while (seed_idx < seed_count)
 	{
-		int		current;
-		int	   *current_neighbors;
-		int		current_neighbor_count;
-		int		j;
+		int			current;
+		int		   *current_neighbors;
+		int			current_neighbor_count;
+		int			j;
 
 		current = seeds[seed_idx];
 		seed_idx++;
@@ -133,7 +133,8 @@ dbscan_expand_cluster(DBSCANState *state,
 		{
 			for (j = 0; j < current_neighbor_count; j++)
 			{
-				int neighbor = current_neighbors[j];
+				int			neighbor = current_neighbors[j];
+
 				if (state->labels[neighbor] == DBSCAN_UNDEFINED)
 				{
 					seeds = (int *) repalloc(seeds, (seed_count + 1) * sizeof(int));
@@ -161,7 +162,7 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 	int			min_pts;
 	char	   *tbl_str;
 	char	   *col_str;
-	DBSCANState	state;
+	DBSCANState state;
 	int			i;
 	ArrayType  *out_array;
 	Datum	   *out_datums;
@@ -192,11 +193,11 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 	col_str = text_to_cstring(column_name);
 
 	elog(DEBUG1,
-	     "neurondb: DBSCAN clustering on %s.%s (eps=%.6f, min_pts=%d)",
-	     tbl_str, col_str, eps, min_pts);
+		 "neurondb: DBSCAN clustering on %s.%s (eps=%.6f, min_pts=%d)",
+		 tbl_str, col_str, eps, min_pts);
 
 	state.data = neurondb_fetch_vectors_from_table(
-		tbl_str, col_str, &state.nvec, &state.dim);
+												   tbl_str, col_str, &state.nvec, &state.dim);
 
 	if (state.nvec == 0)
 		ereport(ERROR,
@@ -206,10 +207,11 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 	state.eps = eps;
 	state.min_pts = min_pts;
 	state.next_cluster = 0;
-	
+
 	/* Check memory allocation size before palloc */
 	{
-		size_t labels_size = (size_t)state.nvec * sizeof(int);
+		size_t		labels_size = (size_t) state.nvec * sizeof(int);
+
 		if (labels_size > MaxAllocSize)
 		{
 			for (i = 0; i < state.nvec; i++)
@@ -218,13 +220,13 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 			NDB_SAFE_PFREE_AND_NULL(tbl_str);
 			NDB_SAFE_PFREE_AND_NULL(col_str);
 			ereport(ERROR,
-				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-				 errmsg("cluster_dbscan: labels array size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
-					labels_size, (size_t)MaxAllocSize),
-				 errhint("Reduce dataset size or use a different clustering algorithm")));
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("cluster_dbscan: labels array size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
+							labels_size, (size_t) MaxAllocSize),
+					 errhint("Reduce dataset size or use a different clustering algorithm")));
 		}
 	}
-	
+
 	state.labels = (int *) palloc0(state.nvec * sizeof(int));
 
 	for (i = 0; i < state.nvec; i++)
@@ -232,8 +234,8 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < state.nvec; i++)
 	{
-		int *neighbors;
-		int neighbor_count;
+		int		   *neighbors;
+		int			neighbor_count;
 
 		if (state.labels[i] != DBSCAN_UNDEFINED)
 			continue;
@@ -252,8 +254,8 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 	}
 
 	elog(DEBUG1,
-	     "neurondb: DBSCAN completed with %d clusters, %d points",
-	     state.next_cluster, state.nvec);
+		 "neurondb: DBSCAN completed with %d clusters, %d points",
+		 state.next_cluster, state.nvec);
 
 	out_datums = (Datum *) palloc(state.nvec * sizeof(Datum));
 	for (i = 0; i < state.nvec; i++)
@@ -283,30 +285,33 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 Datum
 predict_dbscan(PG_FUNCTION_ARGS)
 {
-	int32 model_id = PG_GETARG_INT32(0);
-	ArrayType *features_array = PG_GETARG_ARRAYTYPE_P(1);
+	int32		model_id = PG_GETARG_INT32(0);
+	ArrayType  *features_array = PG_GETARG_ARRAYTYPE_P(1);
 
-	float *features;
-	int cluster_id = DBSCAN_NOISE;
+	float	   *features;
+	int			cluster_id = DBSCAN_NOISE;
 
-	/* Suppress unused variable warnings - placeholders for future implementation */
+	/*
+	 * Suppress unused variable warnings - placeholders for future
+	 * implementation
+	 */
 	(void) model_id;
 	(void) features_array;
 
 	/* Extract features from array */
 	{
-		Oid elmtype = ARR_ELEMTYPE(features_array);
-		int16 typlen;
-		bool typbyval;
-		char typalign;
-		Datum *elems;
-		bool *nulls;
-		int n_elems;
-		int i;
+		Oid			elmtype = ARR_ELEMTYPE(features_array);
+		int16		typlen;
+		bool		typbyval;
+		char		typalign;
+		Datum	   *elems;
+		bool	   *nulls;
+		int			n_elems;
+		int			i;
 
 		get_typlenbyvalalign(elmtype, &typlen, &typbyval, &typalign);
 		deconstruct_array(features_array, elmtype, typlen, typbyval, typalign,
-						 &elems, &nulls, &n_elems);
+						  &elems, &nulls, &n_elems);
 
 		features = palloc(sizeof(float) * n_elems);
 
@@ -315,7 +320,11 @@ predict_dbscan(PG_FUNCTION_ARGS)
 	}
 
 	/* For DBSCAN prediction, we need to check if the point is dense enough */
-	/* This is a simplified implementation - would need to load trained clusters */
+
+	/*
+	 * This is a simplified implementation - would need to load trained
+	 * clusters
+	 */
 	/* For now, classify as noise (-1) as placeholder */
 	cluster_id = DBSCAN_NOISE;
 
@@ -333,41 +342,45 @@ predict_dbscan(PG_FUNCTION_ARGS)
 Datum
 evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 {
-	int32 model_id;
-	text *table_name;
-	text *feature_col;
-	char *tbl_str;
-	char *feat_str;
+	int32		model_id;
+	text	   *table_name;
+	text	   *feature_col;
+	char	   *tbl_str;
+	char	   *feat_str;
 	StringInfoData query;
-	int ret;
-	int n_points = 0;
+	int			ret;
+	int			n_points = 0;
 	StringInfoData jsonbuf;
-	Jsonb *result;
+	Jsonb	   *result;
 	MemoryContext oldcontext;
-	int n_clusters;
-	int n_noise;
-	double eps;
-	int min_pts;
+	int			n_clusters;
+	int			n_noise;
+	double		eps;
+	int			min_pts;
 
 	/* Validate arguments */
 	if (PG_NARGS() != 3)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_dbscan_by_model_id: 3 arguments are required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_dbscan_by_model_id: 3 arguments are required")));
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_dbscan_by_model_id: model_id is required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_dbscan_by_model_id: model_id is required")));
 
 	model_id = PG_GETARG_INT32(0);
-	/* Suppress unused variable warning - placeholder for future implementation */
+
+	/*
+	 * Suppress unused variable warning - placeholder for future
+	 * implementation
+	 */
 	(void) model_id;
 
 	if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_dbscan_by_model_id: table_name and feature_col are required")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_dbscan_by_model_id: table_name and feature_col are required")));
 
 	table_name = PG_GETARG_TEXT_PP(1);
 	feature_col = PG_GETARG_TEXT_PP(2);
@@ -379,29 +392,29 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
- if (ret != SPI_OK_CONNECT)
- 	{
- 		SPI_finish();
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: SPI_connect failed")));
- 	}
-		ereport(ERROR,
+		if (ret != SPI_OK_CONNECT)
+		{
+			SPI_finish();
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: SPI_connect failed")));
+		}
+	ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: evaluate_dbscan_by_model_id: SPI_connect failed")));
+			 errmsg("neurondb: evaluate_dbscan_by_model_id: SPI_connect failed")));
 
 	/* Build query */
 	initStringInfo(&query);
 	appendStringInfo(&query,
-		"SELECT %s FROM %s WHERE %s IS NOT NULL",
-		feat_str, tbl_str, feat_str);
+					 "SELECT %s FROM %s WHERE %s IS NOT NULL",
+					 feat_str, tbl_str, feat_str);
 
 	ret = ndb_spi_execute_safe(query.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: evaluate_dbscan_by_model_id: query failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_dbscan_by_model_id: query failed")));
 
 	n_points = SPI_processed;
 	if (n_points < 2)
@@ -410,20 +423,21 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 		NDB_SAFE_PFREE_AND_NULL(tbl_str);
 		NDB_SAFE_PFREE_AND_NULL(feat_str);
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("neurondb: evaluate_dbscan_by_model_id: need at least 2 points, got %d",
-					n_points)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: evaluate_dbscan_by_model_id: need at least 2 points, got %d",
+						n_points)));
 	}
 
 	/* Load model and compute actual metrics */
 	{
-		bytea *model_payload = NULL;
-		Jsonb *model_parameters = NULL;
-		float **centers = NULL;
-		float **data = NULL;
-		int model_dim = 0;
-		int i, c;
-		int *assignments = NULL;
+		bytea	   *model_payload = NULL;
+		Jsonb	   *model_parameters = NULL;
+		float	  **centers = NULL;
+		float	  **data = NULL;
+		int			model_dim = 0;
+		int			i,
+					c;
+		int		   *assignments = NULL;
 
 		/* Load model from catalog */
 		if (ml_catalog_fetch_model_payload(model_id, &model_payload, &model_parameters, NULL))
@@ -431,11 +445,11 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 			if (model_payload != NULL && VARSIZE(model_payload) > VARHDRSZ)
 			{
 				if (dbscan_model_deserialize_from_bytea(model_payload,
-					&centers,
-					&n_clusters,
-					&model_dim,
-					&eps,
-					&min_pts) == 0)
+														&centers,
+														&n_clusters,
+														&model_dim,
+														&eps,
+														&min_pts) == 0)
 				{
 					/* Fetch data points */
 					data = neurondb_fetch_vectors_from_table(tbl_str, feat_str, &n_points, &model_dim);
@@ -443,23 +457,27 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 					if (data != NULL && n_points > 0)
 					{
 						/* Allocate assignments */
-						assignments = (int *)palloc(sizeof(int) * n_points);
+						assignments = (int *) palloc(sizeof(int) * n_points);
 
-						/* Assign points to nearest cluster centers or mark as noise */
+						/*
+						 * Assign points to nearest cluster centers or mark as
+						 * noise
+						 */
 						n_noise = 0;
 						for (i = 0; i < n_points; i++)
 						{
-							double min_dist = DBL_MAX;
-							int best = -1;
+							double		min_dist = DBL_MAX;
+							int			best = -1;
 
 							for (c = 0; c < n_clusters; c++)
 							{
-								double dist = 0.0;
-								int d;
+								double		dist = 0.0;
+								int			d;
 
 								for (d = 0; d < model_dim; d++)
 								{
-									double diff = (double)data[i][d] - (double)centers[c][d];
+									double		diff = (double) data[i][d] - (double) centers[c][d];
+
 									dist += diff * diff;
 								}
 								dist = sqrt(dist);
@@ -470,7 +488,10 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 								}
 							}
 
-							/* If point is within eps of a cluster, assign it; otherwise mark as noise */
+							/*
+							 * If point is within eps of a cluster, assign it;
+							 * otherwise mark as noise
+							 */
 							if (best >= 0 && min_dist <= eps)
 							{
 								assignments[i] = best;
@@ -546,8 +567,8 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldcontext);
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
-		"{\"n_clusters\":%d,\"n_noise\":%d,\"noise_ratio\":%.6f,\"eps\":%.6f,\"min_pts\":%d,\"n_points\":%d}",
-		n_clusters, n_noise, (double)n_noise / n_points, eps, min_pts, n_points);
+					 "{\"n_clusters\":%d,\"n_noise\":%d,\"noise_ratio\":%.6f,\"eps\":%.6f,\"min_pts\":%d,\"n_points\":%d}",
+					 n_clusters, n_noise, (double) n_noise / n_points, eps, min_pts, n_points);
 
 	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
 	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
@@ -569,35 +590,36 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 
 typedef struct DBSCANGpuModelState
 {
-	bytea *model_blob;
-	Jsonb *metrics;
-	double eps;
-	int min_pts;
-	int n_clusters;
-	int dim;
-	int n_samples;
-} DBSCANGpuModelState;
+	bytea	   *model_blob;
+	Jsonb	   *metrics;
+	double		eps;
+	int			min_pts;
+	int			n_clusters;
+	int			dim;
+	int			n_samples;
+}			DBSCANGpuModelState;
 
 static bytea *
 dbscan_model_serialize_to_bytea(float **cluster_centers, int n_clusters, int dim, double eps, int min_pts)
 {
 	StringInfoData buf;
-	int i, j;
-	int total_size;
-	bytea *result;
+	int			i,
+				j;
+	int			total_size;
+	bytea	   *result;
 
 	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf, (char *)&n_clusters, sizeof(int));
-	appendBinaryStringInfo(&buf, (char *)&dim, sizeof(int));
-	appendBinaryStringInfo(&buf, (char *)&eps, sizeof(double));
-	appendBinaryStringInfo(&buf, (char *)&min_pts, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &n_clusters, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &dim, sizeof(int));
+	appendBinaryStringInfo(&buf, (char *) &eps, sizeof(double));
+	appendBinaryStringInfo(&buf, (char *) &min_pts, sizeof(int));
 
 	for (i = 0; i < n_clusters; i++)
 		for (j = 0; j < dim; j++)
-			appendBinaryStringInfo(&buf, (char *)&cluster_centers[i][j], sizeof(float));
+			appendBinaryStringInfo(&buf, (char *) &cluster_centers[i][j], sizeof(float));
 
 	total_size = VARHDRSZ + buf.len;
-	result = (bytea *)palloc(total_size);
+	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
@@ -606,12 +628,13 @@ dbscan_model_serialize_to_bytea(float **cluster_centers, int n_clusters, int dim
 }
 
 static int
-dbscan_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int *n_clusters_out, int *dim_out, double *eps_out, int *min_pts_out)
+dbscan_model_deserialize_from_bytea(const bytea * data, float ***centers_out, int *n_clusters_out, int *dim_out, double *eps_out, int *min_pts_out)
 {
 	const char *buf;
-	int offset = 0;
-	int i, j;
-	float **centers;
+	int			offset = 0;
+	int			i,
+				j;
+	float	  **centers;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 2 + sizeof(double) + sizeof(int))
 		return -1;
@@ -629,10 +652,10 @@ dbscan_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int
 	if (*n_clusters_out < 0 || *n_clusters_out > 10000 || *dim_out <= 0 || *dim_out > 100000)
 		return -1;
 
-	centers = (float **)palloc(sizeof(float *) * *n_clusters_out);
+	centers = (float **) palloc(sizeof(float *) * *n_clusters_out);
 	for (i = 0; i < *n_clusters_out; i++)
 	{
-		centers[i] = (float *)palloc(sizeof(float) * *dim_out);
+		centers[i] = (float *) palloc(sizeof(float) * *dim_out);
 		for (j = 0; j < *dim_out; j++)
 		{
 			memcpy(&centers[i][j], buf + offset, sizeof(float));
@@ -645,26 +668,28 @@ dbscan_model_deserialize_from_bytea(const bytea *data, float ***centers_out, int
 }
 
 static bool
-dbscan_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
+dbscan_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 {
 	DBSCANGpuModelState *state;
-	float **data = NULL;
-	int *labels = NULL;
-	float **cluster_centers = NULL;
-	int *cluster_sizes = NULL;
-	double eps = 0.5;
-	int min_pts = 5;
-	int nvec = 0;
-	int dim = 0;
-	int i, c, d;
-	int n_clusters = 0;
-	bytea *model_data = NULL;
-	Jsonb *metrics = NULL;
+	float	  **data = NULL;
+	int		   *labels = NULL;
+	float	  **cluster_centers = NULL;
+	int		   *cluster_sizes = NULL;
+	double		eps = 0.5;
+	int			min_pts = 5;
+	int			nvec = 0;
+	int			dim = 0;
+	int			i,
+				c,
+				d;
+	int			n_clusters = 0;
+	bytea	   *model_data = NULL;
+	Jsonb	   *metrics = NULL;
 	StringInfoData metrics_json;
 	DBSCANState dbscan_state;
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -678,19 +703,20 @@ dbscan_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	/* Extract hyperparameters */
 	if (spec->hyperparameters != NULL)
 	{
-		it = JsonbIteratorInit((JsonbContainer *)&spec->hyperparameters->root);
+		it = JsonbIteratorInit((JsonbContainer *) & spec->hyperparameters->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "eps") == 0 && v.type == jbvNumeric)
 					eps = DatumGetFloat8(DirectFunctionCall1(numeric_float8,
-						NumericGetDatum(v.val.numeric)));
+															 NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "min_pts") == 0 && v.type == jbvNumeric)
 					min_pts = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																NumericGetDatum(v.val.numeric)));
 				NDB_SAFE_PFREE_AND_NULL(key);
 			}
 		}
@@ -713,10 +739,10 @@ dbscan_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	nvec = spec->sample_count;
 	dim = spec->feature_dim;
 
-	data = (float **)palloc(sizeof(float *) * nvec);
+	data = (float **) palloc(sizeof(float *) * nvec);
 	for (i = 0; i < nvec; i++)
 	{
-		data[i] = (float *)palloc(sizeof(float) * dim);
+		data[i] = (float *) palloc(sizeof(float) * dim);
 		memcpy(data[i], &spec->feature_matrix[i * dim], sizeof(float) * dim);
 	}
 
@@ -727,15 +753,15 @@ dbscan_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	dbscan_state.eps = eps;
 	dbscan_state.min_pts = min_pts;
 	dbscan_state.next_cluster = 0;
-	labels = (int *)palloc0(nvec * sizeof(int));
+	labels = (int *) palloc0(nvec * sizeof(int));
 
 	for (i = 0; i < nvec; i++)
 		labels[i] = DBSCAN_UNDEFINED;
 
 	for (i = 0; i < nvec; i++)
 	{
-		int *neighbors;
-		int neighbor_count;
+		int		   *neighbors;
+		int			neighbor_count;
 
 		if (labels[i] != DBSCAN_UNDEFINED)
 			continue;
@@ -758,12 +784,12 @@ dbscan_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	/* Compute cluster centroids */
 	if (n_clusters > 0)
 	{
-		cluster_centers = (float **)palloc(sizeof(float *) * n_clusters);
-		cluster_sizes = (int *)palloc0(sizeof(int) * n_clusters);
+		cluster_centers = (float **) palloc(sizeof(float *) * n_clusters);
+		cluster_sizes = (int *) palloc0(sizeof(int) * n_clusters);
 
 		for (c = 0; c < n_clusters; c++)
 		{
-			cluster_centers[c] = (float *)palloc0(sizeof(float) * dim);
+			cluster_centers[c] = (float *) palloc0(sizeof(float) * dim);
 		}
 
 		for (i = 0; i < nvec; i++)
@@ -786,11 +812,12 @@ dbscan_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 		}
 
 		NDB_SAFE_PFREE_AND_NULL(cluster_sizes);
-	} else
+	}
+	else
 	{
 		/* No clusters found, create empty model */
-		cluster_centers = (float **)palloc(sizeof(float *));
-		cluster_centers[0] = (float *)palloc0(sizeof(float) * dim);
+		cluster_centers = (float **) palloc(sizeof(float *));
+		cluster_centers[0] = (float *) palloc0(sizeof(float) * dim);
 		n_clusters = 0;
 	}
 
@@ -800,13 +827,13 @@ dbscan_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	/* Build metrics */
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json,
-		"{\"storage\":\"cpu\",\"n_clusters\":%d,\"eps\":%.6f,\"min_pts\":%d,\"dim\":%d,\"n_samples\":%d}",
-		n_clusters, eps, min_pts, dim, nvec);
+					 "{\"storage\":\"cpu\",\"n_clusters\":%d,\"eps\":%.6f,\"min_pts\":%d,\"dim\":%d,\"n_samples\":%d}",
+					 n_clusters, eps, min_pts, dim, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(metrics_json.data)));
+												 CStringGetDatum(metrics_json.data)));
 	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
 
-	state = (DBSCANGpuModelState *)palloc0(sizeof(DBSCANGpuModelState));
+	state = (DBSCANGpuModelState *) palloc0(sizeof(DBSCANGpuModelState));
 	state->model_blob = model_data;
 	state->metrics = metrics;
 	state->eps = eps;
@@ -835,23 +862,23 @@ dbscan_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 }
 
 static bool
-dbscan_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
-	float *output, int output_dim, char **errstr)
+dbscan_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
+				   float *output, int output_dim, char **errstr)
 {
-	const DBSCANGpuModelState *state;
-	float **centers = NULL;
-	int n_clusters = 0;
-	int dim = 0;
-	double eps = 0.0;
-	int min_pts = 0;
-	int c;
-	double min_dist = DBL_MAX;
-	int best_cluster = DBSCAN_NOISE;
+	const		DBSCANGpuModelState *state;
+	float	  **centers = NULL;
+	int			n_clusters = 0;
+	int			dim = 0;
+	double		eps = 0.0;
+	int			min_pts = 0;
+	int			c;
+	double		min_dist = DBL_MAX;
+	int			best_cluster = DBSCAN_NOISE;
 
 	if (errstr != NULL)
 		*errstr = NULL;
 	if (output != NULL && output_dim > 0)
-		output[0] = (float)DBSCAN_NOISE;
+		output[0] = (float) DBSCAN_NOISE;
 	if (model == NULL || input == NULL || output == NULL)
 	{
 		if (errstr != NULL)
@@ -871,7 +898,7 @@ dbscan_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 		return false;
 	}
 
-	state = (const DBSCANGpuModelState *)model->backend_state;
+	state = (const DBSCANGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 	{
 		if (errstr != NULL)
@@ -880,7 +907,7 @@ dbscan_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 	}
 
 	if (dbscan_model_deserialize_from_bytea(state->model_blob,
-		&centers, &n_clusters, &dim, &eps, &min_pts) != 0)
+											&centers, &n_clusters, &dim, &eps, &min_pts) != 0)
 	{
 		if (errstr != NULL)
 			*errstr = pstrdup("dbscan_gpu_predict: failed to deserialize");
@@ -900,7 +927,8 @@ dbscan_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 	/* Find nearest cluster centroid */
 	for (c = 0; c < n_clusters; c++)
 	{
-		double dist = sqrt(neurondb_l2_distance_squared(input, centers[c], dim));
+		double		dist = sqrt(neurondb_l2_distance_squared(input, centers[c], dim));
+
 		if (dist < min_dist)
 		{
 			min_dist = dist;
@@ -912,7 +940,7 @@ dbscan_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 	if (min_dist > eps)
 		best_cluster = DBSCAN_NOISE;
 
-	output[0] = (float)best_cluster;
+	output[0] = (float) best_cluster;
 
 	for (c = 0; c < n_clusters; c++)
 		NDB_SAFE_PFREE_AND_NULL(centers[c]);
@@ -922,11 +950,11 @@ dbscan_gpu_predict(const MLGpuModel *model, const float *input, int input_dim,
 }
 
 static bool
-dbscan_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
-	MLGpuMetrics *out, char **errstr)
+dbscan_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
+					MLGpuMetrics * out, char **errstr)
 {
-	const DBSCANGpuModelState *state;
-	Jsonb *metrics_json;
+	const		DBSCANGpuModelState *state;
+	Jsonb	   *metrics_json;
 	StringInfoData buf;
 
 	if (errstr != NULL)
@@ -940,20 +968,20 @@ dbscan_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 		return false;
 	}
 
-	state = (const DBSCANGpuModelState *)model->backend_state;
+	state = (const DBSCANGpuModelState *) model->backend_state;
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-		"{\"algorithm\":\"dbscan\",\"storage\":\"cpu\","
-		"\"n_clusters\":%d,\"eps\":%.6f,\"min_pts\":%d,\"dim\":%d,\"n_samples\":%d}",
-		state->n_clusters > 0 ? state->n_clusters : 0,
-		state->eps > 0.0 ? state->eps : 0.5,
-		state->min_pts > 0 ? state->min_pts : 5,
-		state->dim > 0 ? state->dim : 0,
-		state->n_samples > 0 ? state->n_samples : 0);
+					 "{\"algorithm\":\"dbscan\",\"storage\":\"cpu\","
+					 "\"n_clusters\":%d,\"eps\":%.6f,\"min_pts\":%d,\"dim\":%d,\"n_samples\":%d}",
+					 state->n_clusters > 0 ? state->n_clusters : 0,
+					 state->eps > 0.0 ? state->eps : 0.5,
+					 state->min_pts > 0 ? state->min_pts : 5,
+					 state->dim > 0 ? state->dim : 0,
+					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(buf.data)));
+													  CStringGetDatum(buf.data)));
 	NDB_SAFE_PFREE_AND_NULL(buf.data);
 
 	if (out != NULL)
@@ -963,12 +991,12 @@ dbscan_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 }
 
 static bool
-dbscan_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
-	Jsonb **metadata_out, char **errstr)
+dbscan_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
+					 Jsonb * *metadata_out, char **errstr)
 {
-	const DBSCANGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
+	const		DBSCANGpuModelState *state;
+	bytea	   *payload_copy;
+	int			payload_size;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -983,7 +1011,7 @@ dbscan_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		return false;
 	}
 
-	state = (const DBSCANGpuModelState *)model->backend_state;
+	state = (const DBSCANGpuModelState *) model->backend_state;
 	if (state->model_blob == NULL)
 	{
 		if (errstr != NULL)
@@ -992,7 +1020,7 @@ dbscan_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 	}
 
 	payload_size = VARSIZE(state->model_blob);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, state->model_blob, payload_size);
 
 	if (payload_out != NULL)
@@ -1001,27 +1029,27 @@ dbscan_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 		NDB_SAFE_PFREE_AND_NULL(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
-		*metadata_out = (Jsonb *)PG_DETOAST_DATUM_COPY(
-			PointerGetDatum(state->metrics));
+		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
+														PointerGetDatum(state->metrics));
 
 	return true;
 }
 
 static bool
-dbscan_gpu_deserialize(MLGpuModel *model, const bytea *payload,
-	const Jsonb *metadata, char **errstr)
+dbscan_gpu_deserialize(MLGpuModel * model, const bytea * payload,
+					   const Jsonb * metadata, char **errstr)
 {
 	DBSCANGpuModelState *state;
-	bytea *payload_copy;
-	int payload_size;
-	float **centers = NULL;
-	int n_clusters = 0;
-	int dim = 0;
-	double eps = 0.0;
-	int min_pts = 0;
+	bytea	   *payload_copy;
+	int			payload_size;
+	float	  **centers = NULL;
+	int			n_clusters = 0;
+	int			dim = 0;
+	double		eps = 0.0;
+	int			min_pts = 0;
 	JsonbIterator *it;
-	JsonbValue v;
-	int r;
+	JsonbValue	v;
+	int			r;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1033,11 +1061,11 @@ dbscan_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 	}
 
 	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *)palloc(payload_size);
+	payload_copy = (bytea *) palloc(payload_size);
 	memcpy(payload_copy, payload, payload_size);
 
 	if (dbscan_model_deserialize_from_bytea(payload_copy,
-		&centers, &n_clusters, &dim, &eps, &min_pts) != 0)
+											&centers, &n_clusters, &dim, &eps, &min_pts) != 0)
 	{
 		NDB_SAFE_PFREE_AND_NULL(payload_copy);
 		if (errstr != NULL)
@@ -1049,7 +1077,7 @@ dbscan_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 		NDB_SAFE_PFREE_AND_NULL(centers[c]);
 	NDB_SAFE_PFREE_AND_NULL(centers);
 
-	state = (DBSCANGpuModelState *)palloc0(sizeof(DBSCANGpuModelState));
+	state = (DBSCANGpuModelState *) palloc0(sizeof(DBSCANGpuModelState));
 	state->model_blob = payload_copy;
 	state->eps = eps;
 	state->min_pts = min_pts;
@@ -1059,25 +1087,28 @@ dbscan_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 
 	if (metadata != NULL)
 	{
-		int metadata_size = VARSIZE(metadata);
-		Jsonb *metadata_copy = (Jsonb *)palloc(metadata_size);
+		int			metadata_size = VARSIZE(metadata);
+		Jsonb	   *metadata_copy = (Jsonb *) palloc(metadata_size);
+
 		memcpy(metadata_copy, metadata, metadata_size);
 		state->metrics = metadata_copy;
 
-		it = JsonbIteratorInit((JsonbContainer *)&metadata_copy->root);
+		it = JsonbIteratorInit((JsonbContainer *) & metadata_copy->root);
 		while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
 		{
 			if (r == WJB_KEY)
 			{
-				char *key = pnstrdup(v.val.string.val, v.val.string.len);
+				char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
 				r = JsonbIteratorNext(&it, &v, false);
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
-						NumericGetDatum(v.val.numeric)));
+																		 NumericGetDatum(v.val.numeric)));
 				NDB_SAFE_PFREE_AND_NULL(key);
 			}
 		}
-	} else
+	}
+	else
 	{
 		state->metrics = NULL;
 	}
@@ -1093,7 +1124,7 @@ dbscan_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 }
 
 static void
-dbscan_gpu_destroy(MLGpuModel *model)
+dbscan_gpu_destroy(MLGpuModel * model)
 {
 	DBSCANGpuModelState *state;
 
@@ -1102,7 +1133,7 @@ dbscan_gpu_destroy(MLGpuModel *model)
 
 	if (model->backend_state != NULL)
 	{
-		state = (DBSCANGpuModelState *)model->backend_state;
+		state = (DBSCANGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
 			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
 		if (state->metrics != NULL)
@@ -1132,6 +1163,7 @@ void
 neurondb_gpu_register_dbscan_model(void)
 {
 	static bool registered = false;
+
 	if (registered)
 		return;
 	ndb_gpu_register_model_ops(&dbscan_gpu_model_ops);

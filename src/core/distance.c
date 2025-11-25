@@ -29,41 +29,45 @@ check_dimensions(const Vector *a, const Vector *b)
 {
 	if (a->dim != b->dim)
 		ereport(ERROR,
-			(errcode(ERRCODE_DATA_EXCEPTION),
-				errmsg("vector dimensions must match: %d vs %d",
-					a->dim,
-					b->dim)));
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("vector dimensions must match: %d vs %d",
+						a->dim,
+						b->dim)));
 }
 
 /* L2 (Euclidean) distance, uses Kahan summation for numerical stability */
 float4
 l2_distance(Vector *a, Vector *b)
 {
-	double sum = 0.0, c = 0.0;
-	int i;
+	double		sum = 0.0,
+				c = 0.0;
+	int			i;
 
 	check_dimensions(a, b);
 
 	for (i = 0; i < a->dim; i++)
 	{
-		double diff = (double)a->data[i] - (double)b->data[i];
-		double y = (diff * diff) - c;
-		double t = sum + y;
+		double		diff = (double) a->data[i] - (double) b->data[i];
+		double		y = (diff * diff) - c;
+		double		t = sum + y;
+
 		c = (t - sum) - y;
 		sum = t;
 	}
 
-	return (float4)sqrt(sum);
+	return (float4) sqrt(sum);
 }
 
 PG_FUNCTION_INFO_V1(vector_l2_distance);
 Datum
 vector_l2_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(a);
-	Vector *b = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(b);
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+
+	NDB_CHECK_VECTOR_VALID(a);
+	Vector	   *b = PG_GETARG_VECTOR_P(1);
+
+	NDB_CHECK_VECTOR_VALID(b);
 	PG_RETURN_FLOAT4(l2_distance(a, b));
 }
 
@@ -71,25 +75,27 @@ vector_l2_distance(PG_FUNCTION_ARGS)
 float4
 inner_product_distance(Vector *a, Vector *b)
 {
-	double sum = 0.0;
-	int i;
+	double		sum = 0.0;
+	int			i;
 
 	check_dimensions(a, b);
 
 	for (i = 0; i < a->dim; i++)
-		sum += (double)a->data[i] * (double)b->data[i];
+		sum += (double) a->data[i] * (double) b->data[i];
 
-	return (float4)(-sum);
+	return (float4) (-sum);
 }
 
 PG_FUNCTION_INFO_V1(vector_inner_product);
 Datum
 vector_inner_product(PG_FUNCTION_ARGS)
 {
-	Vector *a = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(a);
-	Vector *b = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(b);
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+
+	NDB_CHECK_VECTOR_VALID(a);
+	Vector	   *b = PG_GETARG_VECTOR_P(1);
+
+	NDB_CHECK_VECTOR_VALID(b);
 	PG_RETURN_FLOAT4(inner_product_distance(a, b));
 }
 
@@ -97,16 +103,19 @@ vector_inner_product(PG_FUNCTION_ARGS)
 float4
 cosine_distance(Vector *a, Vector *b)
 {
-	double dot = 0.0, norm_a = 0.0, norm_b = 0.0;
-	int i;
+	double		dot = 0.0,
+				norm_a = 0.0,
+				norm_b = 0.0;
+	int			i;
 
 	check_dimensions(a, b);
 
 	/* Compute dot(a, b), ||a||^2, ||b||^2 */
 	for (i = 0; i < a->dim; i++)
 	{
-		double va = (double)a->data[i];
-		double vb = (double)b->data[i];
+		double		va = (double) a->data[i];
+		double		vb = (double) b->data[i];
+
 		dot += va * vb;
 		norm_a += va * va;
 		norm_b += vb * vb;
@@ -116,17 +125,19 @@ cosine_distance(Vector *a, Vector *b)
 	if (norm_a == 0.0 || norm_b == 0.0)
 		return 1.0;
 
-	return (float4)(1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b))));
+	return (float4) (1.0 - (dot / (sqrt(norm_a) * sqrt(norm_b))));
 }
 
 PG_FUNCTION_INFO_V1(vector_cosine_distance);
 Datum
 vector_cosine_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(a);
-	Vector *b = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(b);
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+
+	NDB_CHECK_VECTOR_VALID(a);
+	Vector	   *b = PG_GETARG_VECTOR_P(1);
+
+	NDB_CHECK_VECTOR_VALID(b);
 	PG_RETURN_FLOAT4(cosine_distance(a, b));
 }
 
@@ -134,25 +145,27 @@ vector_cosine_distance(PG_FUNCTION_ARGS)
 float4
 l1_distance(Vector *a, Vector *b)
 {
-	double sum = 0.0;
-	int i;
+	double		sum = 0.0;
+	int			i;
 
 	check_dimensions(a, b);
 
 	for (i = 0; i < a->dim; i++)
-		sum += fabs((double)a->data[i] - (double)b->data[i]);
+		sum += fabs((double) a->data[i] - (double) b->data[i]);
 
-	return (float4)sum;
+	return (float4) sum;
 }
 
 PG_FUNCTION_INFO_V1(vector_l1_distance);
 Datum
 vector_l1_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(a);
-	Vector *b = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(b);
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+
+	NDB_CHECK_VECTOR_VALID(a);
+	Vector	   *b = PG_GETARG_VECTOR_P(1);
+
+	NDB_CHECK_VECTOR_VALID(b);
 	PG_RETURN_FLOAT4(l1_distance(a, b));
 }
 
@@ -161,17 +174,23 @@ PG_FUNCTION_INFO_V1(vector_hamming_distance);
 Datum
 vector_hamming_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(a);
-	Vector *b = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(b);
-	int count = 0, i;
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+
+	NDB_CHECK_VECTOR_VALID(a);
+	Vector	   *b = PG_GETARG_VECTOR_P(1);
+
+	NDB_CHECK_VECTOR_VALID(b);
+	int			count = 0,
+				i;
 
 	check_dimensions(a, b);
 
 	for (i = 0; i < a->dim; i++)
 	{
-		/* Using "!=" direct numerical for float equality; optionally consider tolerances */
+		/*
+		 * Using "!=" direct numerical for float equality; optionally consider
+		 * tolerances
+		 */
 		if (a->data[i] != b->data[i])
 			count++;
 	}
@@ -184,18 +203,21 @@ PG_FUNCTION_INFO_V1(vector_chebyshev_distance);
 Datum
 vector_chebyshev_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(a);
-	Vector *b = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(b);
-	double max_diff = 0.0;
-	int i;
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+
+	NDB_CHECK_VECTOR_VALID(a);
+	Vector	   *b = PG_GETARG_VECTOR_P(1);
+
+	NDB_CHECK_VECTOR_VALID(b);
+	double		max_diff = 0.0;
+	int			i;
 
 	check_dimensions(a, b);
 
 	for (i = 0; i < a->dim; i++)
 	{
-		double diff = fabs((double)a->data[i] - (double)b->data[i]);
+		double		diff = fabs((double) a->data[i] - (double) b->data[i]);
+
 		if (diff > max_diff)
 			max_diff = diff;
 	}
@@ -208,58 +230,69 @@ PG_FUNCTION_INFO_V1(vector_minkowski_distance);
 Datum
 vector_minkowski_distance(PG_FUNCTION_ARGS)
 {
-	Vector *a = PG_GETARG_VECTOR_P(0);
- NDB_CHECK_VECTOR_VALID(a);
-	Vector *b = PG_GETARG_VECTOR_P(1);
- NDB_CHECK_VECTOR_VALID(b);
-	float8 p = PG_GETARG_FLOAT8(2);
-	double sum = 0.0;
-	int i;
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+
+	NDB_CHECK_VECTOR_VALID(a);
+	Vector	   *b = PG_GETARG_VECTOR_P(1);
+
+	NDB_CHECK_VECTOR_VALID(b);
+	float8		p = PG_GETARG_FLOAT8(2);
+	double		sum = 0.0;
+	int			i;
 
 	check_dimensions(a, b);
 
 	if (p <= 0 || isnan(p) || isinf(p))
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("p must be positive and finite")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("p must be positive and finite")));
 
 	if (p == 1.0)
 	{
 		/* Shortcut: L1 distance (Manhattan) */
 		for (i = 0; i < a->dim; i++)
-			sum += fabs((double)a->data[i] - (double)b->data[i]);
+			sum += fabs((double) a->data[i] - (double) b->data[i]);
 		PG_RETURN_FLOAT8(sum);
-	} else if (p == 2.0)
+	}
+	else if (p == 2.0)
 	{
 		/* Shortcut: L2 distance */
-		double partial = 0.0, c = 0.0;
+		double		partial = 0.0,
+					c = 0.0;
+
 		for (i = 0; i < a->dim; i++)
 		{
-			double diff = (double)a->data[i] - (double)b->data[i];
-			double y = (diff * diff) - c;
-			double t = partial + y;
+			double		diff = (double) a->data[i] - (double) b->data[i];
+			double		y = (diff * diff) - c;
+			double		t = partial + y;
+
 			c = (t - partial) - y;
 			partial = t;
 		}
 		PG_RETURN_FLOAT8(sqrt(partial));
-	} else if (p == INFINITY || p > 1e10) /* Large p treated as Chebyshev */
+	}
+	else if (p == INFINITY || p > 1e10) /* Large p treated as Chebyshev */
 	{
-		double max_diff = 0.0;
+		double		max_diff = 0.0;
+
 		for (i = 0; i < a->dim; i++)
 		{
-			double this_diff =
-				fabs((double)a->data[i] - (double)b->data[i]);
+			double		this_diff =
+				fabs((double) a->data[i] - (double) b->data[i]);
+
 			if (this_diff > max_diff)
 				max_diff = this_diff;
 		}
 		PG_RETURN_FLOAT8(max_diff);
-	} else
+	}
+	else
 	{
 		/* General Minkowski sum */
 		for (i = 0; i < a->dim; i++)
 		{
-			double diff =
-				fabs((double)a->data[i] - (double)b->data[i]);
+			double		diff =
+				fabs((double) a->data[i] - (double) b->data[i]);
+
 			sum += pow(diff, p);
 		}
 		PG_RETURN_FLOAT8(pow(sum, 1.0 / p));

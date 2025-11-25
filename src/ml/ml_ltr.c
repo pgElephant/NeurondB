@@ -12,7 +12,7 @@
  * Features can include:
  *   - Semantic similarity score
  *   - BM25 score
- *   - Recency score  
+ *   - Recency score
  *   - Click-through rate
  *   - Document quality metrics
  *   - Custom business logic scores
@@ -49,9 +49,9 @@
  */
 typedef struct DocLTRScore
 {
-	int32 doc_id;
-	double ltr_score;
-} DocLTRScore;
+	int32		doc_id;
+	double		ltr_score;
+}			DocLTRScore;
 
 /*
  * Comparison for sorting (descending)
@@ -59,8 +59,8 @@ typedef struct DocLTRScore
 static int
 doc_ltr_score_cmp(const void *a, const void *b)
 {
-	const DocLTRScore *da = (const DocLTRScore *)a;
-	const DocLTRScore *db = (const DocLTRScore *)b;
+	const		DocLTRScore *da = (const DocLTRScore *) a;
+	const		DocLTRScore *db = (const DocLTRScore *) b;
 
 	if (da->ltr_score > db->ltr_score)
 		return -1;
@@ -116,26 +116,27 @@ PG_FUNCTION_INFO_V1(ltr_rerank_pointwise);
 Datum
 ltr_rerank_pointwise(PG_FUNCTION_ARGS)
 {
-	ArrayType *doc_ids_array;
-	ArrayType *feature_matrix_array;
-	ArrayType *weights_array;
-	double bias;
-	int32 *doc_ids;
-	float8 *feature_matrix;
-	float8 *weights;
-	int num_docs;
-	int num_features;
+	ArrayType  *doc_ids_array;
+	ArrayType  *feature_matrix_array;
+	ArrayType  *weights_array;
+	double		bias;
+	int32	   *doc_ids;
+	float8	   *feature_matrix;
+	float8	   *weights;
+	int			num_docs;
+	int			num_features;
 	DocLTRScore *doc_scores;
-	int i, f;
+	int			i,
+				f;
 #if defined(NEURONDB_HAS_AVX2) || defined(NEURONDB_HAS_NEON)
-	float *features_f;
-	float *weights_f;
+	float	   *features_f;
+	float	   *weights_f;
 #endif
-	ArrayType *result;
-	Datum *result_datums;
-	int16 typlen;
-	bool typbyval;
-	char typalign;
+	ArrayType  *result;
+	Datum	   *result_datums;
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
 
 	/* Parse arguments */
 	doc_ids_array = PG_GETARG_ARRAYTYPE_P(0);
@@ -146,70 +147,70 @@ ltr_rerank_pointwise(PG_FUNCTION_ARGS)
 	/* Validate arrays */
 	if (ARR_NDIM(doc_ids_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("doc_ids must be 1-dimensional")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("doc_ids must be 1-dimensional")));
 
 	if (ARR_NDIM(feature_matrix_array) != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("feature_matrix must be "
-				       "2-dimensional")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("feature_matrix must be "
+						"2-dimensional")));
 
 	if (ARR_NDIM(weights_array) != 1)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("weights must be 1-dimensional")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("weights must be 1-dimensional")));
 
 	num_docs = ARR_DIMS(doc_ids_array)[0];
 
 	if (ARR_DIMS(feature_matrix_array)[0] != num_docs)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("feature_matrix must have %d rows to match doc_ids",
-					num_docs)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("feature_matrix must have %d rows to match doc_ids",
+						num_docs)));
 
 	num_features = ARR_DIMS(feature_matrix_array)[1];
 
 	if (ARR_DIMS(weights_array)[0] != num_features)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("weights must have %d elements to match features",
-					num_features)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("weights must have %d elements to match features",
+						num_features)));
 
-	doc_ids = (int32 *)ARR_DATA_PTR(doc_ids_array);
-	feature_matrix = (float8 *)ARR_DATA_PTR(feature_matrix_array);
-	weights = (float8 *)ARR_DATA_PTR(weights_array);
+	doc_ids = (int32 *) ARR_DATA_PTR(doc_ids_array);
+	feature_matrix = (float8 *) ARR_DATA_PTR(feature_matrix_array);
+	weights = (float8 *) ARR_DATA_PTR(weights_array);
 
-		elog(DEBUG1,
-			"neurondb: LTR reranking %d docs with %d features",
-		num_docs,
-		num_features);
+	elog(DEBUG1,
+		 "neurondb: LTR reranking %d docs with %d features",
+		 num_docs,
+		 num_features);
 
 	/* Compute LTR scores using SIMD-optimized dot product */
-	doc_scores = (DocLTRScore *)palloc(sizeof(DocLTRScore) * num_docs);
+	doc_scores = (DocLTRScore *) palloc(sizeof(DocLTRScore) * num_docs);
 
 #if defined(NEURONDB_HAS_AVX2) || defined(NEURONDB_HAS_NEON)
-	features_f = (float *)palloc(sizeof(float) * num_features);
-	weights_f = (float *)palloc(sizeof(float) * num_features);
+	features_f = (float *) palloc(sizeof(float) * num_features);
+	weights_f = (float *) palloc(sizeof(float) * num_features);
 
 	/* Convert weights once */
 	for (f = 0; f < num_features; f++)
-		weights_f[f] = (float)weights[f];
+		weights_f[f] = (float) weights[f];
 #endif
 
 	for (i = 0; i < num_docs; i++)
 	{
-		double score = bias;
+		double		score = bias;
 
 /* Use SIMD dot product for feature · weight */
 #if defined(NEURONDB_HAS_AVX2) || defined(NEURONDB_HAS_NEON)
 		/* Convert features to floats for SIMD */
 		for (f = 0; f < num_features; f++)
 			features_f[f] =
-				(float)feature_matrix[i * num_features + f];
+				(float) feature_matrix[i * num_features + f];
 
 		score += neurondb_dot_product(
-			features_f, weights_f, num_features);
+									  features_f, weights_f, num_features);
 #else
 		/* Scalar fallback with double accumulator */
 		for (f = 0; f < num_features; f++)
@@ -230,13 +231,13 @@ ltr_rerank_pointwise(PG_FUNCTION_ARGS)
 	qsort(doc_scores, num_docs, sizeof(DocLTRScore), doc_ltr_score_cmp);
 
 	/* Build result array */
-	result_datums = (Datum *)palloc(sizeof(Datum) * num_docs);
+	result_datums = (Datum *) palloc(sizeof(Datum) * num_docs);
 	for (i = 0; i < num_docs; i++)
 		result_datums[i] = Int32GetDatum(doc_scores[i].doc_id);
 
 	get_typlenbyvalalign(INT4OID, &typlen, &typbyval, &typalign);
 	result = construct_array(
-		result_datums, num_docs, INT4OID, typlen, typbyval, typalign);
+							 result_datums, num_docs, INT4OID, typlen, typbyval, typalign);
 
 	/* Cleanup */
 	NDB_SAFE_PFREE_AND_NULL(doc_scores);
@@ -257,17 +258,18 @@ PG_FUNCTION_INFO_V1(ltr_score_features);
 Datum
 ltr_score_features(PG_FUNCTION_ARGS)
 {
-	ArrayType *feature_matrix_array;
-	ArrayType *weights_array;
-	double bias;
-	float8 *feature_matrix;
-	float8 *weights;
-	int num_docs;
-	int num_features;
-	double *scores;
-	int i, f;
-	ArrayType *result;
-	Datum *result_datums;
+	ArrayType  *feature_matrix_array;
+	ArrayType  *weights_array;
+	double		bias;
+	float8	   *feature_matrix;
+	float8	   *weights;
+	int			num_docs;
+	int			num_features;
+	double	   *scores;
+	int			i,
+				f;
+	ArrayType  *result;
+	Datum	   *result_datums;
 
 	/* Parse arguments */
 	feature_matrix_array = PG_GETARG_ARRAYTYPE_P(0);
@@ -276,22 +278,22 @@ ltr_score_features(PG_FUNCTION_ARGS)
 
 	if (ARR_NDIM(feature_matrix_array) != 2)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("feature_matrix must be "
-				       "2-dimensional")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("feature_matrix must be "
+						"2-dimensional")));
 
 	num_docs = ARR_DIMS(feature_matrix_array)[0];
 	num_features = ARR_DIMS(feature_matrix_array)[1];
 
 	if (ARR_DIMS(weights_array)[0] != num_features)
 		ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				errmsg("weights dimension mismatch")));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("weights dimension mismatch")));
 
-	feature_matrix = (float8 *)ARR_DATA_PTR(feature_matrix_array);
-	weights = (float8 *)ARR_DATA_PTR(weights_array);
+	feature_matrix = (float8 *) ARR_DATA_PTR(feature_matrix_array);
+	weights = (float8 *) ARR_DATA_PTR(weights_array);
 
-	scores = (double *)palloc(sizeof(double) * num_docs);
+	scores = (double *) palloc(sizeof(double) * num_docs);
 
 	/* Compute scores */
 	for (i = 0; i < num_docs; i++)
@@ -303,16 +305,16 @@ ltr_score_features(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result */
-	result_datums = (Datum *)palloc(sizeof(Datum) * num_docs);
+	result_datums = (Datum *) palloc(sizeof(Datum) * num_docs);
 	for (i = 0; i < num_docs; i++)
 		result_datums[i] = Float8GetDatum(scores[i]);
 
 	result = construct_array(result_datums,
-		num_docs,
-		FLOAT8OID,
-		sizeof(float8),
-		FLOAT8PASSBYVAL,
-		'd');
+							 num_docs,
+							 FLOAT8OID,
+							 sizeof(float8),
+							 FLOAT8PASSBYVAL,
+							 'd');
 
 	NDB_SAFE_PFREE_AND_NULL(scores);
 	NDB_SAFE_PFREE_AND_NULL(result_datums);

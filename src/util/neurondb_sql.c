@@ -56,11 +56,11 @@
  */
 const char *
 ndb_sql_get_load_dataset(const char *quoted_feat_col,
-						const char *quoted_target_col,
-						const char *quoted_table)
+						 const char *quoted_target_col,
+						 const char *quoted_table)
 {
-	StringInfoData	buf;
-	NDB_DECLARE(char *, result);
+	StringInfoData buf;
+	NDB_DECLARE (char *, result);
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf, LINREG_SQL_LOAD_DATASET,
@@ -69,7 +69,7 @@ ndb_sql_get_load_dataset(const char *quoted_feat_col,
 					 quoted_table);
 
 	result = pstrdup(buf.data);
-	NDB_FREE(buf.data);
+	NDB_FREE	(buf.data);
 
 	return result;
 }
@@ -80,12 +80,12 @@ ndb_sql_get_load_dataset(const char *quoted_feat_col,
  */
 const char *
 ndb_sql_get_load_dataset_limited(const char *quoted_feat_col,
-								const char *quoted_target_col,
-								const char *quoted_table,
-								int max_rows)
+								 const char *quoted_target_col,
+								 const char *quoted_table,
+								 int max_rows)
 {
-	StringInfoData	buf;
-	NDB_DECLARE(char *, result);
+	StringInfoData buf;
+	NDB_DECLARE (char *, result);
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf, LINREG_SQL_LOAD_DATASET_LIMITED,
@@ -97,7 +97,7 @@ ndb_sql_get_load_dataset_limited(const char *quoted_feat_col,
 					 max_rows);
 
 	result = pstrdup(buf.data);
-	NDB_FREE(buf.data);
+	NDB_FREE	(buf.data);
 
 	return result;
 }
@@ -113,8 +113,8 @@ ndb_sql_get_load_dataset_chunk(const char *quoted_feat_col,
 							   int chunk_size,
 							   int offset)
 {
-	StringInfoData	buf;
-	NDB_DECLARE(char *, result);
+	StringInfoData buf;
+	NDB_DECLARE (char *, result);
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf, LINREG_SQL_LOAD_DATASET_CHUNK,
@@ -125,7 +125,7 @@ ndb_sql_get_load_dataset_chunk(const char *quoted_feat_col,
 					 offset);
 
 	result = pstrdup(buf.data);
-	NDB_FREE(buf.data);
+	NDB_FREE	(buf.data);
 
 	return result;
 }
@@ -136,11 +136,11 @@ ndb_sql_get_load_dataset_chunk(const char *quoted_feat_col,
  */
 const char *
 ndb_sql_get_check_dataset(const char *quoted_feat_col,
-						 const char *quoted_target_col,
-						 const char *quoted_table)
+						  const char *quoted_target_col,
+						  const char *quoted_table)
 {
-	StringInfoData	buf;
-	NDB_DECLARE(char *, result);
+	StringInfoData buf;
+	NDB_DECLARE (char *, result);
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf, LINREG_SQL_CHECK_DATASET,
@@ -151,7 +151,7 @@ ndb_sql_get_check_dataset(const char *quoted_feat_col,
 					 quoted_target_col);
 
 	result = pstrdup(buf.data);
-	NDB_FREE(buf.data);
+	NDB_FREE	(buf.data);
 
 	return result;
 }
@@ -162,11 +162,11 @@ ndb_sql_get_check_dataset(const char *quoted_feat_col,
  */
 const char *
 ndb_sql_get_count_dataset(const char *quoted_feat_col,
-						 const char *quoted_target_col,
-						 const char *quoted_table)
+						  const char *quoted_target_col,
+						  const char *quoted_table)
 {
-	StringInfoData	buf;
-	NDB_DECLARE(char *, result);
+	StringInfoData buf;
+	NDB_DECLARE (char *, result);
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf, LINREG_SQL_COUNT_DATASET,
@@ -175,7 +175,7 @@ ndb_sql_get_count_dataset(const char *quoted_feat_col,
 					 quoted_target_col);
 
 	result = pstrdup(buf.data);
-	NDB_FREE(buf.data);
+	NDB_FREE	(buf.data);
 
 	return result;
 }
@@ -186,11 +186,11 @@ ndb_sql_get_count_dataset(const char *quoted_feat_col,
  */
 const char *
 ndb_sql_get_eval_dataset(const char *quoted_feat_col,
-						const char *quoted_target_col,
-						const char *quoted_table)
+						 const char *quoted_target_col,
+						 const char *quoted_table)
 {
-	StringInfoData	buf;
-	NDB_DECLARE(char *, result);
+	StringInfoData buf;
+	NDB_DECLARE (char *, result);
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf, LINREG_SQL_EVAL_DATASET,
@@ -201,7 +201,7 @@ ndb_sql_get_eval_dataset(const char *quoted_feat_col,
 					 quoted_target_col);
 
 	result = pstrdup(buf.data);
-	NDB_FREE(buf.data);
+	NDB_FREE	(buf.data);
 
 	return result;
 }

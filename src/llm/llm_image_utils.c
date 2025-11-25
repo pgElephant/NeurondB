@@ -124,7 +124,7 @@ ndb_get_image_mime_type(ImageFormat format)
 		case IMAGE_FORMAT_BMP:
 			return "image/bmp";
 		default:
-			return "image/jpeg"; /* Default fallback */
+			return "image/jpeg";	/* Default fallback */
 	}
 }
 
@@ -134,9 +134,9 @@ ndb_get_image_mime_type(ImageFormat format)
  */
 static bool
 ndb_parse_png_dimensions(const unsigned char *data,
-	size_t size,
-	int *width,
-	int *height)
+						 size_t size,
+						 int *width,
+						 int *height)
 {
 	/* PNG IHDR chunk starts at offset 16 */
 	if (size < 24)
@@ -158,9 +158,9 @@ ndb_parse_png_dimensions(const unsigned char *data,
  */
 static bool
 ndb_parse_jpeg_dimensions(const unsigned char *data,
-	size_t size,
-	int *width,
-	int *height)
+						  size_t size,
+						  int *width,
+						  int *height)
 {
 	const unsigned char *p = data;
 	const unsigned char *end = data + size;
@@ -195,7 +195,8 @@ ndb_parse_jpeg_dimensions(const unsigned char *data,
 				}
 			}
 			p++;
-		} else
+		}
+		else
 		{
 			p++;
 		}
@@ -218,7 +219,7 @@ ndb_validate_image(const unsigned char *data, size_t size, MemoryContext mctx)
 		mctx = CurrentMemoryContext;
 
 	oldctx = MemoryContextSwitchTo(mctx);
-	meta = (ImageMetadata *)palloc0(sizeof(ImageMetadata));
+	meta = (ImageMetadata *) palloc0(sizeof(ImageMetadata));
 	MemoryContextSwitchTo(oldctx);
 
 	meta->size = size;
@@ -273,7 +274,11 @@ ndb_validate_image(const unsigned char *data, size_t size, MemoryContext mctx)
 		case IMAGE_FORMAT_GIF:
 		case IMAGE_FORMAT_WEBP:
 		case IMAGE_FORMAT_BMP:
-			/* Dimensions not parsed for these formats (would require full parser) */
+
+			/*
+			 * Dimensions not parsed for these formats (would require full
+			 * parser)
+			 */
 			meta->width = 0;
 			meta->height = 0;
 			meta->channels = 0;
@@ -327,10 +332,10 @@ ndb_get_image_format_name(ImageFormat format)
  *    Convert image metadata to JSON string
  */
 char *
-ndb_image_metadata_to_json(const ImageMetadata *meta)
+ndb_image_metadata_to_json(const ImageMetadata * meta)
 {
 	StringInfoData json;
-	char *format_name;
+	char	   *format_name;
 
 	if (meta == NULL)
 		return pstrdup("{}");
@@ -355,4 +360,3 @@ ndb_image_metadata_to_json(const ImageMetadata *meta)
 	NDB_SAFE_PFREE_AND_NULL(format_name);
 	return json.data;
 }
-

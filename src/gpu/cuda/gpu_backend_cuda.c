@@ -35,7 +35,7 @@
 #endif
 
 #include <stdint.h>
-#include <unistd.h>		/* for getpid() */
+#include <unistd.h>				/* for getpid() */
 
 #ifdef NDB_GPU_CUDA
 
@@ -52,116 +52,119 @@ neurondb_gpu_register_cuda_backend(void)
 {
 }
 
-#endif /* NDB_GPU_CUDA */
+#endif							/* NDB_GPU_CUDA */
 
 #ifdef NDB_GPU_CUDA
 
 typedef struct
 {
-	int device_id;
-	bool initialized;
+	int			device_id;
+	bool		initialized;
 	cublasHandle_t handle;
-	pid_t init_pid;
-} NdbcCudaContext;
+	pid_t		init_pid;
+}			NdbcCudaContext;
 
-static NdbcCudaContext cuda_ctx = { .device_id = 0,
-	.initialized = false,
-	.handle = NULL,
-	.init_pid = 0 };
+static NdbcCudaContext cuda_ctx =
+{
+	.device_id = 0,
+		.initialized = false,
+		.handle = NULL,
+		.init_pid = 0
+};
 
-static int ndb_cuda_init(void);
+static int	ndb_cuda_init(void);
 static void ndb_cuda_shutdown(void);
-static int ndb_cuda_is_available(void);
-static int ndb_cuda_device_count(void);
-static int ndb_cuda_device_info(int device_id, NDBGpuDeviceInfo *info);
-static int ndb_cuda_set_device(int device_id);
-static int ndb_cuda_mem_alloc(void **ptr, size_t bytes);
-static int ndb_cuda_mem_free(void *ptr);
-static int ndb_cuda_memcpy_h2d(void *dst, const void *src, size_t bytes);
-static int ndb_cuda_memcpy_d2h(void *dst, const void *src, size_t bytes);
-static int ndb_cuda_stream_create(ndb_stream_t *stream);
-static int ndb_cuda_stream_destroy(ndb_stream_t stream);
-static int ndb_cuda_stream_synchronize(ndb_stream_t stream);
-static int ndb_cuda_launch_l2_distance(const float *A,
-	const float *B,
-	float *out,
-	int n,
-	int d,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_cosine(const float *A,
-	const float *B,
-	float *out,
-	int n,
-	int d,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_kmeans_assign(const float *vectors,
-	const float *centroids,
-	int *assignments,
-	int num_vectors,
-	int dim,
-	int k,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_kmeans_update(const float *vectors,
-	const int *assignments,
-	float *centroids,
-	int num_vectors,
-	int dim,
-	int k,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_quant_fp16(const float *input,
-	void *output,
-	int count,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_quant_int8(const float *input,
-	int8_t *output,
-	int count,
-	float scale,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_quant_int4(const float *input,
-	unsigned char *output,
-	int count,
-	float scale,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_quant_fp8_e4m3(const float *input,
-	unsigned char *output,
-	int count,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_quant_fp8_e5m2(const float *input,
-	unsigned char *output,
-	int count,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_quant_binary(const float *input,
-	uint8_t *output,
-	int count,
-	ndb_stream_t stream);
-static int ndb_cuda_launch_pq_encode(const float *vectors,
-	const float *codebooks,
-	uint8_t *codes,
-	int nvec,
-	int dim,
-	int m,
-	int ks,
-	ndb_stream_t stream);
+static int	ndb_cuda_is_available(void);
+static int	ndb_cuda_device_count(void);
+static int	ndb_cuda_device_info(int device_id, NDBGpuDeviceInfo * info);
+static int	ndb_cuda_set_device(int device_id);
+static int	ndb_cuda_mem_alloc(void **ptr, size_t bytes);
+static int	ndb_cuda_mem_free(void *ptr);
+static int	ndb_cuda_memcpy_h2d(void *dst, const void *src, size_t bytes);
+static int	ndb_cuda_memcpy_d2h(void *dst, const void *src, size_t bytes);
+static int	ndb_cuda_stream_create(ndb_stream_t * stream);
+static int	ndb_cuda_stream_destroy(ndb_stream_t stream);
+static int	ndb_cuda_stream_synchronize(ndb_stream_t stream);
+static int	ndb_cuda_launch_l2_distance(const float *A,
+										const float *B,
+										float *out,
+										int n,
+										int d,
+										ndb_stream_t stream);
+static int	ndb_cuda_launch_cosine(const float *A,
+								   const float *B,
+								   float *out,
+								   int n,
+								   int d,
+								   ndb_stream_t stream);
+static int	ndb_cuda_launch_kmeans_assign(const float *vectors,
+										  const float *centroids,
+										  int *assignments,
+										  int num_vectors,
+										  int dim,
+										  int k,
+										  ndb_stream_t stream);
+static int	ndb_cuda_launch_kmeans_update(const float *vectors,
+										  const int *assignments,
+										  float *centroids,
+										  int num_vectors,
+										  int dim,
+										  int k,
+										  ndb_stream_t stream);
+static int	ndb_cuda_launch_quant_fp16(const float *input,
+									   void *output,
+									   int count,
+									   ndb_stream_t stream);
+static int	ndb_cuda_launch_quant_int8(const float *input,
+									   int8_t * output,
+									   int count,
+									   float scale,
+									   ndb_stream_t stream);
+static int	ndb_cuda_launch_quant_int4(const float *input,
+									   unsigned char *output,
+									   int count,
+									   float scale,
+									   ndb_stream_t stream);
+static int	ndb_cuda_launch_quant_fp8_e4m3(const float *input,
+										   unsigned char *output,
+										   int count,
+										   ndb_stream_t stream);
+static int	ndb_cuda_launch_quant_fp8_e5m2(const float *input,
+										   unsigned char *output,
+										   int count,
+										   ndb_stream_t stream);
+static int	ndb_cuda_launch_quant_binary(const float *input,
+										 uint8_t * output,
+										 int count,
+										 ndb_stream_t stream);
+static int	ndb_cuda_launch_pq_encode(const float *vectors,
+									  const float *codebooks,
+									  uint8_t * codes,
+									  int nvec,
+									  int dim,
+									  int m,
+									  int ks,
+									  ndb_stream_t stream);
 
 static int
 ndb_cuda_init(void)
 {
-	int device_count = 0;
+	int			device_count = 0;
 	cudaError_t err;
 	cublasStatus_t status;
-	pid_t current_pid = getpid();
+	pid_t		current_pid = getpid();
 
 	/*
-	 * Fork detection: If CUDA was initialized in a different process,
-	 * we're in a forked backend and must reset/reinitialize CUDA.
-	 * CUDA contexts are not fork-safe and must be created per-process.
+	 * Fork detection: If CUDA was initialized in a different process, we're
+	 * in a forked backend and must reset/reinitialize CUDA. CUDA contexts are
+	 * not fork-safe and must be created per-process.
 	 */
 	if (cuda_ctx.initialized && cuda_ctx.init_pid != current_pid)
 	{
 		elog(DEBUG1,
-			"neurondb: Detected fork (parent PID %d, current PID %d) - resetting CUDA",
-			cuda_ctx.init_pid,
-			current_pid);
+			 "neurondb: Detected fork (parent PID %d, current PID %d) - resetting CUDA",
+			 cuda_ctx.init_pid,
+			 current_pid);
 
 		cudaDeviceReset();
 
@@ -184,9 +187,9 @@ ndb_cuda_init(void)
 	if (err != cudaSuccess || device_count <= 0)
 	{
 		elog(WARNING,
-			"neurondb: cudaGetDeviceCount failed: %s (devices=%d)",
-			cudaGetErrorString(err),
-			device_count);
+			 "neurondb: cudaGetDeviceCount failed: %s (devices=%d)",
+			 cudaGetErrorString(err),
+			 device_count);
 		return -1;
 	}
 
@@ -194,9 +197,9 @@ ndb_cuda_init(void)
 	if (err != cudaSuccess)
 	{
 		elog(WARNING,
-			"neurondb: cudaSetDevice(%d) failed: %s",
-			cuda_ctx.device_id,
-			cudaGetErrorString(err));
+			 "neurondb: cudaSetDevice(%d) failed: %s",
+			 cuda_ctx.device_id,
+			 cudaGetErrorString(err));
 		return -1;
 	}
 
@@ -204,8 +207,8 @@ ndb_cuda_init(void)
 	if (err != cudaSuccess)
 	{
 		elog(WARNING,
-			"neurondb: cudaFree(0) warm-up failed: %s",
-			cudaGetErrorString(err));
+			 "neurondb: cudaFree(0) warm-up failed: %s",
+			 cudaGetErrorString(err));
 		return -1;
 	}
 
@@ -213,8 +216,8 @@ ndb_cuda_init(void)
 	if (status != CUBLAS_STATUS_SUCCESS)
 	{
 		elog(WARNING,
-			"neurondb: cublasCreate failed with status %d",
-			status);
+			 "neurondb: cublasCreate failed with status %d",
+			 status);
 		return -1;
 	}
 
@@ -222,9 +225,9 @@ ndb_cuda_init(void)
 	cuda_ctx.init_pid = current_pid;
 
 	elog(DEBUG1,
-		"neurondb: CUDA initialized successfully in process %d (device %d)",
-		current_pid,
-		cuda_ctx.device_id);
+		 "neurondb: CUDA initialized successfully in process %d (device %d)",
+		 current_pid,
+		 cuda_ctx.device_id);
 
 	return 0;
 }
@@ -244,9 +247,10 @@ ndb_cuda_shutdown(void)
 static int
 ndb_cuda_is_available(void)
 {
-	int device_count = 0;
+	int			device_count = 0;
+
 	return (cudaGetDeviceCount(&device_count) == cudaSuccess
-		       && device_count > 0)
+			&& device_count > 0)
 		? 1
 		: 0;
 }
@@ -254,18 +258,19 @@ ndb_cuda_is_available(void)
 static int
 ndb_cuda_device_count(void)
 {
-	int device_count = 0;
+	int			device_count = 0;
+
 	if (cudaGetDeviceCount(&device_count) != cudaSuccess)
 		return 0;
 	return device_count;
 }
 
 static int
-ndb_cuda_device_info(int device_id, NDBGpuDeviceInfo *info)
+ndb_cuda_device_info(int device_id, NDBGpuDeviceInfo * info)
 {
 	struct cudaDeviceProp prop;
-	size_t free_mem = 0;
-	size_t total_mem = 0;
+	size_t		free_mem = 0;
+	size_t		total_mem = 0;
 
 	if (info == NULL)
 		return -1;
@@ -328,7 +333,7 @@ static int
 ndb_cuda_memcpy_h2d(void *dst, const void *src, size_t bytes)
 {
 	return (cudaMemcpy(dst, src, bytes, cudaMemcpyHostToDevice)
-		       == cudaSuccess)
+			== cudaSuccess)
 		? 0
 		: -1;
 }
@@ -337,26 +342,28 @@ static int
 ndb_cuda_memcpy_d2h(void *dst, const void *src, size_t bytes)
 {
 	return (cudaMemcpy(dst, src, bytes, cudaMemcpyDeviceToHost)
-		       == cudaSuccess)
+			== cudaSuccess)
 		? 0
 		: -1;
 }
 
 static int
-ndb_cuda_stream_create(ndb_stream_t *stream)
+ndb_cuda_stream_create(ndb_stream_t * stream)
 {
 	cudaStream_t native;
+
 	if (cudaStreamCreate(&native) != cudaSuccess)
 		return -1;
 	if (stream)
-		*stream = (ndb_stream_t)native;
+		*stream = (ndb_stream_t) native;
 	return 0;
 }
 
 static int
 ndb_cuda_stream_destroy(ndb_stream_t stream)
 {
-	cudaStream_t native = (cudaStream_t)stream;
+	cudaStream_t native = (cudaStream_t) stream;
+
 	if (native == NULL)
 		return 0;
 	return (cudaStreamDestroy(native) == cudaSuccess) ? 0 : -1;
@@ -365,7 +372,8 @@ ndb_cuda_stream_destroy(ndb_stream_t stream)
 static int
 ndb_cuda_stream_synchronize(ndb_stream_t stream)
 {
-	cudaStream_t native = (cudaStream_t)stream;
+	cudaStream_t native = (cudaStream_t) stream;
+
 	if (native == NULL)
 		return (cudaDeviceSynchronize() == cudaSuccess) ? 0 : -1;
 	return (cudaStreamSynchronize(native) == cudaSuccess) ? 0 : -1;
@@ -373,29 +381,29 @@ ndb_cuda_stream_synchronize(ndb_stream_t stream)
 
 static int
 ndb_cuda_launch_l2_distance(const float *A,
-	const float *B,
-	float *out,
-	int n,
-	int d,
-	ndb_stream_t stream)
+							const float *B,
+							float *out,
+							int n,
+							int d,
+							ndb_stream_t stream)
 {
-	cudaStream_t native = stream ? (cudaStream_t)stream : 0;
-	float *d_A = NULL;
-	float *d_B = NULL;
-	float *d_diff = NULL;
-	size_t bytes;
-	int i;
+	cudaStream_t native = stream ? (cudaStream_t) stream : 0;
+	float	   *d_A = NULL;
+	float	   *d_B = NULL;
+	float	   *d_diff = NULL;
+	size_t		bytes;
+	int			i;
 
 	if (!cuda_ctx.initialized || A == NULL || B == NULL || out == NULL
 		|| n <= 0 || d <= 0)
 		return -1;
 
-	bytes = (size_t)n * d * sizeof(float);
-	if (cudaMalloc((void **)&d_A, bytes) != cudaSuccess)
+	bytes = (size_t) n * d * sizeof(float);
+	if (cudaMalloc((void **) &d_A, bytes) != cudaSuccess)
 		goto fail;
-	if (cudaMalloc((void **)&d_B, bytes) != cudaSuccess)
+	if (cudaMalloc((void **) &d_B, bytes) != cudaSuccess)
 		goto fail;
-	if (cudaMalloc((void **)&d_diff, d * sizeof(float)) != cudaSuccess)
+	if (cudaMalloc((void **) &d_diff, d * sizeof(float)) != cudaSuccess)
 		goto fail;
 
 	if (cudaMemcpyAsync(d_A, A, bytes, cudaMemcpyHostToDevice, native)
@@ -410,9 +418,9 @@ ndb_cuda_launch_l2_distance(const float *A,
 
 	for (i = 0; i < n; i++)
 	{
-		const float *d_Ai = d_A + ((size_t)i * d);
-		const float *d_Bi = d_B + ((size_t)i * d);
-		float alpha = -1.0f;
+		const float *d_Ai = d_A + ((size_t) i * d);
+		const float *d_Bi = d_B + ((size_t) i * d);
+		float		alpha = -1.0f;
 
 		if (cublasScopy(cuda_ctx.handle, d, d_Ai, 1, d_diff, 1)
 			!= CUBLAS_STATUS_SUCCESS)
@@ -445,26 +453,26 @@ fail:
 
 static int
 ndb_cuda_launch_cosine(const float *A,
-	const float *B,
-	float *out,
-	int n,
-	int d,
-	ndb_stream_t stream)
+					   const float *B,
+					   float *out,
+					   int n,
+					   int d,
+					   ndb_stream_t stream)
 {
-	cudaStream_t native = stream ? (cudaStream_t)stream : 0;
-	float *d_A = NULL;
-	float *d_B = NULL;
-	size_t bytes;
-	int i;
+	cudaStream_t native = stream ? (cudaStream_t) stream : 0;
+	float	   *d_A = NULL;
+	float	   *d_B = NULL;
+	size_t		bytes;
+	int			i;
 
 	if (!cuda_ctx.initialized || A == NULL || B == NULL || out == NULL
 		|| n <= 0 || d <= 0)
 		return -1;
 
-	bytes = (size_t)n * d * sizeof(float);
-	if (cudaMalloc((void **)&d_A, bytes) != cudaSuccess)
+	bytes = (size_t) n * d * sizeof(float);
+	if (cudaMalloc((void **) &d_A, bytes) != cudaSuccess)
 		goto fail;
-	if (cudaMalloc((void **)&d_B, bytes) != cudaSuccess)
+	if (cudaMalloc((void **) &d_B, bytes) != cudaSuccess)
 		goto fail;
 
 	if (cudaMemcpyAsync(d_A, A, bytes, cudaMemcpyHostToDevice, native)
@@ -479,9 +487,11 @@ ndb_cuda_launch_cosine(const float *A,
 
 	for (i = 0; i < n; i++)
 	{
-		const float *d_Ai = d_A + ((size_t)i * d);
-		const float *d_Bi = d_B + ((size_t)i * d);
-		float dot, norm_a, norm_b;
+		const float *d_Ai = d_A + ((size_t) i * d);
+		const float *d_Bi = d_B + ((size_t) i * d);
+		float		dot,
+					norm_a,
+					norm_b;
 
 		if (cublasSdot(cuda_ctx.handle, d, d_Ai, 1, d_Bi, 1, &dot)
 			!= CUBLAS_STATUS_SUCCESS)
@@ -497,7 +507,8 @@ ndb_cuda_launch_cosine(const float *A,
 			out[i] = 1.0f;
 		else
 		{
-			float cosine = dot / (norm_a * norm_b);
+			float		cosine = dot / (norm_a * norm_b);
+
 			if (cosine < -1.0f)
 				cosine = -1.0f;
 			else if (cosine > 1.0f)
@@ -522,170 +533,170 @@ fail:
 
 static int
 ndb_cuda_launch_quant_fp16(const float *input,
-	void *output,
-	int count,
-	ndb_stream_t stream)
+						   void *output,
+						   int count,
+						   ndb_stream_t stream)
 {
-	cudaStream_t native = stream ? (cudaStream_t)stream : 0;
+	cudaStream_t native = stream ? (cudaStream_t) stream : 0;
 
 	if (!cuda_ctx.initialized || input == NULL || output == NULL
 		|| count <= 0)
 		return -1;
 
 	return (launch_quantize_fp32_to_fp16(input, output, count, native)
-		       == cudaSuccess)
+			== cudaSuccess)
 		? 0
 		: -1;
 }
 
 static int
 ndb_cuda_launch_quant_int8(const float *input,
-	int8_t *output,
-	int count,
-	float scale,
-	ndb_stream_t stream)
+						   int8_t * output,
+						   int count,
+						   float scale,
+						   ndb_stream_t stream)
 {
-	cudaStream_t native = stream ? (cudaStream_t)stream : 0;
+	cudaStream_t native = stream ? (cudaStream_t) stream : 0;
 
 	if (!cuda_ctx.initialized || input == NULL || output == NULL
 		|| count <= 0)
 		return -1;
 
 	return (launch_quantize_fp32_to_int8(
-			input, (signed char *)output, count, scale, native)
-		       == cudaSuccess)
+										 input, (signed char *) output, count, scale, native)
+			== cudaSuccess)
 		? 0
 		: -1;
 }
 
 static int
 ndb_cuda_launch_quant_int4(const float *input,
-	unsigned char *output,
-	int count,
-	float scale,
-	ndb_stream_t stream)
+						   unsigned char *output,
+						   int count,
+						   float scale,
+						   ndb_stream_t stream)
 {
-	cudaStream_t native = stream ? (cudaStream_t)stream : 0;
+	cudaStream_t native = stream ? (cudaStream_t) stream : 0;
 
 	if (!cuda_ctx.initialized || input == NULL || output == NULL
 		|| count <= 0)
 		return -1;
 
 	return (launch_quantize_fp32_to_int4(
-			input, output, count, scale, native) == cudaSuccess)
+										 input, output, count, scale, native) == cudaSuccess)
 		? 0
 		: -1;
 }
 
 static int
 ndb_cuda_launch_quant_fp8_e4m3(const float *input,
-	unsigned char *output,
-	int count,
-	ndb_stream_t stream)
+							   unsigned char *output,
+							   int count,
+							   ndb_stream_t stream)
 {
-	cudaStream_t native = stream ? (cudaStream_t)stream : 0;
+	cudaStream_t native = stream ? (cudaStream_t) stream : 0;
 
 	if (!cuda_ctx.initialized || input == NULL || output == NULL
 		|| count <= 0)
 		return -1;
 
 	return (launch_quantize_fp32_to_fp8_e4m3(
-			input, output, count, native) == cudaSuccess)
+											 input, output, count, native) == cudaSuccess)
 		? 0
 		: -1;
 }
 
 static int
 ndb_cuda_launch_quant_fp8_e5m2(const float *input,
-	unsigned char *output,
-	int count,
-	ndb_stream_t stream)
+							   unsigned char *output,
+							   int count,
+							   ndb_stream_t stream)
 {
-	cudaStream_t native = stream ? (cudaStream_t)stream : 0;
+	cudaStream_t native = stream ? (cudaStream_t) stream : 0;
 
 	if (!cuda_ctx.initialized || input == NULL || output == NULL
 		|| count <= 0)
 		return -1;
 
 	return (launch_quantize_fp32_to_fp8_e5m2(
-			input, output, count, native) == cudaSuccess)
+											 input, output, count, native) == cudaSuccess)
 		? 0
 		: -1;
 }
 
 static int
 ndb_cuda_launch_quant_binary(const float *input,
-	uint8_t *output,
-	int count,
-	ndb_stream_t stream)
+							 uint8_t * output,
+							 int count,
+							 ndb_stream_t stream)
 {
-	cudaStream_t native = stream ? (cudaStream_t)stream : 0;
+	cudaStream_t native = stream ? (cudaStream_t) stream : 0;
 
 	if (!cuda_ctx.initialized || input == NULL || output == NULL
 		|| count <= 0)
 		return -1;
 
 	return (launch_quantize_fp32_to_binary(
-			input, (unsigned char *)output, count, native)
-		       == cudaSuccess)
+										   input, (unsigned char *) output, count, native)
+			== cudaSuccess)
 		? 0
 		: -1;
 }
 
 static int
 ndb_cuda_launch_kmeans_assign(const float *vectors,
-	const float *centroids,
-	int *assignments,
-	int num_vectors,
-	int dim,
-	int k,
-	ndb_stream_t stream)
+							  const float *centroids,
+							  int *assignments,
+							  int num_vectors,
+							  int dim,
+							  int k,
+							  ndb_stream_t stream)
 {
-	(void)stream;
+	(void) stream;
 
 	if (!cuda_ctx.initialized || vectors == NULL || centroids == NULL
 		|| assignments == NULL)
 		return -1;
 
 	return (gpu_kmeans_assign(vectors,
-			centroids,
-			(int32_t *)assignments,
-			num_vectors,
-			k,
-			dim)
-		       == 0)
+							  centroids,
+							  (int32_t *) assignments,
+							  num_vectors,
+							  k,
+							  dim)
+			== 0)
 		? 0
 		: -1;
 }
 
 static int
 ndb_cuda_launch_kmeans_update(const float *vectors,
-	const int *assignments,
-	float *centroids,
-	int num_vectors,
-	int dim,
-	int k,
-	ndb_stream_t stream)
+							  const int *assignments,
+							  float *centroids,
+							  int num_vectors,
+							  int dim,
+							  int k,
+							  ndb_stream_t stream)
 {
-	int32_t *assign32;
-	int32_t *counts;
-	int i;
-	int rc;
+	int32_t    *assign32;
+	int32_t    *counts;
+	int			i;
+	int			rc;
 
-	(void)stream;
+	(void) stream;
 
 	if (!cuda_ctx.initialized || vectors == NULL || assignments == NULL
 		|| centroids == NULL)
 		return -1;
 
-	assign32 = (int32_t *)palloc(sizeof(int32_t) * num_vectors);
-	counts = (int32_t *)palloc0(sizeof(int32_t) * k);
+	assign32 = (int32_t *) palloc(sizeof(int32_t) * num_vectors);
+	counts = (int32_t *) palloc0(sizeof(int32_t) * k);
 
 	for (i = 0; i < num_vectors; i++)
-		assign32[i] = (int32_t)assignments[i];
+		assign32[i] = (int32_t) assignments[i];
 
 	rc = gpu_kmeans_update(
-		vectors, assign32, centroids, counts, num_vectors, k, dim);
+						   vectors, assign32, centroids, counts, num_vectors, k, dim);
 
 	NDB_SAFE_PFREE_AND_NULL(assign32);
 	NDB_SAFE_PFREE_AND_NULL(counts);
@@ -695,22 +706,22 @@ ndb_cuda_launch_kmeans_update(const float *vectors,
 
 static int
 ndb_cuda_launch_pq_encode(const float *vectors,
-	const float *codebooks,
-	uint8_t *codes,
-	int nvec,
-	int dim,
-	int m,
-	int ks,
-	ndb_stream_t stream)
+						  const float *codebooks,
+						  uint8_t * codes,
+						  int nvec,
+						  int dim,
+						  int m,
+						  int ks,
+						  ndb_stream_t stream)
 {
-	(void)stream;
+	(void) stream;
 
 	if (!cuda_ctx.initialized || vectors == NULL || codebooks == NULL
 		|| codes == NULL)
 		return -1;
 
 	return gpu_pq_encode_batch(vectors, codebooks, codes, nvec, dim, m, ks)
-			== 0
+		== 0
 		? 0
 		: -1;
 }
@@ -720,7 +731,7 @@ static const ndb_gpu_backend ndb_cuda_backend = {
 	.provider = "NVIDIA",
 	.kind = NDB_GPU_BACKEND_CUDA,
 	.features = NDB_GPU_FEATURE_DISTANCE | NDB_GPU_FEATURE_QUANTIZE
-		| NDB_GPU_FEATURE_CLUSTERING,
+	| NDB_GPU_FEATURE_CLUSTERING,
 	.priority = 90,
 
 	.init = ndb_cuda_init,
@@ -811,4 +822,4 @@ neurondb_gpu_register_cuda_backend(void)
 		elog(WARNING, "neurondb: failed to register CUDA backend");
 }
 
-#endif /* NDB_GPU_CUDA */
+#endif							/* NDB_GPU_CUDA */

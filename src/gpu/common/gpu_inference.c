@@ -30,18 +30,18 @@
  */
 void
 neurondb_gpu_onnx_inference(void *model_handle,
-	const float *input,
-	int input_size,
-	float *output,
-	int output_size)
+							const float *input,
+							int input_size,
+							float *output,
+							int output_size)
 {
-	const ndb_gpu_backend *backend;
+	const		ndb_gpu_backend *backend;
 
-	(void)model_handle;
-	(void)input;
-	(void)input_size;
-	(void)output;
-	(void)output_size;
+	(void) model_handle;
+	(void) input;
+	(void) input_size;
+	(void) output;
+	(void) output_size;
 
 	if (!neurondb_gpu_is_available())
 		return;
@@ -50,8 +50,8 @@ neurondb_gpu_onnx_inference(void *model_handle,
 	if (backend != NULL)
 	{
 		elog(DEBUG1,
-			"neurondb: ONNX GPU inference not implemented for "
-			"backend %s; using CPU fallback",
-			backend->name ? backend->name : "unknown");
+			 "neurondb: ONNX GPU inference not implemented for "
+			 "backend %s; using CPU fallback",
+			 backend->name ? backend->name : "unknown");
 	}
 }

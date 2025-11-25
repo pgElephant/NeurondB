@@ -39,7 +39,7 @@ ml_gpu_context_acquire(const char *tag)
 		? tag
 		: ml_gpu_context_default_tag();
 	local = AllocSetContextCreate(
-		parent, "ML GPU context", ALLOCSET_SMALL_SIZES);
+								  parent, "ML GPU context", ALLOCSET_SMALL_SIZES);
 
 	ctx = NULL;
 
@@ -49,7 +49,7 @@ ml_gpu_context_acquire(const char *tag)
 
 		oldcx = MemoryContextSwitchTo(local);
 
-		ctx = (MLGpuContext *)palloc0(sizeof(MLGpuContext));
+		ctx = (MLGpuContext *) palloc0(sizeof(MLGpuContext));
 		ctx->memcxt = local;
 		ctx->backend = GPU_BACKEND_NONE;
 		ctx->device_id = -1;
@@ -83,7 +83,7 @@ ml_gpu_context_acquire(const char *tag)
 }
 
 void
-ml_gpu_context_release(MLGpuContext *ctx)
+ml_gpu_context_release(MLGpuContext * ctx)
 {
 	if (ctx == NULL)
 		return;
@@ -92,7 +92,7 @@ ml_gpu_context_release(MLGpuContext *ctx)
 }
 
 MemoryContext
-ml_gpu_context_memory(const MLGpuContext *ctx)
+ml_gpu_context_memory(const MLGpuContext * ctx)
 {
 	if (ctx == NULL)
 		return CurrentMemoryContext;
@@ -100,13 +100,13 @@ ml_gpu_context_memory(const MLGpuContext *ctx)
 }
 
 bool
-ml_gpu_context_ready(const MLGpuContext *ctx)
+ml_gpu_context_ready(const MLGpuContext * ctx)
 {
 	return (ctx != NULL && ctx->gpu_available);
 }
 
 GPUBackend
-ml_gpu_context_backend(const MLGpuContext *ctx)
+ml_gpu_context_backend(const MLGpuContext * ctx)
 {
 	if (ctx == NULL)
 		return GPU_BACKEND_NONE;
@@ -114,7 +114,7 @@ ml_gpu_context_backend(const MLGpuContext *ctx)
 }
 
 int
-ml_gpu_context_device(const MLGpuContext *ctx)
+ml_gpu_context_device(const MLGpuContext * ctx)
 {
 	if (ctx == NULL)
 		return -1;
@@ -122,7 +122,7 @@ ml_gpu_context_device(const MLGpuContext *ctx)
 }
 
 const char *
-ml_gpu_context_tag(const MLGpuContext *ctx)
+ml_gpu_context_tag(const MLGpuContext * ctx)
 {
 	if (ctx == NULL || ctx->tag == NULL)
 		return ml_gpu_context_default_tag();

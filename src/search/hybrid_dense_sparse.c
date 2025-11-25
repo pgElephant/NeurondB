@@ -38,50 +38,51 @@ PG_FUNCTION_INFO_V1(hybrid_dense_sparse_search);
 Datum
 hybrid_dense_sparse_search(PG_FUNCTION_ARGS)
 {
-	text *table_name = PG_GETARG_TEXT_PP(0);
-	text *dense_col = PG_GETARG_TEXT_PP(1);
-	text *sparse_col = PG_GETARG_TEXT_PP(2);
-	Datum dense_query = PG_GETARG_DATUM(3);
-	Datum sparse_query = PG_GETARG_DATUM(4);
-	int32 k = PG_GETARG_INT32(5);
-	float4 dense_weight = PG_ARGISNULL(6) ? 0.5f : PG_GETARG_FLOAT4(6);
-	float4 sparse_weight = PG_ARGISNULL(7) ? 0.5f : PG_GETARG_FLOAT4(7);
-	ReturnSetInfo *rsinfo = (ReturnSetInfo *)fcinfo->resultinfo;
-	TupleDesc tupdesc;
+	text	   *table_name = PG_GETARG_TEXT_PP(0);
+	text	   *dense_col = PG_GETARG_TEXT_PP(1);
+	text	   *sparse_col = PG_GETARG_TEXT_PP(2);
+	Datum		dense_query = PG_GETARG_DATUM(3);
+	Datum		sparse_query = PG_GETARG_DATUM(4);
+	int32		k = PG_GETARG_INT32(5);
+	float4		dense_weight = PG_ARGISNULL(6) ? 0.5f : PG_GETARG_FLOAT4(6);
+	float4		sparse_weight = PG_ARGISNULL(7) ? 0.5f : PG_GETARG_FLOAT4(7);
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	TupleDesc	tupdesc;
 	Tuplestorestate *tupstore;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
-	char *tbl_str = text_to_cstring(table_name);
-	char *dense_str = text_to_cstring(dense_col);
-	char *sparse_str = text_to_cstring(sparse_col);
+	char	   *tbl_str = text_to_cstring(table_name);
+	char	   *dense_str = text_to_cstring(dense_col);
+	char	   *sparse_str = text_to_cstring(sparse_col);
 	StringInfoData sql;
-	int ret;
-	Datum values[2];
-	bool nulls[2] = {false, false};
-	Datum args[2];
-	Oid argtypes[2];
+	int			ret;
+	Datum		values[2];
+	bool		nulls[2] = {false, false};
+	Datum		args[2];
+	Oid			argtypes[2];
 
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("hybrid_dense_sparse_search must be called as table function")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("hybrid_dense_sparse_search must be called as table function")));
 
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				errmsg("hybrid_dense_sparse_search requires Materialize mode")));
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("hybrid_dense_sparse_search requires Materialize mode")));
 
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
 	oldcontext = MemoryContextSwitchTo(per_query_ctx);
 
 	tupdesc = CreateTemplateTupleDesc(2);
-	TupleDescInitEntry(tupdesc, (AttrNumber)1, "doc_id", INT4OID, -1, 0);
-	TupleDescInitEntry(tupdesc, (AttrNumber)2, "fused_score", FLOAT4OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "doc_id", INT4OID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "fused_score", FLOAT4OID, -1, 0);
 	BlessTupleDesc(tupdesc);
 
 	{
 		const char *work_mem_str = GetConfigOption("work_mem", true, false);
-		int work_mem_kb = 262144; /* Default 256MB */
+		int			work_mem_kb = 262144;	/* Default 256MB */
+
 		if (work_mem_str)
 		{
 			work_mem_kb = atoi(work_mem_str);
@@ -97,59 +98,59 @@ hybrid_dense_sparse_search(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldcontext);
 
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
- if (ret != SPI_OK_CONNECT)
- 	{
- 		SPI_finish();
- 		ereport(ERROR,
- 			(errcode(ERRCODE_INTERNAL_ERROR),
- 			 errmsg("neurondb: SPI_connect failed")));
- 	}
-		ereport(ERROR,
+		if (ret != SPI_OK_CONNECT)
+		{
+			SPI_finish();
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: SPI_connect failed")));
+		}
+	ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("SPI_connect failed: %d", ret)));
+			 errmsg("SPI_connect failed: %d", ret)));
 
 	/* Perform hybrid search using weighted fusion */
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-		"WITH dense_scores AS ("
-		"  SELECT ctid, 1.0 / (1.0 + l2_distance(%s, $1)) AS score "
-		"  FROM %s "
-		"  WHERE %s IS NOT NULL "
-		"  ORDER BY l2_distance(%s, $1) "
-		"  LIMIT %d"
-		"), "
-		"sparse_scores AS ("
-		"  SELECT ctid, sparse_vector_dot_product(%s, $2) AS score "
-		"  FROM %s "
-		"  WHERE %s IS NOT NULL "
-		"  ORDER BY sparse_vector_dot_product(%s, $2) DESC "
-		"  LIMIT %d"
-		"), "
-		"fused AS ("
-		"  SELECT "
-		"    COALESCE(d.ctid, s.ctid) AS ctid, "
-		"    COALESCE(d.score, 0.0) * %.2f + "
-		"    COALESCE(s.score, 0.0) * %.2f AS fused_score "
-		"  FROM dense_scores d "
-		"  FULL OUTER JOIN sparse_scores s ON d.ctid = s.ctid"
-		") "
-		"SELECT ctid, fused_score "
-		"FROM fused "
-		"ORDER BY fused_score DESC "
-		"LIMIT %d",
-		dense_str,
-		tbl_str,
-		dense_str,
-		dense_str,
-		k * 2,
-		sparse_str,
-		tbl_str,
-		sparse_str,
-		sparse_str,
-		k * 2,
-		dense_weight,
-		sparse_weight,
-		k);
+					 "WITH dense_scores AS ("
+					 "  SELECT ctid, 1.0 / (1.0 + l2_distance(%s, $1)) AS score "
+					 "  FROM %s "
+					 "  WHERE %s IS NOT NULL "
+					 "  ORDER BY l2_distance(%s, $1) "
+					 "  LIMIT %d"
+					 "), "
+					 "sparse_scores AS ("
+					 "  SELECT ctid, sparse_vector_dot_product(%s, $2) AS score "
+					 "  FROM %s "
+					 "  WHERE %s IS NOT NULL "
+					 "  ORDER BY sparse_vector_dot_product(%s, $2) DESC "
+					 "  LIMIT %d"
+					 "), "
+					 "fused AS ("
+					 "  SELECT "
+					 "    COALESCE(d.ctid, s.ctid) AS ctid, "
+					 "    COALESCE(d.score, 0.0) * %.2f + "
+					 "    COALESCE(s.score, 0.0) * %.2f AS fused_score "
+					 "  FROM dense_scores d "
+					 "  FULL OUTER JOIN sparse_scores s ON d.ctid = s.ctid"
+					 ") "
+					 "SELECT ctid, fused_score "
+					 "FROM fused "
+					 "ORDER BY fused_score DESC "
+					 "LIMIT %d",
+					 dense_str,
+					 tbl_str,
+					 dense_str,
+					 dense_str,
+					 k * 2,
+					 sparse_str,
+					 tbl_str,
+					 sparse_str,
+					 sparse_str,
+					 k * 2,
+					 dense_weight,
+					 sparse_weight,
+					 k);
 
 	args[0] = dense_query;
 	args[1] = sparse_query;
@@ -157,27 +158,27 @@ hybrid_dense_sparse_search(PG_FUNCTION_ARGS)
 	argtypes[1] = get_fn_expr_argtype(fcinfo->flinfo, 4);
 
 	ret = SPI_execute_with_args(sql.data,
-		2,
-		argtypes,
-		args,
-		NULL,
-		false,
-		0);
+								2,
+								argtypes,
+								args,
+								NULL,
+								false,
+								0);
 
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("hybrid_dense_sparse_search query failed")));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("hybrid_dense_sparse_search query failed")));
 
 	/* Return results */
 	for (int i = 0; i < SPI_processed; i++)
 	{
-		HeapTuple tuple = SPI_tuptable->vals[i];
+		HeapTuple	tuple = SPI_tuptable->vals[i];
 		ItemPointer ctid = &tuple->t_self;
-		float4 score = DatumGetFloat4(SPI_getbinval(tuple,
-			SPI_tuptable->tupdesc,
-			2,
-			&nulls[1]));
+		float4		score = DatumGetFloat4(SPI_getbinval(tuple,
+														 SPI_tuptable->tupdesc,
+														 2,
+														 &nulls[1]));
 
 		values[0] = ItemPointerGetBlockNumber(ctid);
 		values[1] = Float4GetDatum(score);
@@ -197,12 +198,12 @@ PG_FUNCTION_INFO_V1(rrf_fusion);
 Datum
 rrf_fusion(PG_FUNCTION_ARGS)
 {
-	float4 dense_rank;
-	float4 sparse_rank;
-	float4 k_param;
-	float4 rrf_score;
+	float4		dense_rank;
+	float4		sparse_rank;
+	float4		k_param;
+	float4		rrf_score;
 
-	PG_GETARG_INT32(0); /* k - reserved for future use */
+	PG_GETARG_INT32(0);			/* k - reserved for future use */
 	dense_rank = PG_GETARG_FLOAT4(1);
 	sparse_rank = PG_GETARG_FLOAT4(2);
 	k_param = PG_ARGISNULL(3) ? 60.0f : PG_GETARG_FLOAT4(3);
@@ -212,4 +213,3 @@ rrf_fusion(PG_FUNCTION_ARGS)
 
 	PG_RETURN_FLOAT4(rrf_score);
 }
-

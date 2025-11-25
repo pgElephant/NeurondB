@@ -129,8 +129,8 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 
 	/* Create memory context */
 	drift_context = AllocSetContextCreate(CurrentMemoryContext,
-										 "drift monitoring context",
-										 ALLOCSET_DEFAULT_SIZES);
+										  "drift monitoring context",
+										  ALLOCSET_DEFAULT_SIZES);
 	elog(DEBUG1, "drift monitoring context created");
 	oldcontext = MemoryContextSwitchTo(drift_context);
 
@@ -162,7 +162,11 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 						 "AND %s < NOW() - INTERVAL '%s'",
 						 col_quoted, tbl_quoted, ts_col_quoted, window_str, window_str, ts_col_quoted, window_str);
 		elog(DEBUG1, "baseline query: %s", sql.data);
-		/* Note: quote_identifier returns const char * pointing to managed memory, don't pfree */
+
+		/*
+		 * Note: quote_identifier returns const char * pointing to managed
+		 * memory, don't pfree
+		 */
 	}
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
@@ -204,7 +208,11 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 						 "WHERE %s >= NOW() - INTERVAL '%s'",
 						 col_quoted, tbl_quoted, ts_col_quoted, window_str);
 		elog(DEBUG1, "current query: %s", sql.data);
-		/* Note: quote_identifier returns const char * pointing to managed memory, don't pfree */
+
+		/*
+		 * Note: quote_identifier returns const char * pointing to managed
+		 * memory, don't pfree
+		 */
 	}
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
@@ -271,7 +279,7 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 		}
 
 		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-														 CStringGetDatum(result_json.data)));
+														  CStringGetDatum(result_json.data)));
 
 		NDB_SAFE_PFREE_AND_NULL(tbl_str);
 		NDB_SAFE_PFREE_AND_NULL(col_str);

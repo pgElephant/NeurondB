@@ -36,9 +36,9 @@
 static char *get_hnsw_tenant_table(const char *table, const char *col, int32 tenant_id);
 static void ensure_hnsw_tenant_metadata_table(void);
 static void upsert_tenant_hnsw_metadata(const char *tbl, const char *col,
-                                        int32 tenant_id, int32 quota_max,
-                                        int16 ef_search, int16 max_level);
-static Jsonb *get_tenant_quota_json(int32 tenant_id, int32 *used, int32 *total);
+										int32 tenant_id, int32 quota_max,
+										int16 ef_search, int16 max_level);
+static Jsonb * get_tenant_quota_json(int32 tenant_id, int32 * used, int32 * total);
 static void maybe_build_hnsw_index(const char *tbl, const char *col, int32 tenant_id);
 
 static const char *HNSW_META_TABLE = "__hnsw_tenant_meta";
@@ -54,34 +54,34 @@ PG_FUNCTION_INFO_V1(hnsw_tenant_create);
 Datum
 hnsw_tenant_create(PG_FUNCTION_ARGS)
 {
-    text   *table_name = PG_GETARG_TEXT_PP(0);
-    text   *column_name = PG_GETARG_TEXT_PP(1);
-    int32   tenant_id = PG_GETARG_INT32(2);
-    int32   quota_max = PG_GETARG_INT32(3);
-    int16   ef_search = PG_GETARG_INT16(4);
-    int16   max_level = PG_GETARG_INT16(5);
-    char   *tbl_str;
-    char   *col_str;
-    char   *index_tbl;
+	text	   *table_name = PG_GETARG_TEXT_PP(0);
+	text	   *column_name = PG_GETARG_TEXT_PP(1);
+	int32		tenant_id = PG_GETARG_INT32(2);
+	int32		quota_max = PG_GETARG_INT32(3);
+	int16		ef_search = PG_GETARG_INT16(4);
+	int16		max_level = PG_GETARG_INT16(5);
+	char	   *tbl_str;
+	char	   *col_str;
+	char	   *index_tbl;
 
-    tbl_str = text_to_cstring(table_name);
-    col_str = text_to_cstring(column_name);
+	tbl_str = text_to_cstring(table_name);
+	col_str = text_to_cstring(column_name);
 
-    ensure_hnsw_tenant_metadata_table();
+	ensure_hnsw_tenant_metadata_table();
 
-    /* Upsert metadata for this tenant/table/col */
-    upsert_tenant_hnsw_metadata(tbl_str, col_str, tenant_id, quota_max, ef_search, max_level);
+	/* Upsert metadata for this tenant/table/col */
+	upsert_tenant_hnsw_metadata(tbl_str, col_str, tenant_id, quota_max, ef_search, max_level);
 
-    /* Materialize the HNSW index data table if needed */
-    maybe_build_hnsw_index(tbl_str, col_str, tenant_id);
+	/* Materialize the HNSW index data table if needed */
+	maybe_build_hnsw_index(tbl_str, col_str, tenant_id);
 
-    index_tbl = get_hnsw_tenant_table(tbl_str, col_str, tenant_id);
-    elog(INFO,
-         "neurondb: Created tenant-aware HNSW on %s.%s (tenant %d, quota=%d, ef=%d, max_level=%d, idx_tbl=%s)",
-         tbl_str, col_str, tenant_id, quota_max, ef_search, max_level, index_tbl);
+	index_tbl = get_hnsw_tenant_table(tbl_str, col_str, tenant_id);
+	elog(INFO,
+		 "neurondb: Created tenant-aware HNSW on %s.%s (tenant %d, quota=%d, ef=%d, max_level=%d, idx_tbl=%s)",
+		 tbl_str, col_str, tenant_id, quota_max, ef_search, max_level, index_tbl);
 
-    NDB_SAFE_PFREE_AND_NULL(index_tbl);
-    PG_RETURN_BOOL(true);
+	NDB_SAFE_PFREE_AND_NULL(index_tbl);
+	PG_RETURN_BOOL(true);
 }
 
 /*-------------------------------------------------------------------------
@@ -95,108 +95,108 @@ PG_FUNCTION_INFO_V1(hnsw_tenant_search);
 Datum
 hnsw_tenant_search(PG_FUNCTION_ARGS)
 {
-    FuncCallContext *funcctx;
-    TupleDesc        tupdesc;
-    MemoryContext    oldcontext;
+	FuncCallContext *funcctx;
+	TupleDesc	tupdesc;
+	MemoryContext oldcontext;
 
-    if (SRF_IS_FIRSTCALL())
-    {
-        char           *tbl_str;
-        char           *col_str;
-        char           *index_tbl;
-        int             ret;
-        StringInfoData  sql;
-        Vector         *query;
-        int32           tenant_id;
-        int32           k;
-        int16           ef_search = 100; /* Default for demonstration */
+	if (SRF_IS_FIRSTCALL())
+	{
+		char	   *tbl_str;
+		char	   *col_str;
+		char	   *index_tbl;
+		int			ret;
+		StringInfoData sql;
+		Vector	   *query;
+		int32		tenant_id;
+		int32		k;
+		int16		ef_search = 100;	/* Default for demonstration */
 
-        query = PG_GETARG_VECTOR_P(0);
-        NDB_CHECK_VECTOR_VALID(query);
-        tenant_id = PG_GETARG_INT32(1);
-        k = PG_GETARG_INT32(2);
+		query = PG_GETARG_VECTOR_P(0);
+		NDB_CHECK_VECTOR_VALID(query);
+		tenant_id = PG_GETARG_INT32(1);
+		k = PG_GETARG_INT32(2);
 
-        /* Validate inputs */
-        if (query == NULL)
-            ereport(ERROR, (errmsg("query vector cannot be null")));
+		/* Validate inputs */
+		if (query == NULL)
+			ereport(ERROR, (errmsg("query vector cannot be null")));
 
-        if (tenant_id < 0)
-            ereport(ERROR, (errmsg("tenant_id must be non-negative")));
+		if (tenant_id < 0)
+			ereport(ERROR, (errmsg("tenant_id must be non-negative")));
 
-        if (k <= 0)
-            ereport(ERROR, (errmsg("k must be positive")));
+		if (k <= 0)
+			ereport(ERROR, (errmsg("k must be positive")));
 
-        elog(DEBUG1,
-             "HNSW tenant search: tenant=%d, query_dim=%d, k=%d, ef_search=%d",
-             tenant_id, query->dim, k, ef_search);
+		elog(DEBUG1,
+			 "HNSW tenant search: tenant=%d, query_dim=%d, k=%d, ef_search=%d",
+			 tenant_id, query->dim, k, ef_search);
 
-        /* Placeholder for table/col name, should pass/lookup real names */
-        tbl_str = pstrdup("");
-        col_str = pstrdup("");
+		/* Placeholder for table/col name, should pass/lookup real names */
+		tbl_str = pstrdup("");
+		col_str = pstrdup("");
 
-        funcctx = SRF_FIRSTCALL_INIT();
+		funcctx = SRF_FIRSTCALL_INIT();
 
-        /* Compose tuple desc: (id bigint, dist real) */
-        tupdesc = CreateTemplateTupleDesc(2);
-        TupleDescInitEntry(tupdesc, (AttrNumber) 1, "id", INT8OID, -1, 0);
-        TupleDescInitEntry(tupdesc, (AttrNumber) 2, "dist", FLOAT4OID, -1, 0);
-        funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+		/* Compose tuple desc: (id bigint, dist real) */
+		tupdesc = CreateTemplateTupleDesc(2);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "id", INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "dist", FLOAT4OID, -1, 0);
+		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-        oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-        /* Compose index/table name for tenant */
-        index_tbl = get_hnsw_tenant_table(tbl_str, col_str, tenant_id);
+		/* Compose index/table name for tenant */
+		index_tbl = get_hnsw_tenant_table(tbl_str, col_str, tenant_id);
 
-        initStringInfo(&sql);
-        appendStringInfo(&sql,
-                         "SELECT id, random()::float4 AS dist FROM %s WHERE tenant_id = %d ORDER BY dist LIMIT %d",
-                         index_tbl, tenant_id, k);
+		initStringInfo(&sql);
+		appendStringInfo(&sql,
+						 "SELECT id, random()::float4 AS dist FROM %s WHERE tenant_id = %d ORDER BY dist LIMIT %d",
+						 index_tbl, tenant_id, k);
 
-        if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-            elog(ERROR, "SPI_connect failed: %d", ret);
+		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+			elog(ERROR, "SPI_connect failed: %d", ret);
 
-        ret = ndb_spi_execute_safe(sql.data, true, k);
-	NDB_CHECK_SPI_TUPTABLE();
-        if (ret != SPI_OK_SELECT && ret != SPI_OK_INSERT)
-            elog(ERROR, "SPI query failed: %s", sql.data);
+		ret = ndb_spi_execute_safe(sql.data, true, k);
+		NDB_CHECK_SPI_TUPTABLE();
+		if (ret != SPI_OK_SELECT && ret != SPI_OK_INSERT)
+			elog(ERROR, "SPI query failed: %s", sql.data);
 
-        /* Save SPI tuptable for subsequent calls */
-        funcctx->max_calls = SPI_processed;
-        funcctx->user_fctx = SPI_tuptable;
+		/* Save SPI tuptable for subsequent calls */
+		funcctx->max_calls = SPI_processed;
+		funcctx->user_fctx = SPI_tuptable;
 
-        MemoryContextSwitchTo(oldcontext);
+		MemoryContextSwitchTo(oldcontext);
 
-        NDB_SAFE_PFREE_AND_NULL(index_tbl);
-    }
+		NDB_SAFE_PFREE_AND_NULL(index_tbl);
+	}
 
-    funcctx = SRF_PERCALL_SETUP();
+	funcctx = SRF_PERCALL_SETUP();
 
-    if (funcctx->call_cntr < funcctx->max_calls)
-    {
-        SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
-        HeapTuple      spi_tuple;
-        Datum          values[2];
-        bool           nulls[2];
-        HeapTuple      tup;
+	if (funcctx->call_cntr < funcctx->max_calls)
+	{
+		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
+		HeapTuple	spi_tuple;
+		Datum		values[2];
+		bool		nulls[2];
+		HeapTuple	tup;
 
-        spi_tuple = tuptable->vals[funcctx->call_cntr];
+		spi_tuple = tuptable->vals[funcctx->call_cntr];
 
-        values[0] = SPI_getbinval(spi_tuple, tuptable->tupdesc, 1, &nulls[0]);
-        values[1] = SPI_getbinval(spi_tuple, tuptable->tupdesc, 2, &nulls[1]);
+		values[0] = SPI_getbinval(spi_tuple, tuptable->tupdesc, 1, &nulls[0]);
+		values[1] = SPI_getbinval(spi_tuple, tuptable->tupdesc, 2, &nulls[1]);
 
-        tup = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+		tup = heap_form_tuple(funcctx->tuple_desc, values, nulls);
 
-        SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tup));
-    }
-    else
-    {
-        SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
+		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tup));
+	}
+	else
+	{
+		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
 
-        if (tuptable != NULL)
-            SPI_freetuptable(tuptable);
-        SPI_finish();
-        SRF_RETURN_DONE(funcctx);
-    }
+		if (tuptable != NULL)
+			SPI_freetuptable(tuptable);
+		SPI_finish();
+		SRF_RETURN_DONE(funcctx);
+	}
 }
 
 /*-------------------------------------------------------------------------
@@ -210,22 +210,22 @@ PG_FUNCTION_INFO_V1(hnsw_tenant_quota);
 Datum
 hnsw_tenant_quota(PG_FUNCTION_ARGS)
 {
-    int32   tenant_id = PG_GETARG_INT32(0);
-    int32   used = 0;
-    int32   total = 0;
-    text   *result_txt;
-    Jsonb  *result_jsonb;
-    char   *result;
+	int32		tenant_id = PG_GETARG_INT32(0);
+	int32		used = 0;
+	int32		total = 0;
+	text	   *result_txt;
+	Jsonb	   *result_jsonb;
+	char	   *result;
 
-    result_jsonb = get_tenant_quota_json(tenant_id, &used, &total);
+	result_jsonb = get_tenant_quota_json(tenant_id, &used, &total);
 
-    result = JsonbToCString(NULL, &result_jsonb->root, VARSIZE(result_jsonb));
-    result_txt = cstring_to_text(result);
+	result = JsonbToCString(NULL, &result_jsonb->root, VARSIZE(result_jsonb));
+	result_txt = cstring_to_text(result);
 
-    NDB_SAFE_PFREE_AND_NULL(result_jsonb);
-    NDB_SAFE_PFREE_AND_NULL(result);
+	NDB_SAFE_PFREE_AND_NULL(result_jsonb);
+	NDB_SAFE_PFREE_AND_NULL(result);
 
-    PG_RETURN_TEXT_P(result_txt);
+	PG_RETURN_TEXT_P(result_txt);
 }
 
 /*-------------------------------------------------------------------------
@@ -239,27 +239,27 @@ hnsw_tenant_quota(PG_FUNCTION_ARGS)
 static void
 ensure_hnsw_tenant_metadata_table(void)
 {
-    int             ret;
-    StringInfoData  sql;
+	int			ret;
+	StringInfoData sql;
 
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        elog(ERROR, "SPI_connect failed in ensure_hnsw_tenant_metadata_table");
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed in ensure_hnsw_tenant_metadata_table");
 
-    initStringInfo(&sql);
+	initStringInfo(&sql);
 
-    appendStringInfo(&sql,
-                     "CREATE TABLE IF NOT EXISTS %s ("
-                     "tbl text, col text, tenant_id int, quota_max int, quota_used int default 0, "
-                     "ef_search smallint, max_level smallint, "
-                     "PRIMARY KEY (tbl, col, tenant_id))",
-                     HNSW_META_TABLE);
+	appendStringInfo(&sql,
+					 "CREATE TABLE IF NOT EXISTS %s ("
+					 "tbl text, col text, tenant_id int, quota_max int, quota_used int default 0, "
+					 "ef_search smallint, max_level smallint, "
+					 "PRIMARY KEY (tbl, col, tenant_id))",
+					 HNSW_META_TABLE);
 
-    ret = ndb_spi_execute_safe(sql.data, false, 0);
+	ret = ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
-    if (ret != SPI_OK_UTILITY && ret != SPI_OK_SELECT)
-        elog(ERROR, "Failed to create metadata table: %s", sql.data);
+	if (ret != SPI_OK_UTILITY && ret != SPI_OK_SELECT)
+		elog(ERROR, "Failed to create metadata table: %s", sql.data);
 
-    SPI_finish();
+	SPI_finish();
 }
 
 /*
@@ -267,49 +267,49 @@ ensure_hnsw_tenant_metadata_table(void)
  */
 static void
 upsert_tenant_hnsw_metadata(const char *tbl, const char *col, int32 tenant_id,
-                           int32 quota_max, int16 ef_search, int16 max_level)
+							int32 quota_max, int16 ef_search, int16 max_level)
 {
-    int             ret;
-    StringInfoData  sql;
+	int			ret;
+	StringInfoData sql;
 
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        elog(ERROR, "SPI_connect failed in upsert_tenant_hnsw_metadata");
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed in upsert_tenant_hnsw_metadata");
 
-    initStringInfo(&sql);
+	initStringInfo(&sql);
 
-    appendStringInfo(&sql,
-                     "INSERT INTO %s (tbl, col, tenant_id, quota_max, quota_used, ef_search, max_level) "
-                     "VALUES ($1, $2, $3, $4, 0, $5, $6) "
-                     "ON CONFLICT (tbl, col, tenant_id) "
-                     "DO UPDATE SET quota_max=EXCLUDED.quota_max, "
-                     "ef_search=EXCLUDED.ef_search, max_level=EXCLUDED.max_level",
-                     HNSW_META_TABLE);
+	appendStringInfo(&sql,
+					 "INSERT INTO %s (tbl, col, tenant_id, quota_max, quota_used, ef_search, max_level) "
+					 "VALUES ($1, $2, $3, $4, 0, $5, $6) "
+					 "ON CONFLICT (tbl, col, tenant_id) "
+					 "DO UPDATE SET quota_max=EXCLUDED.quota_max, "
+					 "ef_search=EXCLUDED.ef_search, max_level=EXCLUDED.max_level",
+					 HNSW_META_TABLE);
 
-    {
-        Oid    argtypes[6] = { TEXTOID, TEXTOID, INT4OID, INT4OID, INT2OID, INT2OID };
-        Datum  values[6];
-        SPIPlanPtr plan;
-        int    exec_ret;
+	{
+		Oid			argtypes[6] = {TEXTOID, TEXTOID, INT4OID, INT4OID, INT2OID, INT2OID};
+		Datum		values[6];
+		SPIPlanPtr	plan;
+		int			exec_ret;
 
-        values[0] = CStringGetTextDatum(tbl);
-        values[1] = CStringGetTextDatum(col);
-        values[2] = Int32GetDatum(tenant_id);
-        values[3] = Int32GetDatum(quota_max);
-        values[4] = Int16GetDatum(ef_search);
-        values[5] = Int16GetDatum(max_level);
+		values[0] = CStringGetTextDatum(tbl);
+		values[1] = CStringGetTextDatum(col);
+		values[2] = Int32GetDatum(tenant_id);
+		values[3] = Int32GetDatum(quota_max);
+		values[4] = Int16GetDatum(ef_search);
+		values[5] = Int16GetDatum(max_level);
 
-        plan = SPI_prepare(sql.data, 6, argtypes);
-        if (plan == NULL)
-            elog(ERROR, "SPI_prepare failed in upsert_tenant_hnsw_metadata: %s", sql.data);
+		plan = SPI_prepare(sql.data, 6, argtypes);
+		if (plan == NULL)
+			elog(ERROR, "SPI_prepare failed in upsert_tenant_hnsw_metadata: %s", sql.data);
 
-        exec_ret = SPI_execute_plan(plan, values, NULL, false, 0);
-        if (exec_ret != SPI_OK_INSERT && exec_ret != SPI_OK_UPDATE)
-            elog(ERROR, "SPI_execute_plan failed in upsert_tenant_hnsw_metadata: ret=%d sql=%s",
-                 exec_ret, sql.data);
+		exec_ret = SPI_execute_plan(plan, values, NULL, false, 0);
+		if (exec_ret != SPI_OK_INSERT && exec_ret != SPI_OK_UPDATE)
+			elog(ERROR, "SPI_execute_plan failed in upsert_tenant_hnsw_metadata: ret=%d sql=%s",
+				 exec_ret, sql.data);
 
-        SPI_freeplan(plan);
-        SPI_finish();
-    }
+		SPI_freeplan(plan);
+		SPI_finish();
+	}
 }
 
 /*
@@ -318,14 +318,14 @@ upsert_tenant_hnsw_metadata(const char *tbl, const char *col, int32 tenant_id,
 static char *
 get_hnsw_tenant_table(const char *table, const char *col, int32 tenant_id)
 {
-    int     n;
-    char   *buf;
+	int			n;
+	char	   *buf;
 
-    n = strlen(table) + strlen(col) + 48;
-    buf = (char *) palloc(n);
-    snprintf(buf, n, "%s%s_%s_%d", HNSW_INDEX_PREFIX, table, col, tenant_id);
+	n = strlen(table) + strlen(col) + 48;
+	buf = (char *) palloc(n);
+	snprintf(buf, n, "%s%s_%s_%d", HNSW_INDEX_PREFIX, table, col, tenant_id);
 
-    return buf;
+	return buf;
 }
 
 /*
@@ -334,96 +334,97 @@ get_hnsw_tenant_table(const char *table, const char *col, int32 tenant_id)
 static void
 maybe_build_hnsw_index(const char *tbl, const char *col, int32 tenant_id)
 {
-    char           *idx_tbl;
-    int             ret;
-    StringInfoData  sql;
+	char	   *idx_tbl;
+	int			ret;
+	StringInfoData sql;
 
-    idx_tbl = get_hnsw_tenant_table(tbl, col, tenant_id);
+	idx_tbl = get_hnsw_tenant_table(tbl, col, tenant_id);
 
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        elog(ERROR, "SPI_connect failed in maybe_build_hnsw_index");
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed in maybe_build_hnsw_index");
 
-    initStringInfo(&sql);
+	initStringInfo(&sql);
 
-    appendStringInfo(&sql,
-                     "CREATE TABLE IF NOT EXISTS %s ("
-                     "id bigint, vector vector, tenant_id int, PRIMARY KEY (id))",
-                     idx_tbl);
+	appendStringInfo(&sql,
+					 "CREATE TABLE IF NOT EXISTS %s ("
+					 "id bigint, vector vector, tenant_id int, PRIMARY KEY (id))",
+					 idx_tbl);
 
-    ret = ndb_spi_execute_safe(sql.data, false, 0);
+	ret = ndb_spi_execute_safe(sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
-    if (ret != SPI_OK_UTILITY)
-        elog(ERROR, "Failed creating index table: %s", sql.data);
+	if (ret != SPI_OK_UTILITY)
+		elog(ERROR, "Failed creating index table: %s", sql.data);
 
-    SPI_finish();
-    NDB_SAFE_PFREE_AND_NULL(idx_tbl);
+	SPI_finish();
+	NDB_SAFE_PFREE_AND_NULL(idx_tbl);
 }
 
 /*
  * Find quota (used/total) for a tenant, return as JSONB.
  */
 static Jsonb *
-get_tenant_quota_json(int32 tenant_id, int32 *used, int32 *total)
+get_tenant_quota_json(int32 tenant_id, int32 * used, int32 * total)
 {
-    int             ret;
-    JsonbParseState *state = NULL;
-    JsonbValue       b;
-    StringInfoData   sql;
+	int			ret;
+	JsonbParseState *state = NULL;
+	JsonbValue	b;
+	StringInfoData sql;
 
-    (void) state;
-    (void) b;
+	(void) state;
+	(void) b;
 
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        elog(ERROR, "SPI_connect failed in get_tenant_quota_json");
+	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed in get_tenant_quota_json");
 
-    initStringInfo(&sql);
+	initStringInfo(&sql);
 
-    appendStringInfo(&sql,
-                     "SELECT quota_used, quota_max FROM %s WHERE tenant_id = %d LIMIT 1",
-                     HNSW_META_TABLE, tenant_id);
+	appendStringInfo(&sql,
+					 "SELECT quota_used, quota_max FROM %s WHERE tenant_id = %d LIMIT 1",
+					 HNSW_META_TABLE, tenant_id);
 
-    ret = ndb_spi_execute_safe(sql.data, true, 1);
+	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	NDB_CHECK_SPI_TUPTABLE();
-    if (ret != SPI_OK_SELECT)
-        elog(ERROR, "Failed to read quota for tenant %d", tenant_id);
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "Failed to read quota for tenant %d", tenant_id);
 
-    if (SPI_processed == 1 && SPI_tuptable != NULL)
-    {
-        HeapTuple   tup = SPI_tuptable->vals[0];
-        bool        qnull,
-                    tnull;
-        *used = DatumGetInt32(SPI_getbinval(tup, SPI_tuptable->tupdesc, 1, &qnull));
-        *total = DatumGetInt32(SPI_getbinval(tup, SPI_tuptable->tupdesc, 2, &tnull));
-    }
-    else
-    {
-        *used = 0;
-        *total = 0;
-    }
-    SPI_finish();
+	if (SPI_processed == 1 && SPI_tuptable != NULL)
+	{
+		HeapTuple	tup = SPI_tuptable->vals[0];
+		bool		qnull,
+					tnull;
 
-    /* Create JSONB object */
-    {
-        JsonbValue     obj;
-        static JsonbPair pairs[2];
+		*used = DatumGetInt32(SPI_getbinval(tup, SPI_tuptable->tupdesc, 1, &qnull));
+		*total = DatumGetInt32(SPI_getbinval(tup, SPI_tuptable->tupdesc, 2, &tnull));
+	}
+	else
+	{
+		*used = 0;
+		*total = 0;
+	}
+	SPI_finish();
 
-        obj.type = jbvObject;
+	/* Create JSONB object */
+	{
+		JsonbValue	obj;
+		static JsonbPair pairs[2];
 
-        pairs[0].key.type = jbvString;
-        pairs[0].key.val.string.len = 4;
-        pairs[0].key.val.string.val = "used";
-        pairs[0].value.type = jbvNumeric;
-        pairs[0].value.val.numeric = int64_to_numeric(*used);
+		obj.type = jbvObject;
 
-        pairs[1].key.type = jbvString;
-        pairs[1].key.val.string.len = 5;
-        pairs[1].key.val.string.val = "total";
-        pairs[1].value.type = jbvNumeric;
-        pairs[1].value.val.numeric = int64_to_numeric(*total);
+		pairs[0].key.type = jbvString;
+		pairs[0].key.val.string.len = 4;
+		pairs[0].key.val.string.val = "used";
+		pairs[0].value.type = jbvNumeric;
+		pairs[0].value.val.numeric = int64_to_numeric(*used);
 
-        obj.val.object.nPairs = 2;
-        obj.val.object.pairs = pairs;
+		pairs[1].key.type = jbvString;
+		pairs[1].key.val.string.len = 5;
+		pairs[1].key.val.string.val = "total";
+		pairs[1].value.type = jbvNumeric;
+		pairs[1].value.val.numeric = int64_to_numeric(*total);
 
-        return JsonbValueToJsonb(&obj);
-    }
+		obj.val.object.nPairs = 2;
+		obj.val.object.pairs = pairs;
+
+		return JsonbValueToJsonb(&obj);
+	}
 }

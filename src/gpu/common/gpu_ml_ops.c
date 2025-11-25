@@ -36,27 +36,27 @@
  */
 void
 neurondb_gpu_matmul(const float *A,
-	const float *B,
-	float *C,
-	int m,
-	int n,
-	int k,
-	bool use_gpu)
+					const float *B,
+					float *C,
+					int m,
+					int n,
+					int k,
+					bool use_gpu)
 {
-	int i;
-	int j;
-	int l;
+	int			i;
+	int			j;
+	int			l;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{
-		const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-		void *d_A = NULL;
-		void *d_B = NULL;
-		void *d_C = NULL;
-		size_t A_size = m * n * sizeof(float);
-		size_t B_size = n * k * sizeof(float);
-		size_t C_size = m * k * sizeof(float);
-		int rc;
+		const		ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
+		void	   *d_A = NULL;
+		void	   *d_B = NULL;
+		void	   *d_C = NULL;
+		size_t		A_size = m * n * sizeof(float);
+		size_t		B_size = n * k * sizeof(float);
+		size_t		C_size = m * k * sizeof(float);
+		int			rc;
 
 		if (backend && backend->mem_alloc)
 		{
@@ -76,9 +76,9 @@ neurondb_gpu_matmul(const float *A,
 				/* GPU matmul kernel would be called here */
 				/* For now, use CPU fallback but with GPU memory framework */
 				elog(DEBUG1,
-					"neurondb: GPU matmul framework ready (backend %s), "
-					"using CPU fallback until kernel implemented",
-					backend->name ? backend->name : "unknown");
+					 "neurondb: GPU matmul framework ready (backend %s), "
+					 "using CPU fallback until kernel implemented",
+					 backend->name ? backend->name : "unknown");
 
 				/* Copy result back */
 				backend->memcpy_d2h(C, d_C, C_size);
@@ -102,7 +102,8 @@ neurondb_gpu_matmul(const float *A,
 	{
 		for (j = 0; j < k; j++)
 		{
-			float sum = 0.0f;
+			float		sum = 0.0f;
+
 			for (l = 0; l < n; l++)
 				sum += A[i * n + l] * B[l * k + j];
 			C[i * k + j] = sum;
@@ -118,21 +119,21 @@ neurondb_gpu_matmul(const float *A,
  */
 void
 neurondb_gpu_vector_add(const float *a,
-	const float *b,
-	float *result,
-	int n,
-	bool use_gpu)
+						const float *b,
+						float *result,
+						int n,
+						bool use_gpu)
 {
-	int i;
+	int			i;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{
-		const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-		void *d_a = NULL;
-		void *d_b = NULL;
-		void *d_result = NULL;
-		size_t vec_size = n * sizeof(float);
-		int rc;
+		const		ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
+		void	   *d_a = NULL;
+		void	   *d_b = NULL;
+		void	   *d_result = NULL;
+		size_t		vec_size = n * sizeof(float);
+		int			rc;
 
 		if (backend && backend->mem_alloc)
 		{
@@ -151,9 +152,9 @@ neurondb_gpu_vector_add(const float *a,
 
 				/* GPU vector_add kernel would be called here */
 				elog(DEBUG1,
-					"neurondb: GPU vector_add framework ready (backend %s), "
-					"using CPU fallback until kernel implemented",
-					backend->name ? backend->name : "unknown");
+					 "neurondb: GPU vector_add framework ready (backend %s), "
+					 "using CPU fallback until kernel implemented",
+					 backend->name ? backend->name : "unknown");
 
 				/* Copy result back */
 				backend->memcpy_d2h(result, d_result, vec_size);
@@ -184,19 +185,19 @@ neurondb_gpu_vector_add(const float *a,
  */
 void
 neurondb_gpu_activation_relu(const float *input,
-	float *output,
-	int n,
-	bool use_gpu)
+							 float *output,
+							 int n,
+							 bool use_gpu)
 {
-	int i;
+	int			i;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{
-		const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-		void *d_input = NULL;
-		void *d_output = NULL;
-		size_t vec_size = n * sizeof(float);
-		int rc;
+		const		ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
+		void	   *d_input = NULL;
+		void	   *d_output = NULL;
+		size_t		vec_size = n * sizeof(float);
+		int			rc;
 
 		if (backend && backend->mem_alloc)
 		{
@@ -210,9 +211,9 @@ neurondb_gpu_activation_relu(const float *input,
 
 				/* GPU ReLU kernel would be called here */
 				elog(DEBUG1,
-					"neurondb: GPU ReLU framework ready (backend %s), "
-					"using CPU fallback until kernel implemented",
-					backend->name ? backend->name : "unknown");
+					 "neurondb: GPU ReLU framework ready (backend %s), "
+					 "using CPU fallback until kernel implemented",
+					 backend->name ? backend->name : "unknown");
 
 				backend->memcpy_d2h(output, d_output, vec_size);
 			}
@@ -244,59 +245,62 @@ neurondb_gpu_activation_relu(const float *input,
  */
 void
 neurondb_gpu_kmeans_update(const float *data,
-	const float *centroids,
-	int *assignments,
-	float *new_centroids,
-	int n_samples,
-	int n_features,
-	int k,
-	bool use_gpu)
+						   const float *centroids,
+						   int *assignments,
+						   float *new_centroids,
+						   int n_samples,
+						   int n_features,
+						   int k,
+						   bool use_gpu)
 {
-	int i;
-	int j;
-	int c;
-	int *counts;
+	int			i;
+	int			j;
+	int			c;
+	int		   *counts;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{
-		const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
+		const		ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
 		ndb_stream_t stream = NULL;
 
 		if (backend && backend->launch_kmeans_update)
 		{
 			/* Use backend's k-means update function */
-			int rc = backend->launch_kmeans_update(data, assignments,
-				new_centroids, n_samples, n_features, k, stream);
+			int			rc = backend->launch_kmeans_update(data, assignments,
+														   new_centroids, n_samples, n_features, k, stream);
+
 			if (rc == 0)
 			{
 				elog(DEBUG1,
-					"neurondb: GPU k-means update completed via backend %s",
-					backend->name ? backend->name : "unknown");
+					 "neurondb: GPU k-means update completed via backend %s",
+					 backend->name ? backend->name : "unknown");
 				return;
 			}
 		}
 
 		elog(DEBUG1,
-			"neurondb: GPU k-means update not available for backend %s; "
-			"using CPU fallback",
-			backend && backend->name ? backend->name : "unknown");
+			 "neurondb: GPU k-means update not available for backend %s; "
+			 "using CPU fallback",
+			 backend && backend->name ? backend->name : "unknown");
 	}
 
-	counts = (int *)palloc0(k * sizeof(int));
+	counts = (int *) palloc0(k * sizeof(int));
 	memset(new_centroids, 0, k * n_features * sizeof(float));
 
 	for (i = 0; i < n_samples; i++)
 	{
-		float min_dist = INFINITY;
-		int best_c = 0;
+		float		min_dist = INFINITY;
+		int			best_c = 0;
 
 		for (c = 0; c < k; c++)
 		{
-			float dist = 0.0f;
+			float		dist = 0.0f;
+
 			for (j = 0; j < n_features; j++)
 			{
-				float diff = data[i * n_features + j]
+				float		diff = data[i * n_features + j]
 					- centroids[c * n_features + j];
+
 				dist += diff * diff;
 			}
 			if (dist < min_dist)
@@ -336,28 +340,28 @@ neurondb_gpu_kmeans_update(const float *data,
  */
 void
 neurondb_gpu_compute_gradient(const float *weights,
-	const float *X,
-	const float *y,
-	float *gradient,
-	int n_samples,
-	int n_features,
-	bool use_gpu)
+							  const float *X,
+							  const float *y,
+							  float *gradient,
+							  int n_samples,
+							  int n_features,
+							  bool use_gpu)
 {
-	int i;
-	int j;
+	int			i;
+	int			j;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{
-		const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-		void *d_weights = NULL;
-		void *d_X = NULL;
-		void *d_y = NULL;
-		void *d_gradient = NULL;
-		size_t weights_size = n_features * sizeof(float);
-		size_t X_size = n_samples * n_features * sizeof(float);
-		size_t y_size = n_samples * sizeof(float);
-		size_t grad_size = n_features * sizeof(float);
-		int rc;
+		const		ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
+		void	   *d_weights = NULL;
+		void	   *d_X = NULL;
+		void	   *d_y = NULL;
+		void	   *d_gradient = NULL;
+		size_t		weights_size = n_features * sizeof(float);
+		size_t		X_size = n_samples * n_features * sizeof(float);
+		size_t		y_size = n_samples * sizeof(float);
+		size_t		grad_size = n_features * sizeof(float);
+		int			rc;
 
 		if (backend && backend->mem_alloc)
 		{
@@ -377,9 +381,9 @@ neurondb_gpu_compute_gradient(const float *weights,
 
 				/* GPU gradient kernel would be called here */
 				elog(DEBUG1,
-					"neurondb: GPU gradient framework ready (backend %s), "
-					"using CPU fallback until kernel implemented",
-					backend->name ? backend->name : "unknown");
+					 "neurondb: GPU gradient framework ready (backend %s), "
+					 "using CPU fallback until kernel implemented",
+					 backend->name ? backend->name : "unknown");
 
 				backend->memcpy_d2h(gradient, d_gradient, grad_size);
 			}
@@ -401,11 +405,13 @@ neurondb_gpu_compute_gradient(const float *weights,
 	memset(gradient, 0, n_features * sizeof(float));
 	for (i = 0; i < n_samples; i++)
 	{
-		float prediction = 0.0f;
+		float		prediction = 0.0f;
+
 		for (j = 0; j < n_features; j++)
 			prediction += weights[j] * X[i * n_features + j];
 		{
-			float error = prediction - y[i];
+			float		error = prediction - y[i];
+
 			for (j = 0; j < n_features; j++)
 				gradient[j] += error * X[i * n_features + j];
 		}
@@ -422,17 +428,17 @@ neurondb_gpu_compute_gradient(const float *weights,
 void
 neurondb_gpu_softmax(const float *input, float *output, int n, bool use_gpu)
 {
-	int i;
-	float max_val;
-	float sum;
+	int			i;
+	float		max_val;
+	float		sum;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{
-		const ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
-		void *d_input = NULL;
-		void *d_output = NULL;
-		size_t vec_size = n * sizeof(float);
-		int rc;
+		const		ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
+		void	   *d_input = NULL;
+		void	   *d_output = NULL;
+		size_t		vec_size = n * sizeof(float);
+		int			rc;
 
 		if (backend && backend->mem_alloc)
 		{
@@ -446,9 +452,9 @@ neurondb_gpu_softmax(const float *input, float *output, int n, bool use_gpu)
 
 				/* GPU softmax kernel would be called here */
 				elog(DEBUG1,
-					"neurondb: GPU softmax framework ready (backend %s), "
-					"using CPU fallback until kernel implemented",
-					backend->name ? backend->name : "unknown");
+					 "neurondb: GPU softmax framework ready (backend %s), "
+					 "using CPU fallback until kernel implemented",
+					 backend->name ? backend->name : "unknown");
 
 				backend->memcpy_d2h(output, d_output, vec_size);
 			}
