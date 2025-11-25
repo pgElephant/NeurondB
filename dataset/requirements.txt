@@ -1,0 +1,7 @@
+requests
+psycopg2-binary
+numpy
+h5py
+datasets
+numpy
+h5py
