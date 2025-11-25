@@ -720,22 +720,6 @@ predict_gmm_model_id(PG_FUNCTION_ARGS)
 	PG_RETURN_INT32(predicted_cluster);
 }
 
-/*
- * Compute Euclidean distance squared (double to double)
- */
-static inline double
-gmm_euclidean_distance_squared_dd(const double *a, const double *b, int dim)
-{
-	double sum = 0.0;
-	int i;
-
-	for (i = 0; i < dim; i++)
-	{
-		double diff = a[i] - b[i];
-		sum += diff * diff;
-	}
-	return sum;
-}
 
 /*
  * Compute Euclidean distance squared (float to double)
@@ -1120,7 +1104,7 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		/* Create a minimal valid JSONB object in a safe way */
 		/* Suppress shadow warnings from nested PG_TRY blocks */
 		#pragma GCC diagnostic push
-		#pragma GCC diagnostic ignored "-Wshadow=compatible-local"
+		#pragma GCC diagnostic ignored "-Wshadow"
 		PG_TRY();
 		{
 			result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,

@@ -84,10 +84,6 @@ typedef struct LinRegStreamAccum
 
 static void linreg_dataset_init(LinRegDataset *dataset);
 static void linreg_dataset_free(LinRegDataset *dataset);
-static void linreg_dataset_load(const char *quoted_tbl,
-	const char *quoted_feat,
-	const char *quoted_target,
-	LinRegDataset *dataset);
 static void linreg_dataset_load_limited(const char *quoted_tbl,
 	const char *quoted_feat,
 	const char *quoted_target,
@@ -215,188 +211,6 @@ linreg_dataset_free(LinRegDataset *dataset)
 	NDB_FREE(dataset->features);
 	NDB_FREE(dataset->targets);
 	linreg_dataset_init(dataset);
-}
-
-/*
- * linreg_dataset_load
- */
-static void
-linreg_dataset_load(const char *quoted_tbl,
-	const char *quoted_feat,
-	const char *quoted_target,
-	LinRegDataset *dataset)
-{
-	MemoryContext oldcontext;
-	int ret;
-	int n_samples = 0;
-	int feature_dim = 0;
-	int i;
-	Oid feat_type_oid = InvalidOid;
-	bool feat_is_array = false;
-
-	if (dataset == NULL)
-		ereport(ERROR,
-			(errmsg("linreg_dataset_load: dataset is NULL")));
-
-	oldcontext = CurrentMemoryContext;
-
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-			(errmsg("linreg_dataset_load: SPI_connect failed")));
-	elog(DEBUG1,
-		"linreg_dataset_load: building query for table %s, features %s, target %s",
-		quoted_tbl, quoted_feat, quoted_target);
-
-	/* Use centralized SQL query function */
-	{
-		NDB_DECLARE(char *, query_str);
-		query_str = (char *)ndb_sql_get_load_dataset(quoted_feat, quoted_target, quoted_tbl);
-		ret = SPI_execute(query_str, true, 0);
-		NDB_SAFE_PFREE_AND_NULL(query_str);
-	}
-	if (ret != SPI_OK_SELECT)
-	{
-		SPI_finish();
-		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: linreg_dataset_load: query failed")));
-	}
-
-	n_samples = SPI_processed;
-	if (n_samples < 10)
-	{
-		SPI_finish();
-		elog(DEBUG1,
-			"linreg_dataset_load: need at least 10 samples, got %d",
-			n_samples);
-		ereport(ERROR,
-			(errmsg("linreg_dataset_load: need at least 10 samples, got %d",
-				n_samples)));
-	}
-
-	if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL)
-		feat_type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, 1);
-	if (feat_type_oid == FLOAT8ARRAYOID || feat_type_oid == FLOAT4ARRAYOID)
-		feat_is_array = true;
-
-	if (SPI_processed > 0)
-	{
-		HeapTuple first_tuple = SPI_tuptable->vals[0];
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
-		Datum feat_datum;
-		bool feat_null;
-		Vector *vec;
-
-		feat_datum = SPI_getbinval(first_tuple, tupdesc, 1, &feat_null);
-		if (!feat_null)
-		{
-			if (feat_is_array)
-			{
-				ArrayType *arr = DatumGetArrayTypeP(feat_datum);
-				if (ARR_NDIM(arr) != 1)
-				{
-					SPI_finish();
-					ereport(ERROR,
-						(errmsg("linreg_dataset_load: features array must be 1-D")));
-				}
-				feature_dim = ARR_DIMS(arr)[0];
-			}
-			else
-			{
-				vec = DatumGetVector(feat_datum);
-				feature_dim = vec->dim;
-			}
-		}
-	}
-
-	if (feature_dim <= 0)
-	{
-		SPI_finish();
-		ereport(ERROR,
-			(errmsg("linreg_dataset_load: could not determine "
-				"feature dimension")));
-	}
-
-	MemoryContextSwitchTo(oldcontext);
-	NDB_ALLOC(dataset->features, float, (size_t)n_samples * (size_t)feature_dim);
-	NDB_ALLOC(dataset->targets, double, (size_t)n_samples);
-
-	for (i = 0; i < n_samples; i++)
-	{
-		HeapTuple tuple = SPI_tuptable->vals[i];
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
-		Datum feat_datum;
-		Datum targ_datum;
-		bool feat_null;
-		bool targ_null;
-		Vector *vec;
-		float *row;
-
-		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
-		if (feat_null)
-			continue;
-
-		row = dataset->features + (i * feature_dim);
-		if (feat_is_array)
-		{
-			ArrayType *arr = DatumGetArrayTypeP(feat_datum);
-			int ndims = ARR_NDIM(arr);
-			int dimlen = (ndims == 1) ? ARR_DIMS(arr)[0] : 0;
-			if (ndims != 1 || dimlen != feature_dim)
-			{
-				SPI_finish();
-				ereport(ERROR,
-					(errmsg("linreg_dataset_load: inconsistent array feature dimensions")));
-			}
-			if (feat_type_oid == FLOAT8ARRAYOID)
-			{
-				float8 *data = (float8 *)ARR_DATA_PTR(arr);
-				int j;
-				for (j = 0; j < feature_dim; j++)
-					row[j] = (float)data[j];
-			}
-			else
-			{
-				float4 *data = (float4 *)ARR_DATA_PTR(arr);
-				memcpy(row, data, sizeof(float) * feature_dim);
-			}
-		}
-		else
-		{
-			vec = DatumGetVector(feat_datum);
-			if (vec->dim != feature_dim)
-			{
-				SPI_finish();
-				ereport(ERROR,
-					(errmsg("linreg_dataset_load: inconsistent "
-						"vector dimensions")));
-			}
-			memcpy(row, vec->data, sizeof(float) * feature_dim);
-		}
-
-		targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
-		if (targ_null)
-			continue;
-
-		{
-			Oid targ_type = SPI_gettypeid(tupdesc, 2);
-
-			if (targ_type == INT2OID || targ_type == INT4OID)
-				dataset->targets[i] =
-					(double)DatumGetInt32(targ_datum);
-			else if (targ_type == INT8OID)
-				dataset->targets[i] =
-					(double)DatumGetInt64(targ_datum);
-			else
-				dataset->targets[i] =
-					DatumGetFloat8(targ_datum);
-		}
-	}
-
-	dataset->n_samples = n_samples;
-	dataset->feature_dim = feature_dim;
-
-	SPI_finish();
 }
 
 /*
@@ -1985,11 +1799,13 @@ evaluate_linear_regression_by_model_id_jsonb(int32 model_id, text *table_name, t
 	NDB_DECLARE(bytea *, gpu_payload);
 	NDB_DECLARE(Jsonb *, gpu_metrics);
 	bool is_gpu_model = false;
+	MemoryContext currctx;
+	NDB_DECLARE(double *, model_coefficients_ptr);	/* Store coefficients pointer for safe cleanup */
+#ifdef NDB_GPU_CUDA
 	NDB_DECLARE(float *, h_features);
 	NDB_DECLARE(double *, h_targets);
 	int valid_rows = 0;
-	MemoryContext currctx;
-	NDB_DECLARE(double *, model_coefficients_ptr);	/* Store coefficients pointer for safe cleanup */
+#endif
 
 	/* Load model from catalog - try CPU first, then GPU */
 	if (!linreg_load_model_from_catalog(model_id, &model))

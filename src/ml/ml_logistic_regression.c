@@ -1480,7 +1480,6 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 	bytea *gpu_payload = NULL;
 	Jsonb *gpu_metrics = NULL;
 	bool is_gpu_model = false;
-	MemoryContext oldcontext;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
@@ -1524,8 +1523,6 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 						model_id)));
 		}
 	}
-
-	oldcontext = CurrentMemoryContext;
 
 	/* Connect to SPI */
 	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
@@ -1847,7 +1844,7 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 					{
 						Jsonb *temp_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 							CStringGetDatum(jsonbuf.data)));
-						
+						MemoryContext oldcontext = CurrentMemoryContext;
 						MemoryContextSwitchTo(oldcontext);
 						result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
 						if (temp_jsonb != (Jsonb *) DatumGetPointer((Datum) temp_jsonb))
@@ -1925,8 +1922,15 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 		}
 #endif	/* NDB_GPU_CUDA */
 	}
+#ifndef NDB_GPU_CUDA
+	/* When CUDA is not available, always use CPU path */
+	if (false) { }
+#endif
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-label"
 cpu_evaluation_path:
+#pragma GCC diagnostic pop
 	/* CPU evaluation path */
 	{
 		LRModel *model = NULL;

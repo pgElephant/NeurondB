@@ -1839,8 +1839,15 @@ nb_evaluate_naive_bayes_internal(FunctionCallInfo fcinfo)
 		 }
  #endif
 	 }
- 
- cpu_evaluation_path:
+#ifndef NDB_GPU_CUDA
+	/* When CUDA is not available, always use CPU path */
+	if (false) { }
+#endif
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-label"
+cpu_evaluation_path:
+#pragma GCC diagnostic pop
  
 	 /* CPU evaluation path */
 	 {

@@ -197,7 +197,7 @@ rf_select_split(const float *features,
 		{
 			int swap_idx;
 
-			swap_idx = (int)pg_prng_uint64_range(
+			swap_idx = (int)pg_prng_uint64_range_inclusive(
 				rng, (uint64)f, (uint64)(feature_dim - 1));
 			if (swap_idx != f)
 			{
@@ -1178,7 +1178,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	int *bootstrap_indices = NULL;
 	int *feature_order = NULL;
 	pg_prng_state rng;
-	int32 model_id;
+	int32 model_id = 0;
 	RFDataset dataset;
 
 	double *labels = NULL;
@@ -1498,7 +1498,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				(int *)palloc(sizeof(int) * sample_count);
 			for (i = 0; i < sample_count; i++)
 				bootstrap_indices[i] =
-					(int)pg_prng_uint64_range(&rng,
+					(int)pg_prng_uint64_range_inclusive(&rng,
 						0,
 						(uint64)(n_samples - 1));
 		}
@@ -2384,7 +2384,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			{
 				int idx;
 
-				idx = (int)pg_prng_uint64_range(
+				idx = (int)pg_prng_uint64_range_inclusive(
 					&rng, 0, (uint64)(n_samples - 1));
 				if (tree_bootstrap != NULL)
 					tree_bootstrap[j] = idx;
@@ -2483,7 +2483,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 						int swap_idx;
 
 						swap_idx = (int)
-							pg_prng_uint64_range(
+							pg_prng_uint64_range_inclusive(
 								&rng,
 								(uint64)f,
 								(uint64)(feature_dim
@@ -4931,8 +4931,15 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 						model_id)));
 		}
 	}
+#ifndef NDB_GPU_CUDA
+	/* When CUDA is not available, always use CPU path */
+	if (false) { }
+#endif
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-label"
 cpu_evaluation_path:
+#pragma GCC diagnostic pop
 	/* CPU evaluation path (also used as fallback for GPU models) */
 	elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] Entering CPU evaluation path");
 	/* Use optimized batch prediction */

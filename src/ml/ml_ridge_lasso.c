@@ -3471,8 +3471,15 @@ evaluate_ridge_regression_by_model_id(PG_FUNCTION_ARGS)
 		PG_RETURN_JSONB_P(result_jsonb);
 #endif	/* NDB_GPU_CUDA */
 	}
+#ifndef NDB_GPU_CUDA
+	/* When CUDA is not available, always use CPU path */
+	if (false) { }
+#endif
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-label"
 gpu_eval_fallback:
+#pragma GCC diagnostic pop
 	/* CPU batch evaluation path (also used as fallback for GPU models) */
 	/* Use the already-loaded h_features and h_targets arrays for batch evaluation */
 	{
@@ -4459,8 +4466,15 @@ evaluate_lasso_regression_by_model_id(PG_FUNCTION_ARGS)
 		PG_RETURN_JSONB_P(result_jsonb);
 #endif	/* NDB_GPU_CUDA */
 	}
+#ifndef NDB_GPU_CUDA
+	/* When CUDA is not available, always use CPU path */
+	if (false) { }
+#endif
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-label"
 gpu_eval_fallback:
+#pragma GCC diagnostic pop
 	/* CPU batch evaluation path (also used as fallback for GPU models) */
 	/* Use the already-loaded h_features and h_targets arrays for batch evaluation */
 	{

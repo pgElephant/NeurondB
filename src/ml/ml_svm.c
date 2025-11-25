@@ -2386,8 +2386,15 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 		}
 #endif	/* NDB_GPU_CUDA */
 	}
+#ifndef NDB_GPU_CUDA
+	/* When CUDA is not available, always use CPU path */
+	if (false) { }
+#endif
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-label"
 cpu_evaluation_path:
+#pragma GCC diagnostic pop
 
 	/* CPU evaluation path */
 	/* Use optimized batch prediction */
