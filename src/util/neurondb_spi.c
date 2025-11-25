@@ -467,3 +467,46 @@ ndb_spi_get_jsonb(NdbSpiSession *session,
 	return result;
 }
 
+bytea *
+ndb_spi_get_bytea(NdbSpiSession *session,
+				  int row_idx,
+				  int col_idx,
+				  MemoryContext dest_context)
+{
+	Datum		datum;
+	bool		isnull;
+	bytea	   *result = NULL;
+	MemoryContext oldcontext;
+
+	if (session == NULL)
+		return NULL;
+
+	if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL)
+		return NULL;
+
+	if (row_idx < 0 || row_idx >= SPI_processed)
+		return NULL;
+
+	if (col_idx < 1 || col_idx > SPI_tuptable->tupdesc->natts)
+		return NULL;
+
+	if (dest_context == NULL)
+		dest_context = session->parent_context;
+
+	/* Extract datum from SPI result */
+	datum = SPI_getbinval(SPI_tuptable->vals[row_idx],
+						 SPI_tuptable->tupdesc,
+						 col_idx,
+						 &isnull);
+
+	if (isnull)
+		return NULL;
+
+	/* Copy directly from datum to caller's context */
+	oldcontext = MemoryContextSwitchTo(dest_context);
+	result = (bytea *)PG_DETOAST_DATUM_COPY(datum);
+	MemoryContextSwitchTo(oldcontext);
+
+	return result;
+}
+

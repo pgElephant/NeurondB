@@ -145,6 +145,15 @@ extern Jsonb *ndb_spi_get_jsonb(NdbSpiSession *session,
 								MemoryContext dest_context);
 
 /*
+ * Copy bytea datum from [row,col] to dest_context.
+ * Returns pointer in dest_context, NULL if not available.
+ */
+extern bytea *ndb_spi_get_bytea(NdbSpiSession *session,
+								int row_idx,
+								int col_idx,
+								MemoryContext dest_context);
+
+/*
  * Macros for begin/end SPI session with error checks.
  *
  * NDB_SPI_SESSION_BEGIN(session, ctx);
