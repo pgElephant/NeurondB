@@ -7,10 +7,10 @@
  * similarity with full-text search (FTS), metadata filtering, keyword
  * matching, temporal awareness, and faceted search.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *    contrib/neurondb/hybrid_search.c
+ *    src/search/hybrid_search.c
  *
  *-------------------------------------------------------------------------
  */
@@ -31,8 +31,10 @@
 #include "utils/elog.h"
 #include "utils/fmgrprotos.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 typedef struct mmr_cand_t
 {
@@ -161,8 +163,10 @@ hybrid_search(PG_FUNCTION_ARGS)
 		vector_weight,
 		limit);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		ereport(ERROR, (errmsg("hybrid_search: failed to begin SPI session")));
 
 	/* Build vector literal representation for SQL (float array as '{...}') */
 	/* Vector data is a flexible array member, access directly */
@@ -181,11 +185,11 @@ hybrid_search(PG_FUNCTION_ARGS)
 		/* Validate each value before formatting */
 		if (!isfinite(val))
 		{
-			NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-			SPI_finish();
-			NDB_SAFE_PFREE_AND_NULL(tbl_str);
-			NDB_SAFE_PFREE_AND_NULL(txt_str);
-			NDB_SAFE_PFREE_AND_NULL(filter_str);
+			NDB_FREE(vec_lit.data);
+			ndb_spi_session_end(&session);
+			NDB_FREE(tbl_str);
+			NDB_FREE(txt_str);
+			NDB_FREE(filter_str);
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("hybrid_search: non-finite value in vector at index %d", i)));
@@ -221,13 +225,15 @@ hybrid_search(PG_FUNCTION_ARGS)
 		vector_weight,
 		limit);
 
-	spi_ret = ndb_spi_execute_safe(sql.data, true, limit);
-	NDB_CHECK_SPI_TUPTABLE();
+	spi_ret = ndb_spi_execute(session, sql.data, true, limit);
 	if (spi_ret != SPI_OK_SELECT)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		ndb_spi_session_end(&session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(txt_str);
+		NDB_FREE(filter_str);
 		ereport(ERROR, (errmsg("Failed to execute hybrid search SQL")));
 	}
 
@@ -245,7 +251,8 @@ hybrid_search(PG_FUNCTION_ARGS)
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 		
 		/* Allocate state */
-		state = (HybridSearchState *)palloc0(sizeof(HybridSearchState));
+		NDB_DECLARE(HybridSearchState *, state);
+		NDB_ALLOC(state, HybridSearchState, 1);
 		NDB_CHECK_ALLOC(state, "state");
 		
 		if (proc == 0)
@@ -257,11 +264,15 @@ hybrid_search(PG_FUNCTION_ARGS)
 		else
 		{
 			/* Extract results from SPI */
+			NDB_DECLARE(int64 *, ids);
+			NDB_DECLARE(float4 *, scores);
 			state->num_results = proc;
-			state->ids = (int64 *)palloc(sizeof(int64) * proc);
-			NDB_CHECK_ALLOC(state->ids, "state->ids");
-			state->scores = (float4 *)palloc(sizeof(float4) * proc);
-			NDB_CHECK_ALLOC(state->scores, "state->scores");
+			NBP_ALLOC(ids, int64, proc);
+			NDB_CHECK_ALLOC(ids, "state->ids");
+			NBP_ALLOC(scores, float4, proc);
+			NDB_CHECK_ALLOC(scores, "state->scores");
+			state->ids = ids;
+			state->scores = scores;
 			
 			for (i = 0; i < proc; i++)
 			{
@@ -304,12 +315,12 @@ hybrid_search(PG_FUNCTION_ARGS)
 		funcctx->user_fctx = state;
 		funcctx->max_calls = proc;
 		
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(txt_str);
-		NDB_SAFE_PFREE_AND_NULL(filter_str);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(txt_str);
+		NDB_FREE(filter_str);
+		ndb_spi_session_end(&session);
 		MemoryContextSwitchTo(oldcontext);
 	}
 	
@@ -455,8 +466,8 @@ reciprocal_rank_fusion(PG_FUNCTION_ARGS)
 				entry->score += 1.0 / (k + (double)j + 1.0);
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(ids);
-		NDB_SAFE_PFREE_AND_NULL(nulls);
+		NDB_FREE(ids);
+		NDB_FREE(nulls);
 	}
 
 	/* Output: sort the ids by score descending, return as text[] */
@@ -526,18 +537,18 @@ reciprocal_rank_fusion(PG_FUNCTION_ARGS)
 			result_datums[idx] =
 				PointerGetDatum(cstring_to_text(items[idx].key));
 			result_nulls[idx] = false;
-			NDB_SAFE_PFREE_AND_NULL(items[idx].key);
+			NDB_FREE(items[idx].key);
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(items);
+		NDB_FREE(items);
 	}
 
 	ret_array = construct_array(
 		result_datums, item_count, TEXTOID, -1, false, 'i');
 
 	hash_destroy(item_hash);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(result_nulls);
+	NDB_FREE(result_datums);
+	NDB_FREE(result_nulls);
 
 	PG_RETURN_ARRAYTYPE_P(ret_array);
 }
@@ -559,10 +570,10 @@ semantic_keyword_search(PG_FUNCTION_ARGS)
 	StringInfoData vec_lit;
 	int spi_ret;
 	ArrayType *ret_array;
-	Datum *datums;
-	bool *nulls;
 	int proc;
 	int i;
+	NDB_DECLARE(Datum *, datums);
+	NDB_DECLARE(bool *, nulls);
 
 	table_name = PG_GETARG_TEXT_PP(0);
 	semantic_query = PG_GETARG_VECTOR_P(1);
@@ -581,8 +592,10 @@ semantic_keyword_search(PG_FUNCTION_ARGS)
 		semantic_query->dim,
 		top_k);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		ereport(ERROR, (errmsg("semantic_keyword_search: failed to begin SPI session")));
 
 	initStringInfo(&vec_lit);
 	appendStringInfoChar(&vec_lit, '{');
@@ -618,13 +631,14 @@ semantic_keyword_search(PG_FUNCTION_ARGS)
 		kw_str,
 		top_k);
 
-	spi_ret = ndb_spi_execute_safe(sql.data, true, top_k);
-	NDB_CHECK_SPI_TUPTABLE();
+	spi_ret = ndb_spi_execute(session, sql.data, true, top_k);
 	if (spi_ret != SPI_OK_SELECT)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(kw_str);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 			(errmsg("Failed to execute semantic_keyword_search "
 				"SQL")));
@@ -633,17 +647,19 @@ semantic_keyword_search(PG_FUNCTION_ARGS)
 	proc = SPI_processed;
 	if (proc == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(kw_str);
+		ndb_spi_session_end(&session);
 		ret_array = construct_empty_array(TEXTOID);
 		PG_RETURN_ARRAYTYPE_P(ret_array);
 	}
 
-	datums = palloc0(sizeof(Datum) * proc);
- NDB_CHECK_ALLOC(datums, "allocation");
-	nulls = palloc0(sizeof(bool) * proc);
- NDB_CHECK_ALLOC(nulls, "allocation");
+	NDB_ALLOC(datums, Datum, proc);
+	NDB_CHECK_ALLOC(datums, "allocation");
+	NDB_ALLOC(nulls, bool, proc);
+	NDB_CHECK_ALLOC(nulls, "allocation");
 	for (i = 0; i < proc; i++)
 	{
 		bool isnull;
@@ -659,11 +675,13 @@ semantic_keyword_search(PG_FUNCTION_ARGS)
 
 	ret_array = construct_array(datums, proc, TEXTOID, -1, false, 'i');
 
-	NDB_SAFE_PFREE_AND_NULL(datums);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-	SPI_finish();
+	NDB_FREE(datums);
+	NDB_FREE(nulls);
+	NDB_FREE(sql.data);
+	NDB_FREE(vec_lit.data);
+	NDB_FREE(tbl_str);
+	NDB_FREE(kw_str);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_ARRAYTYPE_P(ret_array);
 }
@@ -704,8 +722,10 @@ multi_vector_search(PG_FUNCTION_ARGS)
 		agg_str,
 		top_k);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		ereport(ERROR, (errmsg("multi_vector_search: failed to begin SPI session")));
 
 	get_typlenbyvalalign(vec_elemtype, NULL, NULL, NULL);
 	deconstruct_array(query_vectors,
@@ -718,17 +738,29 @@ multi_vector_search(PG_FUNCTION_ARGS)
 		&nvecs);
 
 	if (nvecs < 1)
+	{
+		NDB_FREE(tbl_str);
+		NDB_FREE(agg_str);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 			(errmsg("multi_vector_search: at least one query "
 				"vector required")));
+	}
 
 	{
 		/* Check first vector exists and validate */
 		Vector *first_vec = (Vector *)DatumGetPointer(vec_datums[0]);
 		if (first_vec->dim <= 0)
+		{
+			NDB_FREE(tbl_str);
+			NDB_FREE(agg_str);
+			NDB_FREE(vec_datums);
+			NDB_FREE(vec_nulls);
+			ndb_spi_session_end(&session);
 			ereport(ERROR,
 				(errmsg("query vectors must have positive "
 					"dimension")));
+		}
 	}
 
 	initStringInfo(&subquery);
@@ -754,11 +786,11 @@ multi_vector_search(PG_FUNCTION_ARGS)
 			if (i)
 				appendStringInfoString(&subquery, ", ");
 			appendStringInfo(&subquery, "'%s'::vector", lit.data);
-			NDB_SAFE_PFREE_AND_NULL(lit.data);
+			NDB_FREE(lit.data);
 		}
 	}
-	NDB_SAFE_PFREE_AND_NULL(vec_datums);
-	NDB_SAFE_PFREE_AND_NULL(vec_nulls);
+	NDB_FREE(vec_datums);
+	NDB_FREE(vec_nulls);
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
@@ -778,29 +810,34 @@ multi_vector_search(PG_FUNCTION_ARGS)
 		tbl_str,
 		top_k);
 
-	spi_ret = ndb_spi_execute_safe(sql.data, true, top_k);
-	NDB_CHECK_SPI_TUPTABLE();
+	spi_ret = ndb_spi_execute(session, sql.data, true, top_k);
 	if (spi_ret != SPI_OK_SELECT)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(subquery.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(subquery.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(agg_str);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 			(errmsg("Failed to execute multi_vector_search SQL")));
 	}
 	proc = SPI_processed;
 	if (proc == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(subquery.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(subquery.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(agg_str);
+		ndb_spi_session_end(&session);
 		ret_array = construct_empty_array(TEXTOID);
 		PG_RETURN_ARRAYTYPE_P(ret_array);
 	}
-	datums = palloc0(sizeof(Datum) * proc);
- NDB_CHECK_ALLOC(datums, "allocation");
-	nulls = palloc0(sizeof(bool) * proc);
- NDB_CHECK_ALLOC(nulls, "allocation");
+	datums = NULL;
+	nulls = NULL;
+	NDB_ALLOC(datums, Datum, proc);
+	NDB_CHECK_ALLOC(datums, "allocation");
+	NDB_ALLOC(nulls, bool, proc);
+	NDB_CHECK_ALLOC(nulls, "allocation");
 	for (i = 0; i < proc; i++)
 	{
 		bool isnull;
@@ -814,11 +851,13 @@ multi_vector_search(PG_FUNCTION_ARGS)
 		nulls[i] = isnull;
 	}
 	ret_array = construct_array(datums, proc, TEXTOID, -1, false, 'i');
-	NDB_SAFE_PFREE_AND_NULL(datums);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	NDB_SAFE_PFREE_AND_NULL(subquery.data);
-	SPI_finish();
+	NDB_FREE(datums);
+	NDB_FREE(nulls);
+	NDB_FREE(sql.data);
+	NDB_FREE(subquery.data);
+	NDB_FREE(tbl_str);
+	NDB_FREE(agg_str);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_ARRAYTYPE_P(ret_array);
 }
@@ -861,8 +900,10 @@ faceted_vector_search(PG_FUNCTION_ARGS)
 		per_facet_limit,
 		query_vec->dim);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		ereport(ERROR, (errmsg("faceted_vector_search: failed to begin SPI session")));
 
 	initStringInfo(&vec_lit);
 	appendStringInfoChar(&vec_lit, '{');
@@ -892,13 +933,14 @@ faceted_vector_search(PG_FUNCTION_ARGS)
 		per_facet_limit,
 		facet_str);
 
-	spi_ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	spi_ret = ndb_spi_execute(session, sql.data, true, 0);
 	if (spi_ret != SPI_OK_SELECT)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(facet_str);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 			(errmsg("Failed to execute faceted_vector_search "
 				"SQL")));
@@ -906,16 +948,20 @@ faceted_vector_search(PG_FUNCTION_ARGS)
 	proc = SPI_processed;
 	if (proc == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(facet_str);
+		ndb_spi_session_end(&session);
 		ret_array = construct_empty_array(TEXTOID);
 		PG_RETURN_ARRAYTYPE_P(ret_array);
 	}
-	datums = palloc0(sizeof(Datum) * proc);
- NDB_CHECK_ALLOC(datums, "allocation");
-	nulls = palloc0(sizeof(bool) * proc);
- NDB_CHECK_ALLOC(nulls, "allocation");
+	datums = NULL;
+	nulls = NULL;
+	NDB_ALLOC(datums, Datum, proc);
+	NDB_CHECK_ALLOC(datums, "allocation");
+	NDB_ALLOC(nulls, bool, proc);
+	NDB_CHECK_ALLOC(nulls, "allocation");
 	for (i = 0; i < proc; i++)
 	{
 		bool isnull;
@@ -929,11 +975,13 @@ faceted_vector_search(PG_FUNCTION_ARGS)
 		nulls[i] = isnull;
 	}
 	ret_array = construct_array(datums, proc, TEXTOID, -1, false, 'i');
-	NDB_SAFE_PFREE_AND_NULL(datums);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-	SPI_finish();
+	NDB_FREE(datums);
+	NDB_FREE(nulls);
+	NDB_FREE(sql.data);
+	NDB_FREE(vec_lit.data);
+	NDB_FREE(tbl_str);
+	NDB_FREE(facet_str);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_ARRAYTYPE_P(ret_array);
 }
@@ -979,8 +1027,10 @@ temporal_vector_search(PG_FUNCTION_ARGS)
 		top_k,
 		query_vec->dim);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		ereport(ERROR, (errmsg("temporal_vector_search: failed to begin SPI session")));
 
 	initStringInfo(&vec_lit);
 	appendStringInfoChar(&vec_lit, '{');
@@ -1012,13 +1062,14 @@ temporal_vector_search(PG_FUNCTION_ARGS)
 		tbl_str,
 		top_k);
 
-	spi_ret = ndb_spi_execute_safe(sql.data, true, top_k);
-	NDB_CHECK_SPI_TUPTABLE();
+	spi_ret = ndb_spi_execute(session, sql.data, true, top_k);
 	if (spi_ret != SPI_OK_SELECT)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(ts_str);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 			(errmsg("Failed to execute temporal_vector_search "
 				"SQL")));
@@ -1027,16 +1078,20 @@ temporal_vector_search(PG_FUNCTION_ARGS)
 	proc = SPI_processed;
 	if (proc == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(ts_str);
+		ndb_spi_session_end(&session);
 		ret_array = construct_empty_array(TEXTOID);
 		PG_RETURN_ARRAYTYPE_P(ret_array);
 	}
-	datums = palloc0(sizeof(Datum) * proc);
- NDB_CHECK_ALLOC(datums, "allocation");
-	nulls = palloc0(sizeof(bool) * proc);
- NDB_CHECK_ALLOC(nulls, "allocation");
+	datums = NULL;
+	nulls = NULL;
+	NDB_ALLOC(datums, Datum, proc);
+	NDB_CHECK_ALLOC(datums, "allocation");
+	NDB_ALLOC(nulls, bool, proc);
+	NDB_CHECK_ALLOC(nulls, "allocation");
 	for (i = 0; i < proc; i++)
 	{
 		bool isnull;
@@ -1050,11 +1105,13 @@ temporal_vector_search(PG_FUNCTION_ARGS)
 		nulls[i] = isnull;
 	}
 	ret_array = construct_array(datums, proc, TEXTOID, -1, false, 'i');
-	NDB_SAFE_PFREE_AND_NULL(datums);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-	SPI_finish();
+	NDB_FREE(datums);
+	NDB_FREE(nulls);
+	NDB_FREE(sql.data);
+	NDB_FREE(vec_lit.data);
+	NDB_FREE(tbl_str);
+	NDB_FREE(ts_str);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_ARRAYTYPE_P(ret_array);
 }
@@ -1099,8 +1156,10 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 		top_k,
 		query_vec->dim);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		ereport(ERROR, (errmsg("diverse_vector_search: failed to begin SPI session")));
 
 	initStringInfo(&vec_lit);
 	appendStringInfoChar(&vec_lit, '{');
@@ -1122,13 +1181,13 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 		tbl_str,
 		top_k * 10);
 
-	spi_ret = ndb_spi_execute_safe(sql.data, true, top_k * 10);
-	NDB_CHECK_SPI_TUPTABLE();
+	spi_ret = ndb_spi_execute(session, sql.data, true, top_k * 10);
 	if (spi_ret != SPI_OK_SELECT)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		NDB_FREE(tbl_str);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 			(errmsg("Failed to execute diverse_vector_search "
 				"SQL")));
@@ -1137,9 +1196,10 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 	proc = SPI_processed;
 	if (proc == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(vec_lit.data);
+		NDB_FREE(tbl_str);
+		ndb_spi_session_end(&session);
 		ret_array = construct_empty_array(TEXTOID);
 		PG_RETURN_ARRAYTYPE_P(ret_array);
 	}
@@ -1148,8 +1208,9 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 
 	/* MMR greedy selection */
 
-	cands = palloc0(sizeof(mmr_cand_t) * n_candidates);
- NDB_CHECK_ALLOC(cands, "allocation");
+	cands = NULL;
+	NDB_ALLOC(cands, mmr_cand_t, n_candidates);
+	NDB_CHECK_ALLOC(cands, "allocation");
 
 	for (i = 0; i < n_candidates; i++)
 	{
@@ -1175,10 +1236,10 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 		cands[i].selected = false;
 	}
 
-	datums = palloc0(sizeof(Datum) * top_k);
- NDB_CHECK_ALLOC(datums, "allocation");
-	nulls = palloc0(sizeof(bool) * top_k);
- NDB_CHECK_ALLOC(nulls, "allocation");
+	NDB_ALLOC(datums, Datum, top_k);
+	NDB_CHECK_ALLOC(datums, "allocation");
+	NDB_ALLOC(nulls, bool, top_k);
+	NDB_CHECK_ALLOC(nulls, "allocation");
 
 	for (i = 0; i < top_k && select_count < n_candidates; i++)
 	{
@@ -1243,7 +1304,7 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 		construct_array(datums, select_count, TEXTOID, -1, false, 'i');
 	for (i = 0; i < n_candidates; i++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(cands[i].id);
+		NDB_FREE(cands[i].id);
 		/*
 		 * Only pfree detoasted vectors if address does not match the original
 		 */
@@ -1256,14 +1317,15 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 
 			if ((void *)cands[i].vec
 				!= (void *)DatumGetPointer(orig))
-				NDB_SAFE_PFREE_AND_NULL(cands[i].vec);
+				NDB_FREE(cands[i].vec);
 		}
 	}
-	NDB_SAFE_PFREE_AND_NULL(datums);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
-	NDB_SAFE_PFREE_AND_NULL(cands);
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	NDB_SAFE_PFREE_AND_NULL(vec_lit.data);
-	SPI_finish();
+	NDB_FREE(datums);
+	NDB_FREE(nulls);
+	NDB_FREE(cands);
+	NDB_FREE(sql.data);
+	NDB_FREE(vec_lit.data);
+	NDB_FREE(tbl_str);
+	ndb_spi_session_end(&session);
 	PG_RETURN_ARRAYTYPE_P(ret_array);
 }

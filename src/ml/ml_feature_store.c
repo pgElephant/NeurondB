@@ -1,13 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * ml_feature_store.c
- *    Feature Store for NeuronDB
+ *    Feature store management.
  *
- * Provides feature management, versioning, and serving:
- * - neurondb.create_feature_store() - Initialize feature store
- * - neurondb.register_feature() - Register a feature
- * - neurondb.get_features() - Retrieve features for given entities/feature list
- * - neurondb.feature_engineering() - Apply transformations from pipeline
+ * This module provides feature management, versioning, and serving for
+ * machine learning workflows.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
@@ -32,6 +29,8 @@
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 static char *entity_key_for_store(int32 store_id);
 static char *entity_table_for_store(int32 store_id);
@@ -62,8 +61,10 @@ neurondb_create_feature_store(PG_FUNCTION_ARGS)
 
 	StringInfoData sql;
 	int			ret;
-	bool		isnull;
+	int32		store_id_val;
 	int			store_id;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	elog(DEBUG1,
 		 "neurondb.create_feature_store: name='%s', entity_table='%s', entity_key='%s'",
@@ -71,13 +72,12 @@ neurondb_create_feature_store(PG_FUNCTION_ARGS)
 		 entity_table,
 		 entity_key);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("could not connect to SPI manager")));
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Insert feature store definition */
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 					 "INSERT INTO neurondb.feature_stores "
 					 "(store_name, entity_table, entity_key, description, "
@@ -89,23 +89,44 @@ neurondb_create_feature_store(PG_FUNCTION_ARGS)
 					 quote_literal_cstr(entity_key),
 					 description ? quote_literal_cstr(description) : "NULL");
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed != 1)
+	{
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(store_name);
+		NDB_FREE(entity_table);
+		NDB_FREE(entity_key);
+		if (description)
+			NDB_FREE(description);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("failed to create feature store")));
+	}
 
-	store_id = DatumGetInt32(SPI_getbinval(
-										   SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+	if (!ndb_spi_get_int32(spi_session, 0, 1, &store_id_val))
+	{
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(store_name);
+		NDB_FREE(entity_table);
+		NDB_FREE(entity_key);
+		if (description)
+			NDB_FREE(description);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("failed to get store_id from result")));
+	}
+	store_id = store_id_val;
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 
-	NDB_SAFE_PFREE_AND_NULL(store_name);
-	NDB_SAFE_PFREE_AND_NULL(entity_table);
-	NDB_SAFE_PFREE_AND_NULL(entity_key);
+	NDB_FREE(store_name);
+	NDB_FREE(entity_table);
+	NDB_FREE(entity_key);
 	if (description)
-		NDB_SAFE_PFREE_AND_NULL(description);
+		NDB_FREE(description);
 
 	PG_RETURN_INT32(store_id);
 }
@@ -129,8 +150,10 @@ neurondb_register_feature(PG_FUNCTION_ARGS)
 	char	   *transformation;
 	StringInfoData sql;
 	int			ret;
+	int32		feature_id_val;
 	int			feature_id;
-	bool		isnull;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	feature_name = text_to_cstring(feature_name_text);
 	feature_type = text_to_cstring(feature_type_text);
@@ -145,12 +168,11 @@ neurondb_register_feature(PG_FUNCTION_ARGS)
 		 feature_type,
 		 transformation ? transformation : "none");
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("could not connect to SPI manager")));
+	oldcontext = CurrentMemoryContext;
 
-	initStringInfo(&sql);
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	if (transformation)
 	{
 		appendStringInfo(&sql,
@@ -176,22 +198,41 @@ neurondb_register_feature(PG_FUNCTION_ARGS)
 						 quote_literal_cstr(feature_type));
 	}
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 	if (ret != SPI_OK_INSERT_RETURNING || SPI_processed != 1)
+	{
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(feature_name);
+		NDB_FREE(feature_type);
+		if (transformation)
+			NDB_FREE(transformation);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("failed to register feature")));
+	}
 
-	feature_id = DatumGetInt32(SPI_getbinval(
-											 SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+	if (!ndb_spi_get_int32(spi_session, 0, 1, &feature_id_val))
+	{
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(feature_name);
+		NDB_FREE(feature_type);
+		if (transformation)
+			NDB_FREE(transformation);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("failed to get feature_id from result")));
+	}
+	feature_id = feature_id_val;
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 
-	NDB_SAFE_PFREE_AND_NULL(feature_name);
-	NDB_SAFE_PFREE_AND_NULL(feature_type);
+	NDB_FREE(feature_name);
+	NDB_FREE(feature_type);
 	if (transformation)
-		NDB_SAFE_PFREE_AND_NULL(transformation);
+		NDB_FREE(transformation);
 
 	PG_RETURN_INT32(feature_id);
 }
@@ -245,6 +286,8 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 				fncontext;
 	StringInfoData sql;
 	int			spi_ret;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext_spi;
 
 	JsonbParseState *ps_top = NULL;
 	JsonbValue *o = NULL;
@@ -310,17 +353,22 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 							&ndefs);
 
 	/* Create a context for our output assembly */
+	oldcontext_spi = CurrentMemoryContext;
 	fncontext = AllocSetContextCreate(CurrentMemoryContext,
 									  "neurondb_get_features_context",
 									  ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(fncontext);
 
 	/* Build SQL to select requested features for each entity */
+	oldcontext_spi = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);
+
 	for (i = 0; i < num_entities; ++i)
 	{
 		char	   *eid = TextDatumGetCString(entity_datums[i]);
 
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 
 		appendStringInfo(
 						 &sql, "SELECT %s", quote_identifier(entity_key_col));
@@ -335,28 +383,38 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 						 quote_literal_cstr(eid));
 
 		/* Execute for this entity */
-		if (SPI_connect() != SPI_OK_CONNECT)
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("could not connect to SPI "
-							"manager")));
-
-		spi_ret = ndb_spi_execute_safe(sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
+		spi_ret = ndb_spi_execute(spi_session, sql.data, true, 1);
 
 		if (spi_ret == SPI_OK_SELECT && SPI_processed == 1)
 		{
-			HeapTuple	tuple = SPI_tuptable->vals[0];
-			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-			int			nf = ndefs;
+			HeapTuple	tuple;
+			TupleDesc	tupdesc;
+			int			nf;
+
+			/* Safe access for complex types - validate before access */
+			if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+				SPI_tuptable->vals[0] == NULL || SPI_tuptable->tupdesc == NULL)
+			{
+				continue;
+			}
+			tuple = SPI_tuptable->vals[0];
+			tupdesc = SPI_tuptable->tupdesc;
+			nf = ndefs;
 			JsonbPair  *obj_pairs =
 				(JsonbPair *) palloc(sizeof(JsonbPair) * nf);
 			bool		isnull;
 
 			for (j = 0; j < ndefs; ++j)
 			{
-				Datum		feat_val = SPI_getbinval(
-													 tuple, tupdesc, j + 2, &isnull);
+				Datum		feat_val;
+
+				/* Safe access - validate tupdesc has enough columns */
+				if (tupdesc->natts < (j + 2))
+				{
+					isnull = true;
+					continue;
+				}
+				feat_val = SPI_getbinval(tuple, tupdesc, j + 2, &isnull);
 
 				obj_pairs[j].key.type = jbvString;
 				obj_pairs[j].key.val.string.len =
@@ -456,15 +514,16 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 			o = pushJsonbValue(&ps_top, WJB_END_OBJECT, NULL);
 		}
 
-		SPI_finish();
-		NDB_SAFE_PFREE_AND_NULL(eid);
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		NDB_FREE(eid);
+		ndb_spi_stringinfo_free(spi_session, &sql);
 	}
+
+	NDB_SPI_SESSION_END(spi_session);
 
 	/* Top level: assemble all entity objects into one result object */
 	if (!o)
 		result_jsonb = DatumGetJsonbP(
-									  DirectFunctionCall1(jsonb_in, CStringGetDatum("{}")));
+									  DirectFunctionCall1(jsonb_in, CStringGetTextDatum("{}")));
 	else
 		result_jsonb = JsonbValueToJsonb(o);
 
@@ -472,31 +531,31 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 	MemoryContextDelete(fncontext);
 
 	if (entity_key_col)
-		NDB_SAFE_PFREE_AND_NULL(entity_key_col);
+		NDB_FREE(entity_key_col);
 	if (entity_table)
-		NDB_SAFE_PFREE_AND_NULL(entity_table);
+		NDB_FREE(entity_table);
 	if (feature_names)
 	{
 		for (j = 0; j < ndefs; ++j)
 			if (feature_names[j])
-				NDB_SAFE_PFREE_AND_NULL(feature_names[j]);
-		NDB_SAFE_PFREE_AND_NULL(feature_names);
+				NDB_FREE(feature_names[j]);
+		NDB_FREE(feature_names);
 	}
 	if (feature_types)
 	{
 		for (j = 0; j < ndefs; ++j)
 			if (feature_types[j])
-				NDB_SAFE_PFREE_AND_NULL(feature_types[j]);
-		NDB_SAFE_PFREE_AND_NULL(feature_types);
+				NDB_FREE(feature_types[j]);
+		NDB_FREE(feature_types);
 	}
 	if (feature_transforms)
 	{
 		for (j = 0; j < ndefs; ++j)
 			if (feature_transforms[j])
-				NDB_SAFE_PFREE_AND_NULL(feature_transforms[j]);
-		NDB_SAFE_PFREE_AND_NULL(feature_transforms);
+				NDB_FREE(feature_transforms[j]);
+		NDB_FREE(feature_transforms);
 	}
-	NDB_SAFE_PFREE_AND_NULL(entity_datums);
+	NDB_FREE(entity_datums);
 
 	PG_RETURN_JSONB_P(result_jsonb);
 }
@@ -520,8 +579,8 @@ neurondb_feature_engineering(PG_FUNCTION_ARGS)
 	int32		store_id = PG_GETARG_INT32(0);
 	text	   *source_table_text;
 	char	   *source_table;
-	char	   *entity_key = entity_key_for_store(store_id);
-	char	   *entity_table = entity_table_for_store(store_id);
+	char	   *entity_key;
+	char	   *entity_table;
 	char	  **feature_names = NULL;
 	char	  **feature_types = NULL;
 	char	  **feature_transforms = NULL;
@@ -530,10 +589,14 @@ neurondb_feature_engineering(PG_FUNCTION_ARGS)
 				ret,
 				updated = 0;
 	StringInfoData sql;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	(void) PG_GETARG_JSONB_P(1);	/* unused for now */
 	source_table_text = PG_GETARG_TEXT_PP(2);
 	source_table = text_to_cstring(source_table_text);
+	entity_key = entity_key_for_store(store_id);
+	entity_table = entity_table_for_store(store_id);
 
 	get_feature_definitions(store_id,
 							&feature_names,
@@ -541,10 +604,9 @@ neurondb_feature_engineering(PG_FUNCTION_ARGS)
 							&feature_transforms,
 							&ndefs);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("could not connect to SPI manager")));
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/*
 	 * Apply each transformation to each feature. For simplicity, we evaluate
@@ -559,7 +621,7 @@ neurondb_feature_engineering(PG_FUNCTION_ARGS)
 			|| strlen(feature_transforms[i]) == 0)
 			continue;
 		/* Build UPDATE SQL */
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		appendStringInfo(&sql,
 						 "UPDATE %s dst SET %s = src.val FROM "
 						 "(SELECT %s AS %s, %s AS val FROM %s) src "
@@ -572,44 +634,52 @@ neurondb_feature_engineering(PG_FUNCTION_ARGS)
 						 quote_identifier(source_table),
 						 quote_identifier(entity_key),
 						 quote_identifier(entity_key));
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 		if (ret != SPI_OK_UPDATE)
+		{
+			ndb_spi_stringinfo_free(spi_session, &sql);
+			NDB_SPI_SESSION_END(spi_session);
+			NDB_FREE(source_table);
+			if (entity_key)
+				NDB_FREE(entity_key);
+			if (entity_table)
+				NDB_FREE(entity_table);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("Failed to update feature '%s'",
 							feature_names[i])));
+		}
 		updated += SPI_processed;
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ndb_spi_stringinfo_free(spi_session, &sql);
 	}
 
-	SPI_finish();
+	NDB_SPI_SESSION_END(spi_session);
 
-	NDB_SAFE_PFREE_AND_NULL(source_table);
+	NDB_FREE(source_table);
 	if (entity_key)
-		NDB_SAFE_PFREE_AND_NULL(entity_key);
+		NDB_FREE(entity_key);
 	if (entity_table)
-		NDB_SAFE_PFREE_AND_NULL(entity_table);
+		NDB_FREE(entity_table);
 	if (feature_names)
 	{
 		for (i = 0; i < ndefs; ++i)
 			if (feature_names[i])
-				NDB_SAFE_PFREE_AND_NULL(feature_names[i]);
-		NDB_SAFE_PFREE_AND_NULL(feature_names);
+				NDB_FREE(feature_names[i]);
+		NDB_FREE(feature_names);
 	}
 	if (feature_types)
 	{
 		for (i = 0; i < ndefs; ++i)
 			if (feature_types[i])
-				NDB_SAFE_PFREE_AND_NULL(feature_types[i]);
-		NDB_SAFE_PFREE_AND_NULL(feature_types);
+				NDB_FREE(feature_types[i]);
+		NDB_FREE(feature_types);
 	}
 	if (feature_transforms)
 	{
 		for (i = 0; i < ndefs; ++i)
 			if (feature_transforms[i])
-				NDB_SAFE_PFREE_AND_NULL(feature_transforms[i]);
-		NDB_SAFE_PFREE_AND_NULL(feature_transforms);
+				NDB_FREE(feature_transforms[i]);
+		NDB_FREE(feature_transforms);
 	}
 
 	PG_RETURN_INT32(updated);
@@ -623,35 +693,35 @@ entity_key_for_store(int32 store_id)
 {
 	StringInfoData sql;
 	int			ret;
-	bool		isnull;
 	char	   *entity_key;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
 
-	initStringInfo(&sql);
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 					 "SELECT entity_key FROM neurondb.feature_stores WHERE store_id = %d",
 					 store_id);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("could not connect to SPI manager in "
-						"helper")));
-
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("feature store %d not found",
 						store_id)));
 	}
 
-	entity_key = TextDatumGetCString(SPI_getbinval(
-												   SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+	{
+		text	   *entity_key_text = ndb_spi_get_text(spi_session, 0, 1, oldcontext);
+		entity_key = entity_key_text ? text_to_cstring(entity_key_text) : NULL;
+	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 	return entity_key;
 }
 
@@ -663,35 +733,35 @@ entity_table_for_store(int32 store_id)
 {
 	StringInfoData sql;
 	int			ret;
-	bool		isnull;
 	char	   *entity_table;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
 
-	initStringInfo(&sql);
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 					 "SELECT entity_table FROM neurondb.feature_stores WHERE store_id = %d",
 					 store_id);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("could not connect to SPI manager in "
-						"helper")));
-
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("feature store %d not found",
 						store_id)));
 	}
 
-	entity_table = TextDatumGetCString(SPI_getbinval(
-													 SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
+	{
+		text	   *entity_table_text = ndb_spi_get_text(spi_session, 0, 1, oldcontext);
+		entity_table = entity_table_text ? text_to_cstring(entity_table_text) : NULL;
+	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 	return entity_table;
 }
 
@@ -709,28 +779,25 @@ get_feature_definitions(int32 store_id,
 	int			ret,
 				i,
 				nfeat;
-	bool		isnull;
 	char	  **fnames;
 	char	  **ftypes;
 	char	  **ftransforms;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
 
-	initStringInfo(&sql);
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 					 "SELECT feature_name, feature_type, transformation "
 					 "FROM neurondb.feature_definitions WHERE store_id = %d ORDER BY feature_id",
 					 store_id);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("could not connect to SPI manager in "
-						"feature_definitions helper")));
-
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("could not retrieve feature definitions for store %d",
@@ -738,37 +805,22 @@ get_feature_definitions(int32 store_id,
 	}
 
 	nfeat = SPI_processed;
-	fnames = (char **) palloc0(sizeof(char *) * nfeat);
-	ftypes = (char **) palloc0(sizeof(char *) * nfeat);
-	ftransforms = (char **) palloc0(sizeof(char *) * nfeat);
+	NDB_ALLOC(fnames, char *, nfeat);
+	NDB_ALLOC(ftypes, char *, nfeat);
+	NDB_ALLOC(ftransforms, char *, nfeat);
 
 	for (i = 0; i < nfeat; ++i)
 	{
-		fnames[i] =
-			TextDatumGetCString(SPI_getbinval(SPI_tuptable->vals[i],
-											  SPI_tuptable->tupdesc,
-											  1,
-											  &isnull));
-		ftypes[i] =
-			TextDatumGetCString(SPI_getbinval(SPI_tuptable->vals[i],
-											  SPI_tuptable->tupdesc,
-											  2,
-											  &isnull));
-		if (SPI_getbinval(SPI_tuptable->vals[i],
-						  SPI_tuptable->tupdesc,
-						  3,
-						  &isnull)
-			&& isnull)
-			ftransforms[i] = NULL;
-		else
-			ftransforms[i] = TextDatumGetCString(
-												 SPI_getbinval(SPI_tuptable->vals[i],
-															   SPI_tuptable->tupdesc,
-															   3,
-															   &isnull));
+		text	   *fname_text = ndb_spi_get_text(spi_session, i, 1, oldcontext);
+		text	   *ftype_text = ndb_spi_get_text(spi_session, i, 2, oldcontext);
+		text	   *ftransform_text = ndb_spi_get_text(spi_session, i, 3, oldcontext);
+		fnames[i] = fname_text ? text_to_cstring(fname_text) : NULL;
+		ftypes[i] = ftype_text ? text_to_cstring(ftype_text) : NULL;
+		ftransforms[i] = ftransform_text ? text_to_cstring(ftransform_text) : NULL;
 	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 	*out_feat_names = fnames;
 	*out_feat_types = ftypes;
 	*out_feat_transforms = ftransforms;

@@ -1,15 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * ml_deeplearning.c
- *	  Deep Learning Integration for NeuronDB
+ *    Deep learning model integration.
  *
- * Provides interfaces for PyTorch, TensorFlow, and ONNX model integration.
- * Supports model import, inference, and fine-tuning.
- *
- * IDENTIFICATION
- *	  src/ml/ml_deeplearning.c
+ * This module provides interfaces for PyTorch, TensorFlow, and ONNX model
+ * integration with support for model import, inference, and fine-tuning.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/ml/ml_deeplearning.c
+ *
  *-------------------------------------------------------------------------
  */
 
@@ -33,7 +34,8 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
-#include "neurondb_spi_safe.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 #ifdef HAVE_ONNX_RUNTIME
 #include "neurondb_onnx.h"
 #endif
@@ -69,9 +71,9 @@ import_pytorch_model(PG_FUNCTION_ARGS)
 	/* Defensive: validate model path */
 	if (path == NULL || strlen(path) == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(path);
-		NDB_SAFE_PFREE_AND_NULL(name);
-		NDB_SAFE_PFREE_AND_NULL(type);
+		NDB_FREE(path);
+		NDB_FREE(name);
+		NDB_FREE(type);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("import_pytorch_model: model_path cannot be empty")));
@@ -83,9 +85,9 @@ import_pytorch_model(PG_FUNCTION_ARGS)
 
 		if (stat(path, &st) != 0)
 		{
-			NDB_SAFE_PFREE_AND_NULL(path);
-			NDB_SAFE_PFREE_AND_NULL(name);
-			NDB_SAFE_PFREE_AND_NULL(type);
+			NDB_FREE(path);
+			NDB_FREE(name);
+			NDB_FREE(type);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("import_pytorch_model: model file not found: %s", path)));
@@ -93,9 +95,9 @@ import_pytorch_model(PG_FUNCTION_ARGS)
 
 		if (!S_ISREG(st.st_mode))
 		{
-			NDB_SAFE_PFREE_AND_NULL(path);
-			NDB_SAFE_PFREE_AND_NULL(name);
-			NDB_SAFE_PFREE_AND_NULL(type);
+			NDB_FREE(path);
+			NDB_FREE(name);
+			NDB_FREE(type);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("import_pytorch_model: path is not a regular file: %s", path)));
@@ -117,7 +119,7 @@ import_pytorch_model(PG_FUNCTION_ARGS)
 			appendStringInfo(&params_json,
 							 "{\"model_type\":\"%s\",\"framework\":\"pytorch\",\"path\":%s}",
 							 type, quoted_path);
-			NDB_SAFE_PFREE_AND_NULL(quoted_path);
+			NDB_FREE(quoted_path);
 		}
 		params_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 														  CStringGetDatum(params_json.data)));
@@ -137,7 +139,7 @@ import_pytorch_model(PG_FUNCTION_ARGS)
 		spec.num_features = 0;
 
 		model_id = ml_catalog_register_model(&spec);
-		NDB_SAFE_PFREE_AND_NULL(params_json.data);
+		NDB_FREE(params_json.data);
 	}
 
 	initStringInfo(&result);
@@ -147,9 +149,9 @@ import_pytorch_model(PG_FUNCTION_ARGS)
 		 model_id,
 		 type);
 
-	NDB_SAFE_PFREE_AND_NULL(path);
-	NDB_SAFE_PFREE_AND_NULL(name);
-	NDB_SAFE_PFREE_AND_NULL(type);
+	NDB_FREE(path);
+	NDB_FREE(name);
+	NDB_FREE(type);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -176,8 +178,8 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 	/* Defensive: validate model path */
 	if (path == NULL || strlen(path) == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(path);
-		NDB_SAFE_PFREE_AND_NULL(name);
+		NDB_FREE(path);
+		NDB_FREE(name);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("import_tensorflow_model: model_path cannot be empty")));
@@ -192,8 +194,8 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 
 		if (stat(path, &st) != 0)
 		{
-			NDB_SAFE_PFREE_AND_NULL(path);
-			NDB_SAFE_PFREE_AND_NULL(name);
+			NDB_FREE(path);
+			NDB_FREE(name);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("import_tensorflow_model: model directory not found: %s", path)));
@@ -201,8 +203,8 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 
 		if (!S_ISDIR(st.st_mode))
 		{
-			NDB_SAFE_PFREE_AND_NULL(path);
-			NDB_SAFE_PFREE_AND_NULL(name);
+			NDB_FREE(path);
+			NDB_FREE(name);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("import_tensorflow_model: path is not a directory: %s", path)));
@@ -224,7 +226,7 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 			appendStringInfo(&params_json,
 							 "{\"framework\":\"tensorflow\",\"path\":%s}",
 							 quoted_path);
-			NDB_SAFE_PFREE_AND_NULL(quoted_path);
+			NDB_FREE(quoted_path);
 		}
 		if (input_shapes != NULL)
 		{
@@ -248,7 +250,7 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 		spec.num_features = 0;
 
 		model_id = ml_catalog_register_model(&spec);
-		NDB_SAFE_PFREE_AND_NULL(params_json.data);
+		NDB_FREE(params_json.data);
 	}
 
 	initStringInfo(&result);
@@ -257,8 +259,8 @@ import_tensorflow_model(PG_FUNCTION_ARGS)
 		 name,
 		 model_id);
 
-	NDB_SAFE_PFREE_AND_NULL(path);
-	NDB_SAFE_PFREE_AND_NULL(name);
+	NDB_FREE(path);
+	NDB_FREE(name);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -283,8 +285,8 @@ import_onnx_model(PG_FUNCTION_ARGS)
 	/* Defensive: validate model path */
 	if (path == NULL || strlen(path) == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(path);
-		NDB_SAFE_PFREE_AND_NULL(name);
+		NDB_FREE(path);
+		NDB_FREE(name);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("import_onnx_model: model_path cannot be empty")));
@@ -296,8 +298,8 @@ import_onnx_model(PG_FUNCTION_ARGS)
 
 		if (stat(path, &st) != 0)
 		{
-			NDB_SAFE_PFREE_AND_NULL(path);
-			NDB_SAFE_PFREE_AND_NULL(name);
+			NDB_FREE(path);
+			NDB_FREE(name);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("import_onnx_model: model file not found: %s", path)));
@@ -305,8 +307,8 @@ import_onnx_model(PG_FUNCTION_ARGS)
 
 		if (!S_ISREG(st.st_mode))
 		{
-			NDB_SAFE_PFREE_AND_NULL(path);
-			NDB_SAFE_PFREE_AND_NULL(name);
+			NDB_FREE(path);
+			NDB_FREE(name);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("import_onnx_model: path is not a regular file: %s", path)));
@@ -329,7 +331,7 @@ import_onnx_model(PG_FUNCTION_ARGS)
 							 "{\"framework\":\"onnx\",\"path\":%s,\"optimized\":%s}",
 							 quoted_path,
 							 optimize ? "true" : "false");
-			NDB_SAFE_PFREE_AND_NULL(quoted_path);
+			NDB_FREE(quoted_path);
 		}
 		params_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 														  CStringGetDatum(params_json.data)));
@@ -349,7 +351,7 @@ import_onnx_model(PG_FUNCTION_ARGS)
 		spec.num_features = 0;
 
 		model_id = ml_catalog_register_model(&spec);
-		NDB_SAFE_PFREE_AND_NULL(params_json.data);
+		NDB_FREE(params_json.data);
 	}
 
 	initStringInfo(&result);
@@ -359,8 +361,8 @@ import_onnx_model(PG_FUNCTION_ARGS)
 		 model_id,
 		 optimize ? "yes" : "no");
 
-	NDB_SAFE_PFREE_AND_NULL(path);
-	NDB_SAFE_PFREE_AND_NULL(name);
+	NDB_FREE(path);
+	NDB_FREE(name);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -421,7 +423,7 @@ dl_predict(PG_FUNCTION_ARGS)
 			JsonbIterator *it;
 			JsonbValue	v;
 			int			r;
-			const char *framework = NULL;
+			char *framework = NULL;
 
 			it = JsonbIteratorInit(&parameters->root);
 			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
@@ -435,7 +437,7 @@ dl_predict(PG_FUNCTION_ARGS)
 					{
 						framework = pnstrdup(v.val.string.val, v.val.string.len);
 					}
-					NDB_SAFE_PFREE_AND_NULL(key);
+					NDB_FREE(key);
 				}
 			}
 
@@ -565,13 +567,7 @@ dl_predict(PG_FUNCTION_ARGS)
 					n_outputs = 10;
 				}
 
-				if (framework)
-				{
-					void	   *ptr = (void *) framework;
-
-					ndb_safe_pfree(ptr);
-					framework = NULL;
-				}
+				NDB_FREE(framework);
 			}
 			else
 			{
@@ -646,8 +642,8 @@ dl_predict(PG_FUNCTION_ARGS)
 	result_array = construct_array(
 								   elems, n_outputs, FLOAT4OID, sizeof(float4), true, 'i');
 
-	NDB_SAFE_PFREE_AND_NULL(predictions);
-	NDB_SAFE_PFREE_AND_NULL(elems);
+	NDB_FREE(predictions);
+	NDB_FREE(elems);
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
@@ -690,7 +686,7 @@ finetune_dl_model(PG_FUNCTION_ARGS)
 		 epochs,
 		 learning_rate);
 
-	NDB_SAFE_PFREE_AND_NULL(table);
+	NDB_FREE(table);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -727,8 +723,8 @@ export_dl_model(PG_FUNCTION_ARGS)
 	appendStringInfo(
 					 &result, "Model exported to %s format at: %s", format, path);
 
-	NDB_SAFE_PFREE_AND_NULL(format);
-	NDB_SAFE_PFREE_AND_NULL(path);
+	NDB_FREE(format);
+	NDB_FREE(path);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -787,8 +783,8 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 	/* Defensive: validate model_id */
 	if (model_id <= 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(in_table);
-		NDB_SAFE_PFREE_AND_NULL(out_table);
+		NDB_FREE(in_table);
+		NDB_FREE(out_table);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("dl_predict_batch: model_id must be positive")));
@@ -800,17 +796,13 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 		StringInfoData sql;
 		int			total_rows = 0;
 
-		if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			NDB_SAFE_PFREE_AND_NULL(in_table);
-			NDB_SAFE_PFREE_AND_NULL(out_table);
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("dl_predict_batch: SPI_connect failed")));
-		}
+		NDB_DECLARE(NdbSpiSession *, spi_session);
+		MemoryContext oldcontext = CurrentMemoryContext;
+
+		NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 		/* Count input rows */
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		{
 			const char *in_table_quoted = quote_identifier(in_table);
 
@@ -819,23 +811,21 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 							 in_table_quoted);
 		}
 
-		ret = ndb_spi_execute_safe(sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ret = ndb_spi_execute(spi_session, sql.data, true, 1);
+		ndb_spi_stringinfo_free(spi_session, &sql);
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
-			bool		isnull;
+			int32		count_val;
 
-			total_rows = DatumGetInt32(
-									   SPI_getbinval(SPI_tuptable->vals[0],
-													 SPI_tuptable->tupdesc,
-													 1,
-													 &isnull));
+			if (ndb_spi_get_int32(spi_session, 0, 1, &count_val))
+			{
+				total_rows = count_val;
+			}
 		}
 
 		/* Create output table if it doesn't exist */
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		{
 			const char *out_table_quoted = quote_identifier(out_table);
 
@@ -847,9 +837,8 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 							 out_table_quoted);
 		}
 
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ret = ndb_spi_execute(spi_session, sql.data, false, 0);
+		ndb_spi_stringinfo_free(spi_session, &sql);
 
 		/* Process in batches */
 		{
@@ -860,7 +849,7 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 				const char *out_table_quoted;
 				const char *in_table_quoted;
 
-				initStringInfo(&sql);
+				ndb_spi_stringinfo_init(spi_session, &sql);
 				out_table_quoted = quote_identifier(out_table);
 				in_table_quoted = quote_identifier(in_table);
 				appendStringInfo(&sql,
@@ -870,9 +859,8 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 								 "LIMIT %d OFFSET %d",
 								 out_table_quoted, in_table_quoted, batch_size, offset);
 
-				ret = ndb_spi_execute_safe(sql.data, false, 0);
-				NDB_CHECK_SPI_TUPTABLE();
-				NDB_SAFE_PFREE_AND_NULL(sql.data);
+				ret = ndb_spi_execute(spi_session, sql.data, false, 0);
+				ndb_spi_stringinfo_free(spi_session, &sql);
 
 				if (ret == SPI_OK_INSERT || ret == SPI_OK_INSERT_RETURNING)
 					processed_rows += batch_size;
@@ -883,11 +871,11 @@ dl_predict_batch(PG_FUNCTION_ARGS)
 			}
 		}
 
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(in_table);
-	NDB_SAFE_PFREE_AND_NULL(out_table);
+	NDB_FREE(in_table);
+	NDB_FREE(out_table);
 
 	PG_RETURN_INT32(processed_rows);
 }
@@ -927,7 +915,7 @@ quantize_dl_model(PG_FUNCTION_ARGS)
 		 quant_type,
 		 quantized_model_id);
 
-	NDB_SAFE_PFREE_AND_NULL(quant_type);
+	NDB_FREE(quant_type);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }

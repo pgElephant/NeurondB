@@ -1,23 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_dimensionality_reduction.c
- *    t-SNE, UMAP, and Autoencoder dimensionality reduction
+ *    Dimensionality reduction algorithms.
  *
- * Implements dimensionality reduction algorithms:
+ * This module implements t-SNE, UMAP, and autoencoder-based dimensionality
+ * reduction for data visualization and feature compression.
  *
- * 1. t-SNE: t-Distributed Stochastic Neighbor Embedding
- *    - Non-linear dimensionality reduction
- *    - Preserves local structure
- *
- * 2. UMAP: Uniform Manifold Approximation and Projection
- *    - Preserves both local and global structure
- *    - Faster than t-SNE for large datasets
- *
- * 3. Autoencoder: Neural network-based compression
- *    - Encoder-decoder architecture
- *    - Learns compressed representation
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_dimensionality_reduction.c
@@ -45,7 +34,9 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #include "lib/stringinfo.h"
 #include "libpq/pqformat.h"
 #include "utils/jsonb.h"
@@ -118,10 +109,11 @@ reduce_tsne(PG_FUNCTION_ARGS)
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		/* Initialize reduced vectors randomly */
-		reduced = (float **) palloc(sizeof(float *) * nvec);
+		NDB_DECLARE(float **, reduced);
+		NDB_ALLOC(reduced, float *, nvec);
 		for (i = 0; i < nvec; i++)
 		{
-			reduced[i] = (float *) palloc(sizeof(float) * n_components);
+			NDB_ALLOC(reduced[i], float, n_components);
 			for (j = 0; j < n_components; j++)
 				reduced[i][j] = ((float) rand() / (float) RAND_MAX - 0.5) * 0.0001;
 		}
@@ -136,10 +128,11 @@ reduce_tsne(PG_FUNCTION_ARGS)
 			int			k;
 
 			/* Allocate distance matrix */
-			distances_sq = (double **) palloc(sizeof(double *) * nvec);
+			NDB_DECLARE(double **, distances_sq);
+			NDB_ALLOC(distances_sq, double *, nvec);
 			for (i = 0; i < nvec; i++)
 			{
-				distances_sq[i] = (double *) palloc0(sizeof(double) * nvec);
+				NDB_ALLOC(distances_sq[i], double, nvec);
 			}
 
 			/* Compute squared Euclidean distances */
@@ -166,8 +159,10 @@ reduce_tsne(PG_FUNCTION_ARGS)
 			 * Use binary search to find sigma for each point to achieve
 			 * target perplexity
 			 */
-			P = (double **) palloc(sizeof(double *) * nvec);
-			sum_P = (double *) palloc0(sizeof(double) * nvec);
+			NDB_DECLARE(double **, P);
+			NDB_DECLARE(double *, sum_P);
+			NDB_ALLOC(P, double *, nvec);
+			NDB_ALLOC(sum_P, double, nvec);
 			for (i = 0; i < nvec; i++)
 			{
 				double		sigma = 1.0;
@@ -177,7 +172,7 @@ reduce_tsne(PG_FUNCTION_ARGS)
 				double		sigma_min = 1e-10;
 				double		sigma_max = 1000.0;
 
-				P[i] = (double *) palloc0(sizeof(double) * nvec);
+				NDB_ALLOC(P[i], double, nvec);
 
 				/* Binary search for sigma */
 				for (binary_search_iter = 0; binary_search_iter < 50; binary_search_iter++)
@@ -251,20 +246,23 @@ reduce_tsne(PG_FUNCTION_ARGS)
 				int			d;
 
 				/* Allocate gradient and previous Y */
-				gradient = (double **) palloc(sizeof(double *) * nvec);
-				Y_prev = (double **) palloc(sizeof(double *) * nvec);
+				NDB_DECLARE(double **, gradient);
+				NDB_DECLARE(double **, Y_prev);
+				NDB_ALLOC(gradient, double *, nvec);
+				NDB_ALLOC(Y_prev, double *, nvec);
 				for (i = 0; i < nvec; i++)
 				{
-					gradient[i] = (double *) palloc0(sizeof(double) * n_components);
-					Y_prev[i] = (double *) palloc(sizeof(double) * n_components);
+					NDB_ALLOC(gradient[i], double, n_components);
+					NDB_ALLOC(Y_prev[i], double, n_components);
 					for (d = 0; d < n_components; d++)
 						Y_prev[i][d] = (double) reduced[i][d];
 				}
 
 				/* Compute Q matrix (low-dimensional probabilities) */
-				Q = (double **) palloc(sizeof(double *) * nvec);
+				NDB_DECLARE(double **, Q);
+				NDB_ALLOC(Q, double *, nvec);
 				for (i = 0; i < nvec; i++)
-					Q[i] = (double *) palloc0(sizeof(double) * nvec);
+					NDB_ALLOC(Q[i], double, nvec);
 
 				for (i = 0; i < nvec; i++)
 				{
@@ -330,34 +328,34 @@ reduce_tsne(PG_FUNCTION_ARGS)
 				/* Cleanup gradient and Q for this iteration */
 				for (i = 0; i < nvec; i++)
 				{
-					NDB_SAFE_PFREE_AND_NULL(gradient[i]);
-					NDB_SAFE_PFREE_AND_NULL(Y_prev[i]);
-					NDB_SAFE_PFREE_AND_NULL(Q[i]);
+					NDB_FREE(gradient[i]);
+					NDB_FREE(Y_prev[i]);
+					NDB_FREE(Q[i]);
 				}
-				NDB_SAFE_PFREE_AND_NULL(gradient);
-				NDB_SAFE_PFREE_AND_NULL(Y_prev);
-				NDB_SAFE_PFREE_AND_NULL(Q);
+				NDB_FREE(gradient);
+				NDB_FREE(Y_prev);
+				NDB_FREE(Q);
 			}
 
 			/* Cleanup */
 			for (i = 0; i < nvec; i++)
 			{
-				NDB_SAFE_PFREE_AND_NULL(distances_sq[i]);
-				NDB_SAFE_PFREE_AND_NULL(P[i]);
+				NDB_FREE(distances_sq[i]);
+				NDB_FREE(P[i]);
 			}
-			NDB_SAFE_PFREE_AND_NULL(distances_sq);
-			NDB_SAFE_PFREE_AND_NULL(P);
-			NDB_SAFE_PFREE_AND_NULL(sum_P);
+			NDB_FREE(distances_sq);
+			NDB_FREE(P);
+			NDB_FREE(sum_P);
 		}
 		funcctx->user_fctx = reduced;
 		funcctx->max_calls = nvec;
 		MemoryContextSwitchTo(oldcontext);
 
 		for (i = 0; i < nvec; i++)
-			NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-		NDB_SAFE_PFREE_AND_NULL(vectors);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(vec_col_str);
+			NDB_FREE(vectors[i]);
+		NDB_FREE(vectors);
+		NDB_FREE(tbl_str);
+		NDB_FREE(vec_col_str);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
@@ -368,7 +366,8 @@ reduce_tsne(PG_FUNCTION_ARGS)
 		ArrayType  *result;
 		Datum	   *result_datums;
 
-		result_datums = (Datum *) palloc(sizeof(Datum) * n_components);
+		NDB_DECLARE(Datum *, result_datums);
+		NDB_ALLOC(result_datums, Datum, n_components);
 		for (j = 0; j < n_components; j++)
 			result_datums[j] = Float4GetDatum(reduced[idx][j]);
 
@@ -379,7 +378,7 @@ reduce_tsne(PG_FUNCTION_ARGS)
 								 FLOAT4PASSBYVAL,
 								 'i');
 
-		NDB_SAFE_PFREE_AND_NULL(result_datums);
+		NDB_FREE(result_datums);
 		SRF_RETURN_NEXT(funcctx, PointerGetDatum(result));
 	}
 
@@ -462,10 +461,11 @@ reduce_umap(PG_FUNCTION_ARGS)
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		/* Initialize reduced vectors randomly */
-		reduced = (float **) palloc(sizeof(float *) * nvec);
+		NDB_DECLARE(float **, reduced);
+		NDB_ALLOC(reduced, float *, nvec);
 		for (i = 0; i < nvec; i++)
 		{
-			reduced[i] = (float *) palloc(sizeof(float) * n_components);
+			NDB_ALLOC(reduced[i], float, n_components);
 			for (j = 0; j < n_components; j++)
 				reduced[i][j] = ((float) rand() / (float) RAND_MAX - 0.5) * 0.0001;
 		}
@@ -479,10 +479,11 @@ reduce_umap(PG_FUNCTION_ARGS)
 			int			d;
 
 			/* Compute pairwise distances */
-			distances = (double **) palloc(sizeof(double *) * nvec);
+			NDB_DECLARE(double **, distances);
+			NDB_ALLOC(distances, double *, nvec);
 			for (i = 0; i < nvec; i++)
 			{
-				distances[i] = (double *) palloc(sizeof(double) * nvec);
+				NDB_ALLOC(distances[i], double, nvec);
 				for (j = 0; j < nvec; j++)
 				{
 					if (i == j)
@@ -503,7 +504,8 @@ reduce_umap(PG_FUNCTION_ARGS)
 			}
 
 			/* Find k-nearest neighbors for each point */
-			neighbors = (int **) palloc(sizeof(int *) * nvec);
+			NDB_DECLARE(int **, neighbors);
+			NDB_ALLOC(neighbors, int *, nvec);
 			for (i = 0; i < nvec; i++)
 			{
 				int		   *neighbor_indices = (int *) palloc(sizeof(int) * n_neighbors);
@@ -567,7 +569,7 @@ reduce_umap(PG_FUNCTION_ARGS)
 				}
 
 				neighbors[i] = neighbor_indices;
-				NDB_SAFE_PFREE_AND_NULL(neighbor_dists);
+				NDB_FREE(neighbor_dists);
 			}
 
 			/* Compute high-dimensional probabilities (fuzzy simplicial set) */
@@ -692,20 +694,20 @@ reduce_umap(PG_FUNCTION_ARGS)
 
 				/* Cleanup gradient */
 				for (i = 0; i < nvec; i++)
-					NDB_SAFE_PFREE_AND_NULL(gradient[i]);
-				NDB_SAFE_PFREE_AND_NULL(gradient);
+					NDB_FREE(gradient[i]);
+				NDB_FREE(gradient);
 			}
 
 			/* Cleanup */
 			for (i = 0; i < nvec; i++)
 			{
-				NDB_SAFE_PFREE_AND_NULL(distances[i]);
-				NDB_SAFE_PFREE_AND_NULL(neighbors[i]);
-				NDB_SAFE_PFREE_AND_NULL(high_prob[i]);
+				NDB_FREE(distances[i]);
+				NDB_FREE(neighbors[i]);
+				NDB_FREE(high_prob[i]);
 			}
-			NDB_SAFE_PFREE_AND_NULL(distances);
-			NDB_SAFE_PFREE_AND_NULL(neighbors);
-			NDB_SAFE_PFREE_AND_NULL(high_prob);
+			NDB_FREE(distances);
+			NDB_FREE(neighbors);
+			NDB_FREE(high_prob);
 		}
 
 		funcctx->user_fctx = reduced;
@@ -713,10 +715,10 @@ reduce_umap(PG_FUNCTION_ARGS)
 		MemoryContextSwitchTo(oldcontext);
 
 		for (i = 0; i < nvec; i++)
-			NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-		NDB_SAFE_PFREE_AND_NULL(vectors);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(vec_col_str);
+			NDB_FREE(vectors[i]);
+		NDB_FREE(vectors);
+		NDB_FREE(tbl_str);
+		NDB_FREE(vec_col_str);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
@@ -727,7 +729,8 @@ reduce_umap(PG_FUNCTION_ARGS)
 		ArrayType  *result;
 		Datum	   *result_datums;
 
-		result_datums = (Datum *) palloc(sizeof(Datum) * n_components);
+		NDB_DECLARE(Datum *, result_datums);
+		NDB_ALLOC(result_datums, Datum, n_components);
 		for (j = 0; j < n_components; j++)
 			result_datums[j] = Float4GetDatum(reduced[idx][j]);
 
@@ -738,7 +741,7 @@ reduce_umap(PG_FUNCTION_ARGS)
 								 FLOAT4PASSBYVAL,
 								 'i');
 
-		NDB_SAFE_PFREE_AND_NULL(result_datums);
+		NDB_FREE(result_datums);
 		SRF_RETURN_NEXT(funcctx, PointerGetDatum(result));
 	}
 
@@ -1272,7 +1275,7 @@ train_autoencoder(PG_FUNCTION_ARGS)
 			/* Update weights */
 			autoencoder_update_weights(ae, input);
 
-			NDB_SAFE_PFREE_AND_NULL(reconstructed);
+			NDB_FREE(reconstructed);
 		}
 
 		loss /= (nvec * dim);
@@ -1301,8 +1304,8 @@ train_autoencoder(PG_FUNCTION_ARGS)
 					 activation,
 					 learning_rate,
 					 epochs);
-	params_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(paramsbuf.data)));
-	NDB_SAFE_PFREE_AND_NULL(paramsbuf.data);
+	params_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(paramsbuf.data)));
+	NDB_FREE(paramsbuf.data);
 
 	/* Build metrics JSON */
 	initStringInfo(&metricsbuf);
@@ -1313,8 +1316,8 @@ train_autoencoder(PG_FUNCTION_ARGS)
 					 loss,
 					 nvec,
 					 (double) dim / (double) bottleneck_dim);
-	metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(metricsbuf.data)));
-	NDB_SAFE_PFREE_AND_NULL(metricsbuf.data);
+	metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metricsbuf.data)));
+	NDB_FREE(metricsbuf.data);
 
 	/* Register model in catalog */
 	memset(&spec, 0, sizeof(MLCatalogModelSpec));
@@ -1328,8 +1331,8 @@ train_autoencoder(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-	NDB_SAFE_PFREE_AND_NULL(vectors);
+		NDB_FREE(vectors[i]);
+	NDB_FREE(vectors);
 
 	if (ae != NULL)
 	{
@@ -1340,24 +1343,24 @@ train_autoencoder(PG_FUNCTION_ARGS)
 			if (layer->weights != NULL)
 			{
 				for (j = 0; j < layer->n_outputs; j++)
-					NDB_SAFE_PFREE_AND_NULL(layer->weights[j]);
-				NDB_SAFE_PFREE_AND_NULL(layer->weights);
+					NDB_FREE(layer->weights[j]);
+				NDB_FREE(layer->weights);
 			}
-			NDB_SAFE_PFREE_AND_NULL(layer->activations);
-			NDB_SAFE_PFREE_AND_NULL(layer->deltas);
+			NDB_FREE(layer->activations);
+			NDB_FREE(layer->deltas);
 		}
-		NDB_SAFE_PFREE_AND_NULL(ae->layers);
-		NDB_SAFE_PFREE_AND_NULL(ae->activation_func);
-		NDB_SAFE_PFREE_AND_NULL(ae);
+		NDB_FREE(ae->layers);
+		NDB_FREE(ae->activation_func);
+		NDB_FREE(ae);
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(table_name_str);
-	NDB_SAFE_PFREE_AND_NULL(vector_col_str);
-	NDB_SAFE_PFREE_AND_NULL(activation);
+	NDB_FREE(table_name_str);
+	NDB_FREE(vector_col_str);
+	NDB_FREE(activation);
 	if (encoder_layers)
-		NDB_SAFE_PFREE_AND_NULL(encoder_layers);
+		NDB_FREE(encoder_layers);
 	if (decoder_layers)
-		NDB_SAFE_PFREE_AND_NULL(decoder_layers);
+		NDB_FREE(decoder_layers);
 
 	PG_RETURN_INT32(model_id);
 }

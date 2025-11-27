@@ -1,15 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_inference.c
- *		GPU-accelerated ML inference
+ *    Accelerated ML inference.
  *
- * Implements ONNX Runtime GPU inference and embedding generation
+ * This module implements ONNX Runtime inference and embedding generation
  * for high-throughput batch inference operations.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/gpu_inference.c
+ *    src/gpu/common/gpu_inference.c
  *
  *-------------------------------------------------------------------------
  */

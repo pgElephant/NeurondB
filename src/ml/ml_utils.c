@@ -1,9 +1,11 @@
 /*-------------------------------------------------------------------------
  *
  * ml_utils.c
- *    Common utility functions for ML operations
+ *    Common utility functions for ML operations.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * This module provides shared utility functions used across ML algorithms.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_utils.c
@@ -23,6 +25,8 @@
 #include "neurondb_ml.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 #include "neurondb_spi_safe.h"
 
 /*
@@ -40,10 +44,13 @@ neurondb_fetch_vectors_from_table(const char *table,
 	StringInfoData sql;
 	int			ret;
 	int			i,
-				d;
-	float	  **result;
+				d,
+				j;
+	NDB_DECLARE(float **, result);
 	MemoryContext oldcontext;
 	MemoryContext caller_context;
+	MemoryContext oldcontext_spi;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	/* Save the caller's context before SPI operations */
 	caller_context = CurrentMemoryContext;
@@ -53,26 +60,26 @@ neurondb_fetch_vectors_from_table(const char *table,
 	{
 		int			max_vectors_limit = 500000;
 
+		/* sql is allocated in caller's context, not SPI context */
 		initStringInfo(&sql);
 		appendStringInfo(&sql, "SELECT %s FROM %s LIMIT %d", col, table, max_vectors_limit);
 	}
+	oldcontext_spi = CurrentMemoryContext;
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);
 
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
 		/*
-		 * sql.data is allocated before SPI_connect(), so it's in caller's
+		 * sql.data is allocated before SPI session, so it's in caller's
 		 * context
 		 */
-		/* We must free it explicitly before SPI_finish() */
+		/* We must free it explicitly before SPI session end */
 		char	   *query_str = sql.data;	/* Save pointer before freeing */
 
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: SPI_execute failed: %s", query_str)));
@@ -82,12 +89,12 @@ neurondb_fetch_vectors_from_table(const char *table,
 	if (*out_count == 0)
 	{
 		/*
-		 * sql.data is allocated before SPI_connect(), so it's in caller's
+		 * sql.data is allocated before SPI session, so it's in caller's
 		 * context
 		 */
-		/* We must free it explicitly before SPI_finish() */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		SPI_finish();
+		/* We must free it explicitly before SPI session end */
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(spi_session);
 		*out_dim = 0;
 		return NULL;
 	}
@@ -107,6 +114,16 @@ neurondb_fetch_vectors_from_table(const char *table,
 		Datum		first_datum;
 		Vector	   *first_vec;
 
+		/* Safe access for complex types - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			SPI_processed == 0 || SPI_tuptable->vals[0] == NULL || SPI_tuptable->tupdesc == NULL)
+		{
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(spi_session);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: NULL vector in first row")));
+		}
 		first_datum = SPI_getbinval(SPI_tuptable->vals[0],
 									SPI_tuptable->tupdesc,
 									1,
@@ -114,12 +131,12 @@ neurondb_fetch_vectors_from_table(const char *table,
 		if (isnull)
 		{
 			/*
-			 * sql.data is allocated before SPI_connect(), so it's in caller's
+			 * sql.data is allocated before SPI session, so it's in caller's
 			 * context
-			 */
-			/* We must free it explicitly before SPI_finish() */
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			SPI_finish();
+			*/
+			/* We must free it explicitly before SPI session end */
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(spi_session);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("neurondb: NULL vector in first row")));
@@ -142,12 +159,12 @@ neurondb_fetch_vectors_from_table(const char *table,
 		if (result_array_size > MaxAllocSize)
 		{
 			/*
-			 * sql.data is allocated before SPI_connect(), so it's in caller's
+			 * sql.data is allocated before SPI session, so it's in caller's
 			 * context
 			 */
-			/* We must free it explicitly before SPI_finish() */
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			SPI_finish();
+			/* We must free it explicitly before SPI session end */
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(spi_session);
 			MemoryContextSwitchTo(oldcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
@@ -157,14 +174,30 @@ neurondb_fetch_vectors_from_table(const char *table,
 		}
 	}
 
-	result = (float **) palloc0(sizeof(float *) * (*out_count));
+	NDB_ALLOC(result, float *, *out_count);
 
 	for (i = 0; i < *out_count; i++)
 	{
 		bool		isnull;
 		Datum		vec_datum;
 		Vector	   *vec;
+		NDB_DECLARE(float *, vec_data);
 
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			/* Free already allocated vectors */
+			for (j = 0; j < i; j++)
+				NDB_FREE(result[j]);
+			NDB_FREE(result);
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(spi_session);
+			MemoryContextSwitchTo(oldcontext);
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb_fetch_vectors_from_table: invalid row %d", i)));
+		}
 		vec_datum = SPI_getbinval(SPI_tuptable->vals[i],
 								  SPI_tuptable->tupdesc,
 								  1,
@@ -173,16 +206,16 @@ neurondb_fetch_vectors_from_table(const char *table,
 		{
 			/* Free already allocated vectors */
 			for (int j = 0; j < i; j++)
-				NDB_SAFE_PFREE_AND_NULL(result[j]);
-			NDB_SAFE_PFREE_AND_NULL(result);
+				NDB_FREE(result[j]);
+			NDB_FREE(result);
 
 			/*
-			 * sql.data is allocated before SPI_connect(), so it's in caller's
+			 * sql.data is allocated before SPI session, so it's in caller's
 			 * context
 			 */
-			/* We must free it explicitly before SPI_finish() */
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			SPI_finish();
+			/* We must free it explicitly before SPI session end */
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(spi_session);
 			MemoryContextSwitchTo(oldcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -196,16 +229,16 @@ neurondb_fetch_vectors_from_table(const char *table,
 		{
 			/* Free already allocated vectors */
 			for (int j = 0; j < i; j++)
-				NDB_SAFE_PFREE_AND_NULL(result[j]);
-			NDB_SAFE_PFREE_AND_NULL(result);
+				NDB_FREE(result[j]);
+			NDB_FREE(result);
 
 			/*
-			 * sql.data is allocated before SPI_connect(), so it's in caller's
+			 * sql.data is allocated before SPI session, so it's in caller's
 			 * context
 			 */
-			/* We must free it explicitly before SPI_finish() */
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			SPI_finish();
+			/* We must free it explicitly before SPI session end */
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(spi_session);
 			MemoryContextSwitchTo(oldcontext);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -223,16 +256,16 @@ neurondb_fetch_vectors_from_table(const char *table,
 			{
 				/* Free already allocated vectors */
 				for (int j = 0; j < i; j++)
-					NDB_SAFE_PFREE_AND_NULL(result[j]);
-				NDB_SAFE_PFREE_AND_NULL(result);
+					NDB_FREE(result[j]);
+				NDB_FREE(result);
 
 				/*
-				 * sql.data is allocated before SPI_connect(), so it's in
+				 * sql.data is allocated before SPI session, so it's in
 				 * caller's context
 				 */
-				/* We must free it explicitly before SPI_finish() */
-				NDB_SAFE_PFREE_AND_NULL(sql.data);
-				SPI_finish();
+				/* We must free it explicitly before SPI session end */
+				NDB_FREE(sql.data);
+				NDB_SPI_SESSION_END(spi_session);
 				MemoryContextSwitchTo(oldcontext);
 				ereport(ERROR,
 						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
@@ -243,15 +276,16 @@ neurondb_fetch_vectors_from_table(const char *table,
 		}
 
 		/* Copy vector data */
-		result[i] = (float *) palloc(sizeof(float) * (*out_dim));
+		NDB_ALLOC(vec_data, float, *out_dim);
+		result[i] = vec_data;
 		for (d = 0; d < *out_dim; d++)
 			result[i][d] = vec->data[d];
 	}
 
 	/* Switch back to SPI context before finishing */
 	MemoryContextSwitchTo(oldcontext);
-	SPI_finish();
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
+	NDB_SPI_SESSION_END(spi_session);
 
 	return result;
 }

@@ -1,28 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_reinforcement_learning.c
- *    Q-Learning, DQN, PPO, and Multi-Armed Bandits
+ *    Reinforcement learning algorithms.
  *
- * Implements reinforcement learning algorithms:
+ * This module implements Q-learning, DQN, PPO, and multi-armed bandits
+ * for reinforcement learning tasks.
  *
- * 1. Q-Learning: Tabular Q-learning for discrete state/action spaces
- *    - Off-policy temporal difference learning
- *    - Updates Q-values using Bellman equation
- *
- * 2. Deep Q-Network (DQN): Neural network-based Q-learning
- *    - Handles large/continuous state spaces
- *    - Experience replay buffer
- *    - Target network for stability
- *
- * 3. Proximal Policy Optimization (PPO): Policy gradient method
- *    - Clipped objective for stable updates
- *    - Works with continuous/discrete actions
- *
- * 4. Multi-Armed Bandits: Thompson Sampling, UCB, Epsilon-Greedy
- *    - Contextual bandits for recommendations
- *    - Exploration vs exploitation trade-off
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_reinforcement_learning.c
@@ -49,6 +33,8 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 #include "neurondb_spi_safe.h"
 
 /* Q-Learning agent structure */
@@ -124,33 +110,33 @@ qlearning_train(PG_FUNCTION_ARGS)
 
 	tbl_str = text_to_cstring(table_name);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Initialize Q-table */
-	agent = (QLearningAgent *) palloc(sizeof(QLearningAgent));
+	NDB_DECLARE(QLearningAgent *, agent);
+	NDB_ALLOC(agent, QLearningAgent, 1);
 	agent->n_states = n_states;
 	agent->n_actions = n_actions;
 	agent->learning_rate = learning_rate;
 	agent->discount_factor = discount_factor;
 	agent->epsilon = epsilon;
 
-	agent->q_table = (double **) palloc(sizeof(double *) * n_states);
+	NDB_ALLOC(agent->q_table, double *, n_states);
 	for (i = 0; i < n_states; i++)
 	{
-		agent->q_table[i] = (double *) palloc0(sizeof(double) * n_actions);
+		NDB_ALLOC(agent->q_table[i], double, n_actions);
 	}
 
 	/* Training loop */
-	initStringInfo(&query);
+	ndb_spi_stringinfo_init(spi_session, &query);
 	appendStringInfo(&query,
 					 "SELECT state_id, action_id, reward, next_state_id FROM %s",
 					 tbl_str);
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
@@ -158,20 +144,43 @@ qlearning_train(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < iterations && i < SPI_processed; i++)
 	{
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			continue;
+		}
 		HeapTuple	tuple = SPI_tuptable->vals[i];
-		int			state_id = DatumGetInt32(SPI_getbinval(tuple,
-														   SPI_tuptable->tupdesc,
-														   1, NULL));
-		int			action_id = DatumGetInt32(SPI_getbinval(tuple,
-															SPI_tuptable->tupdesc,
-															2, NULL));
-		double		reward = DatumGetFloat8(SPI_getbinval(tuple,
-														  SPI_tuptable->tupdesc,
-														  3, NULL));
-		bool		isnull;
-		int			next_state_id = DatumGetInt32(SPI_getbinval(tuple,
-																SPI_tuptable->tupdesc,
-																4, &isnull));
+		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		if (tupdesc == NULL)
+		{
+			continue;
+		}
+		/* Use safe function for int32 values */
+		int32		state_id_val, action_id_val, next_state_id_val;
+		bool		isnull = false;
+		
+		if (!ndb_spi_get_int32(spi_session, i, 1, &state_id_val))
+			continue;
+		if (!ndb_spi_get_int32(spi_session, i, 2, &action_id_val))
+			continue;
+		int			state_id = state_id_val;
+		int			action_id = action_id_val;
+		
+		/* For float8 reward, need to use SPI_getbinval with safe access */
+		double		reward = 0.0;
+		if (tupdesc->natts >= 3)
+		{
+			Datum		reward_datum = SPI_getbinval(tuple, tupdesc, 3, NULL);
+			reward = DatumGetFloat8(reward_datum);
+		}
+		
+		/* For next_state_id, use safe function */
+		if (!ndb_spi_get_int32(spi_session, i, 4, &next_state_id_val))
+		{
+			isnull = true;
+		}
+		int			next_state_id = next_state_id_val;
 
 		if (state_id < 0 || state_id >= n_states || action_id < 0 ||
 			action_id >= n_actions)
@@ -222,8 +231,8 @@ qlearning_train(PG_FUNCTION_ARGS)
 		}
 		appendStringInfoString(&jsonbuf, "]}");
 		parameters = DatumGetJsonbP(
-									DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-		NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+									DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+		NDB_FREE(jsonbuf.data);
 	}
 
 	/* Create metrics */
@@ -235,8 +244,8 @@ qlearning_train(PG_FUNCTION_ARGS)
 						 "{\"iterations\":%d,\"n_states\":%d,\"n_actions\":%d}",
 						 iterations, n_states, n_actions);
 		metrics = DatumGetJsonbP(
-								 DirectFunctionCall1(jsonb_in, CStringGetDatum(metricsbuf.data)));
-		NDB_SAFE_PFREE_AND_NULL(metricsbuf.data);
+								 DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metricsbuf.data)));
+		NDB_FREE(metricsbuf.data);
 	}
 
 	/* Register model */
@@ -253,12 +262,12 @@ qlearning_train(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < n_states; i++)
-		NDB_SAFE_PFREE_AND_NULL(agent->q_table[i]);
-	NDB_SAFE_PFREE_AND_NULL(agent->q_table);
-	NDB_SAFE_PFREE_AND_NULL(agent);
-	NDB_SAFE_PFREE_AND_NULL(query.data);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	SPI_finish();
+		NDB_FREE(agent->q_table[i]);
+	NDB_FREE(agent->q_table);
+	NDB_FREE(agent);
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_SPI_SESSION_END(spi_session);
+	NDB_FREE(tbl_str);
 
 	PG_RETURN_INT32(model_id);
 }
@@ -288,32 +297,35 @@ qlearning_predict(PG_FUNCTION_ARGS)
 	model_id = PG_GETARG_INT32(0);
 	state_id = PG_GETARG_INT32(1);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Load Q-table from model */
-	initStringInfo(&query);
+	ndb_spi_stringinfo_init(spi_session, &query);
 	appendStringInfo(&query,
 					 "SELECT parameters FROM neurondb.ml_models WHERE model_id = %d",
 					 model_id);
 
-	ret = ndb_spi_execute_safe(query.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, query.data, true, 1);
 	if (ret != SPI_OK_SELECT || SPI_processed == 0)
+	{
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("Model not found")));
+	}
 
-	parameters = DatumGetJsonbP(SPI_getbinval(SPI_tuptable->vals[0],
-											  SPI_tuptable->tupdesc, 1, NULL));
+	parameters = ndb_spi_get_jsonb(spi_session, 0, 1, oldcontext);
 
 	/* Parse Q-table from JSONB (simplified - would need proper JSONB parsing) */
 	/* For now, return greedy action based on state_id */
 	/* In full implementation, would deserialize Q-table */
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_INT32(best_action);
 }
@@ -371,33 +383,50 @@ multi_armed_bandit(PG_FUNCTION_ARGS)
 	tbl_str = text_to_cstring(table_name);
 	algorithm = text_to_cstring(algorithm_text);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Initialize arm statistics */
-	arm_counts = (int *) palloc0(sizeof(int) * n_arms);
-	arm_rewards = (double *) palloc0(sizeof(double) * n_arms);
+	NDB_ALLOC(arm_counts, int, n_arms);
+	NDB_ALLOC(arm_rewards, double, n_arms);
 
 	/* Collect statistics from table */
-	initStringInfo(&query);
+	ndb_spi_stringinfo_init(spi_session, &query);
 	appendStringInfo(&query,
 					 "SELECT arm_id, reward FROM %s", tbl_str);
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 	if (ret == SPI_OK_SELECT)
 	{
 		for (i = 0; i < SPI_processed; i++)
 		{
+			/* Safe access to SPI_tuptable - validate before access */
+			if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+				i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+			{
+				continue;
+			}
 			HeapTuple	tuple = SPI_tuptable->vals[i];
-			int			arm_id = DatumGetInt32(SPI_getbinval(tuple,
-															 SPI_tuptable->tupdesc,
-															 1, NULL));
-			double		reward = DatumGetFloat8(SPI_getbinval(tuple,
-															  SPI_tuptable->tupdesc,
-															  2, NULL));
+			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+			if (tupdesc == NULL)
+			{
+				continue;
+			}
+			/* Use safe function for int32 arm_id */
+			int32		arm_id_val;
+			if (!ndb_spi_get_int32(spi_session, i, 1, &arm_id_val))
+				continue;
+			int			arm_id = arm_id_val;
+			
+			/* For float8 reward, need to use SPI_getbinval with safe access */
+			double		reward = 0.0;
+			if (tupdesc->natts >= 2)
+			{
+				Datum		reward_datum = SPI_getbinval(tuple, tupdesc, 2, NULL);
+				reward = DatumGetFloat8(reward_datum);
+			}
 
 			if (arm_id >= 0 && arm_id < n_arms)
 			{
@@ -506,14 +535,14 @@ multi_armed_bandit(PG_FUNCTION_ARGS)
 							 'd');
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(arm_counts);
-	NDB_SAFE_PFREE_AND_NULL(arm_rewards);
-	NDB_SAFE_PFREE_AND_NULL(arm_probs);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(query.data);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(algorithm);
-	SPI_finish();
+	NDB_FREE(arm_counts);
+	NDB_FREE(arm_rewards);
+	NDB_FREE(arm_probs);
+	NDB_FREE(result_datums);
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_SPI_SESSION_END(spi_session);
+	NDB_FREE(tbl_str);
+	NDB_FREE(algorithm);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

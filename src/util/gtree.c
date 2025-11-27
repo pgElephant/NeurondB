@@ -3,6 +3,7 @@
 #include "gtree.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * Expand the array of nodes for the given GTree to ensure
@@ -267,7 +268,7 @@ gtree_validate(const GTree * t)
 				(errmsg("gtree_validate: out of memory for seen "
 						"array")));
 	depth = gtree_depth_dfs(t, t->root, 0, seen);
-	NDB_SAFE_PFREE_AND_NULL(seen);
+	NDB_FREE(seen);
 
 	if (depth > GTREE_MAX_DEPTH)
 		ereport(ERROR,

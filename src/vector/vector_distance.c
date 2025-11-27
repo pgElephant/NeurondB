@@ -8,10 +8,10 @@
  * Chebyshev, and Minkowski distances. All functions use Kahan
  * summation for numerical stability where appropriate.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/distance.c
+ *	  src/vector/vector_distance.c
  *
  *-------------------------------------------------------------------------
  */
@@ -23,6 +23,8 @@
 #include <float.h>
 #include "neurondb_safe_memory.h"
 #include "neurondb_validation.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 /* SIMD-optimized distance functions */
 extern float4 l2_distance_simd(Vector *a, Vector *b);

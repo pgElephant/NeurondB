@@ -22,6 +22,7 @@
 #include "neurondb_llm.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Image format detection constants */
 #define IMAGE_MAGIC_PNG_1    0x89
@@ -357,6 +358,6 @@ ndb_image_metadata_to_json(const ImageMetadata * meta)
 	}
 	appendStringInfo(&json, "}");
 
-	NDB_SAFE_PFREE_AND_NULL(format_name);
+	NDB_FREE(format_name);
 	return json.data;
 }

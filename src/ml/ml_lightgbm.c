@@ -1,7 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_lightgbm.c
- *    LightGBM Machine Learning Integration for NeuronDB
+ *    LightGBM gradient boosting integration.
+ *
+ * This module provides LightGBM gradient boosting for classification and
+ * regression with model serialization and catalog storage.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_lightgbm.c
@@ -90,6 +95,7 @@ predict_lightgbm(PG_FUNCTION_ARGS)
 #include "ml_gpu_registry.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 typedef struct LightGBMGpuModelState
 {
@@ -124,7 +130,7 @@ lightgbm_model_serialize_to_bytea(int n_estimators, int max_depth, float learnin
 	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -207,7 +213,7 @@ lightgbm_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errst
 																			   NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "boosting_type") == 0 && v.type == jbvString)
 					strncpy(boosting_type, v.val.string.val, sizeof(boosting_type) - 1);
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -241,7 +247,7 @@ lightgbm_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errst
 					 n_estimators, max_depth, learning_rate, dim, boosting_type, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+	NDB_FREE(metrics_json.data);
 
 	state = (LightGBMGpuModelState *) palloc0(sizeof(LightGBMGpuModelState));
 	state->model_blob = model_data;
@@ -254,7 +260,7 @@ lightgbm_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errst
 	strncpy(state->boosting_type, boosting_type, sizeof(state->boosting_type) - 1);
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -346,7 +352,7 @@ lightgbm_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -390,7 +396,7 @@ lightgbm_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -430,7 +436,7 @@ lightgbm_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 
 	if (lightgbm_model_deserialize_from_bytea(payload_copy, &n_estimators, &max_depth, &learning_rate, &n_features, boosting_type, sizeof(boosting_type)) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("lightgbm_gpu_deserialize: failed to deserialize");
 		return false;
@@ -464,7 +470,7 @@ lightgbm_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -474,7 +480,7 @@ lightgbm_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -495,10 +501,10 @@ lightgbm_gpu_destroy(MLGpuModel * model)
 	{
 		state = (LightGBMGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->metrics);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

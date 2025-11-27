@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
  *
- * gpu_knn_cuda.c
+ * gpu_knn_rocm.c
  *    ROCm backend bridge for K-Nearest Neighbors training and prediction.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *    src/gpu/cuda/gpu_knn_cuda.c
+ *    src/gpu/rocm/gpu_knn_rocm.c
  *
  *-------------------------------------------------------------------------
  */
@@ -30,6 +30,7 @@
 #include "neurondb_rocm_knn.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* KNN model structure */
 typedef struct KNNModel
@@ -148,7 +149,7 @@ ndb_rocm_knn_pack(const struct KNNModel *model,
 			{
 				if (errstr)
 					*errstr = pstrdup("invalid KNN model: features array contains non-finite value");
-				NDB_SAFE_PFREE_AND_NULL(blob);
+				NDB_FREE(blob);
 				return -1;
 			}
 		}
@@ -169,7 +170,7 @@ ndb_rocm_knn_pack(const struct KNNModel *model,
 			{
 				if (errstr)
 					*errstr = pstrdup("invalid KNN model: labels array contains non-finite value");
-				NDB_SAFE_PFREE_AND_NULL(blob);
+				NDB_FREE(blob);
 				return -1;
 			}
 			/* For classification, labels should be integers */
@@ -181,7 +182,7 @@ ndb_rocm_knn_pack(const struct KNNModel *model,
 				{
 					if (errstr)
 						*errstr = pstrdup("invalid KNN model: classification labels must be non-negative integers");
-					NDB_SAFE_PFREE_AND_NULL(blob);
+					NDB_FREE(blob);
 					return -1;
 				}
 			}
@@ -215,7 +216,7 @@ ndb_rocm_knn_pack(const struct KNNModel *model,
 		PG_TRY();
 		{
 			metrics_json = DatumGetJsonbP(
-										  DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+										  DirectFunctionCall1(jsonb_in, CStringGetTextDatum(buf.data)));
 		}
 		PG_CATCH();
 		{
@@ -225,7 +226,7 @@ ndb_rocm_knn_pack(const struct KNNModel *model,
 		}
 		PG_END_TRY();
 
-		NDB_SAFE_PFREE_AND_NULL(buf.data);
+		NDB_FREE(buf.data);
 		*metrics = metrics_json;
 	}
 
@@ -404,7 +405,7 @@ ndb_rocm_knn_train(const float *features,
 	{
 		if (errstr)
 			*errstr = pstrdup("HIP KNN train: failed to allocate labels_copy array");
-		NDB_SAFE_PFREE_AND_NULL(features_copy);
+		NDB_FREE(features_copy);
 		return -1;
 	}
 
@@ -438,9 +439,9 @@ ndb_rocm_knn_train(const float *features,
 
 cleanup:
 	if (features_copy)
-		NDB_SAFE_PFREE_AND_NULL(features_copy);
+		NDB_FREE(features_copy);
 	if (labels_copy)
-		NDB_SAFE_PFREE_AND_NULL(labels_copy);
+		NDB_FREE(labels_copy);
 
 	return rc;
 }
@@ -579,7 +580,7 @@ ndb_rocm_knn_predict(const bytea * model_data,
 	{
 		if (errstr && *errstr == NULL)
 			*errstr = pstrdup("HIP distance computation failed");
-		NDB_SAFE_PFREE_AND_NULL(distances);
+		NDB_FREE(distances);
 		return -1;
 	}
 
@@ -590,7 +591,7 @@ ndb_rocm_knn_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("HIP KNN predict: computed invalid distance");
-			NDB_SAFE_PFREE_AND_NULL(distances);
+			NDB_FREE(distances);
 			return -1;
 		}
 	}
@@ -600,7 +601,7 @@ ndb_rocm_knn_predict(const bytea * model_data,
 	{
 		if (errstr && *errstr == NULL)
 			*errstr = pstrdup("HIP top-k computation failed");
-		NDB_SAFE_PFREE_AND_NULL(distances);
+		NDB_FREE(distances);
 		return -1;
 	}
 
@@ -609,7 +610,7 @@ ndb_rocm_knn_predict(const bytea * model_data,
 	{
 		if (errstr)
 			*errstr = pstrdup("HIP KNN predict: computed non-finite prediction");
-		NDB_SAFE_PFREE_AND_NULL(distances);
+		NDB_FREE(distances);
 		return -1;
 	}
 	/* For classification, prediction should be an integer */
@@ -619,12 +620,12 @@ ndb_rocm_knn_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("HIP KNN predict: classification prediction must be non-negative integer");
-			NDB_SAFE_PFREE_AND_NULL(distances);
+			NDB_FREE(distances);
 			return -1;
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(distances);
+	NDB_FREE(distances);
 	return 0;
 }
 
@@ -825,7 +826,7 @@ ndb_rocm_knn_evaluate_batch(const bytea * model_data,
 
 	if (rc != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(predictions);
+		NDB_FREE(predictions);
 		return -1;
 	}
 
@@ -881,7 +882,7 @@ ndb_rocm_knn_evaluate_batch(const bytea * model_data,
 	else
 		*f1_out = 0.0;
 
-	NDB_SAFE_PFREE_AND_NULL(predictions);
+	NDB_FREE(predictions);
 
 	return 0;
 }

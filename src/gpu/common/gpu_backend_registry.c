@@ -1,10 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_backend_registry.c
- *     GPU backend registration and selection system
+ *    Backend registration and selection system.
  *
- * This module manages the registry of available GPU backends and provides
- * automatic backend selection based on system capabilities.
+ * This module manages the registry of available backends and provides
+ * automatic selection based on system capabilities.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/common/gpu_backend_registry.c
  *
  *-------------------------------------------------------------------------
  */
@@ -228,19 +233,50 @@ ndb_gpu_rf_train(const float *features,
 				 Jsonb * *metrics,
 				 char **errstr)
 {
+	int rc;
+	
+	ereport(DEBUG1,
+			(errmsg("ndb_gpu_rf_train: function entry"),
+			 errdetail("n_samples=%d, feature_dim=%d, class_count=%d",
+					  n_samples, feature_dim, class_count)));
+	
 	if (errstr)
 		*errstr = NULL;
+	
+	ereport(DEBUG1,
+			(errmsg("ndb_gpu_rf_train: checking backend"),
+			 errdetail("active_backend=%p, rf_train=%p",
+					  (void *)active_backend,
+					  active_backend ? (void *)active_backend->rf_train : NULL)));
+	
 	if (!active_backend || active_backend->rf_train == NULL)
+	{
+		elog(DEBUG1, "neurondb: ndb_gpu_rf_train: no active backend or rf_train is NULL");
 		return -1;
-	return active_backend->rf_train(features,
-									labels,
-									n_samples,
-									feature_dim,
-									class_count,
-									hyperparams,
-									model_data,
-									metrics,
-									errstr);
+	}
+	
+	ereport(DEBUG2,
+			(errmsg("ndb_gpu_rf_train: about to call active_backend->rf_train"),
+			 errdetail("backend_name=%s", active_backend->name ? active_backend->name : "NULL")));
+	
+	rc = active_backend->rf_train(features,
+								  labels,
+								  n_samples,
+								  feature_dim,
+								  class_count,
+								  hyperparams,
+								  model_data,
+								  metrics,
+								  errstr);
+	
+	ereport(DEBUG2,
+			(errmsg("ndb_gpu_rf_train: active_backend->rf_train returned"),
+			 errdetail("rc=%d, model_data=%p, metrics=%p",
+					   rc,
+					   (void *)(model_data ? *model_data : NULL),
+					   (void *)(metrics ? *metrics : NULL))));
+	
+	return rc;
 }
 
 int
@@ -346,8 +382,25 @@ ndb_gpu_linreg_train(const float *features,
 {
 	if (errstr)
 		*errstr = NULL;
-	if (!active_backend || active_backend->linreg_train == NULL)
+	if (!active_backend)
+	{
+		elog(DEBUG1, "ndb_gpu_linreg_train: active_backend is NULL");
 		return -1;
+	}
+	if (active_backend->linreg_train == NULL)
+	{
+		elog(DEBUG1, "ndb_gpu_linreg_train: active_backend->linreg_train is NULL (backend=%s)", 
+			 active_backend->name ? active_backend->name : "unknown");
+		return -1;
+	}
+	ereport(DEBUG2,
+			(errmsg("ndb_gpu_linreg_train: calling backend->linreg_train"),
+			 errdetail("backend=%s, features=%p, targets=%p, n_samples=%d, feature_dim=%d",
+					  active_backend->name ? active_backend->name : "unknown",
+					  (void *) features,
+					  (void *) targets,
+					  n_samples,
+					  feature_dim)));
 	return active_backend->linreg_train(features,
 										targets,
 										n_samples,

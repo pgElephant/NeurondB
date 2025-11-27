@@ -28,6 +28,9 @@
 #include "neurondb.h"
 #include "neurondb_types.h"
 #include "neurondb_sparse.h"
+#include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_macros.h"
 #include <string.h>
 #include <math.h>
 
@@ -97,17 +100,12 @@ hybrid_dense_sparse_search(PG_FUNCTION_ARGS)
 
 	MemoryContextSwitchTo(oldcontext);
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("SPI_connect failed: %d", ret)));
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: failed to begin SPI session")));
 
 	/* Perform hybrid search using weighted fusion */
 	initStringInfo(&sql);
@@ -157,13 +155,14 @@ hybrid_dense_sparse_search(PG_FUNCTION_ARGS)
 	argtypes[0] = get_fn_expr_argtype(fcinfo->flinfo, 3);
 	argtypes[1] = get_fn_expr_argtype(fcinfo->flinfo, 4);
 
-	ret = SPI_execute_with_args(sql.data,
-								2,
-								argtypes,
-								args,
-								NULL,
-								false,
-								0);
+	ret = ndb_spi_execute_with_args(session,
+									sql.data,
+									2,
+									argtypes,
+									args,
+									NULL,
+									false,
+									0);
 
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
@@ -186,7 +185,8 @@ hybrid_dense_sparse_search(PG_FUNCTION_ARGS)
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 	}
 
-	SPI_finish();
+	NDB_FREE(sql.data);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_NULL();
 }

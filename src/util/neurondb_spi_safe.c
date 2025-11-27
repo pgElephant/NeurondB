@@ -34,6 +34,7 @@
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*-------------------------------------------------------------------------
  * Helper: Copy a Datum to current memory context
@@ -590,7 +591,7 @@ ndb_spi_get_jsonb_safe(int row_idx, int col_idx, MemoryContext dest_context)
 	if (result == NULL || VARSIZE(result) < sizeof(Jsonb))
 	{
 		if (result != NULL)
-			NDB_SAFE_PFREE_AND_NULL(result);
+			NDB_FREE(result);
 		MemoryContextSwitchTo(oldcontext);
 		elog(ERROR,
 			 "neurondb: JSONB copy validation failed");

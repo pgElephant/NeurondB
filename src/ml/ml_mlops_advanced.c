@@ -1,15 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * ml_mlops_advanced.c
- *	  Advanced MLOps for NeuronDB
+ *    Advanced MLOps functionality.
  *
- * Implements A/B testing, model monitoring, versioning,
+ * This module implements A/B testing, model monitoring, versioning,
  * experiment tracking, and deployment management.
  *
- * IDENTIFICATION
- *	  src/ml/ml_mlops_advanced.c
- *
  * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/ml/ml_mlops_advanced.c
+ *
  *-------------------------------------------------------------------------
  */
 
@@ -31,7 +32,8 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
-#include "neurondb_spi_safe.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 /*
  * Create A/B test experiment
@@ -49,7 +51,7 @@ create_ab_test(PG_FUNCTION_ARGS)
 	int			n_models;
 	int			n_splits;
 	StringInfoData result;
-	int			experiment_id;
+	int			experiment_id = 0;
 
 	/* Get array sizes */
 	n_models = ArrayGetNItems(ARR_NDIM(model_ids), ARR_DIMS(model_ids));
@@ -101,7 +103,7 @@ create_ab_test(PG_FUNCTION_ARGS)
 		{
 			if (split_nulls[i])
 			{
-				NDB_SAFE_PFREE_AND_NULL(name);
+				NDB_FREE(name);
 				ereport(ERROR,
 						(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 						 errmsg("create_ab_test: traffic_split cannot contain NULL")));
@@ -109,7 +111,7 @@ create_ab_test(PG_FUNCTION_ARGS)
 			total_split += DatumGetFloat8(split_elems[i]);
 			if (DatumGetFloat8(split_elems[i]) < 0.0 || DatumGetFloat8(split_elems[i]) > 1.0)
 			{
-				NDB_SAFE_PFREE_AND_NULL(name);
+				NDB_FREE(name);
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("create_ab_test: traffic_split values must be between 0 and 1")));
@@ -118,7 +120,7 @@ create_ab_test(PG_FUNCTION_ARGS)
 
 		if (fabs(total_split - 1.0) > 0.001)
 		{
-			NDB_SAFE_PFREE_AND_NULL(name);
+			NDB_FREE(name);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("create_ab_test: traffic_split must sum to 1.0 (got %.4f)",
@@ -132,26 +134,22 @@ create_ab_test(PG_FUNCTION_ARGS)
 		StringInfoData sql;
 		Jsonb	   *experiment_config;
 		StringInfoData config_json;
+		NDB_DECLARE(NdbSpiSession *, spi_session);
+		MemoryContext oldcontext = CurrentMemoryContext;
 
-		if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			NDB_SAFE_PFREE_AND_NULL(name);
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("create_ab_test: SPI_connect failed")));
-		}
+		NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 		/* Build experiment configuration JSONB */
-		initStringInfo(&config_json);
+		ndb_spi_stringinfo_init(spi_session, &config_json);
 		{
-			Datum		name_datum = CStringGetDatum(name);
+			Datum		name_datum = CStringGetTextDatum(name);
 			Datum		name_quoted = DirectFunctionCall1(quote_literal, name_datum);
 			char	   *name_str = DatumGetCString(name_quoted);
 
 			appendStringInfo(&config_json,
 							 "{\"name\":%s,\"model_ids\":[",
 							 name_str);
-			NDB_SAFE_PFREE_AND_NULL(name_str);
+			NDB_FREE(name_str);
 		}
 		{
 			Datum	   *elems;
@@ -201,15 +199,15 @@ create_ab_test(PG_FUNCTION_ARGS)
 		appendStringInfoChar(&config_json, '}');
 
 		experiment_config = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-															   CStringGetDatum(config_json.data)));
+															   CStringGetTextDatum(config_json.data)));
 		(void) experiment_config;
 
 		/* Insert experiment into neurondb.ml_experiments if table exists */
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		{
-			Datum		name_datum = CStringGetDatum(name);
+			Datum		name_datum = CStringGetTextDatum(name);
 			Datum		name_quoted = DirectFunctionCall1(quote_literal, name_datum);
-			Datum		config_datum = CStringGetDatum(config_json.data);
+			Datum		config_datum = CStringGetTextDatum(config_json.data);
 			Datum		config_quoted = DirectFunctionCall1(quote_literal, config_datum);
 			char	   *name_str = DatumGetCString(name_quoted);
 			char	   *config_str = DatumGetCString(config_quoted);
@@ -220,27 +218,26 @@ create_ab_test(PG_FUNCTION_ARGS)
 							 "VALUES (%s, %s::text, NULL) "
 							 "RETURNING experiment_id",
 							 name_str, config_str);
-			NDB_SAFE_PFREE_AND_NULL(name_str);
-			NDB_SAFE_PFREE_AND_NULL(config_str);
+			NDB_FREE(name_str);
+			NDB_FREE(config_str);
 		}
 
-		ret = ndb_spi_execute_safe(sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(config_json.data);
+		ret = ndb_spi_execute(spi_session, sql.data, true, 1);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		ndb_spi_stringinfo_free(spi_session, &config_json);
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
-			bool		isnull;
+			int32		id_val;
 
-			experiment_id = DatumGetInt32(SPI_getbinval(SPI_tuptable->vals[0],
-														SPI_tuptable->tupdesc,
-														1,
-														&isnull));
-			if (isnull || experiment_id <= 0)
+			if (ndb_spi_get_int32(spi_session, 0, 1, &id_val))
 			{
-				SPI_finish();
-				NDB_SAFE_PFREE_AND_NULL(name);
+				experiment_id = id_val;
+			}
+			if (experiment_id <= 0)
+			{
+				NDB_SPI_SESSION_END(spi_session);
+				NDB_FREE(name);
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
 						 errmsg("create_ab_test: failed to create experiment")));
@@ -249,11 +246,11 @@ create_ab_test(PG_FUNCTION_ARGS)
 		else
 		{
 			/* Table might not exist, use fallback ID generation */
-			SPI_finish();
+			NDB_SPI_SESSION_END(spi_session);
 			experiment_id = 10000 + (int) (random() % 90000);
 		}
 
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 	}
 
 	initStringInfo(&result);
@@ -263,7 +260,7 @@ create_ab_test(PG_FUNCTION_ARGS)
 					 experiment_id,
 					 n_models);
 
-	NDB_SAFE_PFREE_AND_NULL(name);
+	NDB_FREE(name);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -288,6 +285,8 @@ log_prediction(PG_FUNCTION_ARGS)
 	StringInfoData sql;
 	Jsonb	   *input_jsonb;
 	StringInfoData input_json;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	/* Defensive: validate inputs */
 	input_str = text_to_cstring(input_data);
@@ -295,8 +294,8 @@ log_prediction(PG_FUNCTION_ARGS)
 
 	if (model_id <= 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(input_str);
-		NDB_SAFE_PFREE_AND_NULL(pred_str);
+		NDB_FREE(input_str);
+		NDB_FREE(pred_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("log_prediction: model_id must be positive")));
@@ -304,8 +303,8 @@ log_prediction(PG_FUNCTION_ARGS)
 
 	if (confidence < 0.0 || confidence > 1.0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(input_str);
-		NDB_SAFE_PFREE_AND_NULL(pred_str);
+		NDB_FREE(input_str);
+		NDB_FREE(pred_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("log_prediction: confidence must be between 0 and 1")));
@@ -313,43 +312,38 @@ log_prediction(PG_FUNCTION_ARGS)
 
 	if (latency_ms < 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(input_str);
-		NDB_SAFE_PFREE_AND_NULL(pred_str);
+		NDB_FREE(input_str);
+		NDB_FREE(pred_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("log_prediction: latency_ms cannot be negative")));
 	}
 
 	/* Log prediction to monitoring table */
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		NDB_SAFE_PFREE_AND_NULL(input_str);
-		NDB_SAFE_PFREE_AND_NULL(pred_str);
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("log_prediction: SPI_connect failed")));
-	}
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Build input_features JSONB */
-	initStringInfo(&input_json);
+	ndb_spi_stringinfo_init(spi_session, &input_json);
 	{
-		Datum		input_datum = CStringGetDatum(input_str);
+		Datum		input_datum = CStringGetTextDatum(input_str);
 		Datum		input_quoted = DirectFunctionCall1(quote_literal, input_datum);
 		char	   *input_quoted_str = DatumGetCString(input_quoted);
 
 		appendStringInfo(&input_json,
 						 "{\"input\":%s,\"confidence\":%.4f,\"latency_ms\":%d}",
 						 input_quoted_str, confidence, latency_ms);
-		NDB_SAFE_PFREE_AND_NULL(input_quoted_str);
+		NDB_FREE(input_quoted_str);
 	}
-	input_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(input_json.data)));
+	input_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(input_json.data)));
 	 /* silence unused */ (void) input_jsonb;
 	/* Insert prediction log */
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	{
-		Datum		pred_datum = CStringGetDatum(pred_str);
+		Datum		pred_datum = CStringGetTextDatum(pred_str);
 		Datum		pred_quoted = DirectFunctionCall1(quote_literal, pred_datum);
-		Datum		json_datum = CStringGetDatum(input_json.data);
+		Datum		json_datum = CStringGetTextDatum(input_json.data);
 		Datum		json_quoted = DirectFunctionCall1(quote_literal, json_datum);
 		char	   *pred_quoted_str = DatumGetCString(pred_quoted);
 		char	   *json_quoted_str = DatumGetCString(json_quoted);
@@ -359,28 +353,27 @@ log_prediction(PG_FUNCTION_ARGS)
 						 "(model_id, input_features, prediction, predicted_at) "
 						 "VALUES (%d, %s::jsonb, %s::float, NOW())",
 						 model_id, json_quoted_str, pred_quoted_str);
-		NDB_SAFE_PFREE_AND_NULL(pred_quoted_str);
-		NDB_SAFE_PFREE_AND_NULL(json_quoted_str);
+		NDB_FREE(pred_quoted_str);
+		NDB_FREE(json_quoted_str);
 	}
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	NDB_SAFE_PFREE_AND_NULL(input_json.data);
+	ret = ndb_spi_execute(spi_session, sql.data, false, 0);
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	ndb_spi_stringinfo_free(spi_session, &input_json);
 
 	if (ret != SPI_OK_INSERT && ret != SPI_OK_INSERT_RETURNING)
 	{
-		SPI_finish();
-		NDB_SAFE_PFREE_AND_NULL(input_str);
-		NDB_SAFE_PFREE_AND_NULL(pred_str);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(input_str);
+		NDB_FREE(pred_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("log_prediction: failed to insert prediction log")));
 	}
 
-	SPI_finish();
-	NDB_SAFE_PFREE_AND_NULL(input_str);
-	NDB_SAFE_PFREE_AND_NULL(pred_str);
+	NDB_SPI_SESSION_END(spi_session);
+	NDB_FREE(input_str);
+	NDB_FREE(pred_str);
 
 	PG_RETURN_BOOL(true);
 }
@@ -409,7 +402,7 @@ monitor_model_performance(PG_FUNCTION_ARGS)
 	/* Defensive: validate model_id */
 	if (model_id <= 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(window);
+		NDB_FREE(window);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("monitor_model_performance: model_id must be positive")));
@@ -419,59 +412,61 @@ monitor_model_performance(PG_FUNCTION_ARGS)
 	{
 		int			ret;
 		StringInfoData sql;
+		NDB_DECLARE(NdbSpiSession *, spi_session);
+		MemoryContext oldcontext = CurrentMemoryContext;
 
-		if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			NDB_SAFE_PFREE_AND_NULL(window);
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("monitor_model_performance: SPI_connect failed")));
-		}
+		NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 		/* Query prediction count */
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		appendStringInfo(&sql,
 						 "SELECT COUNT(*) FROM neurondb.ml_predictions "
 						 "WHERE model_id = %d AND predicted_at >= NOW() - INTERVAL '%s'",
 						 model_id, window);
 
-		ret = ndb_spi_execute_safe(sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ret = ndb_spi_execute(spi_session, sql.data, true, 1);
+		ndb_spi_stringinfo_free(spi_session, &sql);
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
-			bool		isnull;
+			int32		count32;
 
-			predictions_count = DatumGetInt64(
-											  SPI_getbinval(SPI_tuptable->vals[0],
-															SPI_tuptable->tupdesc,
-															1,
-															&isnull));
+			if (ndb_spi_get_int32(spi_session, 0, 1, &count32))
+			{
+				predictions_count = (int64) count32;
+			}
 		}
 
 		/* Query latency metrics from prediction logs */
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		appendStringInfo(&sql,
 						 "SELECT COALESCE(AVG((input_features->>'latency_ms')::int),0), "
 						 "COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY (input_features->>'latency_ms')::int),0) "
 						 "FROM neurondb.ml_predictions WHERE model_id = %d AND predicted_at >= NOW() - INTERVAL '%s'",
 						 model_id, window);
-		ret = ndb_spi_execute_safe(sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ret = ndb_spi_execute(spi_session, sql.data, true, 1);
+		ndb_spi_stringinfo_free(spi_session, &sql);
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
 			bool		isnull;
-
-			avg_latency = (float) DatumGetFloat8(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
-			if (isnull)
-				avg_latency = 0.0f;
+			/* Note: ndb_spi_get_* doesn't have float8, so we need to access SPI_tuptable directly for numeric types */
+			/* This is acceptable as SPI_tuptable is still accessible, we just use the session for connection management */
+			/* Safe access for complex types - validate before access */
+			if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL && 
+				SPI_tuptable->vals != NULL && SPI_processed > 0 && SPI_tuptable->vals[0] != NULL)
 			{
-				float		p95 = (float) DatumGetFloat8(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull));
-
+				Datum		avg_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
 				if (!isnull)
-					p95_latency = p95;
+					avg_latency = (float) DatumGetFloat8(avg_datum);
+				else
+					avg_latency = 0.0f;
+				/* Safe access for p95 - validate tupdesc has at least 2 columns */
+				if (SPI_tuptable->tupdesc->natts >= 2)
+				{
+					Datum		p95_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull);
+					if (!isnull)
+						p95_latency = (float) DatumGetFloat8(p95_datum);
+				}
 			}
 		}
 
@@ -505,14 +500,14 @@ monitor_model_performance(PG_FUNCTION_ARGS)
 																  DirectFunctionCall1(numeric_float8,
 																					  NumericGetDatum(v.val.numeric)));
 							}
-							NDB_SAFE_PFREE_AND_NULL(key);
+							NDB_FREE(key);
 						}
 					}
 				}
 			}
 		}
 
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 
 		/* Use queried values */
 		p95_latency = avg_latency * 2.0f;	/* Estimate */
@@ -529,7 +524,7 @@ monitor_model_performance(PG_FUNCTION_ARGS)
 					 "\"error_rate\": %.4f}",
 					 window, predictions_count, accuracy, avg_latency, p95_latency, error_rate);
 
-	NDB_SAFE_PFREE_AND_NULL(window);
+	NDB_FREE(window);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -556,8 +551,8 @@ detect_model_drift(PG_FUNCTION_ARGS)
 	/* Defensive: validate model_id */
 	if (model_id <= 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(baseline);
-		NDB_SAFE_PFREE_AND_NULL(current);
+		NDB_FREE(baseline);
+		NDB_FREE(current);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("detect_model_drift: model_id must be positive")));
@@ -565,8 +560,8 @@ detect_model_drift(PG_FUNCTION_ARGS)
 
 	if (threshold < 0.0 || threshold > 1.0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(baseline);
-		NDB_SAFE_PFREE_AND_NULL(current);
+		NDB_FREE(baseline);
+		NDB_FREE(current);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("detect_model_drift: threshold must be between 0 and 1")));
@@ -578,20 +573,15 @@ detect_model_drift(PG_FUNCTION_ARGS)
 		StringInfoData sql;
 		float		baseline_accuracy = 0.0f;
 		float		current_accuracy = 0.0f;
+		NDB_DECLARE(NdbSpiSession *, spi_session);
+		MemoryContext oldcontext = CurrentMemoryContext;
 
-		if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			NDB_SAFE_PFREE_AND_NULL(baseline);
-			NDB_SAFE_PFREE_AND_NULL(current);
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("detect_model_drift: SPI_connect failed")));
-		}
+		NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 		/* Query baseline period metrics */
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		{
-			Datum		baseline_datum = CStringGetDatum(baseline);
+			Datum		baseline_datum = CStringGetTextDatum(baseline);
 			Datum		baseline_quoted = DirectFunctionCall1(quote_literal, baseline_datum);
 			char	   *baseline_str = DatumGetCString(baseline_quoted);
 
@@ -602,30 +592,34 @@ detect_model_drift(PG_FUNCTION_ARGS)
 							 "WHERE m.model_id = %d AND p.predicted_at >= NOW() - INTERVAL '%s' - INTERVAL '%s' "
 							 "AND p.predicted_at < NOW() - INTERVAL '%s'",
 							 model_id, baseline_str, baseline_str, baseline_str);
-			NDB_SAFE_PFREE_AND_NULL(baseline_str);
+			NDB_FREE(baseline_str);
 		}
 
-		ret = ndb_spi_execute_safe(sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ret = ndb_spi_execute(spi_session, sql.data, true, 1);
+		ndb_spi_stringinfo_free(spi_session, &sql);
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
 			bool		isnull;
-
-			baseline_accuracy = (float) DatumGetFloat8(
-													   SPI_getbinval(SPI_tuptable->vals[0],
+			/* Safe access for complex types - validate before access */
+			if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL && 
+				SPI_tuptable->vals != NULL && SPI_processed > 0 && SPI_tuptable->vals[0] != NULL)
+			{
+				Datum		baseline_datum = SPI_getbinval(SPI_tuptable->vals[0],
 																	 SPI_tuptable->tupdesc,
 																	 1,
-																	 &isnull));
-			if (isnull)
-				baseline_accuracy = 0.0f;
+																	 &isnull);
+				if (!isnull)
+					baseline_accuracy = (float) DatumGetFloat8(baseline_datum);
+				else
+					baseline_accuracy = 0.0f;
+			}
 		}
 
 		/* Query current period metrics */
-		initStringInfo(&sql);
+		ndb_spi_stringinfo_init(spi_session, &sql);
 		{
-			Datum		current_datum = CStringGetDatum(current);
+			Datum		current_datum = CStringGetTextDatum(current);
 			Datum		current_quoted = DirectFunctionCall1(quote_literal, current_datum);
 			char	   *current_str = DatumGetCString(current_quoted);
 
@@ -635,27 +629,31 @@ detect_model_drift(PG_FUNCTION_ARGS)
 							 "JOIN neurondb.ml_trained_models m ON p.model_id = m.model_id "
 							 "WHERE m.model_id = %d AND p.predicted_at >= NOW() - INTERVAL '%s'",
 							 model_id, current_str);
-			NDB_SAFE_PFREE_AND_NULL(current_str);
+			NDB_FREE(current_str);
 		}
 
-		ret = ndb_spi_execute_safe(sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		ret = ndb_spi_execute(spi_session, sql.data, true, 1);
+		ndb_spi_stringinfo_free(spi_session, &sql);
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
 			bool		isnull;
-
-			current_accuracy = (float) DatumGetFloat8(
-													  SPI_getbinval(SPI_tuptable->vals[0],
+			/* Safe access for complex types - validate before access */
+			if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL && 
+				SPI_tuptable->vals != NULL && SPI_processed > 0 && SPI_tuptable->vals[0] != NULL)
+			{
+				Datum		current_datum = SPI_getbinval(SPI_tuptable->vals[0],
 																	SPI_tuptable->tupdesc,
 																	1,
-																	&isnull));
-			if (isnull)
-				current_accuracy = 0.0f;
+																	&isnull);
+				if (!isnull)
+					current_accuracy = (float) DatumGetFloat8(current_datum);
+				else
+					current_accuracy = 0.0f;
+			}
 		}
 
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 
 		/* Calculate drift score as absolute difference */
 		if (baseline_accuracy > 0.0f)
@@ -674,8 +672,8 @@ detect_model_drift(PG_FUNCTION_ARGS)
 					 drift_score,
 					 threshold);
 
-	NDB_SAFE_PFREE_AND_NULL(baseline);
-	NDB_SAFE_PFREE_AND_NULL(current);
+	NDB_FREE(baseline);
+	NDB_FREE(current);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -700,8 +698,8 @@ create_model_version(PG_FUNCTION_ARGS)
 	/* Defensive: validate model_id */
 	if (model_id <= 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tag);
-		NDB_SAFE_PFREE_AND_NULL(desc);
+		NDB_FREE(tag);
+		NDB_FREE(desc);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("create_model_version: model_id must be positive")));
@@ -717,8 +715,8 @@ create_model_version(PG_FUNCTION_ARGS)
 		if (!ml_catalog_fetch_model_payload(model_id, &model_data,
 											&parameters, &metrics))
 		{
-			NDB_SAFE_PFREE_AND_NULL(tag);
-			NDB_SAFE_PFREE_AND_NULL(desc);
+			NDB_FREE(tag);
+			NDB_FREE(desc);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("create_model_version: model %d not found", model_id)));
@@ -732,9 +730,9 @@ create_model_version(PG_FUNCTION_ARGS)
 
 			initStringInfo(&params_json);
 			{
-				Datum		tag_datum = CStringGetDatum(tag);
+				Datum		tag_datum = CStringGetTextDatum(tag);
 				Datum		tag_quoted = DirectFunctionCall1(quote_literal, tag_datum);
-				Datum		desc_datum = CStringGetDatum(desc);
+				Datum		desc_datum = CStringGetTextDatum(desc);
 				Datum		desc_quoted = DirectFunctionCall1(quote_literal, desc_datum);
 				char	   *tag_str = DatumGetCString(tag_quoted);
 				char	   *desc_str = DatumGetCString(desc_quoted);
@@ -742,11 +740,11 @@ create_model_version(PG_FUNCTION_ARGS)
 				appendStringInfo(&params_json,
 								 "{\"version_tag\":%s,\"description\":%s,\"base_model_id\":%d}",
 								 tag_str, desc_str, model_id);
-				NDB_SAFE_PFREE_AND_NULL(tag_str);
-				NDB_SAFE_PFREE_AND_NULL(desc_str);
+				NDB_FREE(tag_str);
+				NDB_FREE(desc_str);
 			}
 			version_params = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																CStringGetDatum(params_json.data)));
+																CStringGetTextDatum(params_json.data)));
 
 			memset(&spec, 0, sizeof(spec));
 			spec.algorithm = "versioned";
@@ -763,7 +761,7 @@ create_model_version(PG_FUNCTION_ARGS)
 			spec.num_features = 0;
 
 			version_id = ml_catalog_register_model(&spec);
-			NDB_SAFE_PFREE_AND_NULL(params_json.data);
+			NDB_FREE(params_json.data);
 		}
 	}
 
@@ -774,8 +772,8 @@ create_model_version(PG_FUNCTION_ARGS)
 					 version_id,
 					 desc);
 
-	NDB_SAFE_PFREE_AND_NULL(tag);
-	NDB_SAFE_PFREE_AND_NULL(desc);
+	NDB_FREE(tag);
+	NDB_FREE(desc);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -837,7 +835,7 @@ set_feature_flag(PG_FUNCTION_ARGS)
 					 enabled ? "enabled" : "disabled",
 					 rollout_percentage);
 
-	NDB_SAFE_PFREE_AND_NULL(name);
+	NDB_FREE(name);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -864,8 +862,8 @@ track_experiment_metric(PG_FUNCTION_ARGS)
 	(void) value;
 	(void) var;
 
-	NDB_SAFE_PFREE_AND_NULL(metric);
-	NDB_SAFE_PFREE_AND_NULL(var);
+	NDB_FREE(metric);
+	NDB_FREE(var);
 
 	PG_RETURN_BOOL(true);
 }
@@ -919,8 +917,8 @@ audit_model_access(PG_FUNCTION_ARGS)
 	(void) action_str;
 	(void) user;
 
-	NDB_SAFE_PFREE_AND_NULL(action_str);
-	NDB_SAFE_PFREE_AND_NULL(user);
+	NDB_FREE(action_str);
+	NDB_FREE(user);
 
 	PG_RETURN_BOOL(true);
 }

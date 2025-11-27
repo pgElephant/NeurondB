@@ -1,11 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * embeddings.c
- *    Text and multimodal embedding generation functions
+ *    Text and multimodal embedding generation.
  *
- * Integrates with Hugging Face API via llm_runtime infrastructure.
+ * This module provides embedding generation functions integrated with
+ * the LLM runtime infrastructure.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/embeddings.c
@@ -22,7 +23,9 @@
 #include "utils/fmgroids.h"
 #include "utils/syscache.h"
 #include "utils/guc.h"
+#include "utils/datum.h"
 #include "parser/parse_type.h"
+#include "parser/parse_func.h"
 #include "nodes/makefuncs.h"
 #include "catalog/pg_type.h"
 #include "lib/stringinfo.h"
@@ -32,6 +35,9 @@
 #include "neurondb.h"
 #include "neurondb_llm.h"
 #include "neurondb_gpu.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
+#include "neurondb_json.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -43,38 +49,7 @@
 #include "utils/jsonb.h"
 #endif
 
-/*
- * quote_literal_cstr
- *    Quote a C string for SQL (returns SQL string literal with quotes and escaping)
- */
-static char *
-ndb_quote_json_cstr(const char *str)
-{
-	StringInfoData buf;
-	const char *p;
-	char	   *result;
-
-	if (str == NULL)
-		return pstrdup("NULL");
-
-	initStringInfo(&buf);
-	appendStringInfoChar(&buf, '\'');
-
-	for (p = str; *p; p++)
-	{
-		if (*p == '\'')
-			appendStringInfoString(&buf, "''");
-		else if (*p == '\\')
-			appendStringInfoString(&buf, "\\\\");
-		else
-			appendStringInfoChar(&buf, *p);
-	}
-
-	appendStringInfoChar(&buf, '\'');
-	result = pstrdup(buf.data);
-	pfree(buf.data);
-	return result;
-}
+/* ndb_json_quote_string is now replaced by ndb_json_quote_string from neurondb_json.h */
 
 /*
  * parse_vector_from_text
@@ -103,7 +78,7 @@ parse_vector_from_text(const char *str)
 	end = strrchr(dup, '}');
 	if (!start || !end || end <= start)
 	{
-		pfree(dup);
+		NDB_FREE(dup);
 		return NULL;
 	}
 	*end = '\0';
@@ -123,10 +98,10 @@ parse_vector_from_text(const char *str)
 	}
 	if (dim < 1)
 	{
-		pfree(dup);
+		NDB_FREE(dup);
 		return NULL;
 	}
-	data = (float *) palloc0(dim * sizeof(float));
+	NDB_ALLOC(data, float, dim);
 
 	/* Tokenize for dimension and entries */
 	i = 0;
@@ -146,8 +121,8 @@ parse_vector_from_text(const char *str)
 			dval = strtol(token, &endptr, 10);
 			if (*endptr != '\0' || dval <= 0)
 			{
-				pfree(data);
-				pfree(dup);
+				NDB_FREE(data);
+				NDB_FREE(dup);
 				return NULL;
 			}
 			if (dval != dim)
@@ -164,8 +139,8 @@ parse_vector_from_text(const char *str)
 				data[i++] = strtof(token, &endptr);
 				if (*endptr != '\0' && *endptr != '\n' && *endptr != '\r')
 				{
-					pfree(data);
-					pfree(dup);
+					NDB_FREE(data);
+					NDB_FREE(dup);
 					return NULL;
 				}
 			}
@@ -173,35 +148,30 @@ parse_vector_from_text(const char *str)
 	}
 	if (i != dim)
 	{
-		pfree(data);
-		pfree(dup);
+		NDB_FREE(data);
+		NDB_FREE(dup);
 		return NULL;
 	}
 
-	result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+	/* Allocate Vector with variable-length data array */
+	{
+		size_t		vec_size = VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4);
+		NDB_DECLARE(char *, vec_bytes);
+		NDB_ALLOC(vec_bytes, char, vec_size);
+		result = (Vector *) vec_bytes;
+	}
 	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 	result->dim = dim;
 	for (i = 0; i < dim; i++)
 		result->data[i] = data[i];
 
-	pfree(dup);
-	pfree(data);
+	NDB_FREE(dup);
+	NDB_FREE(data);
 
 	return result;
 }
 
-/*
- * SAFE_PFREE
- *    Macro to pfree a pointer and set it to NULL.
- */
-#define SAFE_PFREE(ptr) \
-	do { \
-		if ((ptr) != NULL) \
-		{ \
-			pfree(ptr); \
-			(ptr) = NULL; \
-		} \
-	} while (0)
+/* SAFE_PFREE macro removed - use NDB_FREE instead */
 
 /*
  * get_embedding_model_config_internal
@@ -212,11 +182,11 @@ parse_vector_from_text(const char *str)
 static Jsonb *
 get_embedding_model_config_internal(const char *model_name)
 {
-	Jsonb	   *result = NULL;
+	NDB_DECLARE(Jsonb *, result);
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	NDB_DECLARE(char *, sql_str);
 	StringInfoData sql;
 	int			spi_ret;
-	Datum		datum;
-	bool		isnull;
 	MemoryContext oldcontext;
 
 	if (model_name == NULL)
@@ -224,35 +194,24 @@ get_embedding_model_config_internal(const char *model_name)
 
 	oldcontext = CurrentMemoryContext;
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		return NULL;
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
-					 "SELECT config_json FROM neurondb.neurondb_embedding_model_config "
+					 "SELECT config_json FROM neurondb.embedding_model_config "
 					 "WHERE model_name = %s",
-					 ndb_quote_json_cstr(model_name));
+					 ndb_json_quote_string(model_name));
+	sql_str = sql.data;
 
-	spi_ret = SPI_execute(sql.data, true, 1);
+	spi_ret = ndb_spi_execute(spi_session, sql_str, true, 1);
 
 	if (spi_ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		datum = SPI_getbinval(SPI_tuptable->vals[0],
-							  SPI_tuptable->tupdesc,
-							  1,
-							  &isnull);
-		if (!isnull)
-		{
-			Jsonb	   *temp_jsonb;
-
-			temp_jsonb = DatumGetJsonbP(datum);
-			MemoryContextSwitchTo(oldcontext);
-			result = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
-		}
+		result = ndb_spi_get_jsonb(spi_session, 0, 0, oldcontext);
 	}
 
-	pfree(sql.data);
-	SPI_finish();
+	/* sql.data is managed by PostgreSQL's memory context, not freed manually */
+	NDB_SPI_SESSION_END(spi_session);
 
 	return result;
 }
@@ -310,7 +269,7 @@ apply_embedding_model_config(NdbLLMConfig * cfg, const char *model_name)
 						{
 							cfg->prefer_gpu = true;
 						}
-						pfree(device_str);
+						NDB_FREE(device_str);
 					}
 				}
 				else if (strcmp(key, "timeout_ms") == 0)
@@ -326,12 +285,11 @@ apply_embedding_model_config(NdbLLMConfig * cfg, const char *model_name)
 					}
 				}
 			}
-			pfree(key);
+			NDB_FREE(key);
 		}
 	}
 
-	if (config_jsonb)
-		pfree(config_jsonb);
+	NDB_FREE(config_jsonb);
 }
 
 PG_FUNCTION_INFO_V1(embed_text);
@@ -401,19 +359,25 @@ embed_text(PG_FUNCTION_ARGS)
 		vec_data == NULL || dim <= 0)
 	{
 		dim = 384;
-		vec_data = (float *) palloc0(dim * sizeof(float));
+		NDB_ALLOC(vec_data, float, dim);
 	}
 
-	result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+	/* Allocate Vector with variable-length data array */
+	{
+		size_t		vec_size = VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4);
+		NDB_DECLARE(char *, vec_bytes);
+		NDB_ALLOC(vec_bytes, char, vec_size);
+		result = (Vector *) vec_bytes;
+	}
 	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 	result->dim = dim;
 
 	for (i = 0; i < dim; i++)
 		result->data[i] = vec_data[i];
 
-	SAFE_PFREE(input_str);
-	SAFE_PFREE(model_str);
-	SAFE_PFREE(vec_data);
+	NDB_FREE(input_str);
+	NDB_FREE(model_str);
+	NDB_FREE(vec_data);
 
 	PG_RETURN_POINTER(result);
 }
@@ -458,12 +422,13 @@ embed_text_batch(PG_FUNCTION_ARGS)
 					  &text_nulls,
 					  &nitems);
 
-	result_datums = (Datum *) palloc0(nitems * sizeof(Datum));
-	result_nulls = (bool *) palloc0(nitems * sizeof(bool));
+	NDB_ALLOC(result_datums, Datum, nitems);
+	NDB_ALLOC(result_nulls, bool, nitems);
 
 	/* Use batch API for better performance */
 	{
-		char	  **text_cstrs = NULL;
+		NDB_DECLARE(char **, text_cstrs);
+		NDB_DECLARE(char *, model_str);
 		NdbLLMConfig cfg;
 		NdbLLMCallOptions call_opts;
 		float	  **vecs = NULL;
@@ -473,7 +438,7 @@ embed_text_batch(PG_FUNCTION_ARGS)
 		int			j;
 
 		/* Convert text datums to C strings */
-		text_cstrs = (char **) palloc(nitems * sizeof(char *));
+		NDB_ALLOC(text_cstrs, char *, nitems);
 		for (i = 0; i < nitems; i++)
 		{
 			if (text_nulls[i])
@@ -483,38 +448,29 @@ embed_text_batch(PG_FUNCTION_ARGS)
 		}
 
 		/* Setup config */
+		memset(&cfg, 0, sizeof(cfg));
+		cfg.provider = (neurondb_llm_provider != NULL) ? neurondb_llm_provider : "huggingface";
+		cfg.endpoint = (neurondb_llm_endpoint != NULL) ?
+			neurondb_llm_endpoint :
+			"https://api-inference.huggingface.co";
+		if (model_text != NULL)
 		{
-			char	   *model_str = NULL;
-
-			memset(&cfg, 0, sizeof(cfg));
-			cfg.provider = (neurondb_llm_provider != NULL) ? neurondb_llm_provider : "huggingface";
-			cfg.endpoint = (neurondb_llm_endpoint != NULL) ?
-				neurondb_llm_endpoint :
-				"https://api-inference.huggingface.co";
-			if (model_text != NULL)
-			{
-				model_str = text_to_cstring(model_text);
-				cfg.model = model_str;
-			}
-			else
-			{
-				cfg.model = (neurondb_llm_model != NULL ?
-							 neurondb_llm_model :
-							 "sentence-transformers/all-MiniLM-L6-v2");
-			}
-			cfg.api_key = neurondb_llm_api_key;
-			cfg.timeout_ms = neurondb_llm_timeout_ms;
-			cfg.prefer_gpu = neurondb_gpu_enabled;
-			cfg.require_gpu = false;
-
-			/* Apply stored model configuration if available */
-			apply_embedding_model_config(&cfg, cfg.model);
-
-			/*
-			 * Note: model_str is used in cfg.model, so we must keep it until
-			 * after batch call
-			 */
+			model_str = text_to_cstring(model_text);
+			cfg.model = model_str;
 		}
+		else
+		{
+			cfg.model = (neurondb_llm_model != NULL ?
+						 neurondb_llm_model :
+						 "sentence-transformers/all-MiniLM-L6-v2");
+		}
+		cfg.api_key = neurondb_llm_api_key;
+		cfg.timeout_ms = neurondb_llm_timeout_ms;
+		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.require_gpu = false;
+
+		/* Apply stored model configuration if available */
+		apply_embedding_model_config(&cfg, cfg.model);
 
 		call_opts.task = "embed";
 		call_opts.prefer_gpu = cfg.prefer_gpu;
@@ -527,7 +483,7 @@ embed_text_batch(PG_FUNCTION_ARGS)
 									   &vecs, &dims, &num_success);
 
 		/* Convert results to Datum array */
-		if (rc == NDB_LLM_ROUTE_SUCCESS && vecs != NULL && dims != NULL)
+		if (rc == NDB_LLM_ROUTE_SUCCESS && vecs != NULL && dims != NULL && num_success > 0)
 		{
 			for (i = 0; i < nitems; i++)
 			{
@@ -538,9 +494,11 @@ embed_text_batch(PG_FUNCTION_ARGS)
 				}
 				else
 				{
-					Vector	   *result_vec = NULL;
-
-					result_vec = (Vector *) palloc0(VARHDRSZ + sizeof(int16) * 2 + dims[i] * sizeof(float4));
+					NDB_DECLARE(Vector *, result_vec);
+					size_t		vec_size = VARHDRSZ + sizeof(int16) * 2 + dims[i] * sizeof(float4);
+					NDB_DECLARE(char *, vec_bytes);
+					NDB_ALLOC(vec_bytes, char, vec_size);
+					result_vec = (Vector *) vec_bytes;
 					SET_VARSIZE(result_vec, VARHDRSZ + sizeof(int16) * 2 + dims[i] * sizeof(float4));
 					result_vec->dim = dims[i];
 					for (j = 0; j < dims[i]; j++)
@@ -550,37 +508,160 @@ embed_text_batch(PG_FUNCTION_ARGS)
 			}
 
 			/* Free batch results */
-			for (i = 0; i < num_success; i++)
+			for (i = 0; i < nitems; i++)
 			{
-				if (vecs[i])
-					pfree(vecs[i]);
+				if (vecs[i] != NULL)
+					NDB_FREE(vecs[i]);
 			}
-			if (vecs)
-				pfree(vecs);
-			if (dims)
-				pfree(dims);
+			NDB_FREE(vecs);
+			NDB_FREE(dims);
 		}
 		else
 		{
-			/* Batch API failed, fall back to individual calls */
-			for (i = 0; i < nitems; i++)
+			/* Free vecs and dims if they were allocated but batch failed */
+			if (vecs != NULL)
 			{
-				if (text_nulls[i])
+				for (i = 0; i < nitems; i++)
 				{
-					result_datums[i] = (Datum) 0;
-					result_nulls[i] = true;
+					if (vecs[i] != NULL)
+						NDB_FREE(vecs[i]);
+				}
+				NDB_FREE(vecs);
+			}
+			if (dims != NULL)
+			{
+				NDB_FREE(dims);
+			}
+			
+			/* Look up embed_text function OID - always use 2-argument version */
+			{
+				List	   *funcname;
+				Oid			argtypes[2];
+				Oid			embed_text_oid;
+				FmgrInfo	flinfo;
+				bool		have_oid = false;
+
+				funcname = list_make1(makeString("embed_text"));
+				argtypes[0] = TEXTOID;
+				argtypes[1] = TEXTOID;
+				embed_text_oid = LookupFuncName(funcname, 2, argtypes, false);
+				if (OidIsValid(embed_text_oid))
+				{
+					fmgr_info(embed_text_oid, &flinfo);
+					have_oid = true;
 				}
 				else
 				{
-					Datum		embed_result;
+					elog(ERROR, "embed_text_batch: embed_text function not found");
+				}
+				list_free(funcname);
 
-					if (model_text != NULL)
-						embed_result = DirectFunctionCall2(embed_text,
-														   text_datums[i],
-														   PointerGetDatum(model_text));
+				/* Batch API failed, fall back to individual calls */
+				for (i = 0; i < nitems; i++)
+				{
+					if (text_nulls[i])
+					{
+						result_datums[i] = (Datum) 0;
+						result_nulls[i] = true;
+					}
 					else
-						embed_result = DirectFunctionCall1(embed_text, text_datums[i]);
-					result_datums[i] = embed_result;
+					{
+						Datum		embed_result;
+						Vector	   *vec_copy;
+						text	   *text_copy;
+
+						/* Copy text to current memory context before calling embed_text */
+						text_copy = (text *) PG_DETOAST_DATUM_COPY(text_datums[i]);
+						if (text_copy == NULL)
+						{
+							elog(WARNING, "embed_text_batch: text_copy is NULL for item %d", i);
+							result_datums[i] = (Datum) 0;
+							result_nulls[i] = true;
+							continue;
+						}
+
+						if (have_oid)
+						{
+							/* Call embed_text directly via its internal logic to avoid function lookup issues */
+							text	   *input_text_copy = (text *) text_copy;
+							char	   *input_str_copy;
+							char	   *model_str_copy = NULL;
+							NdbLLMConfig cfg_copy;
+							NdbLLMCallOptions call_opts_copy;
+							float	   *vec_data_copy = NULL;
+							int			dim_copy = 0;
+							int			k;
+							
+							/* Extract text string */
+							input_str_copy = text_to_cstring(input_text_copy);
+							
+							/* Setup model */
+							if (model_text != NULL)
+								model_str_copy = text_to_cstring(model_text);
+							else
+								model_str_copy = pstrdup("sentence-transformers/all-MiniLM-L6-v2");
+							
+							/* Setup config */
+							memset(&cfg_copy, 0, sizeof(cfg_copy));
+							cfg_copy.provider = (neurondb_llm_provider != NULL) ? neurondb_llm_provider : "huggingface";
+							cfg_copy.endpoint = (neurondb_llm_endpoint != NULL) ?
+								neurondb_llm_endpoint :
+								"https://api-inference.huggingface.co";
+							cfg_copy.model = model_str_copy;
+							cfg_copy.api_key = neurondb_llm_api_key;
+							cfg_copy.timeout_ms = neurondb_llm_timeout_ms;
+							cfg_copy.prefer_gpu = neurondb_gpu_enabled;
+							cfg_copy.require_gpu = false;
+							if (cfg_copy.provider != NULL &&
+								(pg_strcasecmp(cfg_copy.provider, "huggingface-local") == 0 ||
+								 pg_strcasecmp(cfg_copy.provider, "hf-local") == 0) &&
+								!neurondb_llm_fail_open)
+								cfg_copy.require_gpu = true;
+
+							/* Apply stored model configuration if available */
+							apply_embedding_model_config(&cfg_copy, cfg_copy.model);
+
+							call_opts_copy.task = "embed";
+							call_opts_copy.prefer_gpu = cfg_copy.prefer_gpu;
+							call_opts_copy.require_gpu = cfg_copy.require_gpu;
+							call_opts_copy.fail_open = neurondb_llm_fail_open;
+
+							if (ndb_llm_route_embed(&cfg_copy, &call_opts_copy, input_str_copy, &vec_data_copy, &dim_copy) != 0 ||
+								vec_data_copy == NULL || dim_copy <= 0)
+							{
+								dim_copy = 384;
+								NDB_ALLOC(vec_data_copy, float, dim_copy);
+							}
+
+							/* Allocate Vector */
+							{
+								size_t		vec_size = VARHDRSZ + sizeof(int16) * 2 + dim_copy * sizeof(float4);
+								NDB_DECLARE(char *, vec_bytes);
+								NDB_DECLARE(Vector *, result_vec);
+								NDB_ALLOC(vec_bytes, char, vec_size);
+								result_vec = (Vector *) vec_bytes;
+								SET_VARSIZE(result_vec, VARHDRSZ + sizeof(int16) * 2 + dim_copy * sizeof(float4));
+								result_vec->dim = dim_copy;
+								for (k = 0; k < dim_copy; k++)
+									result_vec->data[k] = vec_data_copy[k];
+								embed_result = PointerGetDatum(result_vec);
+							}
+
+							NDB_FREE(input_str_copy);
+							NDB_FREE(model_str_copy);
+							NDB_FREE(vec_data_copy);
+						}
+						else
+						{
+							elog(ERROR, "embed_text_batch: embed_text function not found");
+							embed_result = (Datum) 0; /* not reached */
+						}
+
+						/* Copy Vector to current memory context */
+						vec_copy = (Vector *) PG_DETOAST_DATUM_COPY(embed_result);
+						result_datums[i] = PointerGetDatum(vec_copy);
+						result_nulls[i] = false;
+					}
 				}
 			}
 		}
@@ -588,16 +669,14 @@ embed_text_batch(PG_FUNCTION_ARGS)
 		/* Free C strings */
 		for (i = 0; i < nitems; i++)
 		{
-			if (text_cstrs[i])
-				pfree(text_cstrs[i]);
+			NDB_FREE(text_cstrs[i]);
 		}
-		pfree(text_cstrs);
+		NDB_FREE(text_cstrs);
 
-		/* Free model_str if allocated */
-		if (model_text != NULL && cfg.model != NULL)
+		/* Free model_str if allocated (only if model_text was provided) */
+		if (model_text != NULL)
 		{
-			/* cfg.model points to model_str, safe to free */
-			pfree((char *) cfg.model);
+			NDB_FREE(model_str);
 		}
 	}
 
@@ -632,12 +711,9 @@ embed_text_batch(PG_FUNCTION_ARGS)
 		result = construct_md_array(result_datums, result_nulls, 1, dims, lbs, vector_oid, typlen, typbyval, typalign);
 	}
 
-	SAFE_PFREE(result_datums);
-	SAFE_PFREE(result_nulls);
-	if (text_datums)
-		pfree(text_datums);
-	if (text_nulls)
-		pfree(text_nulls);
+	NDB_FREE(result_datums);
+	NDB_FREE(result_nulls);
+	NDB_FREE(text_datums);
 
 	PG_RETURN_POINTER(result);
 }
@@ -725,23 +801,29 @@ embed_image(PG_FUNCTION_ARGS)
 			vec_data == NULL || dim <= 0)
 		{
 			dim = 512;
-			vec_data = (float *) palloc0(dim * sizeof(float));
+			NDB_ALLOC(vec_data, float, dim);
 		}
 
 		/* Free detoasted image if we created a copy */
-		if (need_free_detoasted && detoasted_image != NULL)
-			pfree(detoasted_image);
+		if (need_free_detoasted)
+			NDB_FREE(detoasted_image);
 	}
 
-	result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+	/* Allocate Vector with variable-length data array */
+	{
+		size_t		vec_size = VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4);
+		NDB_DECLARE(char *, vec_bytes);
+		NDB_ALLOC(vec_bytes, char, vec_size);
+		result = (Vector *) vec_bytes;
+	}
 	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 	result->dim = dim;
 
 	for (i = 0; i < dim; i++)
 		result->data[i] = vec_data[i];
 
-	SAFE_PFREE(vec_data);
-	SAFE_PFREE(model_str);
+	NDB_FREE(vec_data);
+	NDB_FREE(model_str);
 
 	PG_RETURN_POINTER(result);
 }
@@ -854,38 +936,42 @@ embed_multimodal(PG_FUNCTION_ARGS)
 				text_vec != NULL && img_vec != NULL && text_dim > 0 && img_dim > 0)
 			{
 				dim = text_dim + img_dim;
-				vec_data = (float *) palloc(dim * sizeof(float));
+				NDB_ALLOC(vec_data, float, dim);
 				memcpy(vec_data, text_vec, text_dim * sizeof(float));
 				memcpy(vec_data + text_dim, img_vec, img_dim * sizeof(float));
-				pfree(text_vec);
-				pfree(img_vec);
+				NDB_FREE(text_vec);
+				NDB_FREE(img_vec);
 			}
 			else
 			{
 				dim = 512;
-				vec_data = (float *) palloc0(dim * sizeof(float));
-				if (text_vec)
-					pfree(text_vec);
-				if (img_vec)
-					pfree(img_vec);
+				NDB_ALLOC(vec_data, float, dim);
+				NDB_FREE(text_vec);
+				NDB_FREE(img_vec);
 			}
 		}
 
 		/* Free detoasted image if we created a copy */
 		if (need_free_detoasted && detoasted_image != NULL)
-			pfree(detoasted_image);
+			NDB_FREE(detoasted_image);
 	}
 
-	result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+	/* Allocate Vector with variable-length data array */
+	{
+		size_t		vec_size = VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4);
+		NDB_DECLARE(char *, vec_bytes);
+		NDB_ALLOC(vec_bytes, char, vec_size);
+		result = (Vector *) vec_bytes;
+	}
 	SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 	result->dim = dim;
 
 	for (i = 0; i < dim; i++)
 		result->data[i] = vec_data[i];
 
-	SAFE_PFREE(vec_data);
-	SAFE_PFREE(input_str);
-	SAFE_PFREE(model_str);
+	NDB_FREE(vec_data);
+	NDB_FREE(input_str);
+	NDB_FREE(model_str);
 
 	PG_RETURN_POINTER(result);
 }
@@ -915,6 +1001,8 @@ embed_cached(PG_FUNCTION_ARGS)
 	/* bool hit = false; */
 	const char *p;
 	uint32		hashval;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	input_text = PG_GETARG_TEXT_PP(0);
 	if (PG_ARGISNULL(1))
@@ -944,19 +1032,18 @@ embed_cached(PG_FUNCTION_ARGS)
 
 	/* Copy cache_key to current context */
 	cache_key = pstrdup(key_buf.data);
-	pfree(key_buf.data);
+	NDB_FREE(key_buf.data);
 	max_age = neurondb_llm_cache_ttl;
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("embed_cached: SPI_connect failed")));
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Cache lookup (uses SPI) */
 	if (ndb_llm_cache_lookup(cache_key, max_age, &cached_text) && cached_text != NULL)
 	{
 		result = parse_vector_from_text(cached_text);
-		SAFE_PFREE(cached_text);
+		NDB_FREE(cached_text);
 	}
 
 	/* If cache miss or parse failed, generate embedding */
@@ -966,8 +1053,9 @@ embed_cached(PG_FUNCTION_ARGS)
 		int			spi_ret;
 		bool		isnull;
 		Datum		vec_datum;
+		MemoryContext session_ctx;
 
-		initStringInfo(&query);
+		ndb_spi_stringinfo_init(spi_session, &query);
 		if (model_text != NULL)
 		{
 			appendStringInfo(&query, "SELECT embed_text(%s, %s)",
@@ -979,18 +1067,24 @@ embed_cached(PG_FUNCTION_ARGS)
 							 quote_literal_cstr(input_str));
 		}
 
-		spi_ret = SPI_execute(query.data, true, 1);
-		pfree(query.data);
+		spi_ret = ndb_spi_execute(spi_session, query.data, true, 1);
+		ndb_spi_stringinfo_free(spi_session, &query);
 
 		if (spi_ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
-			vec_datum = SPI_getbinval(SPI_tuptable->vals[0],
-									  SPI_tuptable->tupdesc,
-									  1,
-									  &isnull);
-			if (!isnull)
+			/* Extract Vector from SPI result - copy to caller's context */
+			if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL && SPI_tuptable->vals != NULL)
 			{
-				result = (Vector *) PG_DETOAST_DATUM_COPY(vec_datum);
+				vec_datum = SPI_getbinval(SPI_tuptable->vals[0],
+										  SPI_tuptable->tupdesc,
+										  1,
+										  &isnull);
+				if (!isnull)
+				{
+					session_ctx = MemoryContextSwitchTo(oldcontext);
+					result = (Vector *) PG_DETOAST_DATUM_COPY(vec_datum);
+					MemoryContextSwitchTo(session_ctx);
+				}
 			}
 		}
 	}
@@ -1000,7 +1094,13 @@ embed_cached(PG_FUNCTION_ARGS)
 	{
 		int			dim = 384;
 
-		result = (Vector *) palloc0(VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
+		/* Allocate Vector with variable-length data array */
+		{
+			size_t		vec_size = VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4);
+			NDB_DECLARE(char *, vec_bytes);
+			NDB_ALLOC(vec_bytes, char, vec_size);
+			result = (Vector *) vec_bytes;
+		}
 		SET_VARSIZE(result, VARHDRSZ + sizeof(int16) * 2 + dim * sizeof(float4));
 		result->dim = dim;
 	}
@@ -1017,13 +1117,13 @@ embed_cached(PG_FUNCTION_ARGS)
 			appendStringInfo(&cache_val, ",%.7f", result->data[d]);
 		appendStringInfoChar(&cache_val, '}');
 		ndb_llm_cache_store(cache_key, cache_val.data);
-		SAFE_PFREE(cache_val.data);
+		NDB_FREE(cache_val.data);
 	}
 
-	SPI_finish();
-	SAFE_PFREE(input_str);
-	SAFE_PFREE(model_str);
-	SAFE_PFREE(cache_key);
+	NDB_SPI_SESSION_END(spi_session);
+	NDB_FREE(input_str);
+	NDB_FREE(model_str);
+	NDB_FREE(cache_key);
 	PG_RETURN_POINTER(result);
 }
 
@@ -1052,6 +1152,8 @@ configure_embedding_model(PG_FUNCTION_ARGS)
 	Oid			argtypes[2];
 	Datum		values[2];
 	char		nulls[2];
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	model_name = PG_GETARG_TEXT_PP(0);
 	config_json = PG_GETARG_TEXT_PP(1);
@@ -1079,8 +1181,8 @@ configure_embedding_model(PG_FUNCTION_ARGS)
 
 		if (config_jsonb == NULL)
 		{
-			pfree(model_str);
-			pfree(cfg_str);
+			NDB_FREE(model_str);
+			NDB_FREE(cfg_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 					 errmsg("configure_embedding_model: invalid JSON in config_json")));
@@ -1165,26 +1267,21 @@ configure_embedding_model(PG_FUNCTION_ARGS)
 					}
 				}
 			}
-			pfree(key);
+			NDB_FREE(key);
 		}
 	}
 
 	if (!valid)
 	{
-		pfree(model_str);
-		pfree(cfg_str);
+		NDB_FREE(model_str);
+		NDB_FREE(cfg_str);
 		PG_RETURN_BOOL(false);
 	}
 
 	/* Store configuration in catalog table using SPI */
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		pfree(model_str);
-		pfree(cfg_str);
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("configure_embedding_model: SPI_connect failed")));
-	}
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	memset(nulls, ' ', sizeof(nulls));
 	argtypes[0] = TEXTOID;
@@ -1193,26 +1290,26 @@ configure_embedding_model(PG_FUNCTION_ARGS)
 	values[0] = CStringGetTextDatum(model_str);
 	values[1] = JsonbPGetDatum(config_jsonb);
 
-	spi_ret = SPI_execute_with_args(
-									"INSERT INTO neurondb.neurondb_embedding_model_config "
-									"(model_name, config_json, created_at, updated_at) "
-									"VALUES ($1, $2, now(), now()) "
-									"ON CONFLICT (model_name) DO UPDATE "
-									"SET config_json = EXCLUDED.config_json, "
-									"    updated_at = now()",
-									2,
-									argtypes,
-									values,
-									nulls,
-									false,
-									0);
+	spi_ret = ndb_spi_execute_with_args(spi_session,
+										"INSERT INTO neurondb.embedding_model_config "
+										"(model_name, config_json, created_at, updated_at) "
+										"VALUES ($1, $2, now(), now()) "
+										"ON CONFLICT (model_name) DO UPDATE "
+										"SET config_json = EXCLUDED.config_json, "
+										"    updated_at = now()",
+										2,
+										argtypes,
+										values,
+										nulls,
+										false,
+										0);
 
-	SPI_finish();
+	NDB_SPI_SESSION_END(spi_session);
 
 	if (spi_ret != SPI_OK_INSERT && spi_ret != SPI_OK_UPDATE)
 	{
-		pfree(model_str);
-		pfree(cfg_str);
+		NDB_FREE(model_str);
+		NDB_FREE(cfg_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("configure_embedding_model: failed to store configuration")));
@@ -1222,8 +1319,8 @@ configure_embedding_model(PG_FUNCTION_ARGS)
 		 "neurondb: configure_embedding_model: model='%s', config stored successfully",
 		 model_str);
 
-	pfree(model_str);
-	pfree(cfg_str);
+	NDB_FREE(model_str);
+	NDB_FREE(cfg_str);
 
 	PG_RETURN_BOOL(true);
 }
@@ -1249,7 +1346,7 @@ get_embedding_model_config(PG_FUNCTION_ARGS)
 
 	model_str = text_to_cstring(model_name);
 	result = get_embedding_model_config_internal(model_str);
-	pfree(model_str);
+	NDB_FREE(model_str);
 
 	if (result == NULL)
 		PG_RETURN_NULL();
@@ -1275,6 +1372,8 @@ list_embedding_model_configs(PG_FUNCTION_ARGS)
 	StringInfoData sql;
 	int			spi_ret;
 	int			i;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	NDB_DECLARE(char *, sql_str);
 
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
@@ -1321,70 +1420,142 @@ list_embedding_model_configs(PG_FUNCTION_ARGS)
 
 	MemoryContextSwitchTo(oldcontext);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("get_embedding_model_config: SPI_connect failed")));
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "SELECT model_name, config_json, created_at, updated_at "
-					 "FROM neurondb.neurondb_embedding_model_config "
+					 "FROM neurondb.embedding_model_config "
 					 "ORDER BY model_name");
+	sql_str = sql.data;
 
-	spi_ret = SPI_execute(sql.data, true, 0);
+	spi_ret = ndb_spi_execute(spi_session, sql_str, true, 0);
 
 	if (spi_ret == SPI_OK_SELECT)
 	{
 		for (i = 0; i < (int) SPI_processed; i++)
 		{
-			HeapTuple	spi_tuple = SPI_tuptable->vals[i];
 			Datum		values[4];
 			bool		nulls[4];
-			int			j;
-			MemoryContext tuple_context;
+			text	   *model_name_text;
+			Jsonb	   *config_jsonb;
+			Datum		created_at_datum;
+			Datum		updated_at_datum;
+			bool		created_at_isnull;
+			bool		updated_at_isnull;
 
 			memset(nulls, 0, sizeof(nulls));
 
-			for (j = 0; j < 4; j++)
+			/* Column 0: model_name (text) */
+			model_name_text = ndb_spi_get_text(spi_session, i, 1, per_query_ctx);
+			if (model_name_text != NULL)
 			{
-				Datum		datum;
-				bool		isnull;
+				values[0] = PointerGetDatum(model_name_text);
+				nulls[0] = false;
+			}
+			else
+			{
+				nulls[0] = true;
+			}
 
-				datum = SPI_getbinval(spi_tuple, SPI_tuptable->tupdesc, j + 1, &isnull);
-				if (!isnull)
+			/* Column 1: config_json (jsonb) */
+			config_jsonb = ndb_spi_get_jsonb(spi_session, i, 2, per_query_ctx);
+			if (config_jsonb != NULL)
+			{
+				values[1] = JsonbPGetDatum(config_jsonb);
+				nulls[1] = false;
+			}
+			else
+			{
+				nulls[1] = true;
+			}
+
+			/* Columns 2-3: created_at, updated_at (timestamps) - safe access pattern */
+			if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL && SPI_tuptable->vals != NULL && i < (int) SPI_processed)
+			{
+				/* Column 2: created_at */
+				created_at_datum = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 3, &created_at_isnull);
+				if (!created_at_isnull)
 				{
-					if (j == 1)
-					{
-						/* config_json: copy JSONB to tuple context */
-						Jsonb	   *temp_jsonb;
-						MemoryContext oldctx;
+					Oid			created_at_type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, 3);
+					int16		typlen;
+					bool		typbyval;
 
-						temp_jsonb = DatumGetJsonbP(datum);
-						tuple_context = MemoryContextSwitchTo(per_query_ctx);
-						oldctx = MemoryContextSwitchTo(tuple_context);
-						values[j] = JsonbPGetDatum((Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb));
-						MemoryContextSwitchTo(oldctx);
+					{
+						char		typalign;
+
+						get_typlenbyvalalign(created_at_type_oid, &typlen, &typbyval, &typalign);
+					}
+					if (typbyval)
+					{
+						/* Pass-by-value type (like TIMESTAMPTZ) - no need to copy, just use directly */
+						values[2] = created_at_datum;
 					}
 					else
 					{
-						/* Other columns: copy to tuple context */
-						tuple_context = MemoryContextSwitchTo(per_query_ctx);
-						values[j] = datum;
+						/* Pass-by-reference type - need to copy to destination context */
+						MemoryContextSwitchTo(per_query_ctx);
+						values[2] = datumCopy(created_at_datum, typlen, typbyval);
+						MemoryContextSwitchTo(oldcontext);
+					}
+					nulls[2] = false;
+				}
+				else
+				{
+					nulls[2] = true;
+				}
+
+				/* Column 3: updated_at */
+				/* Safe access for updated_at - validate tupdesc has at least 4 columns */
+				if (SPI_tuptable->tupdesc->natts >= 4)
+				{
+					updated_at_datum = SPI_getbinval(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 4, &updated_at_isnull);
+					if (!updated_at_isnull)
+					{
+						Oid			updated_at_type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, 4);
+						int16		typlen;
+						bool		typbyval;
+
+						{
+							char		typalign;
+
+							get_typlenbyvalalign(updated_at_type_oid, &typlen, &typbyval, &typalign);
+						}
+						if (typbyval)
+						{
+							/* Pass-by-value type (like TIMESTAMPTZ) - no need to copy, just use directly */
+							values[3] = updated_at_datum;
+						}
+						else
+						{
+							/* Pass-by-reference type - need to copy to destination context */
+							MemoryContextSwitchTo(per_query_ctx);
+							values[3] = datumCopy(updated_at_datum, typlen, typbyval);
+							MemoryContextSwitchTo(oldcontext);
+						}
+						nulls[3] = false;
+					}
+					else
+					{
+						nulls[3] = true;
 					}
 				}
 				else
 				{
-					nulls[j] = true;
+					nulls[3] = true;
 				}
+			}
+			else
+			{
+				nulls[2] = true;
+				nulls[3] = true;
 			}
 
 			tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 		}
 	}
 
-	pfree(sql.data);
-	SPI_finish();
+	NDB_SPI_SESSION_END(spi_session);
 
 	return (Datum) 0;
 }
@@ -1406,6 +1577,8 @@ delete_embedding_model_config(PG_FUNCTION_ARGS)
 	Oid			argtypes[1];
 	Datum		values[1];
 	char		nulls[1];
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	model_name = PG_GETARG_TEXT_PP(0);
 	if (model_name == NULL)
@@ -1415,29 +1588,25 @@ delete_embedding_model_config(PG_FUNCTION_ARGS)
 
 	model_str = text_to_cstring(model_name);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		pfree(model_str);
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("delete_embedding_model_config: SPI_connect failed")));
-	}
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	memset(nulls, ' ', sizeof(nulls));
 	argtypes[0] = TEXTOID;
 	values[0] = CStringGetTextDatum(model_str);
 
-	spi_ret = SPI_execute_with_args(
-									"DELETE FROM neurondb.neurondb_embedding_model_config WHERE model_name = $1",
-									1,
-									argtypes,
-									values,
-									nulls,
-									false,
-									0);
+	spi_ret = ndb_spi_execute_with_args(spi_session,
+										"DELETE FROM neurondb.embedding_model_config WHERE model_name = $1",
+										1,
+										argtypes,
+										values,
+										nulls,
+										false,
+										0);
 
-	SPI_finish();
-	pfree(model_str);
+	NDB_SPI_SESSION_END(spi_session);
+	NDB_FREE(model_str);
 
 	if (spi_ret == SPI_OK_DELETE)
 		PG_RETURN_BOOL(true);

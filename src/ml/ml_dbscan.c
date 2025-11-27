@@ -1,15 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_dbscan.c
- *	  DBSCAN (Density-Based Spatial Clustering) implementation
+ *    DBSCAN density-based clustering.
  *
- * DBSCAN is a density-based clustering algorithm that groups together points
- * that are closely packed together.
- *
- * IDENTIFICATION
- *	  src/ml/ml_dbscan.c
+ * This module implements DBSCAN for density-based spatial clustering of
+ * closely packed points.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/ml/ml_dbscan.c
  *
  *-------------------------------------------------------------------------
  */
@@ -28,6 +28,9 @@
 #include "ml_catalog.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include <math.h>
 #include <float.h>
 
@@ -143,10 +146,10 @@ dbscan_expand_cluster(DBSCANState * state,
 			}
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(current_neighbors);
+		NDB_FREE(current_neighbors);
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(seeds);
+	NDB_FREE(seeds);
 }
 
 PG_FUNCTION_INFO_V1(cluster_dbscan);
@@ -215,10 +218,10 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 		if (labels_size > MaxAllocSize)
 		{
 			for (i = 0; i < state.nvec; i++)
-				NDB_SAFE_PFREE_AND_NULL(state.data[i]);
-			NDB_SAFE_PFREE_AND_NULL(state.data);
-			NDB_SAFE_PFREE_AND_NULL(tbl_str);
-			NDB_SAFE_PFREE_AND_NULL(col_str);
+				NDB_FREE(state.data[i]);
+			NDB_FREE(state.data);
+			NDB_FREE(tbl_str);
+			NDB_FREE(col_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("cluster_dbscan: labels array size (%zu bytes) exceeds MaxAllocSize (%zu bytes)",
@@ -250,7 +253,7 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 			state.next_cluster++;
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(neighbors);
+		NDB_FREE(neighbors);
 	}
 
 	elog(DEBUG1,
@@ -266,12 +269,12 @@ cluster_dbscan(PG_FUNCTION_ARGS)
 	out_array = construct_array(out_datums, state.nvec, INT4OID, typlen, typbyval, typalign);
 
 	for (i = 0; i < state.nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(state.data[i]);
-	NDB_SAFE_PFREE_AND_NULL(state.data);
-	NDB_SAFE_PFREE_AND_NULL(state.labels);
-	NDB_SAFE_PFREE_AND_NULL(out_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(state.data[i]);
+	NDB_FREE(state.data);
+	NDB_FREE(state.labels);
+	NDB_FREE(out_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_ARRAYTYPE_P(out_array);
 }
@@ -328,7 +331,7 @@ predict_dbscan(PG_FUNCTION_ARGS)
 	/* For now, classify as noise (-1) as placeholder */
 	cluster_id = DBSCAN_NOISE;
 
-	NDB_SAFE_PFREE_AND_NULL(features);
+	NDB_FREE(features);
 
 	PG_RETURN_INT32(cluster_id);
 }
@@ -391,37 +394,38 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 	oldcontext = CurrentMemoryContext;
 
 	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: evaluate_dbscan_by_model_id: SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext_spi;
+	
+	oldcontext_spi = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);
 
 	/* Build query */
-	initStringInfo(&query);
+	ndb_spi_stringinfo_init(spi_session, &query);
 	appendStringInfo(&query,
 					 "SELECT %s FROM %s WHERE %s IS NOT NULL",
 					 feat_str, tbl_str, feat_str);
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
+	{
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: evaluate_dbscan_by_model_id: query failed")));
+	}
 
 	n_points = SPI_processed;
 	if (n_points < 2)
 	{
-		SPI_finish();
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(feat_str);
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_dbscan_by_model_id: need at least 2 points, got %d",
@@ -437,7 +441,6 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 		int			model_dim = 0;
 		int			i,
 					c;
-		int		   *assignments = NULL;
 
 		/* Load model from catalog */
 		if (ml_catalog_fetch_model_payload(model_id, &model_payload, &model_parameters, NULL))
@@ -457,7 +460,8 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 					if (data != NULL && n_points > 0)
 					{
 						/* Allocate assignments */
-						assignments = (int *) palloc(sizeof(int) * n_points);
+						NDB_DECLARE(int *, assignments);
+						NDB_ALLOC(assignments, int, n_points);
 
 						/*
 						 * Assign points to nearest cluster centers or mark as
@@ -505,9 +509,9 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 
 						/* Cleanup data */
 						for (i = 0; i < n_points; i++)
-							NDB_SAFE_PFREE_AND_NULL(data[i]);
-						NDB_SAFE_PFREE_AND_NULL(data);
-						NDB_SAFE_PFREE_AND_NULL(assignments);
+							NDB_FREE(data[i]);
+						NDB_FREE(data);
+						NDB_FREE(assignments);
 					}
 					else
 					{
@@ -518,8 +522,8 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 						if (data != NULL)
 						{
 							for (i = 0; i < n_points; i++)
-								NDB_SAFE_PFREE_AND_NULL(data[i]);
-							NDB_SAFE_PFREE_AND_NULL(data);
+								NDB_FREE(data[i]);
+							NDB_FREE(data);
 						}
 					}
 
@@ -527,8 +531,8 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 					if (centers != NULL)
 					{
 						for (c = 0; c < n_clusters; c++)
-							NDB_SAFE_PFREE_AND_NULL(centers[c]);
-						NDB_SAFE_PFREE_AND_NULL(centers);
+							NDB_FREE(centers[c]);
+						NDB_FREE(centers);
 					}
 				}
 				else
@@ -547,9 +551,9 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 				min_pts = 5;
 			}
 			if (model_payload)
-				NDB_SAFE_PFREE_AND_NULL(model_payload);
+				NDB_FREE(model_payload);
 			if (model_parameters)
-				NDB_SAFE_PFREE_AND_NULL(model_parameters);
+				NDB_FREE(model_parameters);
 		}
 		else
 		{
@@ -561,7 +565,8 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 		}
 	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_SPI_SESSION_END(spi_session);
 
 	/* Build result JSON */
 	MemoryContextSwitchTo(oldcontext);
@@ -570,12 +575,12 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 					 "{\"n_clusters\":%d,\"n_noise\":%d,\"noise_ratio\":%.6f,\"eps\":%.6f,\"min_pts\":%d,\"n_points\":%d}",
 					 n_clusters, n_noise, (double) n_noise / n_points, eps, min_pts, n_points);
 
-	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+	NDB_FREE(jsonbuf.data);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(feat_str);
+	NDB_FREE(tbl_str);
+	NDB_FREE(feat_str);
 
 	PG_RETURN_JSONB_P(result);
 }
@@ -587,6 +592,7 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 #include "neurondb_gpu_model.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 typedef struct DBSCANGpuModelState
 {
@@ -622,7 +628,7 @@ dbscan_model_serialize_to_bytea(float **cluster_centers, int n_clusters, int dim
 	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -717,7 +723,7 @@ dbscan_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 				else if (strcmp(key, "min_pts") == 0 && v.type == jbvNumeric)
 					min_pts = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -776,7 +782,7 @@ dbscan_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 			dbscan_state.next_cluster++;
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(neighbors);
+		NDB_FREE(neighbors);
 	}
 
 	n_clusters = dbscan_state.next_cluster;
@@ -811,7 +817,7 @@ dbscan_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 			}
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(cluster_sizes);
+		NDB_FREE(cluster_sizes);
 	}
 	else
 	{
@@ -830,8 +836,8 @@ dbscan_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 					 "{\"storage\":\"cpu\",\"n_clusters\":%d,\"eps\":%.6f,\"min_pts\":%d,\"dim\":%d,\"n_samples\":%d}",
 					 n_clusters, eps, min_pts, dim, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+												 CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
 	state = (DBSCANGpuModelState *) palloc0(sizeof(DBSCANGpuModelState));
 	state->model_blob = model_data;
@@ -843,7 +849,7 @@ dbscan_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 	state->n_samples = nvec;
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -851,12 +857,12 @@ dbscan_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
+		NDB_FREE(data[i]);
 	for (c = 0; c < n_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(cluster_centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(cluster_centers);
-	NDB_SAFE_PFREE_AND_NULL(labels);
+		NDB_FREE(cluster_centers[c]);
+	NDB_FREE(data);
+	NDB_FREE(cluster_centers);
+	NDB_FREE(labels);
 
 	return true;
 }
@@ -917,8 +923,8 @@ dbscan_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
 	if (input_dim != dim)
 	{
 		for (c = 0; c < n_clusters; c++)
-			NDB_SAFE_PFREE_AND_NULL(centers[c]);
-		NDB_SAFE_PFREE_AND_NULL(centers);
+			NDB_FREE(centers[c]);
+		NDB_FREE(centers);
 		if (errstr != NULL)
 			*errstr = pstrdup("dbscan_gpu_predict: dimension mismatch");
 		return false;
@@ -943,8 +949,8 @@ dbscan_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
 	output[0] = (float) best_cluster;
 
 	for (c = 0; c < n_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(centers);
+		NDB_FREE(centers[c]);
+	NDB_FREE(centers);
 
 	return true;
 }
@@ -981,8 +987,8 @@ dbscan_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
 					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+													  CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -1026,7 +1032,7 @@ dbscan_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -1067,15 +1073,15 @@ dbscan_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	if (dbscan_model_deserialize_from_bytea(payload_copy,
 											&centers, &n_clusters, &dim, &eps, &min_pts) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("dbscan_gpu_deserialize: failed to deserialize");
 		return false;
 	}
 
 	for (int c = 0; c < n_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(centers);
+		NDB_FREE(centers[c]);
+	NDB_FREE(centers);
 
 	state = (DBSCANGpuModelState *) palloc0(sizeof(DBSCANGpuModelState));
 	state->model_blob = payload_copy;
@@ -1104,7 +1110,7 @@ dbscan_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1114,7 +1120,7 @@ dbscan_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1135,10 +1141,10 @@ dbscan_gpu_destroy(MLGpuModel * model)
 	{
 		state = (DBSCANGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->metrics);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

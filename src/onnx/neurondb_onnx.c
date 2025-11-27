@@ -49,17 +49,14 @@
 #include "utils/memutils.h"
 #include "neurondb_onnx.h"
 
-/* ---- Global Configuration Variables (GUC) - Always available ---- */
-char *neurondb_onnx_model_path = NULL; /* Base dir for ONNX model files   */
-bool neurondb_onnx_use_gpu = true; /* Prefer GPU EPs if possible      */
-int neurondb_onnx_threads = 4; /* Intra-op thread count           */
-int neurondb_onnx_cache_size = 10; /* Max number of cached sessions   */
+/* GUC variables are now defined in neurondb_guc.c */
 
 #ifdef HAVE_ONNX_RUNTIME
 
 #include <onnxruntime_c_api.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* ---- Global ONNX API objects ---- */
 static const OrtApi *g_ort_api = NULL; /* ONNX Runtime C API Instance */
@@ -168,8 +165,8 @@ neurondb_onnx_cleanup(void)
 		if (entry->session)
 			neurondb_onnx_unload_model(entry->session);
 		if (entry->model_name)
-			NDB_SAFE_PFREE_AND_NULL(entry->model_name);
-		NDB_SAFE_PFREE_AND_NULL(entry);
+			NDB_FREE(entry->model_name);
+		NDB_FREE(entry);
 	}
 
 	g_model_cache_head = NULL;
@@ -351,9 +348,9 @@ neurondb_onnx_unload_model(ONNXModelSession *session)
 		g_ort_api->ReleaseSessionOptions(session->session_options);
 
 	if (session->model_path)
-		NDB_SAFE_PFREE_AND_NULL(session->model_path);
+		NDB_FREE(session->model_path);
 
-	NDB_SAFE_PFREE_AND_NULL(session);
+	NDB_FREE(session);
 }
 
 /*
@@ -446,7 +443,7 @@ neurondb_onnx_run_inference(ONNXModelSession *session, ONNXTensor *input)
 			ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
 			&input_tensor);
 
-		NDB_SAFE_PFREE_AND_NULL(shape_cast);
+		NDB_FREE(shape_cast);
 	}
 	onnx_check_status(status, "CreateTensorWithDataAsOrtValue");
 
@@ -496,7 +493,7 @@ neurondb_onnx_run_inference(ONNXModelSession *session, ONNXTensor *input)
 		for (i = 0; i < num_dims; i++)
 			output_dims[i] = (int64)dims_temp[i];
 
-		NDB_SAFE_PFREE_AND_NULL(dims_temp);
+		NDB_FREE(dims_temp);
 	}
 
 	output_size = 1;
@@ -530,10 +527,10 @@ neurondb_onnx_free_tensor(ONNXTensor *tensor)
 	if (!tensor)
 		return;
 	if (tensor->data)
-		NDB_SAFE_PFREE_AND_NULL(tensor->data);
+		NDB_FREE(tensor->data);
 	if (tensor->shape)
-		NDB_SAFE_PFREE_AND_NULL(tensor->shape);
-	NDB_SAFE_PFREE_AND_NULL(tensor);
+		NDB_FREE(tensor->shape);
+	NDB_FREE(tensor);
 }
 
 /*
@@ -631,8 +628,8 @@ onnx_cache_evict_lru(void)
 			lru_entry->model_name)));
 
 	neurondb_onnx_unload_model(lru_entry->session);
-	NDB_SAFE_PFREE_AND_NULL(lru_entry->model_name);
-	NDB_SAFE_PFREE_AND_NULL(lru_entry);
+	NDB_FREE(lru_entry->model_name);
+	NDB_FREE(lru_entry);
 
 	g_model_cache_count--;
 }
@@ -896,63 +893,4 @@ neurondb_onnx_model_type_name(ONNXModelType type)
 	}
 }
 
-/*
- * neurondb_onnx_define_gucs
- *	  Define ONNX Runtime GUC parameters
- *
- * This should be called from the main _PG_init in worker_init.c
- */
-void
-neurondb_onnx_define_gucs(void)
-{
-	DefineCustomStringVariable("neurondb.onnx_model_path",
-		"Directory with ONNX model files",
-		"Files exported from HuggingFace transformers in ONNX format "
-		"must be placed under this directory.",
-		&neurondb_onnx_model_path,
-		"/var/lib/neurondb/models",
-		PGC_SUSET,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomBoolVariable("neurondb.onnx_use_gpu",
-		"Attempt to use GPU acceleration for ONNX inference.",
-		"If enabled, CUDA (NVIDIA) or CoreML (macOS) execution will be "
-		"tried before falling back to CPU.",
-		&neurondb_onnx_use_gpu,
-		true,
-		PGC_SUSET,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomIntVariable("neurondb.onnx_threads",
-		"Number of ONNX Runtime intra-operator threads.",
-		"Controls the intra-op-thread pool for ONNX inference.",
-		&neurondb_onnx_threads,
-		4,
-		1,
-		64,
-		PGC_SUSET,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomIntVariable("neurondb.onnx_cache_size",
-		"ONNX model LRU cache size (number of sessions)",
-		"When this limit is reached, the least recently used session "
-		"will be evicted.",
-		&neurondb_onnx_cache_size,
-		10,
-		1,
-		100,
-		PGC_SUSET,
-		0,
-		NULL,
-		NULL,
-		NULL);
-}
+/* GUC initialization is now centralized in neurondb_guc.c */

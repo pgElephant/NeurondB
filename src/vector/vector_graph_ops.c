@@ -9,10 +9,10 @@
  * - PageRank algorithm
  * - Community detection (Louvain algorithm)
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/vector_graph_ops.c
+ *	  src/vector/vector_graph_ops.c
  *
  *-------------------------------------------------------------------------
  */
@@ -30,6 +30,7 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Queue structure for BFS */
 typedef struct QueueNode
@@ -48,7 +49,8 @@ typedef struct Queue
 static Queue *
 queue_create(void)
 {
-	Queue	   *q = (Queue *) palloc(sizeof(Queue));
+	NDB_DECLARE(Queue *, q);
+	NDB_ALLOC(q, Queue, 1);
 
 	q->front = NULL;
 	q->rear = NULL;
@@ -59,7 +61,8 @@ queue_create(void)
 static void
 queue_enqueue(Queue * q, int32 node_idx)
 {
-	QueueNode  *node = (QueueNode *) palloc(sizeof(QueueNode));
+	NDB_DECLARE(QueueNode *, node);
+	NDB_ALLOC(node, QueueNode, 1);
 
 	node->node_idx = node_idx;
 	node->next = NULL;
@@ -93,7 +96,7 @@ queue_dequeue(Queue * q)
 	if (q->front == NULL)
 		q->rear = NULL;
 
-	NDB_SAFE_PFREE_AND_NULL(node);
+	NDB_FREE(node);
 	q->size--;
 	return node_idx;
 }
@@ -103,7 +106,7 @@ queue_free(Queue * q)
 {
 	while (q->front != NULL)
 		queue_dequeue(q);
-	NDB_SAFE_PFREE_AND_NULL(q);
+	NDB_FREE(q);
 }
 
 /* Stack structure for DFS */
@@ -122,7 +125,8 @@ typedef struct Stack
 static Stack *
 stack_create(void)
 {
-	Stack	   *s = (Stack *) palloc(sizeof(Stack));
+	NDB_DECLARE(Stack *, s);
+	NDB_ALLOC(s, Stack, 1);
 
 	s->top = NULL;
 	s->size = 0;
@@ -132,7 +136,8 @@ stack_create(void)
 static void
 stack_push(Stack * s, int32 node_idx)
 {
-	StackNode  *node = (StackNode *) palloc(sizeof(StackNode));
+	NDB_DECLARE(StackNode *, node);
+	NDB_ALLOC(node, StackNode, 1);
 
 	node->node_idx = node_idx;
 	node->next = s->top;
@@ -153,7 +158,7 @@ stack_pop(Stack * s)
 	node_idx = node->node_idx;
 	s->top = node->next;
 
-	NDB_SAFE_PFREE_AND_NULL(node);
+	NDB_FREE(node);
 	s->size--;
 	return node_idx;
 }
@@ -163,7 +168,7 @@ stack_free(Stack * s)
 {
 	while (s->top != NULL)
 		stack_pop(s);
-	NDB_SAFE_PFREE_AND_NULL(s);
+	NDB_FREE(s);
 }
 
 /*
@@ -199,6 +204,12 @@ vgraph_bfs(PG_FUNCTION_ARGS)
 		int32		i;
 		int32		current_node;
 		int32		max_result_size;
+		NDB_DECLARE(int32 *, visited);
+		NDB_DECLARE(int32 *, depth);
+		NDB_DECLARE(int32 *, parent);
+		NDB_DECLARE(int32 *, result_nodes);
+		NDB_DECLARE(int32 *, result_depths);
+		NDB_DECLARE(int32 *, result_parents);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
@@ -211,10 +222,18 @@ vgraph_bfs(PG_FUNCTION_ARGS)
 							start_node_idx,
 							graph->num_nodes - 1)));
 
-		fctx = (bfs_fctx *) palloc0(sizeof(bfs_fctx));
-		fctx->visited = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->depth = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->parent = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
+		fctx = NULL;
+		NDB_ALLOC(fctx, bfs_fctx, 1);
+		NDB_ALLOC(visited, int32, graph->num_nodes);
+		NDB_ALLOC(depth, int32, graph->num_nodes);
+		NDB_ALLOC(parent, int32, graph->num_nodes);
+		/* Initialize arrays to zero */
+		memset(visited, 0, sizeof(int32) * graph->num_nodes);
+		memset(depth, 0, sizeof(int32) * graph->num_nodes);
+		memset(parent, 0, sizeof(int32) * graph->num_nodes);
+		fctx->visited = visited;
+		fctx->depth = depth;
+		fctx->parent = parent;
 
 		/* Initialize depth and parent arrays */
 		for (i = 0; i < graph->num_nodes; i++)
@@ -233,9 +252,12 @@ vgraph_bfs(PG_FUNCTION_ARGS)
 		queue_enqueue(fctx->queue, start_node_idx);
 
 		max_result_size = graph->num_nodes;
-		fctx->result_nodes = (int32 *) palloc(sizeof(int32) * max_result_size);
-		fctx->result_depths = (int32 *) palloc(sizeof(int32) * max_result_size);
-		fctx->result_parents = (int32 *) palloc(sizeof(int32) * max_result_size);
+		NDB_ALLOC(result_nodes, int32, max_result_size);
+		NDB_ALLOC(result_depths, int32, max_result_size);
+		NDB_ALLOC(result_parents, int32, max_result_size);
+		fctx->result_nodes = result_nodes;
+		fctx->result_depths = result_depths;
+		fctx->result_parents = result_parents;
 		fctx->result_count = 0;
 
 		/* BFS traversal */
@@ -345,6 +367,14 @@ vgraph_dfs(PG_FUNCTION_ARGS)
 		int32		current_node;
 		int32		i;
 		int32		max_result_size;
+		NDB_DECLARE(int32 *, visited);
+		NDB_DECLARE(int32 *, discovery_time);
+		NDB_DECLARE(int32 *, finish_time);
+		NDB_DECLARE(int32 *, parent);
+		NDB_DECLARE(int32 *, result_nodes);
+		NDB_DECLARE(int32 *, result_discovery);
+		NDB_DECLARE(int32 *, result_finish);
+		NDB_DECLARE(int32 *, result_parents);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
@@ -357,11 +387,21 @@ vgraph_dfs(PG_FUNCTION_ARGS)
 							start_node_idx,
 							graph->num_nodes - 1)));
 
-		fctx = (dfs_fctx *) palloc0(sizeof(dfs_fctx));
-		fctx->visited = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->discovery_time = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->finish_time = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
-		fctx->parent = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
+		fctx = NULL;
+		NDB_ALLOC(fctx, dfs_fctx, 1);
+		NDB_ALLOC(visited, int32, graph->num_nodes);
+		NDB_ALLOC(discovery_time, int32, graph->num_nodes);
+		NDB_ALLOC(finish_time, int32, graph->num_nodes);
+		NDB_ALLOC(parent, int32, graph->num_nodes);
+		/* Initialize arrays to zero */
+		memset(visited, 0, sizeof(int32) * graph->num_nodes);
+		memset(discovery_time, 0, sizeof(int32) * graph->num_nodes);
+		memset(finish_time, 0, sizeof(int32) * graph->num_nodes);
+		memset(parent, 0, sizeof(int32) * graph->num_nodes);
+		fctx->visited = visited;
+		fctx->discovery_time = discovery_time;
+		fctx->finish_time = finish_time;
+		fctx->parent = parent;
 
 		/* Initialize arrays */
 		for (i = 0; i < graph->num_nodes; i++)
@@ -376,10 +416,14 @@ vgraph_dfs(PG_FUNCTION_ARGS)
 		fctx->time_counter = 0;
 
 		max_result_size = graph->num_nodes;
-		fctx->result_nodes = (int32 *) palloc(sizeof(int32) * max_result_size);
-		fctx->result_discovery = (int32 *) palloc(sizeof(int32) * max_result_size);
-		fctx->result_finish = (int32 *) palloc(sizeof(int32) * max_result_size);
-		fctx->result_parents = (int32 *) palloc(sizeof(int32) * max_result_size);
+		NDB_ALLOC(result_nodes, int32, max_result_size);
+		NDB_ALLOC(result_discovery, int32, max_result_size);
+		NDB_ALLOC(result_finish, int32, max_result_size);
+		NDB_ALLOC(result_parents, int32, max_result_size);
+		fctx->result_nodes = result_nodes;
+		fctx->result_discovery = result_discovery;
+		fctx->result_finish = result_finish;
+		fctx->result_parents = result_parents;
 		fctx->result_count = 0;
 
 		/* DFS traversal using iterative approach */
@@ -505,6 +549,11 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 		double		diff;
 		double		initial_score;
 		double		damping_sum;
+		NDB_DECLARE(double *, scores);
+		NDB_DECLARE(double *, new_scores);
+		NDB_DECLARE(int32 *, out_degree);
+		NDB_DECLARE(int32 *, result_nodes);
+		NDB_DECLARE(double *, result_scores);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
@@ -514,10 +563,18 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("damping_factor must be between 0 and 1")));
 
-		fctx = (pagerank_fctx *) palloc0(sizeof(pagerank_fctx));
-		fctx->scores = (double *) palloc0(sizeof(double) * graph->num_nodes);
-		fctx->new_scores = (double *) palloc0(sizeof(double) * graph->num_nodes);
-		fctx->out_degree = (int32 *) palloc0(sizeof(int32) * graph->num_nodes);
+		fctx = NULL;
+		NDB_ALLOC(fctx, pagerank_fctx, 1);
+		NDB_ALLOC(scores, double, graph->num_nodes);
+		NDB_ALLOC(new_scores, double, graph->num_nodes);
+		NDB_ALLOC(out_degree, int32, graph->num_nodes);
+		/* Initialize arrays to zero */
+		memset(scores, 0, sizeof(double) * graph->num_nodes);
+		memset(new_scores, 0, sizeof(double) * graph->num_nodes);
+		memset(out_degree, 0, sizeof(int32) * graph->num_nodes);
+		fctx->scores = scores;
+		fctx->new_scores = new_scores;
+		fctx->out_degree = out_degree;
 		edges = VGRAPH_EDGES(graph);
 
 		/* Compute out-degrees */
@@ -585,8 +642,10 @@ vgraph_pagerank(PG_FUNCTION_ARGS)
 		}
 
 		/* Prepare results */
-		fctx->result_nodes = (int32 *) palloc(sizeof(int32) * graph->num_nodes);
-		fctx->result_scores = (double *) palloc(sizeof(double) * graph->num_nodes);
+		NDB_ALLOC(result_nodes, int32, graph->num_nodes);
+		NDB_ALLOC(result_scores, double, graph->num_nodes);
+		fctx->result_nodes = result_nodes;
+		fctx->result_scores = result_scores;
 		fctx->result_count = graph->num_nodes;
 
 		for (i = 0; i < graph->num_nodes; i++)
@@ -662,12 +721,18 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 		int32		iter;
 		double		total_edges;
 		double		modularity;
+		NDB_DECLARE(int32 *, communities);
+		NDB_DECLARE(int32 *, result_nodes);
+		NDB_DECLARE(int32 *, result_communities);
+		NDB_DECLARE(double *, result_modularity);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-		fctx = (community_fctx *) palloc0(sizeof(community_fctx));
-		fctx->communities = (int32 *) palloc(sizeof(int32) * graph->num_nodes);
+		fctx = NULL;
+		NDB_ALLOC(fctx, community_fctx, 1);
+		NDB_ALLOC(communities, int32, graph->num_nodes);
+		fctx->communities = communities;
 		edges = VGRAPH_EDGES(graph);
 
 		/* Initialize: each node in its own community */
@@ -755,9 +820,12 @@ vgraph_community_detection(PG_FUNCTION_ARGS)
 		}
 
 		/* Prepare results */
-		fctx->result_nodes = (int32 *) palloc(sizeof(int32) * graph->num_nodes);
-		fctx->result_communities = (int32 *) palloc(sizeof(int32) * graph->num_nodes);
-		fctx->result_modularity = (double *) palloc(sizeof(double) * graph->num_nodes);
+		NDB_ALLOC(result_nodes, int32, graph->num_nodes);
+		NDB_ALLOC(result_communities, int32, graph->num_nodes);
+		NDB_ALLOC(result_modularity, double, graph->num_nodes);
+		fctx->result_nodes = result_nodes;
+		fctx->result_communities = result_communities;
+		fctx->result_modularity = result_modularity;
 		fctx->result_count = graph->num_nodes;
 
 		for (i = 0; i < graph->num_nodes; i++)

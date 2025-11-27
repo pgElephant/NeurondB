@@ -1,15 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_distance.c
- *		GPU-accelerated distance operations for NeurondB
+ *    Accelerated distance operations.
  *
- * Implements L2, cosine, and inner product distance metrics using
- * CUDA cuBLAS or ROCm rocBLAS for high-performance vector operations.
+ * This module implements L2, cosine, and inner product distance metrics
+ * for high-performance vector operations.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/gpu_distance.c
+ *    src/gpu/common/gpu_distance.c
  *
  *-------------------------------------------------------------------------
  */

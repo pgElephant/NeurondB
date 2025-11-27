@@ -7,7 +7,7 @@
  * full-text search in one index structure, enabling single plan node
  * and single heap walk for optimal performance.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/index_hybrid.c
@@ -28,7 +28,9 @@
 #include "lib/stringinfo.h"
 #include <string.h>
 #include "neurondb_validation.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 /*
  * Create hybrid fused index on a table: both HNSW (or flat) vector index and GIN
@@ -47,6 +49,7 @@ hybrid_index_create(PG_FUNCTION_ARGS)
 	char	   *txt_str;
 	StringInfoData sql;
 	int			ret;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	tbl_str = text_to_cstring(table_name);
 	vec_str = text_to_cstring(vector_col);
@@ -60,8 +63,9 @@ hybrid_index_create(PG_FUNCTION_ARGS)
 		 txt_str,
 		 fusion_weight);
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed: %d", ret);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		elog(ERROR, "failed to begin SPI session");
 
 	initStringInfo(&sql);
 
@@ -79,18 +83,21 @@ hybrid_index_create(PG_FUNCTION_ARGS)
 					 tbl_str,
 					 vec_str);
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
+	{
+		NDB_FREE(sql.data);
+		ndb_spi_session_end(&session);
 		elog(ERROR,
 			 "Failed to create vector ANN index on %s.%s: SPI error "
 			 "%d",
 			 tbl_str,
 			 vec_str,
 			 ret);
+	}
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 
 	/*
@@ -105,16 +112,20 @@ hybrid_index_create(PG_FUNCTION_ARGS)
 					 tbl_str,
 					 txt_str);
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
+	{
+		NDB_FREE(sql.data);
+		ndb_spi_session_end(&session);
 		elog(ERROR,
 			 "Failed to create GIN index on %s.%s: SPI error %d",
 			 tbl_str,
 			 txt_str,
 			 ret);
+	}
 
-	SPI_finish();
+	NDB_FREE(sql.data);
+	ndb_spi_session_end(&session);
 
 	/* In production: store fusion config and columns in metadata */
 	elog(INFO,
@@ -156,6 +167,7 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 	char	   *origin_table;
 	char	   *vec_col;
 	char	   *txt_col;
+	NDB_DECLARE(NdbSpiSession *, session2);
 
 	if (SRF_IS_FIRSTCALL())
 	{
@@ -214,13 +226,11 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 						 "vector",
 						 origin_table,
 						 k);
-		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+		session2 = ndb_spi_session_begin(CurrentMemoryContext, false);
+		if (session2 == NULL)
 			elog(ERROR,
-				 "SPI_connect failed for hybrid_index_search: "
-				 "%d",
-				 ret);
-		ret = ndb_spi_execute_safe(sql.data, true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+				 "failed to begin SPI session for hybrid_index_search");
+		ret = ndb_spi_execute(session2, sql.data, true, 0);
 		if (ret != SPI_OK_SELECT)
 			elog(ERROR,
 				 "SPI_execute failed for hybrid query: code %d, "
@@ -229,18 +239,21 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 				 sql.data);
 		if (SPI_processed == 0)
 		{
-			SPI_finish();
+			NDB_FREE(sql.data);
+			ndb_spi_session_end(&session2);
 			funcctx->max_calls = 0;
 			SRF_RETURN_DONE(funcctx);
 		}
 		funcctx->max_calls = SPI_processed;
-		funcctx->user_fctx = SPI_tuptable;
+		/* Store session to keep SPI connection alive for tuptable access */
+		funcctx->user_fctx = session2;
 		MemoryContextSwitchTo(oldcontext);
 	}
 
 	{
 		uint64		call_cntr;
 		uint64		max_calls;
+		NdbSpiSession *session2;
 		SPITupleTable *tuptable;
 		HeapTuple	spi_tuple;
 		Datum		values[4];
@@ -254,7 +267,8 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 
 		if (call_cntr < max_calls)
 		{
-			tuptable = (SPITupleTable *) funcctx->user_fctx;
+			session2 = (NdbSpiSession *) funcctx->user_fctx;
+			tuptable = SPI_tuptable;  /* Access via global SPI_tuptable while session is active */
 			spi_tuple = tuptable->vals[call_cntr];
 
 			/* id, fused_score, ts_rank, vector_dist */
@@ -270,11 +284,10 @@ hybrid_index_search(PG_FUNCTION_ARGS)
 		}
 		else
 		{
-			tuptable = (SPITupleTable *) funcctx->user_fctx;
-			if (tuptable)
-				SPI_freetuptable(tuptable);
+			session2 = (NdbSpiSession *) funcctx->user_fctx;
+			if (session2 != NULL)
+				ndb_spi_session_end(&session2);
 
-			SPI_finish();
 			SRF_RETURN_DONE(funcctx);
 		}
 	}

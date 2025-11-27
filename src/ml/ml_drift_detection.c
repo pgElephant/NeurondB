@@ -1,41 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_drift_detection.c
- *	  Embedding drift detection via centroid shift monitoring
+ *    Embedding drift detection.
  *
- * Embedding drift occurs when the distribution of embeddings changes over time,
- * indicating potential model degradation, data shift, or system issues.
+ * This module detects embedding drift by comparing distributions over time
+ * using centroid shift, covariance change, and KL divergence methods.
  *
- * Detection Methods:
- *
- * 1. Centroid Shift: Compare mean vectors between time periods
- *    - Simple, interpretable
- *    - O(n*d) complexity
- *    - Good for detecting overall distribution shift
- *
- * 2. Covariance Change: Compare covariance matrices
- *    - Detects variance and correlation changes
- *    - More sensitive than centroid alone
- *
- * 3. KL Divergence (approximate): Estimate distribution divergence
- *    - Assumes roughly Gaussian distributions
- *    - Quantifies "surprise" of new data
- *
- * Metrics Returned:
- *   - Euclidean distance between centroids
- *   - Normalized shift (as fraction of baseline std)
- *   - P-value from Hotelling's T² test (if applicable)
- *
- * Use Cases:
- *   - Monitor embedding model health
- *   - Detect data distribution changes
- *   - Trigger model retraining
- *   - Alert on anomalous batches
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/ml/ml_drift_detection.c
+ *    src/ml/ml_drift_detection.c
  *
  *-------------------------------------------------------------------------
  */
@@ -55,6 +29,7 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * vector_distance
@@ -239,18 +214,18 @@ detect_centroid_drift(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < n_baseline; i++)
-		NDB_SAFE_PFREE_AND_NULL(baseline_vecs[i]);
+		NDB_FREE(baseline_vecs[i]);
 	for (i = 0; i < n_current; i++)
-		NDB_SAFE_PFREE_AND_NULL(current_vecs[i]);
-	NDB_SAFE_PFREE_AND_NULL(baseline_vecs);
-	NDB_SAFE_PFREE_AND_NULL(current_vecs);
-	NDB_SAFE_PFREE_AND_NULL(baseline_mean);
-	NDB_SAFE_PFREE_AND_NULL(current_mean);
-	NDB_SAFE_PFREE_AND_NULL(baseline_std);
-	NDB_SAFE_PFREE_AND_NULL(baseline_tbl);
-	NDB_SAFE_PFREE_AND_NULL(baseline_col);
-	NDB_SAFE_PFREE_AND_NULL(current_tbl);
-	NDB_SAFE_PFREE_AND_NULL(current_col);
+		NDB_FREE(current_vecs[i]);
+	NDB_FREE(baseline_vecs);
+	NDB_FREE(current_vecs);
+	NDB_FREE(baseline_mean);
+	NDB_FREE(current_mean);
+	NDB_FREE(baseline_std);
+	NDB_FREE(baseline_tbl);
+	NDB_FREE(baseline_col);
+	NDB_FREE(current_tbl);
+	NDB_FREE(current_col);
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(tuple));
 }
@@ -387,19 +362,19 @@ compute_distribution_divergence(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < n_baseline; i++)
-		NDB_SAFE_PFREE_AND_NULL(baseline_vecs[i]);
+		NDB_FREE(baseline_vecs[i]);
 	for (i = 0; i < n_current; i++)
-		NDB_SAFE_PFREE_AND_NULL(current_vecs[i]);
-	NDB_SAFE_PFREE_AND_NULL(baseline_vecs);
-	NDB_SAFE_PFREE_AND_NULL(current_vecs);
-	NDB_SAFE_PFREE_AND_NULL(baseline_mean);
-	NDB_SAFE_PFREE_AND_NULL(current_mean);
-	NDB_SAFE_PFREE_AND_NULL(baseline_var);
-	NDB_SAFE_PFREE_AND_NULL(current_var);
-	NDB_SAFE_PFREE_AND_NULL(baseline_tbl);
-	NDB_SAFE_PFREE_AND_NULL(baseline_col);
-	NDB_SAFE_PFREE_AND_NULL(current_tbl);
-	NDB_SAFE_PFREE_AND_NULL(current_col);
+		NDB_FREE(current_vecs[i]);
+	NDB_FREE(baseline_vecs);
+	NDB_FREE(current_vecs);
+	NDB_FREE(baseline_mean);
+	NDB_FREE(current_mean);
+	NDB_FREE(baseline_var);
+	NDB_FREE(current_var);
+	NDB_FREE(baseline_tbl);
+	NDB_FREE(baseline_col);
+	NDB_FREE(current_tbl);
+	NDB_FREE(current_col);
 
 	PG_RETURN_FLOAT8(divergence);
 }

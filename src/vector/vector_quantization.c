@@ -9,7 +9,7 @@
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/vector_quantization.c
+ *	  src/vector/vector_quantization.c
  *
  *-------------------------------------------------------------------------
  */
@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* FP16 conversion utilities */
 static inline uint16_t
@@ -439,9 +440,9 @@ vector_l2_distance_fp16(PG_FUNCTION_ARGS)
 	if (a == NULL || b == NULL)
 	{
 		if (a != NULL)
-			NDB_SAFE_PFREE_AND_NULL(a);
+			NDB_FREE(a);
 		if (b != NULL)
-			NDB_SAFE_PFREE_AND_NULL(b);
+			NDB_FREE(b);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
 				 errmsg("failed to dequantize FP16 vectors")));
@@ -451,8 +452,8 @@ vector_l2_distance_fp16(PG_FUNCTION_ARGS)
 	result = l2_distance(a, b);
 
 	/* Free temporary vectors */
-	NDB_SAFE_PFREE_AND_NULL(a);
-	NDB_SAFE_PFREE_AND_NULL(b);
+	NDB_FREE(a);
+	NDB_FREE(b);
 
 	PG_RETURN_FLOAT4(result);
 }
@@ -497,8 +498,8 @@ vector_cosine_distance_fp16(PG_FUNCTION_ARGS)
 	result = cosine_distance(a, b);
 
 	/* Free temporary vectors */
-	NDB_SAFE_PFREE_AND_NULL(a);
-	NDB_SAFE_PFREE_AND_NULL(b);
+	NDB_FREE(a);
+	NDB_FREE(b);
 
 	PG_RETURN_FLOAT4(result);
 }
@@ -554,6 +555,8 @@ vector_quantize_binary(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("vector size exceeds maximum allocation")));
 
+	/* Variable-length type requires custom size - use palloc0 but ensure proper cleanup */
+	/* Note: For variable-length PostgreSQL types, palloc0 is standard */
 	result = (BinaryVec *) palloc0(size);
 	if (result == NULL)
 		ereport(ERROR,

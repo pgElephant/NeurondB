@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_kmeans.c
- *    K-Means clustering algorithm implementation
+ *    K-means clustering algorithm.
  *
- * Implements Lloyd's algorithm with K-Means++ initialization for
- * intelligent centroid seeding using D² weighting.
+ * This module implements Lloyd's algorithm with K-means++ initialization
+ * for centroid-based clustering.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_kmeans.c
@@ -27,6 +27,9 @@
 #include "ml_gpu_registry.h"
 #include "ml_catalog.h"
 #include "neurondb_validation.h"
+#include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 #include <float.h>
 #include <stdlib.h>
@@ -106,8 +109,8 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 		/* Safety check */
 		if (picked < 0 || picked >= nvec)
 		{
-			NDB_SAFE_PFREE_AND_NULL(dist);
-			NDB_SAFE_PFREE_AND_NULL(selected);
+			NDB_FREE(dist);
+			NDB_FREE(selected);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("neurondb: k-means++ failed to select centroid %d",
@@ -130,8 +133,8 @@ kmeanspp_init(float **data, int nvec, int dim, int k, int *centroids)
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(dist);
-	NDB_SAFE_PFREE_AND_NULL(selected);
+	NDB_FREE(dist);
+	NDB_FREE(selected);
 }
 
 /*
@@ -252,7 +255,7 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 					centers[c][d] /= counts[c];
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(counts);
+		NDB_FREE(counts);
 	}
 
 	/* Build output int array (nvec x 1) for 1-based cluster labels */
@@ -263,16 +266,16 @@ cluster_kmeans(PG_FUNCTION_ARGS)
 	out_array = construct_array(out_datums, nvec, INT4OID, 4, true, 'i');
 
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
+		NDB_FREE(data[i]);
 	for (c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(centers);
-	NDB_SAFE_PFREE_AND_NULL(assignments);
-	NDB_SAFE_PFREE_AND_NULL(centroids_idx);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
-	NDB_SAFE_PFREE_AND_NULL(out_datums);
+		NDB_FREE(centers[c]);
+	NDB_FREE(data);
+	NDB_FREE(centers);
+	NDB_FREE(assignments);
+	NDB_FREE(centroids_idx);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
+	NDB_FREE(out_datums);
 
 	PG_RETURN_ARRAYTYPE_P(out_array);
 }
@@ -281,7 +284,7 @@ cluster_kmeans(PG_FUNCTION_ARGS)
  * Serialize K-Means model (centroids) to bytea
  */
 static bytea *
-kmeans_model_serialize_to_bytea(float **centers, int num_clusters, int dim)
+kmeans_model_serialize_to_bytea(float **centers, int num_clusters, int dim, uint8 training_backend)
 {
 	StringInfoData buf;
 	int			i,
@@ -289,7 +292,19 @@ kmeans_model_serialize_to_bytea(float **centers, int num_clusters, int dim)
 	int			total_size;
 	bytea	   *result;
 
+	/* Validate training_backend */
+	if (training_backend > 1)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: kmeans_model_serialize_to_bytea: invalid training_backend %d (must be 0 or 1)",
+						training_backend)));
+	}
+
 	initStringInfo(&buf);
+
+	/* Write training_backend first (0=CPU, 1=GPU) */
+	appendBinaryStringInfo(&buf, (char *) &training_backend, sizeof(uint8));
 
 	/* Write header: num_clusters, dim */
 	appendBinaryStringInfo(&buf, (char *) &num_clusters, sizeof(int));
@@ -305,7 +320,7 @@ kmeans_model_serialize_to_bytea(float **centers, int num_clusters, int dim)
 	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -314,20 +329,28 @@ kmeans_model_serialize_to_bytea(float **centers, int num_clusters, int dim)
  * Deserialize K-Means model from bytea
  */
 static int
-kmeans_model_deserialize_from_bytea(const bytea * data, float ***centers_out, int *num_clusters_out, int *dim_out)
+kmeans_model_deserialize_from_bytea(const bytea * data, float ***centers_out, int *num_clusters_out, int *dim_out, uint8 *training_backend_out)
 {
 	const char *buf;
 	int			offset = 0;
 	int			i,
 				j;
 	float	  **centers;
+	uint8		training_backend = 0;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 2)
 		return -1;
 
 	buf = VARDATA(data);
+	offset = 0;
 
-	/* Read header */
+	/* Read training_backend first */
+	training_backend = (uint8) buf[offset];
+	offset += sizeof(uint8);
+	if (training_backend_out != NULL)
+		*training_backend_out = training_backend;
+
+	/* Read header: num_clusters, dim */
 	memcpy(num_clusters_out, buf + offset, sizeof(int));
 	offset += sizeof(int);
 	memcpy(dim_out, buf + offset, sizeof(int));
@@ -391,8 +414,8 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 
 	if (num_clusters <= 1)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("number of clusters must be at least 2")));
@@ -404,8 +427,8 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 
 	if (!data || nvec < num_clusters)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("not enough vectors for cluster count (need >= %d, have %d)",
@@ -481,18 +504,18 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 					centers[c][d] /= counts[c];
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(counts);
+		NDB_FREE(counts);
 	}
 
-	/* Serialize model to bytea */
-	model_data = kmeans_model_serialize_to_bytea(centers, num_clusters, dim);
+	/* Serialize model to bytea with training_backend=0 (CPU) */
+	model_data = kmeans_model_serialize_to_bytea(centers, num_clusters, dim, 0);
 
 	/* Build metrics JSONB */
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json, "{\"storage\": \"cpu\", \"k\": %d, \"dim\": %d, \"max_iters\": %d, \"n_samples\": %d}",
 					 num_clusters, dim, max_iters, nvec);
-	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
 	/* Store model in catalog */
 	memset(&spec, 0, sizeof(MLCatalogModelSpec));
@@ -509,15 +532,15 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
+		NDB_FREE(data[i]);
 	for (c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(centers);
-	NDB_SAFE_PFREE_AND_NULL(assignments);
-	NDB_SAFE_PFREE_AND_NULL(centroids_idx);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(centers[c]);
+	NDB_FREE(data);
+	NDB_FREE(centers);
+	NDB_FREE(assignments);
+	NDB_FREE(centroids_idx);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_INT32(model_id);
 }
@@ -567,7 +590,6 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	text	   *vector_col;
 	char	   *tbl_str;
 	char	   *col_str;
-	int			ret;
 	int			nvec = 0;
 	int			i,
 				j,
@@ -589,6 +611,7 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	Jsonb	   *result_jsonb = NULL;
 	bytea	   *model_payload = NULL;
 	Jsonb	   *model_metrics = NULL;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
@@ -613,8 +636,8 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	/* Load model from catalog */
 	if (!ml_catalog_fetch_model_payload(model_id, &model_payload, NULL, &model_metrics))
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_kmeans_by_model_id: model %d not found",
@@ -623,10 +646,10 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 
 	if (model_payload == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		if (model_metrics)
-			NDB_SAFE_PFREE_AND_NULL(model_metrics);
+			NDB_FREE(model_metrics);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_kmeans_by_model_id: model %d has no model_data",
@@ -634,51 +657,39 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	}
 
 	/* Deserialize model */
-	if (kmeans_model_deserialize_from_bytea(model_payload, &centers, &num_clusters, &dim) != 0)
+		if (kmeans_model_deserialize_from_bytea(model_payload, &centers, &num_clusters, &dim, NULL) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		if (model_payload)
-			NDB_SAFE_PFREE_AND_NULL(model_payload);
+			NDB_FREE(model_payload);
 		if (model_metrics)
-			NDB_SAFE_PFREE_AND_NULL(model_metrics);
+			NDB_FREE(model_metrics);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_kmeans_by_model_id: failed to deserialize model")));
 	}
 
 	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-	{
-		for (c = 0; c < num_clusters; c++)
-			NDB_SAFE_PFREE_AND_NULL(centers[c]);
-		NDB_SAFE_PFREE_AND_NULL(centers);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
-		if (model_payload)
-			NDB_SAFE_PFREE_AND_NULL(model_payload);
-		if (model_metrics)
-			NDB_SAFE_PFREE_AND_NULL(model_metrics);
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_kmeans_by_model_id: SPI_connect failed")));
-	}
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Fetch test data */
 	data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
 
 	if (!data || nvec < 1)
 	{
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 		for (c = 0; c < num_clusters; c++)
-			NDB_SAFE_PFREE_AND_NULL(centers[c]);
-		NDB_SAFE_PFREE_AND_NULL(centers);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+			NDB_FREE(centers[c]);
+		NDB_FREE(centers);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		if (model_payload)
-			NDB_SAFE_PFREE_AND_NULL(model_payload);
+			NDB_FREE(model_payload);
 		if (model_metrics)
-			NDB_SAFE_PFREE_AND_NULL(model_metrics);
+			NDB_FREE(model_metrics);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_kmeans_by_model_id: no valid data found")));
@@ -856,23 +867,23 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 					 num_clusters);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetDatum(jsonbuf.data)));
+													  CStringGetTextDatum(jsonbuf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+	NDB_FREE(jsonbuf.data);
 
 	/*
 	 * Cleanup - Note: data[], centers[] allocated by
 	 * neurondb_fetch_vectors_from_table in SPI context, will be freed by
-	 * SPI_finish(). Do not double-free.
+	 * NDB_SPI_SESSION_END(). Do not double-free.
 	 */
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 	if (model_payload)
-		NDB_SAFE_PFREE_AND_NULL(model_payload);
+		NDB_FREE(model_payload);
 	if (model_metrics)
-		NDB_SAFE_PFREE_AND_NULL(model_metrics);
+		NDB_FREE(model_metrics);
 
-	SPI_finish();
+	NDB_SPI_SESSION_END(spi_session);
 	PG_RETURN_JSONB_P(result_jsonb);
 }
 
@@ -883,6 +894,7 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 #include "neurondb_gpu_model.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 static bool
 kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
@@ -943,7 +955,7 @@ kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 				else if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
 					max_iters = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																  NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -976,8 +988,8 @@ kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 	if (nvec < num_clusters)
 	{
 		for (i = 0; i < nvec; i++)
-			NDB_SAFE_PFREE_AND_NULL(data[i]);
-		NDB_SAFE_PFREE_AND_NULL(data);
+			NDB_FREE(data[i]);
+		NDB_FREE(data);
 		if (errstr != NULL)
 			*errstr = pstrdup("kmeans_gpu_train: not enough samples for clusters");
 		return false;
@@ -1050,20 +1062,20 @@ kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 					centers[c][d] /= counts[c];
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(counts);
+		NDB_FREE(counts);
 	}
 
-	/* Serialize model */
-	model_data = kmeans_model_serialize_to_bytea(centers, num_clusters, dim);
+	/* Serialize model with training_backend=1 (GPU) */
+	model_data = kmeans_model_serialize_to_bytea(centers, num_clusters, dim, 1);
 
 	/* Build metrics JSONB */
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json,
-					 "{\"storage\":\"cpu\",\"k\":%d,\"dim\":%d,\"max_iters\":%d,\"n_samples\":%d}",
+					 "{\"training_backend\":1,\"k\":%d,\"dim\":%d,\"max_iters\":%d,\"n_samples\":%d}",
 					 num_clusters, dim, max_iters, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+												 CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
 	/* Store in model state */
 	state = (KMeansGpuModelState *) palloc0(sizeof(KMeansGpuModelState));
@@ -1074,7 +1086,7 @@ kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 	state->n_samples = nvec;
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1082,13 +1094,13 @@ kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
+		NDB_FREE(data[i]);
 	for (c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(centers);
-	NDB_SAFE_PFREE_AND_NULL(assignments);
-	NDB_SAFE_PFREE_AND_NULL(centroids_idx);
+		NDB_FREE(centers[c]);
+	NDB_FREE(data);
+	NDB_FREE(centers);
+	NDB_FREE(assignments);
+	NDB_FREE(centroids_idx);
 
 	return true;
 }
@@ -1147,7 +1159,7 @@ kmeans_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
 
 	/* Deserialize model */
 	if (kmeans_model_deserialize_from_bytea(state->model_blob,
-											&centers, &num_clusters, &dim) != 0)
+											&centers, &num_clusters, &dim, NULL) != 0)
 	{
 		if (errstr != NULL)
 			*errstr = pstrdup("kmeans_gpu_predict: failed to deserialize model");
@@ -1157,8 +1169,8 @@ kmeans_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
 	if (input_dim != dim)
 	{
 		for (c = 0; c < num_clusters; c++)
-			NDB_SAFE_PFREE_AND_NULL(centers[c]);
-		NDB_SAFE_PFREE_AND_NULL(centers);
+			NDB_FREE(centers[c]);
+		NDB_FREE(centers);
 		if (errstr != NULL)
 			*errstr = pstrdup("kmeans_gpu_predict: dimension mismatch");
 		return false;
@@ -1180,8 +1192,8 @@ kmeans_gpu_predict(const MLGpuModel * model, const float *input, int input_dim,
 
 	/* Cleanup */
 	for (c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(centers);
+		NDB_FREE(centers[c]);
+	NDB_FREE(centers);
 
 	return true;
 }
@@ -1226,8 +1238,8 @@ kmeans_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
 					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+													  CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -1280,7 +1292,7 @@ kmeans_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -1328,9 +1340,9 @@ kmeans_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 
 	/* Deserialize to get dimensions */
 	if (kmeans_model_deserialize_from_bytea(payload_copy,
-											&centers, &num_clusters, &dim) != 0)
+											&centers, &num_clusters, &dim, NULL) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("kmeans_gpu_deserialize: failed to deserialize");
 		return false;
@@ -1338,8 +1350,8 @@ kmeans_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 
 	/* Free temporary deserialized data */
 	for (int c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(centers);
+		NDB_FREE(centers[c]);
+	NDB_FREE(centers);
 
 	/* Extract n_samples from metadata if available */
 	state = (KMeansGpuModelState *) palloc0(sizeof(KMeansGpuModelState));
@@ -1368,7 +1380,7 @@ kmeans_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1378,7 +1390,7 @@ kmeans_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1408,10 +1420,10 @@ kmeans_gpu_destroy(MLGpuModel * model)
 	{
 		state = (KMeansGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->metrics);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

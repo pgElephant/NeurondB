@@ -34,6 +34,7 @@
 #include "neurondb_cuda_rf.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Forward declarations for kernel launchers */
 extern int	launch_rf_predict_batch_kernel(const NdbCudaRfNode * d_nodes,
@@ -359,17 +360,17 @@ ndb_cuda_rf_train(const float *features,
 			if (errstr)
 				*errstr = pstrdup("CUDA RF train: palloc failed");
 			if (label_ints)
-				NDB_SAFE_PFREE_AND_NULL(label_ints);
+				NDB_FREE(label_ints);
 			if (class_counts)
-				NDB_SAFE_PFREE_AND_NULL(class_counts);
+				NDB_FREE(class_counts);
 			if (tmp_left_counts)
-				NDB_SAFE_PFREE_AND_NULL(tmp_left_counts);
+				NDB_FREE(tmp_left_counts);
 			if (tmp_right_counts)
-				NDB_SAFE_PFREE_AND_NULL(tmp_right_counts);
+				NDB_FREE(tmp_right_counts);
 			if (best_left_counts)
-				NDB_SAFE_PFREE_AND_NULL(best_left_counts);
+				NDB_FREE(best_left_counts);
 			if (best_right_counts)
-				NDB_SAFE_PFREE_AND_NULL(best_right_counts);
+				NDB_FREE(best_right_counts);
 			return -1;
 		}
 	}
@@ -687,19 +688,19 @@ gpu_cleanup:
 	if (d_right_counts)
 		cudaFree(d_right_counts);
 	if (label_ints)
-		NDB_SAFE_PFREE_AND_NULL(label_ints);
+		NDB_FREE(label_ints);
 	if (class_counts)
-		NDB_SAFE_PFREE_AND_NULL(class_counts);
+		NDB_FREE(class_counts);
 	if (tmp_left_counts)
-		NDB_SAFE_PFREE_AND_NULL(tmp_left_counts);
+		NDB_FREE(tmp_left_counts);
 	if (tmp_right_counts)
-		NDB_SAFE_PFREE_AND_NULL(tmp_right_counts);
+		NDB_FREE(tmp_right_counts);
 	if (best_left_counts)
-		NDB_SAFE_PFREE_AND_NULL(best_left_counts);
+		NDB_FREE(best_left_counts);
 	if (best_right_counts)
-		NDB_SAFE_PFREE_AND_NULL(best_right_counts);
+		NDB_FREE(best_right_counts);
 	if (metrics_json)
-		NDB_SAFE_PFREE_AND_NULL(metrics_json);
+		NDB_FREE(metrics_json);
 
 	return rc;
 
@@ -902,7 +903,7 @@ ndb_cuda_rf_predict(const bytea * model_data,
 	}
 
 	if (votes)
-		NDB_SAFE_PFREE_AND_NULL(votes);
+		NDB_FREE(votes);
 
 	return 0;
 }
@@ -1000,7 +1001,7 @@ ndb_cuda_rf_model_upload(const NdbCudaRfNode * nodes,
 						sizeof(NdbCudaRfNode) * (size_t) total_nodes);
 	if (status != cudaSuccess)
 	{
-		NDB_SAFE_PFREE_AND_NULL(model);
+		NDB_FREE(model);
 		return -1;
 	}
 
@@ -1010,7 +1011,7 @@ ndb_cuda_rf_model_upload(const NdbCudaRfNode * nodes,
 	if (status != cudaSuccess)
 	{
 		cudaFree(model->d_nodes);
-		NDB_SAFE_PFREE_AND_NULL(model);
+		NDB_FREE(model);
 		return -1;
 	}
 
@@ -1023,7 +1024,7 @@ ndb_cuda_rf_model_upload(const NdbCudaRfNode * nodes,
 	{
 		cudaFree(model->d_nodes);
 		cudaFree(model->d_trees);
-		NDB_SAFE_PFREE_AND_NULL(model);
+		NDB_FREE(model);
 		return -1;
 	}
 
@@ -1036,7 +1037,7 @@ ndb_cuda_rf_model_upload(const NdbCudaRfNode * nodes,
 	{
 		cudaFree(model->d_nodes);
 		cudaFree(model->d_trees);
-		NDB_SAFE_PFREE_AND_NULL(model);
+		NDB_FREE(model);
 		return -1;
 	}
 
@@ -1066,7 +1067,7 @@ ndb_cuda_rf_model_free(NdbCudaRfGpuModel * model)
 		cudaFree(model->d_trees);
 
 	model->is_valid = false;
-	NDB_SAFE_PFREE_AND_NULL(model);
+	NDB_FREE(model);
 }
 
 /*
@@ -1377,7 +1378,7 @@ ndb_cuda_rf_predict_batch(const bytea * model_data,
 	{
 		cudaFree(d_features);
 		cudaFree(d_votes);
-		NDB_SAFE_PFREE_AND_NULL(h_votes);
+		NDB_FREE(h_votes);
 		if (errstr)
 			*errstr = psprintf("failed to copy features to GPU: %s",
 							   cudaGetErrorString(status));
@@ -1395,7 +1396,7 @@ ndb_cuda_rf_predict_batch(const bytea * model_data,
 	{
 		cudaFree(d_features);
 		cudaFree(d_votes);
-		NDB_SAFE_PFREE_AND_NULL(h_votes);
+		NDB_FREE(h_votes);
 		if (errstr)
 			*errstr = psprintf("batch prediction failed: %s",
 							   cudaGetErrorString(cudaGetLastError()));
@@ -1411,7 +1412,7 @@ ndb_cuda_rf_predict_batch(const bytea * model_data,
 	{
 		cudaFree(d_features);
 		cudaFree(d_votes);
-		NDB_SAFE_PFREE_AND_NULL(h_votes);
+		NDB_FREE(h_votes);
 		if (errstr)
 			*errstr = psprintf("failed to copy votes from GPU: %s",
 							   cudaGetErrorString(status));
@@ -1439,7 +1440,7 @@ ndb_cuda_rf_predict_batch(const bytea * model_data,
 
 	cudaFree(d_features);
 	cudaFree(d_votes);
-	NDB_SAFE_PFREE_AND_NULL(h_votes);
+	NDB_FREE(h_votes);
 
 	return 0;
 }
@@ -1522,10 +1523,10 @@ ndb_cuda_rf_evaluate_batch(const bytea * model_data,
 
 	if (rc != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(predictions);
-		NDB_SAFE_PFREE_AND_NULL(tp);
-		NDB_SAFE_PFREE_AND_NULL(fp);
-		NDB_SAFE_PFREE_AND_NULL(fn);
+		NDB_FREE(predictions);
+		NDB_FREE(tp);
+		NDB_FREE(fp);
+		NDB_FREE(fn);
 		return -1;
 	}
 
@@ -1593,10 +1594,10 @@ ndb_cuda_rf_evaluate_batch(const bytea * model_data,
 		*f1_out = 0.0;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(predictions);
-	NDB_SAFE_PFREE_AND_NULL(tp);
-	NDB_SAFE_PFREE_AND_NULL(fp);
-	NDB_SAFE_PFREE_AND_NULL(fn);
+	NDB_FREE(predictions);
+	NDB_FREE(tp);
+	NDB_FREE(fp);
+	NDB_FREE(fn);
 
 	return 0;
 }

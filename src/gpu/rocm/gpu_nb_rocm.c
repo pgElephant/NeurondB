@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
  *
- * gpu_nb_cuda.c
+ * gpu_nb_rocm.c
  *    ROCm backend bridge for Naive Bayes training and prediction.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *    src/gpu/cuda/gpu_nb_cuda.c
+ *    src/gpu/rocm/gpu_nb_rocm.c
  *
  *-------------------------------------------------------------------------
  */
@@ -30,6 +30,7 @@
 #include "neurondb_rocm_nb.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -143,7 +144,7 @@ ndb_rocm_nb_pack_model(const GaussianNBModel * model,
 			{
 				if (errstr)
 					*errstr = pstrdup("invalid NB model: class_priors contains invalid value (must be in [0, 1])");
-				NDB_SAFE_PFREE_AND_NULL(blob);
+				NDB_FREE(blob);
 				return -1;
 			}
 			priors_dest[i] = prior;
@@ -171,7 +172,7 @@ ndb_rocm_nb_pack_model(const GaussianNBModel * model,
 					{
 						if (errstr)
 							*errstr = pstrdup("invalid NB model: means contains non-finite value");
-						NDB_SAFE_PFREE_AND_NULL(blob);
+						NDB_FREE(blob);
 						return -1;
 					}
 					means_dest[i * model->n_features + j] = mean_val;
@@ -206,7 +207,7 @@ ndb_rocm_nb_pack_model(const GaussianNBModel * model,
 					{
 						if (errstr)
 							*errstr = pstrdup("invalid NB model: variances contains invalid value");
-						NDB_SAFE_PFREE_AND_NULL(blob);
+						NDB_FREE(blob);
 						return -1;
 					}
 					/* Regularize to avoid division by zero */
@@ -247,7 +248,7 @@ ndb_rocm_nb_pack_model(const GaussianNBModel * model,
 		PG_TRY();
 		{
 			metrics_json = DatumGetJsonbP(
-										  DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+										  DirectFunctionCall1(jsonb_in, CStringGetTextDatum(buf.data)));
 		}
 		PG_CATCH();
 		{
@@ -257,7 +258,7 @@ ndb_rocm_nb_pack_model(const GaussianNBModel * model,
 		}
 		PG_END_TRY();
 
-		NDB_SAFE_PFREE_AND_NULL(buf.data);
+		NDB_FREE(buf.data);
 		*metrics = metrics_json;
 	}
 
@@ -494,19 +495,19 @@ ndb_rocm_nb_train(const float *features,
 cleanup:
 	/* Free model structure arrays (not the data they point to) */
 	if (model.means != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model.means);
+		NDB_FREE(model.means);
 	if (model.variances != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model.variances);
+		NDB_FREE(model.variances);
 
 	/* Free host memory */
 	if (class_counts != NULL)
-		NDB_SAFE_PFREE_AND_NULL(class_counts);
+		NDB_FREE(class_counts);
 	if (class_priors != NULL)
-		NDB_SAFE_PFREE_AND_NULL(class_priors);
+		NDB_FREE(class_priors);
 	if (means != NULL)
-		NDB_SAFE_PFREE_AND_NULL(means);
+		NDB_FREE(means);
 	if (variances != NULL)
-		NDB_SAFE_PFREE_AND_NULL(variances);
+		NDB_FREE(variances);
 
 	return rc;
 }
@@ -620,7 +621,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("HIP NB predict: invalid prior in model");
-			NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+			NDB_FREE(class_log_probs);
 			return -1;
 		}
 		log_prob = log(prior + 1e-10);	/* Add small epsilon to avoid log(0) */
@@ -635,7 +636,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("HIP NB predict: invalid mean or variance in model");
-				NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+				NDB_FREE(class_log_probs);
 				return -1;
 			}
 
@@ -647,7 +648,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("HIP NB predict: variance is zero or negative");
-				NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+				NDB_FREE(class_log_probs);
 				return -1;
 			}
 
@@ -658,7 +659,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("HIP NB predict: computed non-finite log_pdf");
-				NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+				NDB_FREE(class_log_probs);
 				return -1;
 			}
 
@@ -670,7 +671,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("HIP NB predict: computed non-finite log_prob");
-			NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+			NDB_FREE(class_log_probs);
 			return -1;
 		}
 
@@ -700,7 +701,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("HIP NB predict: max_log_prob is non-finite");
-			NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+			NDB_FREE(class_log_probs);
 			return -1;
 		}
 
@@ -712,7 +713,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("HIP NB predict: computed non-finite exp value");
-				NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+				NDB_FREE(class_log_probs);
 				return -1;
 			}
 			sum += exp_val;
@@ -723,7 +724,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("HIP NB predict: sum of probabilities is zero or non-finite");
-			NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+			NDB_FREE(class_log_probs);
 			return -1;
 		}
 
@@ -732,7 +733,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("HIP NB predict: computed invalid probability");
-			NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+			NDB_FREE(class_log_probs);
 			return -1;
 		}
 
@@ -740,7 +741,7 @@ ndb_rocm_nb_predict(const bytea * model_data,
 	}
 
 	*class_out = best_class;
-	NDB_SAFE_PFREE_AND_NULL(class_log_probs);
+	NDB_FREE(class_log_probs);
 
 	return 0;
 }
@@ -876,7 +877,7 @@ ndb_rocm_nb_evaluate_batch(const bytea * model_data,
 
 	if (rc != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(predictions);
+		NDB_FREE(predictions);
 		return -1;
 	}
 
@@ -928,7 +929,7 @@ ndb_rocm_nb_evaluate_batch(const bytea * model_data,
 	else
 		*f1_out = 0.0;
 
-	NDB_SAFE_PFREE_AND_NULL(predictions);
+	NDB_FREE(predictions);
 
 	return 0;
 }

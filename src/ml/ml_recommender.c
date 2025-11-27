@@ -1,15 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * ml_recommender.c
- *    Recommender Systems for NeuronDB
+ *    Recommender systems implementation.
  *
- * Implements collaborative filtering (ALS matrix factorization), content-based
- * filtering (vector similarity), and hybrid approaches.
+ * This module implements collaborative filtering, content-based filtering,
+ * and hybrid recommendation approaches.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_recommender.c
  *
- * Copyright (c) 2024-2025, pgElephant, Inc.
  *-------------------------------------------------------------------------
  */
 
@@ -29,6 +30,9 @@
 #include "ml_catalog.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 #include <math.h>
 #include <string.h>
@@ -55,12 +59,11 @@ als_alloc_matrix(int nrow, int ncol)
 	float	  **mat;
 	int			i;
 
-	mat = (float **) palloc(sizeof(float *) * nrow);
-	NDB_CHECK_ALLOC(mat, "mat");
+	NDB_ALLOC(mat, float *, nrow);
 	for (i = 0; i < nrow; ++i)
 	{
-		mat[i] = (float *) palloc0(sizeof(float) * ncol);
-		NDB_CHECK_ALLOC(mat, "mat");
+		NDB_ALLOC(mat[i], float, ncol);
+		memset(mat[i], 0, sizeof(float) * ncol);
 	}
 	return mat;
 }
@@ -75,9 +78,9 @@ als_free_matrix(float **mat, int nrow)
 	for (i = 0; i < nrow; ++i)
 	{
 		if (mat[i])
-			NDB_SAFE_PFREE_AND_NULL(mat[i]);
+			NDB_FREE(mat[i]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(mat);
+	NDB_FREE(mat);
 }
 
 /* Dot product of two float arrays */
@@ -119,6 +122,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 	char	   *rating_col_str = text_to_cstring(rating_col);
 
 	int			ret;
+	NDB_DECLARE (NdbSpiSession *, train_als_spi_session);
 	MemoryContext oldcontext = NULL,
 				model_mcxt = NULL;
 	int			n_row,
@@ -131,7 +135,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 	float	   *ratings = NULL;
 	float	  **P = NULL,
 			  **Q = NULL;
-	StringInfoData sql;
+	StringInfoData sql = {0};
 	SPIPlanPtr	plan = NULL;
 
 	if (n_factors < ALS_MIN_NFACTORS || n_factors > ALS_MAX_NFACTORS)
@@ -151,77 +155,116 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 					 quote_identifier(user_col_str),
 					 quote_identifier(item_col_str));
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	elog(ERROR, "SPI_connect failed");
+	oldcontext = CurrentMemoryContext;
+	Assert(oldcontext != NULL);
+	NDB_SPI_SESSION_BEGIN(train_als_spi_session, oldcontext);
 
 	ret = ndb_spi_execute_safe(sql.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 	{
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(train_als_spi_session);
 		ereport(ERROR,
-				(errmsg("Failed to execute SQL for ratings: %s",
-						sql.data)));
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: train_collaborative_filter: failed to execute SQL for ratings"),
+				 errdetail("SQL query: %s", sql.data),
+				 errhint("Verify the table exists and contains valid user, item, and rating columns.")));
 	}
 
 	n_row = SPI_processed;
 	if (n_row <= 1)
 	{
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(train_als_spi_session);
 		ereport(ERROR,
-				(errmsg("Not enough ratings found to train model")));
+				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+				 errmsg("neurondb: train_collaborative_filter: not enough ratings found to train model"),
+				 errdetail("Found %d rows, but need at least 2 rows", n_row),
+				 errhint("Add more rating data to the table.")));
 	}
 
-	user_ids = (int *) palloc(sizeof(int) * n_row);
-	NDB_CHECK_ALLOC(user_ids, "user_ids");
-	item_ids = (int *) palloc(sizeof(int) * n_row);
-	NDB_CHECK_ALLOC(item_ids, "item_ids");
-	ratings = (float *) palloc(sizeof(float) * n_row);
-	NDB_CHECK_ALLOC(ratings, "ratings");
+	NDB_ALLOC(user_ids, int, n_row);
+	NDB_ALLOC(item_ids, int, n_row);
+	NDB_ALLOC(ratings, float, n_row);
 	n_ratings = n_row;
 
 	for (i = 0; i < n_row; ++i)
 	{
-		HeapTuple	tuple = SPI_tuptable->vals[i];
-		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		HeapTuple	tuple;
+		TupleDesc	tupdesc;
 		bool		isnull[3] = {false, false, false};
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			continue;
+		}
+		tuple = SPI_tuptable->vals[i];
+		tupdesc = SPI_tuptable->tupdesc;
+		if (tupdesc == NULL)
+		{
+			continue;
+		}
 		int32		user = 0,
 					item = 0;
 		float		r = 0.0f;
 
-		user = DatumGetInt32(
-							 SPI_getbinval(tuple, tupdesc, 1, &isnull[0]));
-		item = DatumGetInt32(
-							 SPI_getbinval(tuple, tupdesc, 2, &isnull[1]));
+		/* Use safe function for int32 values */
+		if (!ndb_spi_get_int32(train_als_spi_session, i, 1, &user))
+		{
+			isnull[0] = true;
+		}
+		if (!ndb_spi_get_int32(train_als_spi_session, i, 2, &item))
+		{
+			isnull[1] = true;
+		}
 
 		if (isnull[0] || isnull[1])
 		{
-			SPI_finish();
+			NDB_FREE(sql.data);
+			NDB_FREE(user_ids);
+			NDB_FREE(item_ids);
+			NDB_FREE(ratings);
+			NDB_SPI_SESSION_END(train_als_spi_session);
 			ereport(ERROR,
-					(errmsg("user_col or item_col contains NULL at row %d",
-							i + 1)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: train_collaborative_filter: user_col or item_col contains NULL"),
+					 errdetail("Row %d contains NULL values in user or item columns", i + 1),
+					 errhint("Remove NULL values from the user and item columns.")));
 		}
 
-		if (SPI_gettypeid(tupdesc, 3) == FLOAT8OID)
-			r = (float) DatumGetFloat8(
-									   SPI_getbinval(tuple, tupdesc, 3, &isnull[2]));
+		/* Safe access for rating - validate tupdesc has at least 3 columns */
+		if (tupdesc->natts >= 3)
+		{
+			Datum		rating_datum;
+			
+			rating_datum = SPI_getbinval(tuple, tupdesc, 3, &isnull[2]);
+			if (!isnull[2])
+			{
+				if (SPI_gettypeid(tupdesc, 3) == FLOAT8OID)
+					r = (float) DatumGetFloat8(rating_datum);
+				else
+					r = (float) DatumGetFloat4(rating_datum);
+			}
+		}
 		else
-			r = (float) DatumGetFloat4(
-									   SPI_getbinval(tuple, tupdesc, 3, &isnull[2]));
+		{
+			isnull[2] = true;
+		}
 
 		if (isnull[2])
 		{
-			SPI_finish();
+			NDB_FREE(sql.data);
+			NDB_FREE(user_ids);
+			NDB_FREE(item_ids);
+			NDB_FREE(ratings);
+			NDB_SPI_SESSION_END(train_als_spi_session);
 			ereport(ERROR,
-					(errmsg("rating_col contains NULL at row %d",
-							i + 1)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: train_collaborative_filter: rating_col contains NULL"),
+					 errdetail("Row %d contains NULL value in rating column", i + 1),
+					 errhint("Remove NULL values from the rating column.")));
 		}
 		user_ids[i] = user;
 		item_ids[i] = item;
@@ -313,7 +356,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 		spec.num_features = n_factors;
 
 		model_id = ml_catalog_register_model(&spec);
-		elog(NOTICE, "DEBUG: ml_catalog returned model_id=%d (as int32)", model_id);
+		elog(DEBUG1, "neurondb: ml_catalog returned model_id=%d (as int32)", model_id);
 		if (model_id <= 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
@@ -323,7 +366,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 		 * Use safe free/reinit - ml_catalog_register_model uses
 		 * SPI_connect/finish
 		 */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		NDB_FREE(sql.data);
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
 						 "CREATE TABLE IF NOT EXISTS neurondb_cf_user_factors "
@@ -331,7 +374,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 		ndb_spi_execute_safe(sql.data, false, 0);
 		NDB_CHECK_SPI_TUPTABLE();
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		NDB_FREE(sql.data);
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
 						 "CREATE TABLE IF NOT EXISTS neurondb_cf_item_factors "
@@ -340,7 +383,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 		NDB_CHECK_SPI_TUPTABLE();
 
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		NDB_FREE(sql.data);
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
 						 "DELETE FROM neurondb_cf_user_factors WHERE model_id = %d",
@@ -348,7 +391,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 		ndb_spi_execute_safe(sql.data, false, 0);
 		NDB_CHECK_SPI_TUPTABLE();
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		NDB_FREE(sql.data);
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
 						 "DELETE FROM neurondb_cf_item_factors WHERE model_id = %d",
@@ -458,23 +501,24 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 		als_free_matrix(Q, max_item_id + 1);
 
 		if (user_ids)
-			NDB_SAFE_PFREE_AND_NULL(user_ids);
+			NDB_FREE(user_ids);
 		if (item_ids)
-			NDB_SAFE_PFREE_AND_NULL(item_ids);
+			NDB_FREE(item_ids);
 		if (ratings)
-			NDB_SAFE_PFREE_AND_NULL(ratings);
+			NDB_FREE(ratings);
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (user_col_str)
-			NDB_SAFE_PFREE_AND_NULL(user_col_str);
+			NDB_FREE(user_col_str);
 		if (item_col_str)
-			NDB_SAFE_PFREE_AND_NULL(item_col_str);
+			NDB_FREE(item_col_str);
 		if (rating_col_str)
-			NDB_SAFE_PFREE_AND_NULL(rating_col_str);
+			NDB_FREE(rating_col_str);
 		if (model_mcxt)
 			MemoryContextDelete(model_mcxt);
 
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(train_als_spi_session);
 		elog(INFO, "Collaborative filter model created, model_id=%d", model_id);
 		PG_RETURN_INT32(model_id);
 	}
@@ -484,37 +528,35 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 static bool
 als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_factors)
 {
-	StringInfoData query;
+	StringInfoData query = {0};
+	NDB_DECLARE (NdbSpiSession *, load_user_factors_spi_session);
+	MemoryContext oldcontext;
 	int			ret;
 	int			n_rows;
+
+	oldcontext = CurrentMemoryContext;
+	Assert(oldcontext != NULL);
+	NDB_SPI_SESSION_BEGIN(load_user_factors_spi_session, oldcontext);
 
 	initStringInfo(&query);
 	appendStringInfo(&query,
 					 "SELECT factors FROM neurondb_cf_user_factors WHERE model_id = %d AND user_id = %d",
 					 model_id, user_id);
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	return false;
-
 	ret = ndb_spi_execute_safe(query.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 	{
-		SPI_finish();
+		NDB_FREE(query.data);
+		NDB_SPI_SESSION_END(load_user_factors_spi_session);
 		return false;
 	}
 
 	n_rows = SPI_processed;
 	if (n_rows != 1)
 	{
-		SPI_finish();
+		NDB_FREE(query.data);
+		NDB_SPI_SESSION_END(load_user_factors_spi_session);
 		return false;
 	}
 
@@ -538,7 +580,8 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 		factors_datum = SPI_getbinval(tuple, tupdesc, 1, &factors_null);
 		if (factors_null)
 		{
-			SPI_finish();
+			NDB_FREE(query.data);
+			NDB_SPI_SESSION_END(load_user_factors_spi_session);
 			return false;
 		}
 
@@ -546,7 +589,8 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 		n_dims = ARR_NDIM(factors_array);
 		if (n_dims != 1)
 		{
-			SPI_finish();
+			NDB_FREE(query.data);
+			NDB_SPI_SESSION_END(load_user_factors_spi_session);
 			return false;
 		}
 
@@ -558,10 +602,10 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 
 		/* Allocate in parent context before SPI_finish() */
 		*n_factors = n_elems;
-		SPI_finish();
+		NDB_FREE(query.data);
+		NDB_SPI_SESSION_END(load_user_factors_spi_session);
 
-		*factors = palloc(sizeof(float) * n_elems);
-		NDB_CHECK_ALLOC(factors, "allocation");
+		NDB_ALLOC(*factors, float, n_elems);
 		for (i = 0; i < n_elems; i++)
 			(*factors)[i] = DatumGetFloat4(elems[i]);
 	}
@@ -572,41 +616,46 @@ als_load_user_factors(int32 model_id, int32 user_id, float **factors, int *n_fac
 static bool
 als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_items_total, int *n_factors)
 {
-	StringInfoData query;
+	StringInfoData query = {0};
+	NDB_DECLARE (NdbSpiSession *, load_item_factors_spi_session);
+	MemoryContext oldcontext;
 	int			ret;
 	int			n_rows;
+
+	oldcontext = CurrentMemoryContext;
+	Assert(oldcontext != NULL);
+	NDB_SPI_SESSION_BEGIN(load_item_factors_spi_session, oldcontext);
 
 	initStringInfo(&query);
 	appendStringInfo(&query,
 					 "SELECT factors FROM neurondb_cf_item_factors WHERE model_id = %d AND item_id = %d",
 					 model_id, item_id);
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	return false;
-
 	ret = ndb_spi_execute_safe(query.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 	{
-		SPI_finish();
+		NDB_FREE(query.data);
+		NDB_SPI_SESSION_END(load_item_factors_spi_session);
 		return false;
 	}
 
 	n_rows = SPI_processed;
 	if (n_rows != 1)
 	{
-		SPI_finish();
+		NDB_FREE(query.data);
+		NDB_SPI_SESSION_END(load_item_factors_spi_session);
 		return false;
 	}
 
-	/* Extract factors array */
+	/* Extract factors array - safe access for complex types */
+	if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+		SPI_processed == 0 || SPI_tuptable->vals[0] == NULL || SPI_tuptable->tupdesc == NULL)
+	{
+		NDB_FREE(query.data);
+		NDB_SPI_SESSION_END(load_item_factors_spi_session);
+		return false;
+	}
 	{
 		HeapTuple	tuple = SPI_tuptable->vals[0];
 		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
@@ -626,7 +675,8 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 		factors_datum = SPI_getbinval(tuple, tupdesc, 1, &factors_null);
 		if (factors_null)
 		{
-			SPI_finish();
+			NDB_FREE(query.data);
+			NDB_SPI_SESSION_END(load_item_factors_spi_session);
 			return false;
 		}
 
@@ -634,7 +684,8 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 		n_dims = ARR_NDIM(factors_array);
 		if (n_dims != 1)
 		{
-			SPI_finish();
+			NDB_FREE(query.data);
+			NDB_SPI_SESSION_END(load_item_factors_spi_session);
 			return false;
 		}
 
@@ -647,11 +698,11 @@ als_load_item_factors(int32 model_id, int32 item_id, float ***factors, int *n_it
 		/* Allocate in parent context before SPI_finish() */
 		*n_items_total = 1;
 		*n_factors = n_elems;
-		SPI_finish();
+		NDB_FREE(query.data);
+		NDB_SPI_SESSION_END(load_item_factors_spi_session);
 
-		*factors = palloc(sizeof(float *) * 1); /* Only one item */
-		NDB_CHECK_ALLOC(factors, "allocation");
-		(*factors)[0] = palloc(sizeof(float) * n_elems);
+		NDB_ALLOC(*factors, float *, 1);
+		NDB_ALLOC((*factors)[0], float, n_elems);
 
 		for (i = 0; i < n_elems; i++)
 			(*factors)[0][i] = DatumGetFloat4(elems[i]);
@@ -692,7 +743,7 @@ predict_collaborative_filter(PG_FUNCTION_ARGS)
 	/* Load item factors */
 	if (!als_load_item_factors(model_id, item_id, &item_factors, &n_items_total, &n_factors))
 	{
-		NDB_SAFE_PFREE_AND_NULL(user_factors);
+		NDB_FREE(user_factors);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("collaborative_filter: no factors found for item %d in model %d",
@@ -709,10 +760,10 @@ predict_collaborative_filter(PG_FUNCTION_ARGS)
 	if (prediction > 5.0)
 		prediction = 5.0;
 
-	NDB_SAFE_PFREE_AND_NULL(user_factors);
+	NDB_FREE(user_factors);
 	for (i = 0; i < n_items_total; i++)
-		NDB_SAFE_PFREE_AND_NULL(item_factors[i]);
-	NDB_SAFE_PFREE_AND_NULL(item_factors);
+		NDB_FREE(item_factors[i]);
+	NDB_FREE(item_factors);
 
 	PG_RETURN_FLOAT8(prediction);
 }
@@ -743,7 +794,7 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 	int			i;
 	StringInfoData jsonbuf;
 	Jsonb	   *result;
-	MemoryContext oldcontext;
+	MemoryContext oldcontext = CurrentMemoryContext;
 	double		rmse;
 
 	/* Validate arguments */
@@ -774,93 +825,132 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 	item_str = text_to_cstring(item_col);
 	rating_str = text_to_cstring(rating_col);
 
-	oldcontext = CurrentMemoryContext;
+	{
+		MemoryContext oldcontext = CurrentMemoryContext;
+		NDB_DECLARE (NdbSpiSession *, eval_cf_spi_session);
 
-	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
+		Assert(oldcontext != NULL);
+		NDB_SPI_SESSION_BEGIN(eval_cf_spi_session, oldcontext);
+
+		/* Build query */
+		initStringInfo(&query);
+		appendStringInfo(&query,
+						 "SELECT %s, %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL AND %s IS NOT NULL",
+						 user_str, item_str, rating_str, tbl_str, user_str, item_str, rating_str);
+
+		ret = ndb_spi_execute_safe(query.data, true, 0);
+		NDB_CHECK_SPI_TUPTABLE();
+		if (ret != SPI_OK_SELECT)
 		{
-			SPI_finish();
+			NDB_FREE(query.data);
+			NDB_SPI_SESSION_END(eval_cf_spi_session);
+			NDB_FREE(tbl_str);
+			NDB_FREE(user_str);
+			NDB_FREE(item_str);
+			NDB_FREE(rating_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
+					 errmsg("neurondb: evaluate_collaborative_filter_by_model_id: query failed"),
+					 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+					 errhint("Verify the table exists and contains valid user, item, and rating columns.")));
 		}
-	ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: evaluate_collaborative_filter_by_model_id: SPI_connect failed")));
 
-	/* Build query */
-	initStringInfo(&query);
-	appendStringInfo(&query,
-					 "SELECT %s, %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL AND %s IS NOT NULL",
-					 user_str, item_str, rating_str, tbl_str, user_str, item_str, rating_str);
+		n_ratings = SPI_processed;
+		if (n_ratings < 2)
+		{
+			NDB_FREE(query.data);
+			NDB_SPI_SESSION_END(eval_cf_spi_session);
+			NDB_FREE(tbl_str);
+			NDB_FREE(user_str);
+			NDB_FREE(item_str);
+			NDB_FREE(rating_str);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: evaluate_collaborative_filter_by_model_id: need at least 2 ratings"),
+					 errdetail("Found %d ratings, but need at least 2", n_ratings),
+					 errhint("Add more rating data to the table.")));
+		}
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
-	if (ret != SPI_OK_SELECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_collaborative_filter_by_model_id: query failed")));
+		/* Evaluate each rating */
+		for (i = 0; i < n_ratings; i++)
+		{
+			HeapTuple	tuple;
+			TupleDesc	tupdesc;
+			int32		user_id_val = 0, item_id_val = 0;
+			/* Safe access to SPI_tuptable - validate before access */
+			if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+				i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+			{
+				continue;
+			}
+			tuple = SPI_tuptable->vals[i];
+			tupdesc = SPI_tuptable->tupdesc;
+			if (tupdesc == NULL)
+			{
+				continue;
+			}
+			/* Use safe function for int32 values */
+			bool		user_null = false, item_null = false;
+			Datum		user_datum, item_datum;
+			bool		user_isnull, item_isnull;
+			
+			if (!ndb_spi_get_result_safe(i, 1, NULL, &user_datum, &user_isnull) || user_isnull)
+			{
+				user_null = true;
+			}
+			else
+			{
+				user_id_val = DatumGetInt32(user_datum);
+			}
+			if (!ndb_spi_get_result_safe(i, 2, NULL, &item_datum, &item_isnull) || item_isnull)
+			{
+				item_null = true;
+			}
+			else
+			{
+				item_id_val = DatumGetInt32(item_datum);
+			}
+			int32		user_id = user_id_val;
+			int32		item_id = item_id_val;
+			
+			/* For rating (float), need to use SPI_getbinval with safe access */
+			Datum		rating_datum;
+			bool		rating_null;
+			float		true_rating;
+			float		pred_rating;
+			float		error;
+			
+			/* Safe access for rating - validate tupdesc has at least 3 columns */
+			if (tupdesc->natts < 3)
+			{
+				continue;
+			}
+			rating_datum = SPI_getbinval(tuple, tupdesc, 3, &rating_null);
 
-	n_ratings = SPI_processed;
-	if (n_ratings < 2)
-	{
-		SPI_finish();
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(user_str);
-		NDB_SAFE_PFREE_AND_NULL(item_str);
-		NDB_SAFE_PFREE_AND_NULL(rating_str);
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb: evaluate_collaborative_filter_by_model_id: need at least 2 ratings, got %d",
-						n_ratings)));
+			if (user_null || item_null || rating_null)
+				continue;
+
+			true_rating = DatumGetFloat4(rating_datum);
+
+			/* Get prediction */
+			pred_rating = DatumGetFloat8(DirectFunctionCall3(predict_collaborative_filter,
+															 Int32GetDatum(model_id),
+															 Int32GetDatum(user_id),
+															 Int32GetDatum(item_id)));
+
+			/* Skip NaN/Inf predictions */
+			if (isnan(pred_rating) || isinf(pred_rating))
+				continue;
+
+			/* Compute error */
+			error = true_rating - pred_rating;
+			mse += error * error;
+			mae += fabs(error);
+		}
+
+		NDB_FREE(query.data);
+		NDB_SPI_SESSION_END(eval_cf_spi_session);
 	}
-
-	/* Evaluate each rating */
-	for (i = 0; i < n_ratings; i++)
-	{
-		HeapTuple	tuple = SPI_tuptable->vals[i];
-		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-		Datum		user_datum;
-		Datum		item_datum;
-		Datum		rating_datum;
-		bool		user_null;
-		bool		item_null;
-		bool		rating_null;
-		int32		user_id;
-		int32		item_id;
-		float		true_rating;
-		float		pred_rating;
-		float		error;
-
-		user_datum = SPI_getbinval(tuple, tupdesc, 1, &user_null);
-		item_datum = SPI_getbinval(tuple, tupdesc, 2, &item_null);
-		rating_datum = SPI_getbinval(tuple, tupdesc, 3, &rating_null);
-
-		if (user_null || item_null || rating_null)
-			continue;
-
-		user_id = DatumGetInt32(user_datum);
-		item_id = DatumGetInt32(item_datum);
-		true_rating = DatumGetFloat4(rating_datum);
-
-		/* Get prediction */
-		pred_rating = DatumGetFloat8(DirectFunctionCall3(predict_collaborative_filter,
-														 Int32GetDatum(model_id),
-														 Int32GetDatum(user_id),
-														 Int32GetDatum(item_id)));
-
-		/* Skip NaN/Inf predictions */
-		if (isnan(pred_rating) || isinf(pred_rating))
-			continue;
-
-		/* Compute error */
-		error = true_rating - pred_rating;
-		mse += error * error;
-		mae += fabs(error);
-	}
-
-	SPI_finish();
 
 	/* Handle case where all predictions were NaN */
 	if (n_ratings == 0 || isnan(mse) || isinf(mse))
@@ -892,14 +982,14 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 					 "{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"n_ratings\":%d}",
 					 mse, mae, rmse, n_ratings);
 
-	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+	NDB_FREE(jsonbuf.data);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(user_str);
-	NDB_SAFE_PFREE_AND_NULL(item_str);
-	NDB_SAFE_PFREE_AND_NULL(rating_str);
+	NDB_FREE(tbl_str);
+	NDB_FREE(user_str);
+	NDB_FREE(item_str);
+	NDB_FREE(rating_str);
 
 	PG_RETURN_JSONB_P(result);
 }
@@ -925,27 +1015,28 @@ recommend_items(PG_FUNCTION_ARGS)
 				j;
 	int32	   *top_items = NULL;
 	float	   *top_scores = NULL;
-	StringInfoData sql;
+	StringInfoData sql = {0};
+	NDB_DECLARE (NdbSpiSession *, predict_cf_spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
 	int			ret = 0;
+
 	ArrayType  *result_array = NULL;
 	Datum	   *elems = NULL;
+
+	NDB_SPI_SESSION_BEGIN(predict_cf_spi_session, oldcontext);
 
 	if (n_items < RECO_MIN_RESULT || n_items > RECO_MAX_RESULT)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("n_items must be between %d and %d",
+				 errmsg("neurondb: predict_collaborative_filter: n_items must be between %d and %d",
 						RECO_MIN_RESULT,
-						RECO_MAX_RESULT)));
+						RECO_MAX_RESULT),
+				 errdetail("n_items is %d, valid range is %d-%d", n_items, RECO_MIN_RESULT, RECO_MAX_RESULT),
+				 errhint("Specify a value between %d and %d", RECO_MIN_RESULT, RECO_MAX_RESULT)));
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	elog(ERROR, "SPI_connect failed");
+	oldcontext = CurrentMemoryContext;
+	Assert(oldcontext != NULL);
+	NDB_SPI_SESSION_BEGIN(predict_cf_spi_session, oldcontext);
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
@@ -957,18 +1048,33 @@ recommend_items(PG_FUNCTION_ARGS)
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 	{
-		SPI_finish();
-		ereport(ERROR, (errmsg("Failed to load user factors")));
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(predict_cf_spi_session);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: predict_collaborative_filter: failed to load user factors"),
+				 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+				 errhint("Verify the model exists and contains user factors for user %d", user_id)));
 	}
 	if (SPI_processed != 1)
 	{
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(predict_cf_spi_session);
 		ereport(ERROR,
-				(errmsg("No user_factors found for user %d in model %d",
-						user_id,
-						model_id)));
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: predict_collaborative_filter: no user_factors found"),
+				 errdetail("No user_factors found for user %d in model %d", user_id, model_id),
+				 errhint("Ensure the user was part of the training data.")));
 	}
 
+	/* Safe access for complex types - validate before access */
+	if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+		SPI_processed == 0 || SPI_tuptable->vals[0] == NULL || SPI_tuptable->tupdesc == NULL)
+	{
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(predict_cf_spi_session);
+		PG_RETURN_NULL();
+	}
 	{
 		HeapTuple	tuple = SPI_tuptable->vals[0];
 		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
@@ -977,16 +1083,20 @@ recommend_items(PG_FUNCTION_ARGS)
 
 		if (isnull)
 		{
-			SPI_finish();
-			ereport(ERROR, (errmsg("NULL user factors array")));
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(predict_cf_spi_session);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: predict_collaborative_filter: NULL user factors array"),
+					 errdetail("User factors array is NULL for user %d in model %d", user_id, model_id),
+					 errhint("This indicates corrupted model data. Retrain the model.")));
 		}
 		{
 			ArrayType  *user_vec = DatumGetArrayTypeP(arr);
 
 			n_factors = ArrayGetNItems(
 									   ARR_NDIM(user_vec), ARR_DIMS(user_vec));
-			user_factors =
-				(float *) palloc(sizeof(float) * n_factors);
+			NDB_ALLOC(user_factors, float, n_factors);
 			memcpy(user_factors,
 				   ARR_DATA_PTR(user_vec),
 				   sizeof(float) * n_factors);
@@ -994,7 +1104,7 @@ recommend_items(PG_FUNCTION_ARGS)
 	}
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "SELECT item_id, factors FROM neurondb_cf_item_factors WHERE model_id = %d",
@@ -1004,23 +1114,31 @@ recommend_items(PG_FUNCTION_ARGS)
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 	{
+		NDB_FREE(sql.data);
 		if (user_factors)
-			NDB_SAFE_PFREE_AND_NULL(user_factors);
-		SPI_finish();
-		ereport(ERROR, (errmsg("Failed to load item factors")));
+			NDB_FREE(user_factors);
+		NDB_SPI_SESSION_END(predict_cf_spi_session);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: predict_collaborative_filter: failed to load item factors"),
+				 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+				 errhint("Verify the model exists and contains item factors.")));
 	}
 	n_items_total = SPI_processed;
 	if (n_items_total < 1)
 	{
+		NDB_FREE(sql.data);
 		if (user_factors)
-			NDB_SAFE_PFREE_AND_NULL(user_factors);
-		SPI_finish();
-		ereport(ERROR, (errmsg("No items found for model")));
+			NDB_FREE(user_factors);
+		NDB_SPI_SESSION_END(predict_cf_spi_session);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("neurondb: predict_collaborative_filter: no items found for model"),
+				 errdetail("Model %d has no item factors", model_id),
+				 errhint("Ensure the model was trained successfully.")));
 	}
-	item_ids = (int *) palloc(sizeof(int) * n_items_total);
-	NDB_CHECK_ALLOC(item_ids, "item_ids");
-	item_factors = (float **) palloc(sizeof(float *) * n_items_total);
-	NDB_CHECK_ALLOC(item_factors, "item_factors");
+	NDB_ALLOC(item_ids, int, n_items_total);
+	NDB_ALLOC(item_factors, float *, n_items_total);
 
 	for (i = 0; i < n_items_total; ++i)
 	{
@@ -1029,12 +1147,21 @@ recommend_items(PG_FUNCTION_ARGS)
 		float	   *fac = NULL;
 		int			item_n_factors = 0;
 		ArrayType  *arr_f = NULL;
-		bool		isnull_item = false;
 		bool		isnull_fac = false;
 		Datum		facdatum;
 
-		item_id = DatumGetInt32(SPI_getbinval(
-											  itup, SPI_tuptable->tupdesc, 1, &isnull_item));
+		/* Get item_id from tuple directly */
+		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		Datum		item_id_datum;
+		bool		item_id_isnull;
+		int32		item_id_val;
+		
+		item_id_datum = SPI_getbinval(itup, tupdesc, 1, &item_id_isnull);
+		if (!item_id_isnull)
+		{
+			item_id_val = DatumGetInt32(item_id_datum);
+			item_id = item_id_val;
+		}
 		facdatum = SPI_getbinval(
 								 itup, SPI_tuptable->tupdesc, 2, &isnull_fac);
 		arr_f = DatumGetArrayTypeP(facdatum);
@@ -1043,26 +1170,26 @@ recommend_items(PG_FUNCTION_ARGS)
 		if (item_n_factors != n_factors)
 		{
 			for (j = 0; j < i; ++j)
-				NDB_SAFE_PFREE_AND_NULL(item_factors[j]);
-			NDB_SAFE_PFREE_AND_NULL(item_ids);
-			NDB_SAFE_PFREE_AND_NULL(item_factors);
-			NDB_SAFE_PFREE_AND_NULL(user_factors);
-			SPI_finish();
+				NDB_FREE(item_factors[j]);
+			NDB_FREE(item_ids);
+			NDB_FREE(item_factors);
+			NDB_FREE(user_factors);
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(predict_cf_spi_session);
 			ereport(ERROR,
-					(errmsg("Factor dimension mismatch for item %d",
-							item_id)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: recommend_items: factor dimension mismatch"),
+					 errdetail("Item %d has %d factors but expected %d", item_id, item_n_factors, n_factors),
+					 errhint("This indicates corrupted model data. Retrain the model.")));
 		}
-		fac = (float *) palloc(sizeof(float) * n_factors);
-		NDB_CHECK_ALLOC(fac, "fac");
+		NDB_ALLOC(fac, float, n_factors);
 		memcpy(fac, ARR_DATA_PTR(arr_f), sizeof(float) * n_factors);
 		item_ids[i] = item_id;
 		item_factors[i] = fac;
 	}
 
-	top_items = (int32 *) palloc(sizeof(int32) * n_items);
-	NDB_CHECK_ALLOC(top_items, "top_items");
-	top_scores = (float *) palloc(sizeof(float) * n_items);
-	NDB_CHECK_ALLOC(top_scores, "top_scores");
+	NDB_ALLOC(top_items, int32, n_items);
+	NDB_ALLOC(top_scores, float, n_items);
 
 	for (i = 0; i < n_items; ++i)
 	{
@@ -1089,14 +1216,14 @@ recommend_items(PG_FUNCTION_ARGS)
 	}
 
 	if (user_factors)
-		NDB_SAFE_PFREE_AND_NULL(user_factors);
+		NDB_FREE(user_factors);
 	for (i = 0; i < n_items_total; ++i)
 		if (item_factors[i])
-			NDB_SAFE_PFREE_AND_NULL(item_factors[i]);
+			NDB_FREE(item_factors[i]);
 	if (item_factors)
-		NDB_SAFE_PFREE_AND_NULL(item_factors);
+		NDB_FREE(item_factors);
 	if (item_ids)
-		NDB_SAFE_PFREE_AND_NULL(item_ids);
+		NDB_FREE(item_ids);
 
 	for (i = 0; i < n_items - 1; ++i)
 	{
@@ -1115,8 +1242,7 @@ recommend_items(PG_FUNCTION_ARGS)
 		}
 	}
 
-	elems = (Datum *) palloc(sizeof(Datum) * n_items);
-	NDB_CHECK_ALLOC(elems, "elems");
+	NDB_ALLOC(elems, Datum, n_items);
 	for (i = 0; i < n_items; ++i)
 	{
 		elems[i] = Int32GetDatum(top_items[i]);
@@ -1125,10 +1251,11 @@ recommend_items(PG_FUNCTION_ARGS)
 	result_array = construct_array(
 								   elems, n_items, INT4OID, sizeof(int32), true, 'i');
 
-	NDB_SAFE_PFREE_AND_NULL(elems);
-	NDB_SAFE_PFREE_AND_NULL(top_items);
-	NDB_SAFE_PFREE_AND_NULL(top_scores);
-	SPI_finish();
+	NDB_FREE(sql.data);
+	NDB_FREE(elems);
+	NDB_FREE(top_items);
+	NDB_FREE(top_scores);
+	NDB_SPI_SESSION_END(predict_cf_spi_session);
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
@@ -1169,18 +1296,12 @@ recommend_content_based(PG_FUNCTION_ARGS)
 						RECO_MIN_RESULT,
 						RECO_MAX_RESULT)));
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	elog(ERROR, "SPI_connect failed");
-
 	{
-		StringInfoData sql;
+		NDB_DECLARE(NdbSpiSession *, content_spi_session);
+		MemoryContext oldcontext = CurrentMemoryContext;
+		StringInfoData sql = {0};
+
+		NDB_SPI_SESSION_BEGIN(content_spi_session, oldcontext);
 
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
@@ -1190,26 +1311,31 @@ recommend_content_based(PG_FUNCTION_ARGS)
 		NDB_CHECK_SPI_TUPTABLE();
 		if (ret != SPI_OK_SELECT)
 		{
+			NDB_FREE(sql.data);
 			if (features_table_str)
-				NDB_SAFE_PFREE_AND_NULL(features_table_str);
-			SPI_finish();
+				NDB_FREE(features_table_str);
+			NDB_SPI_SESSION_END(content_spi_session);
 			ereport(ERROR,
-					(errmsg("Could not SELECT item features")));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: recommend_content_based: failed to load item features"),
+					 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+					 errhint("Verify the features table exists and is accessible.")));
 		}
 		item_count = SPI_processed;
 		if (item_count < 2)
 		{
+			NDB_FREE(sql.data);
 			if (features_table_str)
-				NDB_SAFE_PFREE_AND_NULL(features_table_str);
-			SPI_finish();
+				NDB_FREE(features_table_str);
+			NDB_SPI_SESSION_END(content_spi_session);
 			ereport(ERROR,
-					(errmsg("Not enough items for content-based "
-							"recommendations")));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: recommend_content_based: insufficient items"),
+					 errdetail("Found %d items but need at least 2 for content-based recommendations", item_count),
+					 errhint("Ensure the features table contains at least 2 items.")));
 		}
-		other_ids = (int32 *) palloc(sizeof(int32) * item_count);
-		NDB_CHECK_ALLOC(other_ids, "other_ids");
-		other_factors = (float **) palloc(sizeof(float *) * item_count);
-		NDB_CHECK_ALLOC(other_factors, "other_factors");
+		NDB_ALLOC(other_ids, int32, item_count);
+		NDB_ALLOC(other_factors, float *, item_count);
 
 		n_factors = 0;
 		for (i = 0; i < item_count; ++i)
@@ -1226,19 +1352,22 @@ recommend_content_based(PG_FUNCTION_ARGS)
 
 			if (isnull_item || isnull_feat)
 			{
+				NDB_FREE(sql.data);
 				if (features_table_str)
-					NDB_SAFE_PFREE_AND_NULL(features_table_str);
+					NDB_FREE(features_table_str);
 				for (j = 0; j < i; ++j)
 					if (other_factors[j])
-						NDB_SAFE_PFREE_AND_NULL(other_factors[j]);
+						NDB_FREE(other_factors[j]);
 				if (other_factors)
-					NDB_SAFE_PFREE_AND_NULL(other_factors);
+					NDB_FREE(other_factors);
 				if (other_ids)
-					NDB_SAFE_PFREE_AND_NULL(other_ids);
-				SPI_finish();
+					NDB_FREE(other_ids);
+				NDB_SPI_SESSION_END(content_spi_session);
 				ereport(ERROR,
-						(errmsg("NULL item or features at row %d",
-								i + 1)));
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("neurondb: recommend_content_based: NULL item or features"),
+						 errdetail("Row %d contains NULL item_id or features", i + 1),
+						 errhint("Ensure all rows have valid item_id and features data.")));
 			}
 			{
 				ArrayType  *arr = DatumGetArrayTypeP(arr_datum);
@@ -1249,25 +1378,27 @@ recommend_content_based(PG_FUNCTION_ARGS)
 					n_factors = nf;
 				if (nf != n_factors)
 				{
+					NDB_FREE(sql.data);
 					if (features_table_str)
-						NDB_SAFE_PFREE_AND_NULL(features_table_str);
+						NDB_FREE(features_table_str);
 					for (j = 0; j < i; ++j)
 						if (other_factors[j])
-							NDB_SAFE_PFREE_AND_NULL(other_factors[j]);
+							NDB_FREE(other_factors[j]);
 					if (other_factors)
-						NDB_SAFE_PFREE_AND_NULL(other_factors);
+						NDB_FREE(other_factors);
 					if (other_ids)
-						NDB_SAFE_PFREE_AND_NULL(other_ids);
-					SPI_finish();
+						NDB_FREE(other_ids);
+					NDB_SPI_SESSION_END(content_spi_session);
 					ereport(ERROR,
-							(errmsg("Feature length mismatch at row %d",
-									i + 1)));
+							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+							 errmsg("neurondb: recommend_content_based: feature dimension mismatch"),
+							 errdetail("Row %d has %d features but expected %d", i + 1, nf, n_factors),
+							 errhint("Ensure all feature vectors have the same dimension.")));
 				}
 				{
-					float	   *vec = (float *) palloc(
-													   sizeof(float) * n_factors);
+					float	   *vec;
 
-					NDB_CHECK_ALLOC(vec, "vec");
+					NDB_ALLOC(vec, float, n_factors);
 					memcpy(vec,
 						   ARR_DATA_PTR(arr),
 						   sizeof(float) * n_factors);
@@ -1283,25 +1414,26 @@ recommend_content_based(PG_FUNCTION_ARGS)
 		}
 		if (target_idx == -1)
 		{
+			NDB_FREE(sql.data);
 			if (features_table_str)
-				NDB_SAFE_PFREE_AND_NULL(features_table_str);
+				NDB_FREE(features_table_str);
 			for (j = 0; j < item_count; ++j)
 				if (other_factors[j])
-					NDB_SAFE_PFREE_AND_NULL(other_factors[j]);
+					NDB_FREE(other_factors[j]);
 			if (other_factors)
-				NDB_SAFE_PFREE_AND_NULL(other_factors);
+				NDB_FREE(other_factors);
 			if (other_ids)
-				NDB_SAFE_PFREE_AND_NULL(other_ids);
-			SPI_finish();
+				NDB_FREE(other_ids);
+			NDB_SPI_SESSION_END(content_spi_session);
 			ereport(ERROR,
-					(errmsg("item_id %d not found in features table",
-							item_id)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: recommend_content_based: item not found"),
+					 errdetail("Item ID %d not found in features table", item_id),
+					 errhint("Verify the item_id exists in the features table.")));
 		}
 
-		top_items = (int32 *) palloc(sizeof(int32) * n_recommendations);
-		NDB_CHECK_ALLOC(top_items, "top_items");
-		top_sims = (float *) palloc(sizeof(float) * n_recommendations);
-		NDB_CHECK_ALLOC(top_sims, "top_sims");
+		NDB_ALLOC(top_items, int32, n_recommendations);
+		NDB_ALLOC(top_sims, float, n_recommendations);
 		for (i = 0; i < n_recommendations; ++i)
 		{
 			top_items[i] = -1;
@@ -1357,8 +1489,7 @@ recommend_content_based(PG_FUNCTION_ARGS)
 					top_items[i] = top_items[j];
 					top_items[j] = t2;
 				}
-		elems = (Datum *) palloc(sizeof(Datum) * n_recommendations);
-		NDB_CHECK_ALLOC(elems, "elems");
+		NDB_ALLOC(elems, Datum, n_recommendations);
 		for (i = 0; i < n_recommendations; ++i)
 			elems[i] = Int32GetDatum(top_items[i]);
 		result_array = construct_array(elems,
@@ -1370,20 +1501,21 @@ recommend_content_based(PG_FUNCTION_ARGS)
 
 		for (i = 0; i < item_count; ++i)
 			if (other_factors[i])
-				NDB_SAFE_PFREE_AND_NULL(other_factors[i]);
+				NDB_FREE(other_factors[i]);
 		if (other_factors)
-			NDB_SAFE_PFREE_AND_NULL(other_factors);
+			NDB_FREE(other_factors);
 		if (other_ids)
-			NDB_SAFE_PFREE_AND_NULL(other_ids);
+			NDB_FREE(other_ids);
 		if (features_table_str)
-			NDB_SAFE_PFREE_AND_NULL(features_table_str);
+			NDB_FREE(features_table_str);
 		if (elems)
-			NDB_SAFE_PFREE_AND_NULL(elems);
+			NDB_FREE(elems);
 		if (top_items)
-			NDB_SAFE_PFREE_AND_NULL(top_items);
+			NDB_FREE(top_items);
 		if (top_sims)
-			NDB_SAFE_PFREE_AND_NULL(top_sims);
-		SPI_finish();
+			NDB_FREE(top_sims);
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(content_spi_session);
 		PG_RETURN_ARRAYTYPE_P(result_array);
 	}
 }
@@ -1411,18 +1543,13 @@ user_similarity(PG_FUNCTION_ARGS)
 				sxy = 0.0f;
 	float		r = 0.0f;
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	elog(ERROR, "SPI_connect failed");
+	NDB_DECLARE(NdbSpiSession *, user_sim_spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(user_sim_spi_session, oldcontext);
 
 	{
-		StringInfoData sql;
+		StringInfoData sql = {0};
 
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
@@ -1438,22 +1565,29 @@ user_similarity(PG_FUNCTION_ARGS)
 		NDB_CHECK_SPI_TUPTABLE();
 		if (ret != SPI_OK_SELECT)
 		{
+			NDB_FREE(sql.data);
 			if (ratings_table_str)
-				NDB_SAFE_PFREE_AND_NULL(ratings_table_str);
-			SPI_finish();
+				NDB_FREE(ratings_table_str);
+			NDB_SPI_SESSION_END(user_sim_spi_session);
 			ereport(ERROR,
-					(errmsg("Could not fetch user ratings")));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: user_similarity: failed to fetch user ratings"),
+					 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+					 errhint("Verify the ratings table exists and is accessible.")));
 		}
 
 		count = SPI_processed;
 		if (count < 2)
 		{
+			NDB_FREE(sql.data);
 			if (ratings_table_str)
-				NDB_SAFE_PFREE_AND_NULL(ratings_table_str);
-			SPI_finish();
+				NDB_FREE(ratings_table_str);
+			NDB_SPI_SESSION_END(user_sim_spi_session);
 			ereport(ERROR,
-					(errmsg("Users must have at least two items in "
-							"common")));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: user_similarity: insufficient common items"),
+					 errdetail("Users must have at least 2 items in common, found %d", count),
+					 errhint("Ensure both users have rated at least 2 common items.")));
 		}
 		for (i = 0; i < count; ++i)
 		{
@@ -1482,9 +1616,10 @@ user_similarity(PG_FUNCTION_ARGS)
 				r = 0.0f;
 		}
 
+		NDB_FREE(sql.data);
 		if (ratings_table_str)
-			NDB_SAFE_PFREE_AND_NULL(ratings_table_str);
-		SPI_finish();
+			NDB_FREE(ratings_table_str);
+		NDB_SPI_SESSION_END(user_sim_spi_session);
 		PG_RETURN_FLOAT8((double) r);
 	}
 }
@@ -1545,17 +1680,13 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 		Datum	   *elems;
 		ArrayType  *result_array;
 
+		NDB_DECLARE(NdbSpiSession *, hybrid_spi_session);
+		MemoryContext oldcontext;
+
+		oldcontext = CurrentMemoryContext;
 		content_table_str = text_to_cstring(content_table);
 
-		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-			if (ret != SPI_OK_CONNECT)
-			{
-				SPI_finish();
-				ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("neurondb: SPI_connect failed")));
-			}
-		elog(ERROR, "SPI_connect failed");
+		NDB_SPI_SESSION_BEGIN(hybrid_spi_session, oldcontext);
 
 		initStringInfo(&sql);
 
@@ -1568,20 +1699,27 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 		NDB_CHECK_SPI_TUPTABLE();
 		if (ret != SPI_OK_SELECT)
 		{
+			NDB_FREE(sql.data);
 			if (content_table_str)
-				NDB_SAFE_PFREE_AND_NULL(content_table_str);
-			SPI_finish();
-			ereport(ERROR, (errmsg("Failed to load user factors")));
+				NDB_FREE(content_table_str);
+			NDB_SPI_SESSION_END(hybrid_spi_session);
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: recommend_hybrid: failed to load user factors"),
+					 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+					 errhint("Verify the model exists and contains user factors.")));
 		}
 		if (SPI_processed != 1)
 		{
+			NDB_FREE(sql.data);
 			if (content_table_str)
-				NDB_SAFE_PFREE_AND_NULL(content_table_str);
-			SPI_finish();
+				NDB_FREE(content_table_str);
+			NDB_SPI_SESSION_END(hybrid_spi_session);
 			ereport(ERROR,
-					(errmsg("No user_factors found for user %d in model %d",
-							user_id,
-							cf_model_id)));
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: recommend_hybrid: user factors not found"),
+					 errdetail("No user_factors found for user %d in model %d", user_id, cf_model_id),
+					 errhint("Verify the user_id exists in the model.")));
 		}
 		tuple = SPI_tuptable->vals[0];
 		tupdesc = SPI_tuptable->tupdesc;
@@ -1589,23 +1727,27 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 		arr = SPI_getbinval(tuple, tupdesc, 1, &isnull);
 		if (isnull)
 		{
+			NDB_FREE(sql.data);
 			if (content_table_str)
-				NDB_SAFE_PFREE_AND_NULL(content_table_str);
-			SPI_finish();
-			ereport(ERROR, (errmsg("NULL user factors array")));
+				NDB_FREE(content_table_str);
+			NDB_SPI_SESSION_END(hybrid_spi_session);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: recommend_hybrid: NULL user factors array"),
+					 errdetail("User factors array is NULL for user %d in model %d", user_id, cf_model_id),
+					 errhint("This indicates corrupted model data. Retrain the model.")));
 		}
 		user_vec = DatumGetArrayTypeP(arr);
 		n_factors =
 			ArrayGetNItems(ARR_NDIM(user_vec), ARR_DIMS(user_vec));
-		user_factors = (float *) palloc(sizeof(float) * n_factors);
-		NDB_CHECK_ALLOC(user_factors, "user_factors");
+		NDB_ALLOC(user_factors, float, n_factors);
 		memcpy(user_factors,
 			   ARR_DATA_PTR(user_vec),
 			   sizeof(float) * n_factors);
 
 		/* load item factors */
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		NDB_FREE(sql.data);
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
 						 "SELECT item_id, factors FROM neurondb_cf_item_factors WHERE model_id = %d",
@@ -1614,27 +1756,35 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 		NDB_CHECK_SPI_TUPTABLE();
 		if (ret != SPI_OK_SELECT)
 		{
+			NDB_FREE(sql.data);
 			if (user_factors)
-				NDB_SAFE_PFREE_AND_NULL(user_factors);
+				NDB_FREE(user_factors);
 			if (content_table_str)
-				NDB_SAFE_PFREE_AND_NULL(content_table_str);
-			SPI_finish();
-			ereport(ERROR, (errmsg("Failed to load item factors")));
+				NDB_FREE(content_table_str);
+			NDB_SPI_SESSION_END(hybrid_spi_session);
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: recommend_hybrid: failed to load item factors"),
+					 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+					 errhint("Verify the model exists and contains item factors.")));
 		}
 		n_items_total = SPI_processed;
 		if (n_items_total < 1)
 		{
+			NDB_FREE(sql.data);
 			if (user_factors)
-				NDB_SAFE_PFREE_AND_NULL(user_factors);
+				NDB_FREE(user_factors);
 			if (content_table_str)
-				NDB_SAFE_PFREE_AND_NULL(content_table_str);
-			SPI_finish();
-			ereport(ERROR, (errmsg("No items found for model")));
+				NDB_FREE(content_table_str);
+			NDB_SPI_SESSION_END(hybrid_spi_session);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("neurondb: recommend_hybrid: no items found"),
+					 errdetail("No items found for model %d", cf_model_id),
+					 errhint("Verify the model contains item factors.")));
 		}
-		item_ids = (int32 *) palloc(sizeof(int32) * n_items_total);
-		NDB_CHECK_ALLOC(item_ids, "item_ids");
-		item_factors =
-			(float **) palloc(sizeof(float *) * n_items_total);
+		NDB_ALLOC(item_ids, int32, n_items_total);
+		NDB_ALLOC(item_factors, float *, n_items_total);
 		for (i = 0; i < n_items_total; ++i)
 		{
 			HeapTuple	tup2 = SPI_tuptable->vals[i];
@@ -1657,23 +1807,25 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 				for (j = 0; j < i; ++j)
 				{
 					if (item_factors[j])
-						NDB_SAFE_PFREE_AND_NULL(item_factors[j]);
+						NDB_FREE(item_factors[j]);
 				}
 				if (item_factors)
-					NDB_SAFE_PFREE_AND_NULL(item_factors);
+					NDB_FREE(item_factors);
 				if (item_ids)
-					NDB_SAFE_PFREE_AND_NULL(item_ids);
+					NDB_FREE(item_ids);
 				if (user_factors)
-					NDB_SAFE_PFREE_AND_NULL(user_factors);
+					NDB_FREE(user_factors);
 				if (content_table_str)
-					NDB_SAFE_PFREE_AND_NULL(content_table_str);
-				SPI_finish();
+					NDB_FREE(content_table_str);
+				NDB_FREE(sql.data);
+				NDB_SPI_SESSION_END(hybrid_spi_session);
 				ereport(ERROR,
-						(errmsg("Factor dimension mismatch for item %d",
-								id)));
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("neurondb: recommend_hybrid: factor dimension mismatch"),
+						 errdetail("Item %d has %d factors but expected %d", id, nf, n_factors),
+						 errhint("This indicates corrupted model data. Retrain the model.")));
 			}
-			vec = (float *) palloc(sizeof(float) * n_factors);
-			NDB_CHECK_ALLOC(vec, "vec");
+			NDB_ALLOC(vec, float, n_factors);
 			memcpy(vec,
 				   ARR_DATA_PTR(facarr),
 				   sizeof(float) * n_factors);
@@ -1682,7 +1834,7 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 		}
 
 		/* Use safe free/reinit to handle potential memory context changes */
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
+		NDB_FREE(sql.data);
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
 						 "SELECT item_id, features FROM %s",
@@ -1693,24 +1845,26 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 		{
 			for (i = 0; i < n_items_total; ++i)
 				if (item_factors[i])
-					NDB_SAFE_PFREE_AND_NULL(item_factors[i]);
+					NDB_FREE(item_factors[i]);
 			if (item_factors)
-				NDB_SAFE_PFREE_AND_NULL(item_factors);
+				NDB_FREE(item_factors);
 			if (item_ids)
-				NDB_SAFE_PFREE_AND_NULL(item_ids);
+				NDB_FREE(item_ids);
 			if (user_factors)
-				NDB_SAFE_PFREE_AND_NULL(user_factors);
+				NDB_FREE(user_factors);
 			if (content_table_str)
-				NDB_SAFE_PFREE_AND_NULL(content_table_str);
-			SPI_finish();
+				NDB_FREE(content_table_str);
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(hybrid_spi_session);
 			ereport(ERROR,
-					(errmsg("Could not load item features")));
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: recommend_hybrid: failed to load item features"),
+					 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+					 errhint("Verify the content table exists and is accessible.")));
 		}
 		n_feat_items = SPI_processed;
-		feat_item_ids = (int32 *) palloc(sizeof(int32) * n_feat_items);
-		NDB_CHECK_ALLOC(feat_item_ids, "feat_item_ids");
-		content_factors =
-			(float **) palloc(sizeof(float *) * n_feat_items);
+		NDB_ALLOC(feat_item_ids, int32, n_feat_items);
+		NDB_ALLOC(content_factors, float *, n_feat_items);
 		nf_content = 0;
 
 		for (i = 0; i < n_feat_items; ++i)
@@ -1733,29 +1887,31 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 			{
 				for (j = 0; j < i; ++j)
 					if (content_factors[j])
-						NDB_SAFE_PFREE_AND_NULL(content_factors[j]);
+						NDB_FREE(content_factors[j]);
 				for (j = 0; j < n_items_total; ++j)
 					if (item_factors[j])
-						NDB_SAFE_PFREE_AND_NULL(item_factors[j]);
+						NDB_FREE(item_factors[j]);
 				if (content_factors)
-					NDB_SAFE_PFREE_AND_NULL(content_factors);
+					NDB_FREE(content_factors);
 				if (feat_item_ids)
-					NDB_SAFE_PFREE_AND_NULL(feat_item_ids);
+					NDB_FREE(feat_item_ids);
 				if (item_factors)
-					NDB_SAFE_PFREE_AND_NULL(item_factors);
+					NDB_FREE(item_factors);
 				if (item_ids)
-					NDB_SAFE_PFREE_AND_NULL(item_ids);
+					NDB_FREE(item_ids);
 				if (user_factors)
-					NDB_SAFE_PFREE_AND_NULL(user_factors);
+					NDB_FREE(user_factors);
 				if (content_table_str)
-					NDB_SAFE_PFREE_AND_NULL(content_table_str);
-				SPI_finish();
+					NDB_FREE(content_table_str);
+				NDB_FREE(sql.data);
+				NDB_SPI_SESSION_END(hybrid_spi_session);
 				ereport(ERROR,
-						(errmsg("Content vector dimension "
-								"mismatch")));
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("neurondb: recommend_hybrid: content vector dimension mismatch"),
+						 errdetail("Row %d has %d features but expected %d", i + 1, nf, nf_content),
+						 errhint("Ensure all content feature vectors have the same dimension.")));
 			}
-			vec = (float *) palloc(sizeof(float) * nf_content);
-			NDB_CHECK_ALLOC(vec, "vec");
+			NDB_ALLOC(vec, float, nf_content);
 			memcpy(vec,
 				   ARR_DATA_PTR(a),
 				   sizeof(float) * nf_content);
@@ -1764,10 +1920,8 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 		}
 
 		ntop = Min(n_items, n_items_total);
-		top_items = (int32 *) palloc(sizeof(int32) * ntop);
-		NDB_CHECK_ALLOC(top_items, "top_items");
-		top_scores = (float *) palloc(sizeof(float) * ntop);
-		NDB_CHECK_ALLOC(top_scores, "top_scores");
+		NDB_ALLOC(top_items, int32, ntop);
+		NDB_ALLOC(top_scores, float, ntop);
 
 		for (i = 0; i < ntop; ++i)
 		{
@@ -1837,37 +1991,37 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 			}
 		}
 
-		elems = (Datum *) palloc(sizeof(Datum) * ntop);
-		NDB_CHECK_ALLOC(elems, "elems");
+		NDB_ALLOC(elems, Datum, ntop);
 		for (i = 0; i < ntop; ++i)
 			elems[i] = Int32GetDatum(top_items[i]);
 		result_array = construct_array(
 									   elems, ntop, INT4OID, sizeof(int32), true, 'i');
 		if (top_items)
-			NDB_SAFE_PFREE_AND_NULL(top_items);
+			NDB_FREE(top_items);
 		if (top_scores)
-			NDB_SAFE_PFREE_AND_NULL(top_scores);
+			NDB_FREE(top_scores);
 		for (i = 0; i < n_feat_items; ++i)
 			if (content_factors[i])
-				NDB_SAFE_PFREE_AND_NULL(content_factors[i]);
+				NDB_FREE(content_factors[i]);
 		for (i = 0; i < n_items_total; ++i)
 			if (item_factors[i])
-				NDB_SAFE_PFREE_AND_NULL(item_factors[i]);
+				NDB_FREE(item_factors[i]);
 		if (content_factors)
-			NDB_SAFE_PFREE_AND_NULL(content_factors);
+			NDB_FREE(content_factors);
 		if (feat_item_ids)
-			NDB_SAFE_PFREE_AND_NULL(feat_item_ids);
+			NDB_FREE(feat_item_ids);
 		if (item_factors)
-			NDB_SAFE_PFREE_AND_NULL(item_factors);
+			NDB_FREE(item_factors);
 		if (item_ids)
-			NDB_SAFE_PFREE_AND_NULL(item_ids);
+			NDB_FREE(item_ids);
 		if (user_factors)
-			NDB_SAFE_PFREE_AND_NULL(user_factors);
+			NDB_FREE(user_factors);
 		if (content_table_str)
-			NDB_SAFE_PFREE_AND_NULL(content_table_str);
+			NDB_FREE(content_table_str);
 		if (elems)
-			NDB_SAFE_PFREE_AND_NULL(elems);
-		SPI_finish();
+			NDB_FREE(elems);
+		NDB_FREE(sql.data);
+		NDB_SPI_SESSION_END(hybrid_spi_session);
 		PG_RETURN_ARRAYTYPE_P(result_array);
 	}
 }
@@ -1879,6 +2033,7 @@ recommend_hybrid(PG_FUNCTION_ARGS)
 #include "neurondb_gpu_model.h"
 #include "ml_gpu_registry.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 typedef struct RecommenderGpuModelState
 {
@@ -1918,11 +2073,10 @@ recommender_model_serialize_to_bytea(float **user_factors, int n_users, float **
 			appendBinaryStringInfo(&buf, (char *) &item_factors[i][f], sizeof(float));
 
 	total_size = VARHDRSZ + buf.len;
-	result = (bytea *) palloc(total_size);
-	NDB_CHECK_ALLOC(result, "result");
+	NDB_ALLOC(result, bytea, total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -1954,12 +2108,10 @@ recommender_model_deserialize_from_bytea(const bytea * data, float ***user_facto
 	if (*n_users_out < 1 || *n_users_out > 1000000 || *n_items_out < 1 || *n_items_out > 1000000 || *n_factors_out < 1 || *n_factors_out > 1000)
 		return -1;
 
-	user_factors = (float **) palloc(sizeof(float *) * *n_users_out);
-	NDB_CHECK_ALLOC(user_factors, "user_factors");
+	NDB_ALLOC(user_factors, float *, *n_users_out);
 	for (u = 0; u < *n_users_out; u++)
 	{
-		user_factors[u] = (float *) palloc(sizeof(float) * *n_factors_out);
-		NDB_CHECK_ALLOC(user_factors, "user_factors");
+		NDB_ALLOC(user_factors[u], float, *n_factors_out);
 		for (f = 0; f < *n_factors_out; f++)
 		{
 			memcpy(&user_factors[u][f], buf + offset, sizeof(float));
@@ -1967,12 +2119,10 @@ recommender_model_deserialize_from_bytea(const bytea * data, float ***user_facto
 		}
 	}
 
-	item_factors = (float **) palloc(sizeof(float *) * *n_items_out);
-	NDB_CHECK_ALLOC(item_factors, "item_factors");
+	NDB_ALLOC(item_factors, float *, *n_items_out);
 	for (i = 0; i < *n_items_out; i++)
 	{
-		item_factors[i] = (float *) palloc(sizeof(float) * *n_factors_out);
-		NDB_CHECK_ALLOC(item_factors, "item_factors");
+		NDB_ALLOC(item_factors[i], float, *n_factors_out);
 		for (f = 0; f < *n_factors_out; f++)
 		{
 			memcpy(&item_factors[i][f], buf + offset, sizeof(float));
@@ -1995,16 +2145,16 @@ recommender_model_free(float **user_factors, int n_users, float **item_factors, 
 	{
 		for (u = 0; u < n_users; u++)
 			if (user_factors[u] != NULL)
-				NDB_SAFE_PFREE_AND_NULL(user_factors[u]);
-		NDB_SAFE_PFREE_AND_NULL(user_factors);
+				NDB_FREE(user_factors[u]);
+		NDB_FREE(user_factors);
 	}
 
 	if (item_factors != NULL)
 	{
 		for (i = 0; i < n_items; i++)
 			if (item_factors[i] != NULL)
-				NDB_SAFE_PFREE_AND_NULL(item_factors[i]);
-		NDB_SAFE_PFREE_AND_NULL(item_factors);
+				NDB_FREE(item_factors[i]);
+		NDB_FREE(item_factors);
 	}
 }
 
@@ -2062,7 +2212,7 @@ recommender_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **er
 				else if (strcmp(key, "lambda") == 0 && v.type == jbvNumeric)
 					lambda = (float) DatumGetFloat8(DirectFunctionCall1(numeric_float8,
 																		NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -2090,22 +2240,18 @@ recommender_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **er
 	(void) dim;					/* Suppress unused variable warning */
 
 	/* Initialize user and item factors (ALS) */
-	user_factors = (float **) palloc(sizeof(float *) * n_users);
-	NDB_CHECK_ALLOC(user_factors, "user_factors");
+	NDB_ALLOC(user_factors, float *, n_users);
 	for (u = 0; u < n_users; u++)
 	{
-		user_factors[u] = (float *) palloc(sizeof(float) * n_factors);
-		NDB_CHECK_ALLOC(user_factors, "user_factors");
+		NDB_ALLOC(user_factors[u], float, n_factors);
 		for (f = 0; f < n_factors; f++)
 			user_factors[u][f] = (float) rand() / RAND_MAX * 0.1f;
 	}
 
-	item_factors = (float **) palloc(sizeof(float *) * n_items);
-	NDB_CHECK_ALLOC(item_factors, "item_factors");
+	NDB_ALLOC(item_factors, float *, n_items);
 	for (i = 0; i < n_items; i++)
 	{
-		item_factors[i] = (float *) palloc(sizeof(float) * n_factors);
-		NDB_CHECK_ALLOC(item_factors, "item_factors");
+		NDB_ALLOC(item_factors[i], float, n_factors);
 		for (f = 0; f < n_factors; f++)
 			item_factors[i][f] = (float) rand() / RAND_MAX * 0.1f;
 	}
@@ -2119,8 +2265,8 @@ recommender_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **er
 					 "{\"storage\":\"cpu\",\"n_users\":%d,\"n_items\":%d,\"n_factors\":%d,\"lambda\":%.6f,\"n_samples\":%d}",
 					 n_users, n_items, n_factors, lambda, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+												 CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
 	state = (RecommenderGpuModelState *) palloc0(sizeof(RecommenderGpuModelState));
 	NDB_CHECK_ALLOC(state, "state");
@@ -2135,7 +2281,7 @@ recommender_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **er
 	state->lambda = lambda;
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -2258,8 +2404,8 @@ recommender_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
 					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+													  CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -2297,14 +2443,13 @@ recommender_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	}
 
 	payload_size = VARSIZE(state->model_blob);
-	payload_copy = (bytea *) palloc(payload_size);
-	NDB_CHECK_ALLOC(payload_copy, "payload_copy");
+	NDB_ALLOC(payload_copy, bytea, payload_size);
 	memcpy(payload_copy, state->model_blob, payload_size);
 
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -2340,14 +2485,13 @@ recommender_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *) palloc(payload_size);
-	NDB_CHECK_ALLOC(payload_copy, "payload_copy");
+	NDB_ALLOC(payload_copy, bytea, payload_size);
 	memcpy(payload_copy, payload, payload_size);
 
 	if (recommender_model_deserialize_from_bytea(payload_copy,
 												 &user_factors, &n_users, &item_factors, &n_items, &n_factors, &lambda) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("recommender_gpu_deserialize: failed to deserialize");
 		return false;
@@ -2367,9 +2511,9 @@ recommender_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	if (metadata != NULL)
 	{
 		int			metadata_size = VARSIZE(metadata);
-		Jsonb	   *metadata_copy = (Jsonb *) palloc(metadata_size);
+		Jsonb	   *metadata_copy;
 
-		NDB_CHECK_ALLOC(metadata_copy, "metadata_copy");
+		NDB_ALLOC(metadata_copy, Jsonb, metadata_size);
 		memcpy(metadata_copy, metadata, metadata_size);
 		state->metrics = metadata_copy;
 
@@ -2384,7 +2528,7 @@ recommender_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -2394,7 +2538,7 @@ recommender_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -2415,15 +2559,15 @@ recommender_gpu_destroy(MLGpuModel * model)
 	{
 		state = (RecommenderGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
+			NDB_FREE(state->metrics);
 		if (state->user_factors != NULL || state->item_factors != NULL)
 		{
 			recommender_model_free(state->user_factors, state->n_users,
 								   state->item_factors, state->n_items);
 		}
-		NDB_SAFE_PFREE_AND_NULL(state);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

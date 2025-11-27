@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
  *
- * gpu_linreg_cuda.c
+ * gpu_linreg_rocm.c
  *    ROCm backend bridge for Linear Regression training and prediction.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *    src/gpu/cuda/gpu_linreg_cuda.c
+ *    src/gpu/rocm/gpu_linreg_rocm.c
  *
  *-------------------------------------------------------------------------
  */
@@ -29,6 +29,7 @@
 #include "neurondb_rocm_linreg.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Forward declaration for kernel launch wrappers */
 extern hipError_t launch_build_X_matrix_kernel(const float *features,
@@ -106,7 +107,7 @@ ndb_rocm_linreg_pack_model(const LinRegModel * model,
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
 						 "{\"algorithm\":\"linear_regression\","
-						 "\"storage\":\"gpu\","
+						 "\"training_backend\":1,"
 						 "\"n_features\":%d,"
 						 "\"n_samples\":%d,"
 						 "\"r_squared\":%.6f,"
@@ -119,8 +120,8 @@ ndb_rocm_linreg_pack_model(const LinRegModel * model,
 						 model->mae);
 
 		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetDatum(buf.data)));
-		NDB_SAFE_PFREE_AND_NULL(buf.data);
+														  jsonb_in, CStringGetTextDatum(buf.data)));
+		NDB_FREE(buf.data);
 		*metrics = metrics_json;
 	}
 
@@ -386,7 +387,7 @@ cpu_fallback:
 				h_Xty[j] += xi[j] * targets[i];
 			}
 
-			NDB_SAFE_PFREE_AND_NULL(xi);
+			NDB_FREE(xi);
 		}
 	}
 
@@ -491,8 +492,8 @@ cpu_fallback:
 		{
 			if (errstr)
 				*errstr = pstrdup("neurondb: failed to allocate memory for Cholesky decomposition");
-			NDB_SAFE_PFREE_AND_NULL(h_XtX);
-			NDB_SAFE_PFREE_AND_NULL(h_Xty);
+			NDB_FREE(h_XtX);
+			NDB_FREE(h_Xty);
 			return -1;
 		}
 
@@ -575,13 +576,13 @@ cpu_fallback:
 		if (!cholesky_success)
 		{
 			if (L)
-				NDB_SAFE_PFREE_AND_NULL(L);
+				NDB_FREE(L);
 			if (XtX_work)
-				NDB_SAFE_PFREE_AND_NULL(XtX_work);
-			NDB_SAFE_PFREE_AND_NULL(h_XtX);
-			NDB_SAFE_PFREE_AND_NULL(h_Xty);
-			NDB_SAFE_PFREE_AND_NULL(h_XtX_inv);
-			NDB_SAFE_PFREE_AND_NULL(h_beta);
+				NDB_FREE(XtX_work);
+			NDB_FREE(h_XtX);
+			NDB_FREE(h_Xty);
+			NDB_FREE(h_XtX_inv);
+			NDB_FREE(h_beta);
 			return -1;
 		}
 
@@ -644,13 +645,13 @@ cpu_fallback:
 					sum / L[row * dim_with_intercept + row];
 			}
 
-			NDB_SAFE_PFREE_AND_NULL(col_vec);
+			NDB_FREE(col_vec);
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(L);
-		NDB_SAFE_PFREE_AND_NULL(y_work);
+		NDB_FREE(L);
+		NDB_FREE(y_work);
 		if (XtX_work)
-			NDB_SAFE_PFREE_AND_NULL(XtX_work);
+			NDB_FREE(XtX_work);
 		/* Note: h_beta is already computed above via Cholesky solve */
 	}
 
@@ -706,14 +707,14 @@ cpu_fallback:
 		rc = ndb_rocm_linreg_pack_model(
 										&model, &payload, &metrics_json, errstr);
 
-		NDB_SAFE_PFREE_AND_NULL(model.coefficients);
+		NDB_FREE(model.coefficients);
 	}
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(h_XtX);
-	NDB_SAFE_PFREE_AND_NULL(h_Xty);
-	NDB_SAFE_PFREE_AND_NULL(h_XtX_inv);
-	NDB_SAFE_PFREE_AND_NULL(h_beta);
+	NDB_FREE(h_XtX);
+	NDB_FREE(h_Xty);
+	NDB_FREE(h_XtX_inv);
+	NDB_FREE(h_beta);
 
 	if (rc == 0 && payload != NULL)
 	{
@@ -724,9 +725,9 @@ cpu_fallback:
 	}
 
 	if (payload != NULL)
-		NDB_SAFE_PFREE_AND_NULL(payload);
+		NDB_FREE(payload);
 	if (metrics_json != NULL)
-		NDB_SAFE_PFREE_AND_NULL(metrics_json);
+		NDB_FREE(metrics_json);
 
 	return -1;
 }
@@ -1076,7 +1077,7 @@ ndb_rocm_linreg_evaluate(const bytea * model_data,
 			h_coefficients_double[i] = (double) coefficients[i];
 
 		cuda_err = hipMemcpy(d_coefficients, h_coefficients_double, coeff_bytes, hipMemcpyHostToDevice);
-		NDB_SAFE_PFREE_AND_NULL(h_coefficients_double);
+		NDB_FREE(h_coefficients_double);
 
 		if (cuda_err != hipSuccess)
 		{

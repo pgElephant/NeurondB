@@ -1,15 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_rag.c
- *	  RAG (Retrieval-Augmented Generation) Pipeline for NeuronDB
+ *    Retrieval-augmented generation pipeline.
  *
- * Implements text chunking, embedding, ranking, and data transformation for RAG support,
- * fully following PostgreSQL C coding standards and conventions.
+ * This module implements text chunking, embedding, ranking, and data
+ * transformation for RAG support.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/ml/ml_rag.c
+ *    src/ml/ml_rag.c
  *
  *-------------------------------------------------------------------------
  */
@@ -34,6 +34,7 @@
 #include "neurondb.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 PG_FUNCTION_INFO_V1(neurondb_chunk_text);
 PG_FUNCTION_INFO_V1(neurondb_embed_text);
@@ -93,7 +94,7 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 		chunk_datums[0] = CStringGetTextDatum("");
 		result_array = construct_array(
 									   chunk_datums, 1, TEXTOID, -1, false, TYPALIGN_INT);
-		NDB_SAFE_PFREE_AND_NULL(chunk_datums);
+		NDB_FREE(chunk_datums);
 		PG_RETURN_ARRAYTYPE_P(result_array);
 	}
 
@@ -142,7 +143,7 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 			chunk_buf[chunk_len] = '\0';
 			chunk_datums[chunk_count++] =
 				CStringGetTextDatum(chunk_buf);
-			NDB_SAFE_PFREE_AND_NULL(chunk_buf);
+			NDB_FREE(chunk_buf);
 		}
 
 		if (end == input_len)
@@ -154,10 +155,10 @@ neurondb_chunk_text(PG_FUNCTION_ARGS)
 	}
 	result_array = construct_array(
 								   chunk_datums, chunk_count, TEXTOID, -1, false, TYPALIGN_INT);
-	NDB_SAFE_PFREE_AND_NULL(chunk_datums);
+	NDB_FREE(chunk_datums);
 	if (separator_text)
-		NDB_SAFE_PFREE_AND_NULL(separator);
-	NDB_SAFE_PFREE_AND_NULL(input_str);
+		NDB_FREE(separator);
+	NDB_FREE(input_str);
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
 
@@ -224,9 +225,9 @@ neurondb_embed_text(PG_FUNCTION_ARGS)
 	result->unused = 0;
 	memcpy(result->data, embedding_data, sizeof(float) * embedding_dim);
 
-	NDB_SAFE_PFREE_AND_NULL(embedding_data);
-	NDB_SAFE_PFREE_AND_NULL(model_name);
-	NDB_SAFE_PFREE_AND_NULL(input_str);
+	NDB_FREE(embedding_data);
+	NDB_FREE(model_name);
+	NDB_FREE(input_str);
 
 	PG_RETURN_POINTER(result);
 }
@@ -269,8 +270,8 @@ simple_bm25(const char *query, const char *doc)
 	if (total > 0)
 		score /= total;
 
-	NDB_SAFE_PFREE_AND_NULL(doc_lc);
-	NDB_SAFE_PFREE_AND_NULL(query_lc);
+	NDB_FREE(doc_lc);
+	NDB_FREE(query_lc);
 	return score + 0.5f;		/* Base for sort stability */
 }
 
@@ -315,8 +316,8 @@ simple_cosine(const char *query, const char *doc)
 	}
 	if (qcount == 0)
 		qcount = 1;
-	NDB_SAFE_PFREE_AND_NULL(doc_lc);
-	NDB_SAFE_PFREE_AND_NULL(query_lc);
+	NDB_FREE(doc_lc);
+	NDB_FREE(query_lc);
 	return (float) score / qcount + 0.5f;	/* stabilization */
 }
 
@@ -358,8 +359,8 @@ levenshtein(const char *s1, const char *s2)
 		int			result;
 
 		result = v1[len2];
-		NDB_SAFE_PFREE_AND_NULL(v0);
-		NDB_SAFE_PFREE_AND_NULL(v1);
+		NDB_FREE(v0);
+		NDB_FREE(v1);
 		return result;
 	}
 }
@@ -499,15 +500,15 @@ neurondb_rank_documents(PG_FUNCTION_ARGS)
 	for (i = 0; i < nelems; i++)
 	{
 		if (ranklist[i].doc)
-			NDB_SAFE_PFREE_AND_NULL(ranklist[i].doc);
+			NDB_FREE(ranklist[i].doc);
 	}
-	NDB_SAFE_PFREE_AND_NULL(ranklist);
+	NDB_FREE(ranklist);
 	if (algorithm_text)
-		NDB_SAFE_PFREE_AND_NULL(algorithm);
-	NDB_SAFE_PFREE_AND_NULL(query);
+		NDB_FREE(algorithm);
+	NDB_FREE(query);
 
 	PG_RETURN_JSONB_P(DatumGetJsonbP(DirectFunctionCall1(
-														 jsonb_in, CStringGetDatum(json_result.data))));
+														 jsonb_in, CStringGetTextDatum(json_result.data))));
 }
 
 /*
@@ -649,8 +650,8 @@ neurondb_transform_data(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		NDB_SAFE_PFREE_AND_NULL(transformed_data);
-		NDB_SAFE_PFREE_AND_NULL(result_datums);
+		NDB_FREE(transformed_data);
+		NDB_FREE(result_datums);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("unsupported transformation pipeline: "
@@ -670,9 +671,9 @@ neurondb_transform_data(PG_FUNCTION_ARGS)
 								   FLOAT8PASSBYVAL,
 								   'd');
 
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(transformed_data);
-	NDB_SAFE_PFREE_AND_NULL(pipeline_name);
+	NDB_FREE(result_datums);
+	NDB_FREE(transformed_data);
+	NDB_FREE(pipeline_name);
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }

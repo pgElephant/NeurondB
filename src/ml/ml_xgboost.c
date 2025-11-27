@@ -1,18 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_xgboost.c
- *	  XGBoost Integration for NeuronDB
+ *    XGBoost gradient boosting integration.
  *
- * Provides XGBoost gradient boosting for classification and regression.
- * Requires XGBoost C library (libxgboost.so).
- *
- * Conditional compilation: if XGBoost headers not found, builds stub
- * implementations that error gracefully.
+ * This module provides XGBoost gradient boosting for classification and
+ * regression with model serialization and catalog storage.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/ml/ml_xgboost.c
+ *    src/ml/ml_xgboost.c
  *
  *-------------------------------------------------------------------------
  */
@@ -78,13 +75,16 @@ load_training_data(const char *table,
 	appendStringInfo(
 		&query, "SELECT %s, %s FROM %s", feature_col, label_col, table);
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &query);
+	appendStringInfo(
+		&query, "SELECT %s, %s FROM %s", feature_col, label_col, table);
+
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
@@ -102,6 +102,14 @@ load_training_data(const char *table,
 	 * We expect features to be either PostgreSQL array or a single float column.
 	 * We'll support 1-D and N-D, check first row.
 	 */
+	/* Safe access for complex types - validate before access */
+	if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+		SPI_processed == 0 || SPI_tuptable->vals[0] == NULL || SPI_tuptable->tupdesc == NULL)
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("neurondb: null feature vector found")));
+	}
 	tupdesc = SPI_tuptable->tupdesc;
 	tuple = SPI_tuptable->vals[0];
 
@@ -121,8 +129,10 @@ load_training_data(const char *table,
 		ncols = 1;
 	}
 
-	features = (float *)palloc(sizeof(float) * nrows * ncols);
-	labels = (float *)palloc(sizeof(float) * nrows);
+	NDB_DECLARE(float *, features);
+	NDB_DECLARE(float *, labels);
+	NDB_ALLOC(features, float, nrows * ncols);
+	NDB_ALLOC(labels, float, nrows);
 
 	for (i = 0; i < nrows; i++)
 	{
@@ -132,11 +142,18 @@ load_training_data(const char *table,
 		Datum featval;
 		Datum labelval;
 
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: null feature vector in row %d", i)));
+		}
 		current_tuple = SPI_tuptable->vals[i];
 
 		/* Features */
-		featval =
-			SPI_getbinval(current_tuple, tupdesc, 1, &isnull_feat);
+		featval = SPI_getbinval(current_tuple, tupdesc, 1, &isnull_feat);
 		if (isnull_feat)
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -180,9 +197,14 @@ load_training_data(const char *table,
 				elog(ERROR, "Unsupported feature column type");
 		}
 
-		/* Labels */
-		labelval =
-			SPI_getbinval(current_tuple, tupdesc, 2, &isnull_label);
+		/* Labels - safe access for label - validate tupdesc has at least 2 columns */
+		if (tupdesc->natts < 2)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("neurondb: null label/target in row %d", i)));
+		}
+		labelval = SPI_getbinval(current_tuple, tupdesc, 2, &isnull_label);
 		if (isnull_label)
 			ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -203,7 +225,8 @@ load_training_data(const char *table,
 	*out_nrows = nrows;
 	*out_ncols = ncols;
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_SPI_SESSION_END(spi_session);
 }
 
 /*
@@ -220,36 +243,40 @@ store_xgboost_model(const void *model_bytes, size_t model_len)
 	char *insert_cmd = "INSERT INTO ml_models(model, provider) VALUES ($1, "
 			   "$2) RETURNING id";
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed for model insert");
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	values[0] = PointerGetDatum(
 		cstring_to_bytea((const char *)model_bytes, model_len));
 	values[1] = CStringGetTextDatum("xgboost");
 
-	ret = SPI_execute_with_args(
-		insert_cmd, 2, argtypes, values, nulls, false, 1);
+	ret = ndb_spi_execute_with_args(
+		spi_session, insert_cmd, 2, argtypes, values, nulls, false, 1);
 	if (ret != SPI_OK_INSERT_RETURNING)
+	{
+		NDB_SPI_SESSION_END(spi_session);
 		elog(ERROR,
 			"SPI_execute_with_args failed to insert XGBoost model");
+	}
 
 	if (SPI_processed > 0)
 	{
-		HeapTuple tup = SPI_tuptable->vals[0];
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
 		bool isnull;
-		Datum iddat;
-
-		iddat = SPI_getbinval(tup, tupdesc, 1, &isnull);
+		model_id = ndb_spi_get_int32(spi_session, 0, 1, oldcontext, &isnull);
 		if (isnull)
+		{
+			NDB_SPI_SESSION_END(spi_session);
 			elog(ERROR, "Null model ID returned");
-		model_id = DatumGetInt32(iddat);
+		}
 	} else
 	{
+		NDB_SPI_SESSION_END(spi_session);
 		elog(ERROR, "No model id returned from insert");
 	}
 
-	SPI_finish();
+	NDB_SPI_SESSION_END(spi_session);
 
 	return model_id;
 }
@@ -272,40 +299,47 @@ fetch_xgboost_model(int32 model_id, size_t *model_size)
 
 	snprintf(select_cmd,
 		sizeof(select_cmd),
-		elog(DEBUG1,
-			"SELECT model FROM ml_models WHERE id = %d",
+		"SELECT model FROM ml_models WHERE id = %d",
 		model_id);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed for model fetch");
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
 
-	ret = ndb_spi_execute_safe(select_cmd, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ret = ndb_spi_execute(spi_session, select_cmd, true, 1);
 
 	if (ret != SPI_OK_SELECT)
+	{
+		NDB_SPI_SESSION_END(spi_session);
 		elog(ERROR, "SPI_execute failed for model select");
+	}
 
 	if (SPI_processed == 0)
+	{
+		NDB_SPI_SESSION_END(spi_session);
 		elog(ERROR,
-			elog(DEBUG1,
-				"Model with id %d not found in ml_models",
+			"Model with id %d not found in ml_models",
 			model_id);
+	}
 
-	tup = SPI_tuptable->vals[0];
-	tupdesc = SPI_tuptable->tupdesc;
-
-	modeldat = SPI_getbinval(tup, tupdesc, 1, &isnull);
-	if (isnull)
+	NDB_DECLARE(bytea *, model_bytea);
+	model_bytea = ndb_spi_get_bytea(spi_session, 0, 1, oldcontext, &isnull);
+	if (isnull || model_bytea == NULL)
+	{
+		NDB_SPI_SESSION_END(spi_session);
 		elog(ERROR, "Null model returned");
+	}
 
-	model_bytea = DatumGetByteaP(modeldat);
 	len = VARSIZE(model_bytea) - VARHDRSZ;
-	data = palloc(len);
+	NDB_DECLARE(char *, data_bytes);
+	NDB_ALLOC(data_bytes, char, len);
+	data = data_bytes;
 	memcpy(data, VARDATA(model_bytea), len);
 
 	*model_size = len;
 
-	SPI_finish();
+	NDB_SPI_SESSION_END(spi_session);
 	return data;
 }
 
@@ -433,8 +467,8 @@ train_xgboost_classifier(PG_FUNCTION_ARGS)
 
 	(void)XGBoosterFree(booster);
 	(void)XGDMatrixFree(dtrain);
-	NDB_SAFE_PFREE_AND_NULL(features);
-	NDB_SAFE_PFREE_AND_NULL(labels);
+	NDB_FREE(features);
+	NDB_FREE(labels);
 
 	PG_RETURN_INT32(model_id);
 }
@@ -547,8 +581,8 @@ train_xgboost_regressor(PG_FUNCTION_ARGS)
 
 	(void)XGBoosterFree(booster);
 	(void)XGDMatrixFree(dtrain);
-	NDB_SAFE_PFREE_AND_NULL(features);
-	NDB_SAFE_PFREE_AND_NULL(labels);
+	NDB_FREE(features);
+	NDB_FREE(labels);
 
 	PG_RETURN_INT32(model_id);
 }
@@ -585,7 +619,8 @@ predict_xgboost(PG_FUNCTION_ARGS)
 		ARR_NDIM(features_array), ARR_DIMS(features_array));
 	features = (float8 *)ARR_DATA_PTR(features_array);
 
-	feat_f = (float *)palloc(sizeof(float) * n_dims);
+	NDB_DECLARE(float *, feat_f);
+	NDB_ALLOC(feat_f, float, n_dims);
 	for (i = 0; i < n_dims; i++)
 		feat_f[i] = (float)features[i];
 
@@ -608,8 +643,8 @@ predict_xgboost(PG_FUNCTION_ARGS)
 
 	(void)XGBoosterFree(booster);
 	(void)XGDMatrixFree(dmat);
-	NDB_SAFE_PFREE_AND_NULL(feat_f);
-	NDB_SAFE_PFREE_AND_NULL(mod_bytes);
+	NDB_FREE(feat_f);
+	NDB_FREE(mod_bytes);
 
 	PG_RETURN_FLOAT8(pred);
 }
@@ -714,31 +749,38 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
     oldcontext = CurrentMemoryContext;
 
     /* Connect to SPI */
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR,
-            (errcode(ERRCODE_INTERNAL_ERROR),
-                errmsg("neurondb: evaluate_xgboost_by_model_id: SPI_connect failed")));
+    NDB_DECLARE(NdbSpiSession *, spi_session);
+    MemoryContext oldcontext_spi = CurrentMemoryContext;
+
+    NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);
 
     /* Build query */
-    initStringInfo(&query);
+    ndb_spi_stringinfo_init(spi_session, &query);
     appendStringInfo(&query,
         "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
         feat_str, targ_str, tbl_str, feat_str, targ_str);
 
-    ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+    ret = ndb_spi_execute(spi_session, query.data, true, 0);
     if (ret != SPI_OK_SELECT)
+    {
+        ndb_spi_stringinfo_free(spi_session, &query);
+        NDB_SPI_SESSION_END(spi_session);
+        NDB_FREE(tbl_str);
+        NDB_FREE(feat_str);
+        NDB_FREE(targ_str);
         ereport(ERROR,
             (errcode(ERRCODE_INTERNAL_ERROR),
                 errmsg("neurondb: evaluate_xgboost_by_model_id: query failed")));
+    }
 
     nvec = SPI_processed;
     if (nvec < 2)
     {
-        SPI_finish();
-        NDB_SAFE_PFREE_AND_NULL(tbl_str);
-        NDB_SAFE_PFREE_AND_NULL(feat_str);
-        NDB_SAFE_PFREE_AND_NULL(targ_str);
+        ndb_spi_stringinfo_free(spi_session, &query);
+        NDB_SPI_SESSION_END(spi_session);
+        NDB_FREE(tbl_str);
+        NDB_FREE(feat_str);
+        NDB_FREE(targ_str);
         ereport(ERROR,
             (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                 errmsg("neurondb: evaluate_xgboost_by_model_id: need at least 2 samples, got %d",
@@ -800,10 +842,11 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
             arr = DatumGetArrayTypeP(feat_datum);
             if (ARR_NDIM(arr) != 1)
             {
-                SPI_finish();
-                NDB_SAFE_PFREE_AND_NULL(tbl_str);
-                NDB_SAFE_PFREE_AND_NULL(feat_str);
-                NDB_SAFE_PFREE_AND_NULL(targ_str);
+                ndb_spi_stringinfo_free(spi_session, &query);
+    NDB_SPI_SESSION_END(spi_session);
+                NDB_FREE(tbl_str);
+                NDB_FREE(feat_str);
+                NDB_FREE(targ_str);
                 ereport(ERROR,
                     (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                         errmsg("xgboost: features array must be 1-D")));
@@ -831,7 +874,8 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
             int ndims = 1;
             int dims[1] = {actual_dim};
             int lbs[1] = {1};
-            Datum *elems = palloc(sizeof(Datum) * actual_dim);
+            NDB_DECLARE(Datum *, elems);
+            NDB_ALLOC(elems, Datum, actual_dim);
 
             for (j = 0; j < actual_dim; j++)
                 elems[j] = Float8GetDatum(vec->data[j]);
@@ -844,8 +888,8 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
                                                        Int32GetDatum(model_id),
                                                        features_datum));
 
-            NDB_SAFE_PFREE_AND_NULL(elems);
-            NDB_SAFE_PFREE_AND_NULL(feature_array);
+            NDB_FREE(elems);
+            NDB_FREE(feature_array);
         }
 
         /* Compute errors */
@@ -856,7 +900,8 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
         ss_tot += (y_true - y_mean) * (y_true - y_mean);
     }
 
-    SPI_finish();
+    ndb_spi_stringinfo_free(spi_session, &query);
+    NDB_SPI_SESSION_END(spi_session);
 
     mse /= nvec;
     mae /= nvec;
@@ -875,13 +920,13 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
         "{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"r_squared\":%.6f,\"n_samples\":%d}",
         mse, mae, rmse, r_squared, nvec);
 
-    result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-    NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+    result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+    NDB_FREE(jsonbuf.data);
 
     /* Cleanup */
-    NDB_SAFE_PFREE_AND_NULL(tbl_str);
-    NDB_SAFE_PFREE_AND_NULL(feat_str);
-    NDB_SAFE_PFREE_AND_NULL(targ_str);
+    NDB_FREE(tbl_str);
+    NDB_FREE(feat_str);
+    NDB_FREE(targ_str);
 
     PG_RETURN_JSONB_P(result);
 #else
@@ -902,7 +947,8 @@ evaluate_xgboost_by_model_id(PG_FUNCTION_ARGS)
 #include "ml_gpu_registry.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
-#include "neurondb_spi_safe.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 typedef struct XGBoostGpuModelState
 {
@@ -923,6 +969,7 @@ xgboost_model_serialize_to_bytea(int n_estimators, int max_depth, float learning
 	int total_size;
 	bytea *result;
 	int obj_len;
+	NDB_DECLARE(char *, result_bytes);
 
 	initStringInfo(&buf);
 	appendBinaryStringInfo(&buf, (char *)&n_estimators, sizeof(int));
@@ -934,10 +981,11 @@ xgboost_model_serialize_to_bytea(int n_estimators, int max_depth, float learning
 	appendBinaryStringInfo(&buf, objective, obj_len);
 
 	total_size = VARHDRSZ + buf.len;
-	result = (bytea *)palloc(total_size);
+	NDB_ALLOC(result_bytes, char, total_size);
+	result = (bytea *) result_bytes;
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -1019,7 +1067,7 @@ xgboost_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 						NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "objective") == 0 && v.type == jbvString)
 					strncpy(objective, v.val.string.val, sizeof(objective) - 1);
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1052,10 +1100,10 @@ xgboost_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 		"{\"storage\":\"cpu\",\"n_estimators\":%d,\"max_depth\":%d,\"learning_rate\":%.6f,\"n_features\":%d,\"objective\":\"%s\",\"n_samples\":%d}",
 		n_estimators, max_depth, learning_rate, dim, objective, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+		CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
-	state = (XGBoostGpuModelState *)palloc0(sizeof(XGBoostGpuModelState));
+	NDB_ALLOC(state, XGBoostGpuModelState, 1);
 	state->model_blob = model_data;
 	state->metrics = metrics;
 	state->n_estimators = n_estimators;
@@ -1066,7 +1114,7 @@ xgboost_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	strncpy(state->objective, objective, sizeof(state->objective) - 1);
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1157,8 +1205,8 @@ xgboost_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 		state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+		CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -1173,6 +1221,7 @@ xgboost_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 	const XGBoostGpuModelState *state;
 	bytea *payload_copy;
 	int payload_size;
+	NDB_DECLARE(char *, payload_bytes);
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1194,15 +1243,15 @@ xgboost_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 			*errstr = pstrdup("xgboost_gpu_serialize: model blob is NULL");
 		return false;
 	}
-
 	payload_size = VARSIZE(state->model_blob);
-	payload_copy = (bytea *)palloc(payload_size);
+	NDB_ALLOC(payload_bytes, char, payload_size);
+	payload_copy = (bytea *) payload_bytes;
 	memcpy(payload_copy, state->model_blob, payload_size);
 
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *)PG_DETOAST_DATUM_COPY(
@@ -1226,6 +1275,7 @@ xgboost_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 	JsonbIterator *it;
 	JsonbValue v;
 	int r;
+	NDB_DECLARE(char *, payload_bytes);
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -1235,20 +1285,20 @@ xgboost_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 			*errstr = pstrdup("xgboost_gpu_deserialize: invalid parameters");
 		return false;
 	}
-
 	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *)palloc(payload_size);
+	NDB_ALLOC(payload_bytes, char, payload_size);
+	payload_copy = (bytea *) payload_bytes;
 	memcpy(payload_copy, payload, payload_size);
 
 	if (xgboost_model_deserialize_from_bytea(payload_copy, &n_estimators, &max_depth, &learning_rate, &n_features, objective, sizeof(objective)) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("xgboost_gpu_deserialize: failed to deserialize");
 		return false;
 	}
 
-	state = (XGBoostGpuModelState *)palloc0(sizeof(XGBoostGpuModelState));
+	NDB_ALLOC(state, XGBoostGpuModelState, 1);
 	state->model_blob = payload_copy;
 	state->n_estimators = n_estimators;
 	state->max_depth = max_depth;
@@ -1259,8 +1309,12 @@ xgboost_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 
 	if (metadata != NULL)
 	{
-		int metadata_size = VARSIZE(metadata);
-		Jsonb *metadata_copy = (Jsonb *)palloc(metadata_size);
+		int			metadata_size;
+		NDB_DECLARE(char *, metadata_bytes);
+		Jsonb	   *metadata_copy;
+		metadata_size = VARSIZE(metadata);
+		NDB_ALLOC(metadata_bytes, char, metadata_size);
+		metadata_copy = (Jsonb *) metadata_bytes;
 		memcpy(metadata_copy, metadata, metadata_size);
 		state->metrics = metadata_copy;
 
@@ -1274,7 +1328,7 @@ xgboost_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 						NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	} else
@@ -1283,7 +1337,7 @@ xgboost_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1304,10 +1358,10 @@ xgboost_gpu_destroy(MLGpuModel *model)
 	{
 		state = (XGBoostGpuModelState *)model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->metrics);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

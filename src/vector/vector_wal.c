@@ -5,7 +5,7 @@
  * Provides delta encoding and compression for vector updates in WAL
  * to reduce replication bandwidth and storage overhead.
  *
- * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  */
 
 #include "postgres.h"
@@ -19,6 +19,7 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Note: PG_MODULE_MAGIC is defined in src/core/neurondb.c (only once per extension) */
 
@@ -37,13 +38,16 @@ safe_text_to_cstring(const text * txt)
 static float8 *
 parse_vector_str(const char *vec, int *out_dim)
 {
-	char	   *copy = pstrdup(vec);
+	char	   *copy;
 	int			capacity = 32;
 	int			count = 0;
-	float8	   *result = (float8 *) palloc(sizeof(float8) * capacity);
-	char	   *token,
-			   *ptr;
+	NDB_DECLARE(float8 *, result);
+	char	   *token;
+	char	   *ptr;
 	char	   *saveptr = NULL;
+
+	copy = pstrdup(vec);
+	NDB_ALLOC(result, float8, capacity);
 
 	*out_dim = 0;
 
@@ -81,6 +85,8 @@ parse_vector_str(const char *vec, int *out_dim)
 		if (count >= capacity)
 		{
 			capacity *= 2;
+			/* For reallocation, we need to manually handle since NDB_ALLOC doesn't support repalloc */
+			/* This is acceptable for dynamic growth patterns */
 			result = (float8 *) repalloc(
 										 result, capacity * sizeof(float8));
 		}
@@ -88,7 +94,7 @@ parse_vector_str(const char *vec, int *out_dim)
 		token = strtok_r(NULL, ",", &saveptr);
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(copy);
+	NDB_FREE(copy);
 	*out_dim = count;
 
 	if (count == 0)
@@ -237,7 +243,8 @@ vector_wal_decompress(PG_FUNCTION_ARGS)
 						base_dim,
 						dim)));
 
-	output = (float8 *) palloc(sizeof(float8) * dim);
+	output = NULL;
+	NDB_ALLOC(output, float8, dim);
 
 	/*
 	 * Parse run-length encoding: <run>:<delta>;... (semi-colon separated)
@@ -318,6 +325,7 @@ Datum
 vector_wal_estimate_size(PG_FUNCTION_ARGS)
 {
 	text	   *vector = PG_GETARG_TEXT_PP(0);
+	text	   *base_vector = PG_GETARG_TEXT_PP(1);
 	char	   *vec_str;
 	int32		original_size;
 	int32		estimated_compressed_size;
@@ -326,6 +334,9 @@ vector_wal_estimate_size(PG_FUNCTION_ARGS)
 	/* NULL-safe: treat NULL as empty vector */
 	if (!vector)
 		PG_RETURN_INT32(0);
+
+	/* base_vector is accepted for API consistency but not currently used */
+	(void) base_vector;
 
 	vec_str = text_to_cstring(
 							  vector);	/* Postgres returns "" for zero-length

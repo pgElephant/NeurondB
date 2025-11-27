@@ -29,6 +29,8 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_json.h"
 
 /*
  * sparse_vector_in: Parse sparse vector from text
@@ -40,111 +42,54 @@ sparse_vector_in(PG_FUNCTION_ARGS)
 {
 	char	   *str = PG_GETARG_CSTRING(0);
 	SparseVector *result;
-	int32		vocab_size = 0;
-	int32		nnz = 0;
-	uint16		model_type = 1; /* Default to SPLADE */
-	int32	   *token_ids = NULL;
-	float4	   *weights = NULL;
-	char	   *ptr;
-	int			capacity = 16;
+	NdbSparseVectorParse parsed = {0};
+	char	   *errstr = NULL;
+	int			parse_result;
 
-	/* Simple parser - in production, use proper JSON parsing */
-	ptr = str;
-	while (*ptr && *ptr != '{')
-		ptr++;
-
-	/* Parse vocab_size */
-	if (strstr(ptr, "vocab_size:") != NULL)
+	/* Use centralized JSON parsing */
+	parse_result = ndb_json_parse_sparse_vector(str, &parsed, &errstr);
+	if (parse_result != 0)
 	{
-		sscanf(strstr(ptr, "vocab_size:"), "vocab_size:%d", &vocab_size);
-	}
-
-	/* Parse model type */
-	if (strstr(ptr, "model:BM25") != NULL)
-		model_type = 0;
-	else if (strstr(ptr, "model:SPLADE") != NULL)
-		model_type = 1;
-	else if (strstr(ptr, "model:ColBERTv2") != NULL)
-		model_type = 2;
-
-	/* Allocate temporary arrays */
-	token_ids = (int32 *) palloc(sizeof(int32) * capacity);
-	weights = (float4 *) palloc(sizeof(float4) * capacity);
-
-	/* Parse tokens array */
-	if (strstr(ptr, "tokens:[") != NULL)
-	{
-		char	   *tokens_start = strstr(ptr, "tokens:[") + 8;
-		char	   *tokens_end = strchr(tokens_start, ']');
-		char	   *tok_ptr = tokens_start;
-
-		while (tok_ptr < tokens_end && *tok_ptr)
+		if (errstr)
 		{
-			if (nnz >= capacity)
-			{
-				capacity *= 2;
-				token_ids = (int32 *) repalloc(token_ids,
-											   sizeof(int32) * capacity);
-				weights = (float4 *) repalloc(weights,
-											  sizeof(float4) * capacity);
-			}
-
-			while (*tok_ptr == ' ' || *tok_ptr == ',')
-				tok_ptr++;
-
-			if (*tok_ptr == ']')
-				break;
-
-			token_ids[nnz] = atoi(tok_ptr);
-			while (*tok_ptr && *tok_ptr != ',' && *tok_ptr != ']')
-				tok_ptr++;
-			nnz++;
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("sparse_vector parsing failed: %s", errstr)));
+			pfree(errstr);
 		}
-	}
-
-	/* Parse weights array */
-	if (strstr(ptr, "weights:[") != NULL)
-	{
-		char	   *weights_start = strstr(ptr, "weights:[") + 9;
-		char	   *weights_end = strchr(weights_start, ']');
-		char	   *wgt_ptr = weights_start;
-		int			idx = 0;
-
-		while (wgt_ptr < weights_end && *wgt_ptr && idx < nnz)
+		else
 		{
-			while (*wgt_ptr == ' ' || *wgt_ptr == ',')
-				wgt_ptr++;
-
-			if (*wgt_ptr == ']')
-				break;
-
-			weights[idx] = strtof(wgt_ptr, NULL);
-			while (*wgt_ptr && *wgt_ptr != ',' && *wgt_ptr != ']')
-				wgt_ptr++;
-			idx++;
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("sparse_vector parsing failed")));
 		}
+		ndb_json_parse_sparse_vector_free(&parsed);
+		PG_RETURN_NULL();
 	}
 
-	if (nnz == 0)
+	if (parsed.nnz == 0)
+	{
+		ndb_json_parse_sparse_vector_free(&parsed);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 				 errmsg("sparse_vector must have at least one token")));
-
-	if (vocab_size == 0)
-		vocab_size = 30522;		/* Default BERT vocab size */
+		PG_RETURN_NULL();
+	}
 
 	/* Build result */
-	result = (SparseVector *) palloc0(SPARSE_VEC_SIZE(nnz));
-	SET_VARSIZE(result, SPARSE_VEC_SIZE(nnz));
-	result->vocab_size = vocab_size;
-	result->nnz = nnz;
-	result->model_type = model_type;
+	result = (SparseVector *) palloc0(SPARSE_VEC_SIZE(parsed.nnz));
+	SET_VARSIZE(result, SPARSE_VEC_SIZE(parsed.nnz));
+	result->vocab_size = parsed.vocab_size;
+	result->nnz = parsed.nnz;
+	result->model_type = parsed.model_type;
 
-	memcpy(SPARSE_VEC_TOKEN_IDS(result), token_ids, sizeof(int32) * nnz);
-	memcpy(SPARSE_VEC_WEIGHTS(result), weights, sizeof(float4) * nnz);
+	memcpy(SPARSE_VEC_TOKEN_IDS(result), parsed.token_ids, sizeof(int32) * parsed.nnz);
+	memcpy(SPARSE_VEC_WEIGHTS(result), parsed.weights, sizeof(float4) * parsed.nnz);
 
-	NDB_SAFE_PFREE_AND_NULL(token_ids);
-	NDB_SAFE_PFREE_AND_NULL(weights);
+	/* Free parsed structure (but not the arrays - they're now in result) */
+	parsed.token_ids = NULL;
+	parsed.weights = NULL;
+	ndb_json_parse_sparse_vector_free(&parsed);
 
 	PG_RETURN_POINTER(result);
 }

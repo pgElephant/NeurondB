@@ -1,11 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * ml_multimodal.c
- *    Multi-modal embedding generation (CLIP, ImageBind)
+ *    Multi-modal embedding generation.
  *
- * Implements CLIP and ImageBind model integration for generating embeddings
- * from multiple modalities (text, image, audio, video, depth, thermal).
- * Supports cross-modal retrieval (query with one modality, retrieve from another).
+ * This module implements CLIP and ImageBind integration for generating
+ * embeddings from multiple modalities with cross-modal retrieval support.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
@@ -37,6 +36,7 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * MultimodalEmbedding: Stores embedding with modality information
@@ -123,11 +123,11 @@ clip_embed(PG_FUNCTION_ARGS)
 		for (i = 0; i < dim; i++)
 			result_vec->data[i] = vec_data[i];
 
-		NDB_SAFE_PFREE_AND_NULL(input_str);
+		NDB_FREE(input_str);
 		if (modality_str)
-			NDB_SAFE_PFREE_AND_NULL(modality_str);
+			NDB_FREE(modality_str);
 		if (vec_data)
-			NDB_SAFE_PFREE_AND_NULL(vec_data);
+			NDB_FREE(vec_data);
 
 		PG_RETURN_POINTER(result_vec);
 	}
@@ -218,10 +218,10 @@ imagebind_embed(PG_FUNCTION_ARGS)
 		for (i = 0; i < dim; i++)
 			result_vec->data[i] = vec_data[i];
 
-		NDB_SAFE_PFREE_AND_NULL(input_str);
-		NDB_SAFE_PFREE_AND_NULL(modality_str);
+		NDB_FREE(input_str);
+		NDB_FREE(modality_str);
 		if (vec_data)
-			NDB_SAFE_PFREE_AND_NULL(vec_data);
+			NDB_FREE(vec_data);
 
 		PG_RETURN_POINTER(result_vec);
 	}
@@ -341,22 +341,22 @@ cross_modal_search(PG_FUNCTION_ARGS)
 		{
 			/* Return empty result set */
 			tuplestore_end(tupstore);
-			NDB_SAFE_PFREE_AND_NULL(tbl_str);
-			NDB_SAFE_PFREE_AND_NULL(col_str);
-			NDB_SAFE_PFREE_AND_NULL(qmod_str);
-			NDB_SAFE_PFREE_AND_NULL(qin_str);
-			NDB_SAFE_PFREE_AND_NULL(tmod_str);
+			NDB_FREE(tbl_str);
+			NDB_FREE(col_str);
+			NDB_FREE(qmod_str);
+			NDB_FREE(qin_str);
+			NDB_FREE(tmod_str);
 			PG_RETURN_NULL();
 		}
 
 		/* In a full implementation, search table and compute similarity */
 		/* For now, return empty result set */
 		tuplestore_end(tupstore);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
-		NDB_SAFE_PFREE_AND_NULL(qmod_str);
-		NDB_SAFE_PFREE_AND_NULL(qin_str);
-		NDB_SAFE_PFREE_AND_NULL(tmod_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
+		NDB_FREE(qmod_str);
+		NDB_FREE(qin_str);
+		NDB_FREE(tmod_str);
 	}
 
 	PG_RETURN_NULL();

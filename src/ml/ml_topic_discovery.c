@@ -1,21 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_topic_discovery.c
- *    Topic discovery using K-means + TF-IDF
+ *    Topic discovery using clustering.
  *
- * Discovers latent topics in document embeddings by:
- *   1. Clustering embeddings with K-means
- *   2. Computing term importance per cluster (TF-IDF-like)
- *   3. Extracting top terms per topic
+ * This module discovers latent topics in document embeddings by clustering
+ * with K-means and computing term importance per cluster.
  *
- * This is a simplified topic modeling approach suitable for:
- *   - Quick topic overview
- *   - Document categorization
- *   - Exploratory analysis
- *
- * For more sophisticated topic modeling, consider LDA or BERTopic externally.
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_topic_discovery.c
@@ -34,6 +25,8 @@
 #include "neurondb.h"
 #include "neurondb_ml.h"
 #include "neurondb_validation.h"
+#include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 #include <math.h>
 #include <float.h>
@@ -222,16 +215,16 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-	NDB_SAFE_PFREE_AND_NULL(data);
+		NDB_FREE(data[i]);
+	NDB_FREE(data);
 	for (k = 0; k < num_topics; k++)
-		NDB_SAFE_PFREE_AND_NULL(centroids[k]);
-	NDB_SAFE_PFREE_AND_NULL(centroids);
-	NDB_SAFE_PFREE_AND_NULL(assignments);
-	NDB_SAFE_PFREE_AND_NULL(cluster_sizes);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(centroids[k]);
+	NDB_FREE(centroids);
+	NDB_FREE(assignments);
+	NDB_FREE(cluster_sizes);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -243,6 +236,7 @@ discover_topics_simple(PG_FUNCTION_ARGS)
 #include "neurondb_gpu_model.h"
 #include "ml_gpu_registry.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 typedef struct TopicDiscoveryGpuModelState
 {
@@ -279,7 +273,7 @@ topic_discovery_model_serialize_to_bytea(float **topic_word_dist, int n_topics, 
 	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -334,8 +328,8 @@ topic_discovery_model_free(float **topic_word_dist, int n_topics)
 
 	for (t = 0; t < n_topics; t++)
 		if (topic_word_dist[t] != NULL)
-			NDB_SAFE_PFREE_AND_NULL(topic_word_dist[t]);
-	NDB_SAFE_PFREE_AND_NULL(topic_word_dist);
+			NDB_FREE(topic_word_dist[t]);
+	NDB_FREE(topic_word_dist);
 }
 
 static bool
@@ -392,7 +386,7 @@ topic_discovery_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char 
 				else if (strcmp(key, "beta") == 0 && v.type == jbvNumeric)
 					beta = (float) DatumGetFloat8(DirectFunctionCall1(numeric_float8,
 																	  NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -455,7 +449,7 @@ topic_discovery_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char 
 					 n_topics, vocab_size, alpha, beta, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+	NDB_FREE(metrics_json.data);
 
 	state = (TopicDiscoveryGpuModelState *) palloc0(sizeof(TopicDiscoveryGpuModelState));
 	state->model_blob = model_data;
@@ -468,7 +462,7 @@ topic_discovery_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char 
 	state->beta = beta;
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -476,8 +470,8 @@ topic_discovery_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char 
 
 	/* Cleanup temp data */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-	NDB_SAFE_PFREE_AND_NULL(data);
+		NDB_FREE(data[i]);
+	NDB_FREE(data);
 
 	return true;
 }
@@ -572,7 +566,7 @@ topic_discovery_gpu_predict(const MLGpuModel * model, const float *input, int in
 			output[t] = 1.0f / state->n_topics;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(topic_probs);
+	NDB_FREE(topic_probs);
 
 	return true;
 }
@@ -610,7 +604,7 @@ topic_discovery_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spe
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -654,7 +648,7 @@ topic_discovery_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -695,7 +689,7 @@ topic_discovery_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	if (topic_discovery_model_deserialize_from_bytea(payload_copy,
 													 &topic_word_dist, &n_topics, &vocab_size, &alpha, &beta) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("topic_discovery_gpu_deserialize: failed to deserialize");
 		return false;
@@ -729,7 +723,7 @@ topic_discovery_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -739,7 +733,7 @@ topic_discovery_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -760,14 +754,14 @@ topic_discovery_gpu_destroy(MLGpuModel * model)
 	{
 		state = (TopicDiscoveryGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
+			NDB_FREE(state->metrics);
 		if (state->topic_word_distributions != NULL)
 		{
 			topic_discovery_model_free(state->topic_word_distributions, state->n_topics);
 		}
-		NDB_SAFE_PFREE_AND_NULL(state);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

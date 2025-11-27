@@ -28,7 +28,9 @@
 #include "neurondb_types.h"
 #include "neurondb_sparse.h"
 #include "neurondb_validation.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #ifdef HAVE_ONNX_RUNTIME
 #include "neurondb_onnx.h"
 #endif
@@ -96,17 +98,12 @@ sparse_search(PG_FUNCTION_ARGS)
 
 	MemoryContextSwitchTo(oldcontext);
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("SPI_connect failed: %d", ret)));
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: failed to begin SPI session")));
 
 	/* Perform sparse search using dot product */
 	initStringInfo(&sql);
@@ -124,13 +121,14 @@ sparse_search(PG_FUNCTION_ARGS)
 	argtypes[0] = get_fn_expr_argtype(fcinfo->flinfo, 2);
 	args[0] = query_vec;
 
-	ret = SPI_execute_with_args(sql.data,
-								1,
-								argtypes,
-								args,
-								NULL,
-								false,
-								0);
+	ret = ndb_spi_execute_with_args(session,
+									sql.data,
+									1,
+									argtypes,
+									args,
+									NULL,
+									false,
+									0);
 
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
@@ -153,7 +151,8 @@ sparse_search(PG_FUNCTION_ARGS)
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 	}
 
-	SPI_finish();
+	NDB_FREE(sql.data);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_NULL();
 }
@@ -184,7 +183,7 @@ splade_embed(PG_FUNCTION_ARGS)
 	session = neurondb_onnx_get_or_load_model("splade", ONNX_MODEL_EMBEDDING);
 	if (session == NULL || !session->is_loaded)
 	{
-		NDB_SAFE_PFREE_AND_NULL(input_str);
+		NDB_FREE(input_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("splade_embed: SPLADE model not available")));
@@ -194,7 +193,7 @@ splade_embed(PG_FUNCTION_ARGS)
 	token_ids = neurondb_tokenize_with_model(input_str, max_length, &token_length, "splade");
 	if (token_ids == NULL || token_length <= 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(input_str);
+		NDB_FREE(input_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("splade_embed: tokenization failed")));
@@ -216,8 +215,8 @@ splade_embed(PG_FUNCTION_ARGS)
 	if (output_tensor == NULL || output_tensor->data == NULL)
 	{
 		neurondb_onnx_free_tensor(input_tensor);
-		NDB_SAFE_PFREE_AND_NULL(token_ids);
-		NDB_SAFE_PFREE_AND_NULL(input_str);
+		NDB_FREE(token_ids);
+		NDB_FREE(input_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("splade_embed: inference failed")));
@@ -265,14 +264,14 @@ splade_embed(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	neurondb_onnx_free_tensor(input_tensor);
 	neurondb_onnx_free_tensor(output_tensor);
-	NDB_SAFE_PFREE_AND_NULL(token_ids);
-	NDB_SAFE_PFREE_AND_NULL(indices);
-	NDB_SAFE_PFREE_AND_NULL(values);
-	NDB_SAFE_PFREE_AND_NULL(input_str);
+	NDB_FREE(token_ids);
+	NDB_FREE(indices);
+	NDB_FREE(values);
+	NDB_FREE(input_str);
 
 	PG_RETURN_POINTER(sparse_vec);
 #else
-	NDB_SAFE_PFREE_AND_NULL(input_str);
+	NDB_FREE(input_str);
 	ereport(ERROR,
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 			 errmsg("splade_embed: ONNX runtime not available")));
@@ -308,7 +307,7 @@ colbertv2_embed(PG_FUNCTION_ARGS)
 	session = neurondb_onnx_get_or_load_model("colbertv2", ONNX_MODEL_EMBEDDING);
 	if (session == NULL || !session->is_loaded)
 	{
-		NDB_SAFE_PFREE_AND_NULL(input_str);
+		NDB_FREE(input_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("colbertv2_embed: ColBERTv2 model not available")));
@@ -318,7 +317,7 @@ colbertv2_embed(PG_FUNCTION_ARGS)
 	token_ids = neurondb_tokenize_with_model(input_str, max_length, &token_length, "colbertv2");
 	if (token_ids == NULL || token_length <= 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(input_str);
+		NDB_FREE(input_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("colbertv2_embed: tokenization failed")));
@@ -340,8 +339,8 @@ colbertv2_embed(PG_FUNCTION_ARGS)
 	if (output_tensor == NULL || output_tensor->data == NULL)
 	{
 		neurondb_onnx_free_tensor(input_tensor);
-		NDB_SAFE_PFREE_AND_NULL(token_ids);
-		NDB_SAFE_PFREE_AND_NULL(input_str);
+		NDB_FREE(token_ids);
+		NDB_FREE(input_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("colbertv2_embed: inference failed")));
@@ -400,7 +399,7 @@ colbertv2_embed(PG_FUNCTION_ARGS)
 			}
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(max_pooled);
+		NDB_FREE(max_pooled);
 	}
 	else
 	{
@@ -443,14 +442,14 @@ colbertv2_embed(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	neurondb_onnx_free_tensor(input_tensor);
 	neurondb_onnx_free_tensor(output_tensor);
-	NDB_SAFE_PFREE_AND_NULL(token_ids);
-	NDB_SAFE_PFREE_AND_NULL(indices);
-	NDB_SAFE_PFREE_AND_NULL(values);
-	NDB_SAFE_PFREE_AND_NULL(input_str);
+	NDB_FREE(token_ids);
+	NDB_FREE(indices);
+	NDB_FREE(values);
+	NDB_FREE(input_str);
 
 	PG_RETURN_POINTER(sparse_vec);
 #else
-	NDB_SAFE_PFREE_AND_NULL(input_str);
+	NDB_FREE(input_str);
 	ereport(ERROR,
 			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 			 errmsg("colbertv2_embed: ONNX runtime not available")));
@@ -579,13 +578,13 @@ bm25_score(PG_FUNCTION_ARGS)
 	if (num_query_tokens == 0 || num_doc_tokens == 0)
 	{
 		for (i = 0; i < num_query_tokens; i++)
-			NDB_SAFE_PFREE_AND_NULL(query_tokens[i]);
+			NDB_FREE(query_tokens[i]);
 		for (i = 0; i < num_doc_tokens; i++)
-			NDB_SAFE_PFREE_AND_NULL(doc_tokens[i]);
-		NDB_SAFE_PFREE_AND_NULL(query_tokens);
-		NDB_SAFE_PFREE_AND_NULL(doc_tokens);
-		NDB_SAFE_PFREE_AND_NULL(query_str);
-		NDB_SAFE_PFREE_AND_NULL(doc_str);
+			NDB_FREE(doc_tokens[i]);
+		NDB_FREE(query_tokens);
+		NDB_FREE(doc_tokens);
+		NDB_FREE(query_str);
+		NDB_FREE(doc_str);
 		PG_RETURN_FLOAT4(0.0f);
 	}
 
@@ -629,16 +628,16 @@ bm25_score(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < num_query_tokens; i++)
-		NDB_SAFE_PFREE_AND_NULL(query_tokens[i]);
+		NDB_FREE(query_tokens[i]);
 	for (i = 0; i < num_doc_tokens; i++)
-		NDB_SAFE_PFREE_AND_NULL(doc_tokens[i]);
-	NDB_SAFE_PFREE_AND_NULL(query_tokens);
-	NDB_SAFE_PFREE_AND_NULL(doc_tokens);
-	NDB_SAFE_PFREE_AND_NULL(query_unique);
-	NDB_SAFE_PFREE_AND_NULL(query_counts);
-	NDB_SAFE_PFREE_AND_NULL(doc_counts);
-	NDB_SAFE_PFREE_AND_NULL(query_str);
-	NDB_SAFE_PFREE_AND_NULL(doc_str);
+		NDB_FREE(doc_tokens[i]);
+	NDB_FREE(query_tokens);
+	NDB_FREE(doc_tokens);
+	NDB_FREE(query_unique);
+	NDB_FREE(query_counts);
+	NDB_FREE(doc_counts);
+	NDB_FREE(query_str);
+	NDB_FREE(doc_str);
 
 	PG_RETURN_FLOAT4((float4) score);
 }

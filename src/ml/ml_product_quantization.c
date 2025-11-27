@@ -1,18 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_product_quantization.c
- *    Detailed implementation of Product Quantization (PQ) for vector compression.
+ *    Product quantization for vector compression.
  *
- * Product Quantization (PQ) is a lossy compression technique for high-dimensional
- * vectors, commonly employed for efficient approximate nearest neighbor search.
+ * This module implements product quantization for efficient vector compression
+ * and approximate nearest neighbor search.
  *
- * The PQ scheme splits a d-dimensional vector into m contiguous subspaces of
- * equal dimension dsub = d / m. Each subspace is quantized independently using
- * k-means clustering to learn a codebook of ksub centroids per subspace.
- * Encoding replaces each subvector by the index of its nearest centroid.
- * This provides significant compression (e.g., 8-32x), enabling large-scale search.
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_product_quantization.c
@@ -33,8 +27,10 @@
 #include "neurondb_ml.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_simd.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #include "ml_gpu_registry.h"
 #include "ml_catalog.h"
 
@@ -171,10 +167,10 @@ train_subspace_kmeans(float **subspace_data,
 			}
 			/* If a centroid got no points, it remains from old pass */
 		}
-		NDB_SAFE_PFREE_AND_NULL(counts);
+		NDB_FREE(counts);
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(assignments);
+	NDB_FREE(assignments);
 }
 
 /*
@@ -327,8 +323,8 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 
 		/* Release subspace data for this subspace */
 		for (i = 0; i < nvec; i++)
-			NDB_SAFE_PFREE_AND_NULL(subspace_data[i]);
-		NDB_SAFE_PFREE_AND_NULL(subspace_data);
+			NDB_FREE(subspace_data[i]);
+		NDB_FREE(subspace_data);
 	}
 
 	/* Serialization step: compute total serialized length for bytea */
@@ -364,17 +360,17 @@ train_pq_codebook(PG_FUNCTION_ARGS)
 	for (sub = 0; sub < m; sub++)
 	{
 		for (i = 0; i < ksub; i++)
-			NDB_SAFE_PFREE_AND_NULL(codebook.centroids[sub][i]);
-		NDB_SAFE_PFREE_AND_NULL(codebook.centroids[sub]);
+			NDB_FREE(codebook.centroids[sub][i]);
+		NDB_FREE(codebook.centroids[sub]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(codebook.centroids);
+	NDB_FREE(codebook.centroids);
 
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-	NDB_SAFE_PFREE_AND_NULL(data);
+		NDB_FREE(data[i]);
+	NDB_FREE(data);
 
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_BYTEA_P(result);
 }
@@ -498,12 +494,12 @@ pq_encode_vector(PG_FUNCTION_ARGS)
 	for (sub = 0; sub < m; sub++)
 	{
 		for (c = 0; c < ksub; c++)
-			NDB_SAFE_PFREE_AND_NULL(centroids[sub][c]);
-		NDB_SAFE_PFREE_AND_NULL(centroids[sub]);
+			NDB_FREE(centroids[sub][c]);
+		NDB_FREE(centroids[sub]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(centroids);
-	NDB_SAFE_PFREE_AND_NULL(codes);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
+	NDB_FREE(centroids);
+	NDB_FREE(codes);
+	NDB_FREE(result_datums);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -640,16 +636,16 @@ predict_pq_codebook(PG_FUNCTION_ARGS)
 	for (sub = 0; sub < m; sub++)
 	{
 		for (c = 0; c < ksub; c++)
-			NDB_SAFE_PFREE_AND_NULL(centroids[sub][c]);
-		NDB_SAFE_PFREE_AND_NULL(centroids[sub]);
+			NDB_FREE(centroids[sub][c]);
+		NDB_FREE(centroids[sub]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(centroids);
-	NDB_SAFE_PFREE_AND_NULL(codes);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
+	NDB_FREE(centroids);
+	NDB_FREE(codes);
+	NDB_FREE(result_datums);
 	if (model_data)
-		NDB_SAFE_PFREE_AND_NULL(model_data);
+		NDB_FREE(model_data);
 	if (parameters)
-		NDB_SAFE_PFREE_AND_NULL(parameters);
+		NDB_FREE(parameters);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -706,30 +702,36 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 	oldcontext = CurrentMemoryContext;
 
 	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_pq_codebook_by_model_id: SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext_spi = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);
 
 	/* Build query */
-	initStringInfo(&query);
+	ndb_spi_stringinfo_init(spi_session, &query);
 	appendStringInfo(&query,
 					 "SELECT %s FROM %s WHERE %s IS NOT NULL",
 					 vec_str, tbl_str, vec_str);
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
+	{
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(vec_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: evaluate_pq_codebook_by_model_id: query failed")));
+	}
 
 	n_points = SPI_processed;
 	if (n_points < 2)
 	{
-		SPI_finish();
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(vec_str);
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(vec_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_pq_codebook_by_model_id: need at least 2 vectors, got %d",
@@ -745,7 +747,6 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 		int			m,
 					ksub,
 					dsub;
-		float	 ***centroids = NULL;
 		int			i,
 					sub,
 					c,
@@ -753,6 +754,7 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 		double		total_error = 0.0;
 		int			valid_vectors = 0;
 		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		float	  ***centroids = NULL;
 
 		/* Load model from catalog */
 		if (ml_catalog_fetch_model_payload(model_id,
@@ -778,14 +780,17 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 					bits_per_code = 1;
 
 				/* Reconstruct centroids */
-				centroids = (float ***) palloc(sizeof(float **) * m);
+				NDB_ALLOC(centroids, float **, m);
 				for (sub = 0; sub < m; sub++)
 				{
-					centroids[sub] = (float **) palloc(sizeof(float *) * ksub);
+					NDB_DECLARE(float **, centroids_sub);
+					NDB_ALLOC(centroids_sub, float *, ksub);
+					centroids[sub] = centroids_sub;
 					for (c = 0; c < ksub; c++)
 					{
-						centroids[sub][c] =
-							(float *) palloc(sizeof(float) * dsub);
+						NDB_DECLARE(float *, centroids_sub_c);
+						NDB_ALLOC(centroids_sub_c, float, dsub);
+						centroids[sub][c] = centroids_sub_c;
 						memcpy(centroids[sub][c], cb_ptr, sizeof(float) * dsub);
 						cb_ptr += sizeof(float) * dsub;
 					}
@@ -794,7 +799,17 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 				/* Compute quantization error for each vector */
 				for (i = 0; i < n_points; i++)
 				{
+					/* Safe access to SPI_tuptable - validate before access */
+					if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+						i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+					{
+						continue;
+					}
 					HeapTuple	tuple = SPI_tuptable->vals[i];
+					if (tupdesc == NULL)
+					{
+						continue;
+					}
 					Datum		vec_datum;
 					bool		vec_null;
 					Vector	   *vec;
@@ -875,12 +890,12 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 							for (c = 0; c < ksub; c++)
 							{
 								if (centroids[sub][c] != NULL)
-									NDB_SAFE_PFREE_AND_NULL(centroids[sub][c]);
+									NDB_FREE(centroids[sub][c]);
 							}
-							NDB_SAFE_PFREE_AND_NULL(centroids[sub]);
+							NDB_FREE(centroids[sub]);
 						}
 					}
-					NDB_SAFE_PFREE_AND_NULL(centroids);
+					NDB_FREE(centroids);
 				}
 
 				/* Calculate average quantization error */
@@ -894,11 +909,11 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 				}
 
 				if (model_payload != NULL)
-					NDB_SAFE_PFREE_AND_NULL(model_payload);
+					NDB_FREE(model_payload);
 				if (parameters != NULL)
-					NDB_SAFE_PFREE_AND_NULL(parameters);
+					NDB_FREE(parameters);
 				if (metrics != NULL)
-					NDB_SAFE_PFREE_AND_NULL(metrics);
+					NDB_FREE(metrics);
 			}
 			else
 			{
@@ -919,7 +934,8 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 		}
 	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_SPI_SESSION_END(spi_session);
 
 	/* Build result JSON */
 	MemoryContextSwitchTo(oldcontext);
@@ -928,12 +944,12 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 					 "{\"quantization_error\":%.6f,\"subquantizers\":%d,\"codebook_size\":%d,\"bits_per_code\":%d,\"n_vectors\":%d}",
 					 avg_quantization_error, subquantizers, codebook_size, bits_per_code, n_points);
 
-	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+	NDB_FREE(jsonbuf.data);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(vec_str);
+	NDB_FREE(tbl_str);
+	NDB_FREE(vec_str);
 
 	PG_RETURN_JSONB_P(result);
 }
@@ -1043,10 +1059,10 @@ pq_asymmetric_distance(PG_FUNCTION_ARGS)
 	for (sub = 0; sub < m; sub++)
 	{
 		for (int c = 0; c < ksub; c++)
-			NDB_SAFE_PFREE_AND_NULL(centroids[sub][c]);
-		NDB_SAFE_PFREE_AND_NULL(centroids[sub]);
+			NDB_FREE(centroids[sub][c]);
+		NDB_FREE(centroids[sub]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(centroids);
+	NDB_FREE(centroids);
 
 	PG_RETURN_FLOAT4((float4) sqrt(total_dist));
 }
@@ -1152,11 +1168,11 @@ pq_codebook_free(PQCodebook * codebook)
 		{
 			for (i = 0; i < codebook->ksub; i++)
 				if (codebook->centroids[sub][i] != NULL)
-					NDB_SAFE_PFREE_AND_NULL(codebook->centroids[sub][i]);
-			NDB_SAFE_PFREE_AND_NULL(codebook->centroids[sub]);
+					NDB_FREE(codebook->centroids[sub][i]);
+			NDB_FREE(codebook->centroids[sub]);
 		}
 	}
-	NDB_SAFE_PFREE_AND_NULL(codebook->centroids);
+	NDB_FREE(codebook->centroids);
 }
 
 static bool
@@ -1204,7 +1220,7 @@ product_quantization_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, 
 				else if (strcmp(key, "ksub") == 0 && v.type == jbvNumeric)
 					ksub = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 															 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1270,8 +1286,8 @@ product_quantization_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, 
 		train_subspace_kmeans(subspace_data, nvec, codebook.dsub, ksub, codebook.centroids[sub], 100);
 
 		for (i = 0; i < nvec; i++)
-			NDB_SAFE_PFREE_AND_NULL(subspace_data[i]);
-		NDB_SAFE_PFREE_AND_NULL(subspace_data);
+			NDB_FREE(subspace_data[i]);
+		NDB_FREE(subspace_data);
 	}
 
 	/* Serialize model */
@@ -1283,8 +1299,8 @@ product_quantization_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, 
 					 "{\"storage\":\"cpu\",\"m\":%d,\"ksub\":%d,\"dsub\":%d,\"dim\":%d,\"n_samples\":%d}",
 					 m, ksub, codebook.dsub, dim, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+												 CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
 	state = (ProductQuantizationGpuModelState *) palloc0(sizeof(ProductQuantizationGpuModelState));
 	state->model_blob = model_data;
@@ -1298,7 +1314,7 @@ product_quantization_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, 
 	state->n_samples = nvec;
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1306,8 +1322,8 @@ product_quantization_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, 
 
 	/* Cleanup temp data */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-	NDB_SAFE_PFREE_AND_NULL(data);
+		NDB_FREE(data[i]);
+	NDB_FREE(data);
 
 	return true;
 }
@@ -1404,7 +1420,7 @@ product_quantization_gpu_predict(const MLGpuModel * model, const float *input, i
 	}
 
 	memcpy(output, reconstructed, sizeof(float) * state->dim);
-	NDB_SAFE_PFREE_AND_NULL(reconstructed);
+	NDB_FREE(reconstructed);
 
 	return true;
 }
@@ -1449,8 +1465,8 @@ product_quantization_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec 
 					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+													  CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -1494,7 +1510,7 @@ product_quantization_gpu_serialize(const MLGpuModel * model, bytea * *payload_ou
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -1530,7 +1546,7 @@ product_quantization_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 
 	if (pq_codebook_deserialize_from_bytea(payload_copy, &codebook) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("product_quantization_gpu_deserialize: failed to deserialize");
 		return false;
@@ -1568,7 +1584,7 @@ product_quantization_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				else if (strcmp(key, "dim") == 0 && v.type == jbvNumeric)
 					state->dim = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																   NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1578,7 +1594,7 @@ product_quantization_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1599,15 +1615,15 @@ product_quantization_gpu_destroy(MLGpuModel * model)
 	{
 		state = (ProductQuantizationGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
+			NDB_FREE(state->metrics);
 		if (state->codebook != NULL)
 		{
 			pq_codebook_free(state->codebook);
-			NDB_SAFE_PFREE_AND_NULL(state->codebook);
+			NDB_FREE(state->codebook);
 		}
-		NDB_SAFE_PFREE_AND_NULL(state);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

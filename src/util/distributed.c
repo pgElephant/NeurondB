@@ -10,7 +10,7 @@
  * - vector query load balancing across replicas,
  * - and asynchronous, durable index synchronization via WAL and logical replication.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/distributed.c
@@ -37,7 +37,9 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 /*-------------------------------------------------------------------------
  * Context for distributed kNN search SRF
@@ -157,19 +159,19 @@ distributed_knn_search(PG_FUNCTION_ARGS)
 								 shard_names[i],
 								 k);
 
-				ret = SPI_connect();
-				if (ret != SPI_OK_CONNECT)
+				NDB_DECLARE(NdbSpiSession *, session);
+				session = ndb_spi_session_begin(CurrentMemoryContext, false);
+				if (session == NULL)
 					elog(ERROR,
-						 "neurondb: SPI_connect failed "
-						 "for shard \"%s\": code %d",
-						 shard_names[i],
-						 ret);
+						 "neurondb: failed to begin SPI session "
+						 "for shard \"%s\"",
+						 shard_names[i]);
 
-				ret = ndb_spi_execute_safe(sql.data, true, 0);
-				NDB_CHECK_SPI_TUPTABLE();
+				ret = ndb_spi_execute(session, sql.data, true, 0);
 				if (ret != SPI_OK_SELECT)
 				{
-					SPI_finish();
+					NDB_FREE(sql.data);
+					ndb_spi_session_end(&session);
 					elog(ERROR,
 						 "neurondb: SPI SELECT failed "
 						 "on shard \"%s\": %s",
@@ -203,8 +205,8 @@ distributed_knn_search(PG_FUNCTION_ARGS)
 					cidx++;
 				}
 
-				SPI_finish();
-				NDB_SAFE_PFREE_AND_NULL(sql.data);
+				ndb_spi_session_end(&session);
+				NDB_FREE(sql.data);
 			}
 
 			/* Global stable sort and SRF context build */
@@ -277,7 +279,7 @@ distributed_knn_search(PG_FUNCTION_ARGS)
 					}
 
 					funcctx->user_fctx = sctx;
-					NDB_SAFE_PFREE_AND_NULL(sorted_idxs);
+					NDB_FREE(sorted_idxs);
 					MemoryContextSwitchTo(oldcontext);
 				}
 			}
@@ -309,10 +311,10 @@ distributed_knn_search(PG_FUNCTION_ARGS)
 		}
 		else
 		{
-			NDB_SAFE_PFREE_AND_NULL(sctx->ids);
-			NDB_SAFE_PFREE_AND_NULL(sctx->dists);
-			NDB_SAFE_PFREE_AND_NULL(sctx->nulls);
-			NDB_SAFE_PFREE_AND_NULL(sctx);
+			NDB_FREE(sctx->ids);
+			NDB_FREE(sctx->dists);
+			NDB_FREE(sctx->nulls);
+			NDB_FREE(sctx);
 			SRF_RETURN_DONE(funcctx);
 		}
 	}
@@ -480,8 +482,8 @@ merge_distributed_results(PG_FUNCTION_ARGS)
 			result = construct_array(
 									 recs, nres, RECORDOID, -1, false, 'd');
 
-			NDB_SAFE_PFREE_AND_NULL(cands);
-			NDB_SAFE_PFREE_AND_NULL(recs);
+			NDB_FREE(cands);
+			NDB_FREE(recs);
 
 			PG_RETURN_ARRAYTYPE_P(result);
 		}
@@ -564,10 +566,12 @@ sync_index_async(PG_FUNCTION_ARGS)
 		 idx_str,
 		 replica_str);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed in "
+				 errmsg("neurondb: failed to begin SPI session in "
 						"sync_index_async")));
 
 	initStringInfo(&sql);
@@ -582,11 +586,11 @@ sync_index_async(PG_FUNCTION_ARGS)
 					 "sync_started_at TIMESTAMPTZ DEFAULT now(),"
 					 "sync_status TEXT DEFAULT 'active',"
 					 "UNIQUE(source_index_name, target_replica_name))");
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
 	{
-		SPI_finish();
+		NDB_FREE(sql.data);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: failed to create sync "
@@ -616,8 +620,7 @@ sync_index_async(PG_FUNCTION_ARGS)
 					 "SELECT 1 FROM pg_replication_slots WHERE slot_name = '%s'",
 					 slot_name.data);
 
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 0);
 	slot_exists = (ret == SPI_OK_SELECT && SPI_processed > 0);
 
 	if (!slot_exists)
@@ -630,11 +633,13 @@ sync_index_async(PG_FUNCTION_ARGS)
 						 "SELECT "
 						 "pg_create_logical_replication_slot('%s','pgoutput')",
 						 slot_name.data);
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(session, sql.data, false, 0);
 		if (ret != SPI_OK_SELECT)
 		{
-			SPI_finish();
+			NDB_FREE(sql.data);
+			NDB_FREE(slot_name.data);
+			NDB_FREE(pub_name.data);
+			ndb_spi_session_end(&session);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("neurondb: failed to create "
@@ -656,8 +661,7 @@ sync_index_async(PG_FUNCTION_ARGS)
 	appendStringInfo(&sql,
 					 "SELECT 1 FROM pg_publication WHERE pubname = '%s'",
 					 pub_name.data);
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 0);
 	publication_exists = (ret == SPI_OK_SELECT && SPI_processed > 0);
 
 	if (!publication_exists)
@@ -671,8 +675,7 @@ sync_index_async(PG_FUNCTION_ARGS)
 						 "CREATE PUBLICATION %s FOR TABLE %s",
 						 pub_name.data,
 						 idx_str);
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(session, sql.data, false, 0);
 		if (ret != SPI_OK_UTILITY)
 			elog(WARNING,
 				 "neurondb: failed to create publication \"%s\" (may require manual intervention)",
@@ -706,34 +709,23 @@ sync_index_async(PG_FUNCTION_ARGS)
 	argtypes[1] = TEXTOID;
 	argtypes[2] = TEXTOID;
 
-	plan = SPI_prepare(sql.data, 3, argtypes);
-	if (plan == NULL)
-	{
-		SPI_finish();
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: failed to prepare sync "
-						"metadata INSERT/UPDATE")));
-	}
-
 	values[0] = CStringGetTextDatum(idx_str);
 	values[1] = CStringGetTextDatum(replica_str);
 	values[2] = CStringGetTextDatum(slot_name.data);
-	nulls[0] = ' ';
-	nulls[1] = ' ';
-	nulls[2] = ' ';
-	ret = SPI_execute_plan(plan, values, nulls, false, 0);
 
+	ret = ndb_spi_execute_with_args(session, sql.data, 3, argtypes, values, nulls, false, 0);
 	if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE)
 	{
-		SPI_freeplan(plan);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(slot_name.data);
+		NDB_FREE(pub_name.data);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: failed to insert/update sync "
 						"metadata")));
 	}
-	SPI_freeplan(plan);
+
 
 	elog(DEBUG1,
 		 "neurondb: async sync setup complete for index \"%s\"",
@@ -754,8 +746,7 @@ sync_index_async(PG_FUNCTION_ARGS)
 
 	resetStringInfo(&sql);
 	appendStringInfo(&sql, "SELECT pg_current_wal_lsn()");
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 0);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
@@ -769,17 +760,17 @@ sync_index_async(PG_FUNCTION_ARGS)
 		{
 			char	   *lsn_str = TextDatumGetCString(lsn_datum);
 
-			NDB_SAFE_PFREE_AND_NULL(lsn_str);
+			NDB_FREE(lsn_str);
 		}
 	}
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 
-	NDB_SAFE_PFREE_AND_NULL(idx_str);
-	NDB_SAFE_PFREE_AND_NULL(replica_str);
-	NDB_SAFE_PFREE_AND_NULL(slot_name.data);
-	NDB_SAFE_PFREE_AND_NULL(pub_name.data);
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(idx_str);
+	NDB_FREE(replica_str);
+	NDB_FREE(slot_name.data);
+	NDB_FREE(pub_name.data);
+	NDB_FREE(sql.data);
 
 	PG_RETURN_BOOL(true);
 }

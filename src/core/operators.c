@@ -11,7 +11,7 @@
  *    context management, rigorous input contract, and explicit documentation
  *    is provided for all operators.
  *
- *    Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ *    Copyright (c) 2024-2025, pgElephant, Inc.
  *
  *    IDENTIFICATION
  *      src/core/operators.c
@@ -35,6 +35,8 @@
 #include "neurondb_safe_memory.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_macros.h"
 #include <math.h>
 #include <float.h>
 #include <limits.h>
@@ -510,6 +512,7 @@ vec_join(PG_FUNCTION_ARGS)
 		uint64		current;
 		float4		threshold;
 		MemoryContext fn_mcxt;
+		NdbSpiSession *session;
 	}			vec_join_fctx;
 
 	FuncCallContext *funcctx;
@@ -559,37 +562,36 @@ vec_join(PG_FUNCTION_ARGS)
 
 		PG_TRY();
 		{
-			spi_ret = SPI_connect();
-			if (spi_ret != SPI_OK_CONNECT)
+			newstate->session = ndb_spi_session_begin(funcctx->multi_call_memory_ctx, false);
+			if (newstate->session == NULL)
 			{
 				MemoryContextSwitchTo(oldcontext);
-				NDB_SAFE_PFREE_AND_NULL(left_table);
-				NDB_SAFE_PFREE_AND_NULL(right_table);
-				NDB_SAFE_PFREE_AND_NULL(join_pred);
+				NDB_FREE(left_table);
+				NDB_FREE(right_table);
+				NDB_FREE(join_pred);
 				PG_RETURN_NULL();
 			}
 
-			spi_ret = ndb_spi_execute_safe(querybuf, true, 0);
-			NDB_CHECK_SPI_TUPTABLE();
+			spi_ret = ndb_spi_execute(newstate->session, querybuf, true, 0);
 			if (spi_ret != SPI_OK_SELECT)
 			{
-				SPI_finish();
+				ndb_spi_session_end(&newstate->session);
 				MemoryContextSwitchTo(oldcontext);
-				NDB_SAFE_PFREE_AND_NULL(left_table);
-				NDB_SAFE_PFREE_AND_NULL(right_table);
-				NDB_SAFE_PFREE_AND_NULL(join_pred);
+				NDB_FREE(left_table);
+				NDB_FREE(right_table);
+				NDB_FREE(join_pred);
 				PG_RETURN_NULL();
 			}
-			NDB_CHECK_SPI_TUPTABLE();
 		}
 		PG_CATCH();
 		{
+			ndb_spi_session_end(&newstate->session);
 			EmitErrorReport();
 			FlushErrorState();
 			MemoryContextSwitchTo(oldcontext);
-			NDB_SAFE_PFREE_AND_NULL(left_table);
-			NDB_SAFE_PFREE_AND_NULL(right_table);
-			NDB_SAFE_PFREE_AND_NULL(join_pred);
+			NDB_FREE(left_table);
+			NDB_FREE(right_table);
+			NDB_FREE(join_pred);
 			if (IsTransactionState())
 				AbortCurrentTransaction();
 			PG_RE_THROW();
@@ -611,9 +613,9 @@ vec_join(PG_FUNCTION_ARGS)
 		funcctx->user_fctx = newstate;
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-		NDB_SAFE_PFREE_AND_NULL(left_table);
-		NDB_SAFE_PFREE_AND_NULL(right_table);
-		NDB_SAFE_PFREE_AND_NULL(join_pred);
+		NDB_FREE(left_table);
+		NDB_FREE(right_table);
+		NDB_FREE(join_pred);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -684,7 +686,7 @@ vec_join(PG_FUNCTION_ARGS)
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(rettup));
 		}
 	}
-	SPI_finish();
+	ndb_spi_session_end(&state->session);
 	SRF_RETURN_DONE(funcctx);
 }
 
@@ -714,6 +716,7 @@ graph_knn(PG_FUNCTION_ARGS)
 		int32	   *hop_counts; /* Store computed hop counts */
 		int32		max_hops;
 		Vector	   *query_vec;
+		NdbSpiSession *session;
 	}			graph_knn_fctx;
 
 	FuncCallContext *funcctx;
@@ -772,27 +775,28 @@ graph_knn(PG_FUNCTION_ARGS)
 
 		PG_TRY();
 		{
-			if (SPI_connect() != SPI_OK_CONNECT)
+			newstate->session = ndb_spi_session_begin(funcctx->multi_call_memory_ctx, false);
+			if (newstate->session == NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(graph_col_cstr);
+				NDB_FREE(graph_col_cstr);
 				MemoryContextSwitchTo(oldcontext);
 				PG_RETURN_NULL();
 			}
 
-			if (ndb_spi_execute_safe(querybuf, true, 0) != SPI_OK_SELECT)
+			if (ndb_spi_execute(newstate->session, querybuf, true, 0) != SPI_OK_SELECT)
 			{
-				SPI_finish();
-				NDB_SAFE_PFREE_AND_NULL(graph_col_cstr);
+				ndb_spi_session_end(&newstate->session);
+				NDB_FREE(graph_col_cstr);
 				MemoryContextSwitchTo(oldcontext);
 				PG_RETURN_NULL();
 			}
-			NDB_CHECK_SPI_TUPTABLE();
 		}
 		PG_CATCH();
 		{
+			ndb_spi_session_end(&newstate->session);
 			EmitErrorReport();
 			FlushErrorState();
-			NDB_SAFE_PFREE_AND_NULL(graph_col_cstr);
+			NDB_FREE(graph_col_cstr);
 			MemoryContextSwitchTo(oldcontext);
 			if (IsTransactionState())
 				AbortCurrentTransaction();
@@ -815,7 +819,7 @@ graph_knn(PG_FUNCTION_ARGS)
 		funcctx->user_fctx = newstate;
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-		NDB_SAFE_PFREE_AND_NULL(graph_col_cstr);
+		NDB_FREE(graph_col_cstr);
 
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -883,7 +887,7 @@ graph_knn(PG_FUNCTION_ARGS)
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(rettup));
 		}
 	}
-	SPI_finish();
+	ndb_spi_session_end(&state->session);
 	SRF_RETURN_DONE(funcctx);
 }
 
@@ -930,55 +934,59 @@ hybrid_rank(PG_FUNCTION_ARGS)
 	txt_str = text_to_cstring(query_text);
 
 	/* Defensive: try to fetch weights from neurondb_hybrid_weights table */
-	if (SPI_connect() == SPI_OK_CONNECT)
 	{
-		StringInfoData sql;
-		int			spi_rc;
-
-		PG_TRY();
+		NDB_DECLARE(NdbSpiSession *, session);
+		session = ndb_spi_session_begin(CurrentMemoryContext, false);
+		if (session != NULL)
 		{
-			initStringInfo(&sql);
-			appendStringInfo(&sql,
-							 "SELECT alpha, beta FROM neurondb_hybrid_weights WHERE "
-							 "relation = '%s'",
-							 rel_str);
+			StringInfoData sql;
+			int			spi_rc;
 
-			spi_rc = ndb_spi_execute_safe(sql.data, true, 1);
-			NDB_CHECK_SPI_TUPTABLE();
-			if (spi_rc == SPI_OK_SELECT && SPI_processed == 1)
+			PG_TRY();
 			{
-				bool		isnull1 = false;
-				bool		isnull2 = false;
-				float4		aval = DatumGetFloat4(
-												  SPI_getbinval(SPI_tuptable->vals[0],
-																SPI_tuptable->tupdesc,
-																1,
-																&isnull1));
-				float4		bval = DatumGetFloat4(
-												  SPI_getbinval(SPI_tuptable->vals[0],
-																SPI_tuptable->tupdesc,
-																2,
-																&isnull2));
+				initStringInfo(&sql);
+				appendStringInfo(&sql,
+								 "SELECT alpha, beta FROM neurondb_hybrid_weights WHERE "
+								 "relation = '%s'",
+								 rel_str);
 
-				if (!isnull1)
-					alpha = aval;
-				if (!isnull2)
-					beta = bval;
+				spi_rc = ndb_spi_execute(session, sql.data, true, 1);
+				if (spi_rc == SPI_OK_SELECT && SPI_processed == 1)
+				{
+					bool		isnull1 = false;
+					bool		isnull2 = false;
+					float4		aval = DatumGetFloat4(
+													  SPI_getbinval(SPI_tuptable->vals[0],
+																	SPI_tuptable->tupdesc,
+																	1,
+																	&isnull1));
+					float4		bval = DatumGetFloat4(
+													  SPI_getbinval(SPI_tuptable->vals[0],
+																	SPI_tuptable->tupdesc,
+																	2,
+																	&isnull2));
+
+					if (!isnull1)
+						alpha = aval;
+					if (!isnull2)
+						beta = bval;
+				}
+				NDB_FREE(sql.data);
+				ndb_spi_session_end(&session);
 			}
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			SPI_finish();
+			PG_CATCH();
+			{
+				if (session != NULL)
+					ndb_spi_session_end(&session);
+				EmitErrorReport();
+				FlushErrorState();
+				NDB_FREE(sql.data);
+				if (IsTransactionState())
+					AbortCurrentTransaction();
+				PG_RE_THROW();
+			}
+			PG_END_TRY();
 		}
-		PG_CATCH();
-		{
-			EmitErrorReport();
-			FlushErrorState();
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			SPI_finish();
-			if (IsTransactionState())
-				AbortCurrentTransaction();
-			PG_RE_THROW();
-		}
-		PG_END_TRY();
 	}
 
 	/* Compute vector score based on query vector norm and dimension */
@@ -1033,8 +1041,8 @@ hybrid_rank(PG_FUNCTION_ARGS)
 		float4		final_score =
 			alpha * lexical_score + beta * vector_score;
 
-		NDB_SAFE_PFREE_AND_NULL(rel_str);
-		NDB_SAFE_PFREE_AND_NULL(txt_str);
+		NDB_FREE(rel_str);
+		NDB_FREE(txt_str);
 		PG_RETURN_FLOAT4(final_score);
 	}
 }
@@ -1071,7 +1079,7 @@ vec_window_rank(PG_FUNCTION_ARGS)
 
 	for (p = part_str; *p; ++p)
 		hash = ((hash << 5) + hash) + (unsigned char) *p;
-	NDB_SAFE_PFREE_AND_NULL(part_str);
+	NDB_FREE(part_str);
 
 	PG_RETURN_INT64((int64) (hash % 10 + 1));
 }
@@ -1138,7 +1146,7 @@ vec_route(PG_FUNCTION_ARGS)
 
 		if ((Pointer) centroid != DatumGetPointer(cent_dat))
 		{
-			NDB_SAFE_PFREE_AND_NULL(centroid);
+			NDB_FREE(centroid);
 		}
 	}
 

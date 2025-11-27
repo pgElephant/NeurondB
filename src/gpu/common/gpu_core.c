@@ -1,14 +1,17 @@
-/*
+/*-------------------------------------------------------------------------
+ *
  * gpu_core.c
- *     Robust GPU initialization and device management for NeurondB.
+ *    Backend initialization and device management.
  *
- * This module handles GPU backend initialization (CUDA/ROCm/OpenCL),
- * device selection, runtime fallback to CPU, and all related statistics.
+ * This module handles backend initialization, device selection, and
+ * related statistics.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *     src/gpu_core.c
+ *    src/gpu/common/gpu_core.c
+ *
+ *-------------------------------------------------------------------------
  */
 
 #include "postgres.h"
@@ -38,6 +41,7 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "libpq/pqsignal.h"
 #include <signal.h>
 
@@ -52,15 +56,7 @@ extern bool neurondb_gpu_rf_predict_backend(const void *,
 											char **);
 #endif
 
-bool		neurondb_gpu_enabled = false;
-int			neurondb_gpu_device = 0;
-int			neurondb_gpu_batch_size = 8192;
-int			neurondb_gpu_streams = 2;
-double		neurondb_gpu_memory_pool_mb = 512.0;
-bool		neurondb_gpu_fail_open = true;
-char	   *neurondb_gpu_kernels = NULL;
-char	   *neurondb_gpu_backend = NULL;
-int			neurondb_gpu_timeout_ms = 30000;
+/* GUC variables are now defined in neurondb_guc.c */
 
 static bool gpu_ready = false;
 static bool gpu_disabled = false;
@@ -117,120 +113,7 @@ ndb_gpu_stats_record(bool used_gpu, double gpu_ms, double cpu_ms, bool fallback)
 		gpu_stats.avg_latency_ms = 0.0;
 }
 
-void
-neurondb_gpu_init_guc(void)
-{
-	DefineCustomBoolVariable("neurondb.gpu_enabled",
-							 "Enable GPU acceleration for vector operations",
-							 NULL,
-							 &neurondb_gpu_enabled,
-							 false,
-							 PGC_USERSET,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
-
-	DefineCustomIntVariable("neurondb.gpu_device",
-							"GPU device ID to use (0-based)",
-							NULL,
-							&neurondb_gpu_device,
-							0,
-							0,
-							16,
-							PGC_USERSET,
-							0,
-							NULL,
-							NULL,
-							NULL);
-
-	DefineCustomIntVariable("neurondb.gpu_batch_size",
-							"Batch size for GPU operations",
-							NULL,
-							&neurondb_gpu_batch_size,
-							8192,
-							64,
-							65536,
-							PGC_USERSET,
-							0,
-							NULL,
-							NULL,
-							NULL);
-
-	DefineCustomIntVariable("neurondb.gpu_streams",
-							"Number of CUDA/HIP streams for parallel operations",
-							NULL,
-							&neurondb_gpu_streams,
-							2,
-							1,
-							8,
-							PGC_USERSET,
-							0,
-							NULL,
-							NULL,
-							NULL);
-
-	DefineCustomRealVariable("neurondb.gpu_memory_pool_mb",
-							 "GPU memory pool size in MB",
-							 NULL,
-							 &neurondb_gpu_memory_pool_mb,
-							 512.0,
-							 64.0,
-							 32768.0,
-							 PGC_USERSET,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
-
-	DefineCustomBoolVariable("neurondb.gpu_fail_open",
-							 "Fallback to CPU on GPU errors (true = fail open)",
-							 NULL,
-							 &neurondb_gpu_fail_open,
-							 true,
-							 PGC_USERSET,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
-
-	DefineCustomStringVariable("neurondb.gpu_kernels",
-							   "List of GPU-accelerated kernels (comma-separated: "
-							   "l2,cosine,ip)",
-							   NULL,
-							   &neurondb_gpu_kernels,
-							   "l2,cosine,ip,rf_split,rf_predict",
-							   PGC_USERSET,
-							   0,
-							   NULL,
-							   NULL,
-							   NULL);
-
-	DefineCustomStringVariable("neurondb.gpu_backend",
-							   "GPU backend: 'cuda' (NVIDIA), 'rocm' (AMD), 'metal' (Apple), "
-							   "'auto' (detect), 'cpu' (disable)",
-							   NULL,
-							   &neurondb_gpu_backend,
-							   "auto",
-							   PGC_USERSET,
-							   0,
-							   NULL,
-							   NULL,
-							   NULL);
-
-	DefineCustomIntVariable("neurondb.gpu_timeout_ms",
-							"GPU kernel execution timeout in milliseconds",
-							NULL,
-							&neurondb_gpu_timeout_ms,
-							30000,
-							1000,
-							300000,
-							PGC_USERSET,
-							0,
-							NULL,
-							NULL,
-							NULL);
-}
+/* GUC initialization is now centralized in neurondb_guc.c */
 
 bool
 ndb_gpu_kernel_enabled(const char *kernel_name)
@@ -631,7 +514,7 @@ neurondb_gpu_info(PG_FUNCTION_ARGS)
 	tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 
 	if (info)
-		NDB_SAFE_PFREE_AND_NULL(info);
+		NDB_FREE(info);
 
 	return (Datum) 0;
 }

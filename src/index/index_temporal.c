@@ -7,7 +7,7 @@
  * scores, enabling time-gated kNN queries where recent vectors
  * are automatically boosted.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/index/index_temporal.c
@@ -31,7 +31,9 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 /* Forward declarations */
 static char *VectorToLiteral(Vector *v);
@@ -77,6 +79,7 @@ temporal_index_create(PG_FUNCTION_ARGS)
 	char	   *idx_tbl;
 	StringInfoData sql;
 	int			ret;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	tbl_str = text_to_cstring(table_name);
 	vec_str = text_to_cstring(vector_col);
@@ -91,9 +94,9 @@ temporal_index_create(PG_FUNCTION_ARGS)
 		 ts_str,
 		 decay_rate);
 
-	ret = SPI_connect();
-	if (ret != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed: %d", ret);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		elog(ERROR, "failed to begin SPI session");
 
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
@@ -103,23 +106,29 @@ temporal_index_create(PG_FUNCTION_ARGS)
 					 "insert_ts timestamptz"
 					 ")",
 					 idx_tbl);
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
+	{
+		NDB_FREE(sql.data);
+		ndb_spi_session_end(&session);
 		elog(ERROR, "Failed to create TVX index table: %s", sql.data);
+	}
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 
 	appendStringInfo(&sql, "TRUNCATE %s", idx_tbl);
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
+	{
+		NDB_FREE(sql.data);
+		ndb_spi_session_end(&session);
 		elog(ERROR, "Failed to truncate TVX index table: %s", idx_tbl);
+	}
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 
 	appendStringInfo(&sql,
@@ -130,15 +139,19 @@ temporal_index_create(PG_FUNCTION_ARGS)
 					 ts_str,
 					 tbl_str);
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret != SPI_OK_INSERT)
+	{
+		NDB_FREE(sql.data);
+		ndb_spi_session_end(&session);
 		elog(ERROR,
 			 "Failed to bulk insert vectors into TVX index: %s",
 			 sql.data);
+	}
 
-	SPI_finish();
-	NDB_SAFE_PFREE_AND_NULL(idx_tbl);
+	NDB_FREE(sql.data);
+	ndb_spi_session_end(&session);
+	NDB_FREE(idx_tbl);
 
 	PG_RETURN_BOOL(true);
 }
@@ -164,6 +177,7 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 	FuncCallContext *funcctx;
 	TupleDesc	tupdesc;
 	MemoryContext oldcontext;
+	NDB_DECLARE(NdbSpiSession *, session2);
 
 	if (SRF_IS_FIRSTCALL())
 	{
@@ -205,9 +219,9 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
-		ret = SPI_connect();
-		if (ret != SPI_OK_CONNECT)
-			elog(ERROR, "SPI_connect failed: %d", ret);
+		session2 = ndb_spi_session_begin(funcctx->multi_call_memory_ctx, false);
+		if (session2 == NULL)
+			elog(ERROR, "failed to begin SPI session");
 
 		initStringInfo(&sql);
 
@@ -225,16 +239,21 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 						 (long long) cutoff_time,
 						 k);
 
-		ret = ndb_spi_execute_safe(sql.data, true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(session2, sql.data, true, 0);
 		if (ret != SPI_OK_SELECT)
+		{
+			NDB_FREE(sql.data);
+			ndb_spi_session_end(&session2);
 			elog(ERROR, "Failed temporal index scan: %s", sql.data);
+		}
 
-		funcctx->user_fctx = SPI_tuptable;
+		/* Store session to keep SPI connection alive for tuptable access */
+		funcctx->user_fctx = session2;
+		NDB_FREE(sql.data);
 
 		MemoryContextSwitchTo(oldcontext);
 
-		NDB_SAFE_PFREE_AND_NULL(idx_tbl);
+		NDB_FREE(idx_tbl);
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
@@ -242,11 +261,13 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 	{
 		uint64		call_cntr;
 		uint64		max_calls;
+		NdbSpiSession *session2;
 		SPITupleTable *tuptable;
 
 		call_cntr = funcctx->call_cntr;
-		max_calls = SPI_processed;
-		tuptable = (SPITupleTable *) funcctx->user_fctx;
+		max_calls = funcctx->max_calls;
+		session2 = (NdbSpiSession *) funcctx->user_fctx;
+		tuptable = SPI_tuptable;  /* Access via global SPI_tuptable while session is active */
 
 		if (call_cntr < max_calls)
 		{
@@ -270,9 +291,8 @@ temporal_knn_search(PG_FUNCTION_ARGS)
 		}
 		else
 		{
-			if (tuptable)
-				SPI_freetuptable(tuptable);
-			SPI_finish();
+			if (session2 != NULL)
+				ndb_spi_session_end(&session2);
 			SRF_RETURN_DONE(funcctx);
 		}
 	}

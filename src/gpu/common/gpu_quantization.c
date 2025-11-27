@@ -1,14 +1,18 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_quantization.c
- *     Host-side quantization helpers used by GPU entry points.
+ *    Host-side quantization helpers.
  *
- * For now these implementations execute on the CPU so that the extension
- * continues to build without requiring CUDA/HIP kernels to be compiled.
- * Once proper GPU kernels are restored we can swap these functions to
- * dispatch to device code.
+ * This module provides quantization helper functions used by entry points
+ * for vector compression and quantization operations.
  *
- *-------------------------------------------------------------------------*/
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/common/gpu_quantization.c
+ *
+ *-------------------------------------------------------------------------
+ */
 
 #include "postgres.h"
 #include "fmgr.h"

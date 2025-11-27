@@ -1,8 +1,17 @@
-/*
+/*-------------------------------------------------------------------------
+ *
  * gpu_sql.c
- * PostgreSQL SQL-callable wrappers for NeurondB GPU-accelerated vector
- * operations. Implements robust CPU fallback logic, strict error checking,
- * and correct Postgres resource management throughout.
+ *    SQL-callable wrappers for accelerated vector operations.
+ *
+ * This module provides PostgreSQL SQL-callable wrappers for accelerated
+ * vector operations with error checking and resource management.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/common/gpu_sql.c
+ *
+ *-------------------------------------------------------------------------
  */
 
 #include "postgres.h"
@@ -30,6 +39,43 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+
+/* IVF index structure definitions (matching ivf_am.c) */
+#define IVF_MAGIC_NUMBER 0x49564646 /* "IVFF" in hex */
+
+typedef struct IvfMetaPageData
+{
+	uint32		magicNumber;
+	uint32		version;
+	int			nlists;
+	int			nprobe;
+	int			dim;
+	BlockNumber centroidsBlock;
+	int64		insertedVectors;
+}			IvfMetaPageData;
+
+typedef struct IvfCentroidData
+{
+	int			listId;
+	int			dim;
+	int64		memberCount;
+	BlockNumber firstBlock;
+	/* Followed by float4 centroid[dim] */
+}			IvfCentroidData;
+
+typedef struct IvfListPageHeader
+{
+	BlockNumber nextBlock;
+	int32		entryCount;
+}			IvfListPageHeader;
+
+typedef struct IvfListEntryData
+{
+	ItemPointerData heapPtr;
+	int16		dim;
+	/* Followed by float4 vector[dim] */
+}			IvfListEntryData;
 
 /*
  * ndb_gpu_can_run
@@ -666,7 +712,7 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 					candidateCount = 1;
 					visited[current] = true;
 
-					NDB_SAFE_PFREE_AND_NULL(nodeVec);
+					NDB_FREE(nodeVec);
 				}
 				UnlockReleaseBuffer(nodeBuf);
 			}
@@ -726,7 +772,7 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 								candidateCount++;
 								visited[neighbors[j]] = true;
 
-								NDB_SAFE_PFREE_AND_NULL(neighborVec);
+								NDB_FREE(neighborVec);
 							}
 							UnlockReleaseBuffer(neighborBuf);
 						}
@@ -795,12 +841,12 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 					UnlockReleaseBuffer(resultBuf);
 				}
 
-				NDB_SAFE_PFREE_AND_NULL(topKIndices);
+				NDB_FREE(topKIndices);
 			}
 
-			NDB_SAFE_PFREE_AND_NULL(candidates);
-			NDB_SAFE_PFREE_AND_NULL(candidateDists);
-			NDB_SAFE_PFREE_AND_NULL(visited);
+			NDB_FREE(candidates);
+			NDB_FREE(candidateDists);
+			NDB_FREE(visited);
 
 			elog(DEBUG1,
 				 "hnsw_knn_search_gpu: Completed graph traversal, returning %d result(s)",
@@ -841,9 +887,9 @@ hnsw_knn_search_gpu(PG_FUNCTION_ARGS)
 			{
 				funcctx->user_fctx = NULL;
 				if (results)
-					NDB_SAFE_PFREE_AND_NULL(results);
+					NDB_FREE(results);
 				if (distances)
-					NDB_SAFE_PFREE_AND_NULL(distances);
+					NDB_FREE(distances);
 			}
 		}
 
@@ -1019,26 +1065,316 @@ ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 			}
 		}
 
-		/* Perform IVF search */
-
-		/*
-		 * Full implementation would: 1. Load cluster centroids to GPU memory
-		 * 2. Select nprobe closest clusters on GPU (or CPU fallback) 3. Load
-		 * candidate vectors from selected clusters to GPU 4. Compute
-		 * distances on GPU for all candidates 5. Return top-k results
-		 *
-		 * For now, return error indicating full implementation needed.
-		 */
+		/* Perform IVF search with GPU acceleration */
 		if (meta->centroidsBlock != InvalidBlockNumber && meta->nlists > 0)
 		{
-			UnlockReleaseBuffer(metaBuffer);
-			index_close(indexRel, AccessShareLock);
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("ivf_knn_search_gpu: Full IVF GPU search "
-							"implementation not yet available"),
-					 errhint("Use CPU-based IVF search or implement full "
-							 "GPU cluster selection and distance computation")));
+			Buffer		centroidsBuf;
+			Page		centroidsPage;
+			OffsetNumber maxoff;
+			float4	   *centroids = NULL;
+			float4	   *centroid_distances = NULL;
+			int		   *selected_clusters = NULL;
+			float4	   *candidate_vectors = NULL;
+			ItemPointerData *candidate_tids = NULL;
+			int			candidate_count = 0;
+			int			i, j;
+			int			max_candidates = k * nprobe * 10; /* Collect more candidates than needed */
+
+			/* Step 1: Load centroids to GPU memory */
+			centroidsBuf = ReadBuffer(indexRel, meta->centroidsBlock);
+			if (!BufferIsValid(centroidsBuf))
+			{
+				UnlockReleaseBuffer(metaBuffer);
+				index_close(indexRel, AccessShareLock);
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("ivf_knn_search_gpu: ReadBuffer failed for centroids")));
+			}
+			LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
+			centroidsPage = BufferGetPage(centroidsBuf);
+			maxoff = PageGetMaxOffsetNumber(centroidsPage);
+
+			/* Allocate centroids array */
+			centroids = (float4 *) palloc(meta->nlists * query->dim * sizeof(float4));
+			centroid_distances = (float4 *) palloc(meta->nlists * sizeof(float4));
+			selected_clusters = (int *) palloc(nprobe * sizeof(int));
+
+			/* Extract centroids from page */
+			for (i = 0; i < meta->nlists && i < maxoff; i++)
+			{
+				OffsetNumber offnum = FirstOffsetNumber + i;
+				IvfCentroidData *centroid;
+				float4	   *centroid_vec;
+
+				if (offnum > maxoff)
+					break;
+
+				centroid = (IvfCentroidData *) PageGetItem(centroidsPage,
+														   PageGetItemId(centroidsPage, offnum));
+				if (centroid->dim != query->dim)
+					continue;
+
+				centroid_vec = (float4 *) ((char *) centroid + MAXALIGN(sizeof(IvfCentroidData)));
+				memcpy(centroids + i * query->dim, centroid_vec, query->dim * sizeof(float4));
+			}
+
+			/* Step 2: Select nprobe closest clusters using GPU */
+			if (backend && backend->launch_l2_distance)
+			{
+				/* Compute distances to all centroids on GPU */
+				for (i = 0; i < meta->nlists; i++)
+				{
+					float		dist = 0.0f;
+					int			rc;
+
+					rc = backend->launch_l2_distance(query->data,
+													  centroids + i * query->dim,
+													  &dist,
+													  1,
+													  query->dim,
+													  NULL);
+					if (rc == 0)
+						centroid_distances[i] = dist;
+					else
+						centroid_distances[i] = FLT_MAX;
+				}
+			}
+			else
+			{
+				/* CPU fallback: compute distances */
+				for (i = 0; i < meta->nlists; i++)
+				{
+					float		sum = 0.0f;
+					int			d;
+
+					for (d = 0; d < query->dim; d++)
+					{
+						float		diff = query->data[d] - centroids[i * query->dim + d];
+						sum += diff * diff;
+					}
+					centroid_distances[i] = sqrtf(sum);
+				}
+			}
+
+			/* Select nprobe closest clusters */
+			for (i = 0; i < nprobe; i++)
+			{
+				int			best_idx = -1;
+				float		best_dist = FLT_MAX;
+
+				for (j = 0; j < meta->nlists; j++)
+				{
+					bool		already_selected = false;
+					int			k;
+
+					for (k = 0; k < i; k++)
+					{
+						if (selected_clusters[k] == j)
+						{
+							already_selected = true;
+							break;
+						}
+					}
+
+					if (!already_selected && centroid_distances[j] < best_dist)
+					{
+						best_dist = centroid_distances[j];
+						best_idx = j;
+					}
+				}
+				selected_clusters[i] = best_idx;
+			}
+
+			UnlockReleaseBuffer(centroidsBuf);
+
+			/* Step 3: Load candidate vectors from selected clusters */
+			centroidsBuf = ReadBuffer(indexRel, meta->centroidsBlock);
+			LockBuffer(centroidsBuf, BUFFER_LOCK_SHARE);
+			centroidsPage = BufferGetPage(centroidsBuf);
+			maxoff = PageGetMaxOffsetNumber(centroidsPage);
+
+			candidate_vectors = (float4 *) palloc(max_candidates * query->dim * sizeof(float4));
+			candidate_tids = (ItemPointerData *) palloc(max_candidates * sizeof(ItemPointerData));
+
+			/* Collect candidates from selected clusters */
+			for (i = 0; i < nprobe && candidate_count < max_candidates; i++)
+			{
+				int			cluster_id = selected_clusters[i];
+				OffsetNumber offnum;
+				IvfCentroidData *centroid;
+				BlockNumber list_block;
+
+				if (cluster_id < 0 || cluster_id >= maxoff)
+					continue;
+
+				offnum = FirstOffsetNumber + cluster_id;
+				if (offnum > maxoff)
+					continue;
+
+				centroid = (IvfCentroidData *) PageGetItem(centroidsPage,
+														   PageGetItemId(centroidsPage, offnum));
+
+				if (centroid->firstBlock == InvalidBlockNumber)
+					continue;
+
+				/* Traverse inverted list */
+				list_block = centroid->firstBlock;
+				while (list_block != InvalidBlockNumber && candidate_count < max_candidates)
+				{
+					Buffer		list_buf;
+					Page		list_page;
+					IvfListPageHeader *list_header;
+					OffsetNumber list_maxoff;
+					OffsetNumber list_offnum;
+
+					list_buf = ReadBuffer(indexRel, list_block);
+					if (!BufferIsValid(list_buf))
+						break;
+					LockBuffer(list_buf, BUFFER_LOCK_SHARE);
+					list_page = BufferGetPage(list_buf);
+					list_header = (IvfListPageHeader *) PageGetSpecialPointer(list_page);
+
+					if (!PageIsNew(list_page) && !PageIsEmpty(list_page))
+					{
+						list_maxoff = PageGetMaxOffsetNumber(list_page);
+
+						for (list_offnum = FirstOffsetNumber;
+							 list_offnum <= list_maxoff && candidate_count < max_candidates;
+							 list_offnum = OffsetNumberNext(list_offnum))
+						{
+							ItemId		item_id = PageGetItemId(list_page, list_offnum);
+							IvfListEntryData *entry;
+							float4	   *entry_vec;
+
+							if (!ItemIdIsValid(item_id) || ItemIdIsDead(item_id))
+								continue;
+
+							entry = (IvfListEntryData *) PageGetItem(list_page, item_id);
+							if (entry->dim != query->dim)
+								continue;
+
+							entry_vec = (float4 *) ((char *) entry + MAXALIGN(sizeof(IvfListEntryData)));
+							memcpy(candidate_vectors + candidate_count * query->dim,
+								   entry_vec, query->dim * sizeof(float4));
+							candidate_tids[candidate_count] = entry->heapPtr;
+							candidate_count++;
+						}
+					}
+
+					list_block = list_header->nextBlock;
+					UnlockReleaseBuffer(list_buf);
+				}
+			}
+
+			UnlockReleaseBuffer(centroidsBuf);
+
+			/* Step 4: Compute distances on GPU for all candidates */
+			if (candidate_count > 0)
+			{
+				float4	   *candidate_distances = NULL;
+				int		   *indices = NULL;
+				int			j;
+
+				candidate_distances = (float4 *) palloc(candidate_count * sizeof(float4));
+				indices = (int *) palloc(candidate_count * sizeof(int));
+
+				if (backend && backend->launch_l2_distance)
+				{
+					/* Compute distances on GPU */
+					for (i = 0; i < candidate_count; i++)
+					{
+						float		dist = 0.0f;
+						int			rc;
+
+						rc = backend->launch_l2_distance(query->data,
+														  candidate_vectors + i * query->dim,
+														  &dist,
+														  1,
+														  query->dim,
+														  NULL);
+						if (rc == 0)
+							candidate_distances[i] = dist;
+						else
+							candidate_distances[i] = FLT_MAX;
+					}
+				}
+				else
+				{
+					/* CPU fallback */
+					for (i = 0; i < candidate_count; i++)
+					{
+						float		sum = 0.0f;
+						int			d;
+
+						for (d = 0; d < query->dim; d++)
+						{
+							float		diff = query->data[d] - candidate_vectors[i * query->dim + d];
+							sum += diff * diff;
+						}
+						candidate_distances[i] = sqrtf(sum);
+					}
+				}
+
+				/* Initialize indices */
+				for (i = 0; i < candidate_count; i++)
+					indices[i] = i;
+
+				/* Sort by distance (selection sort for top-k) */
+				for (i = 0; i < k && i < candidate_count; i++)
+				{
+					int			best_idx = i;
+					float		best_dist = candidate_distances[indices[i]];
+
+					for (j = i + 1; j < candidate_count; j++)
+					{
+						if (candidate_distances[indices[j]] < best_dist)
+						{
+							best_dist = candidate_distances[indices[j]];
+							best_idx = j;
+						}
+					}
+
+					/* Swap */
+					if (best_idx != i)
+					{
+						int			tmp = indices[i];
+						indices[i] = indices[best_idx];
+						indices[best_idx] = tmp;
+					}
+				}
+
+				/* Allocate result arrays */
+				resultCount = (k < candidate_count) ? k : candidate_count;
+				results = (ItemPointerData *) palloc(resultCount * sizeof(ItemPointerData));
+				distances = (float4 *) palloc(resultCount * sizeof(float4));
+
+				for (i = 0; i < resultCount; i++)
+				{
+					results[i] = candidate_tids[indices[i]];
+					distances[i] = candidate_distances[indices[i]];
+				}
+
+				NDB_FREE(candidate_distances);
+				NDB_FREE(indices);
+			}
+			else
+			{
+				resultCount = 0;
+				results = NULL;
+				distances = NULL;
+			}
+
+			/* Cleanup */
+			if (centroids)
+				NDB_FREE(centroids);
+			if (centroid_distances)
+				NDB_FREE(centroid_distances);
+			if (selected_clusters)
+				NDB_FREE(selected_clusters);
+			if (candidate_vectors)
+				NDB_FREE(candidate_vectors);
+			if (candidate_tids)
+				NDB_FREE(candidate_tids);
 		}
 		else
 		{
@@ -1077,9 +1413,9 @@ ivf_knn_search_gpu(PG_FUNCTION_ARGS)
 			{
 				funcctx->user_fctx = NULL;
 				if (results)
-					NDB_SAFE_PFREE_AND_NULL(results);
+					NDB_FREE(results);
 				if (distances)
-					NDB_SAFE_PFREE_AND_NULL(distances);
+					NDB_FREE(distances);
 			}
 		}
 		MemoryContextSwitchTo(oldcontext);

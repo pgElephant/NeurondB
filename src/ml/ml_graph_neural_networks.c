@@ -1,23 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_graph_neural_networks.c
- *    Graph Convolutional Networks, Graph Attention Networks, GraphSAGE
+ *    Graph neural network algorithms.
  *
- * Implements graph neural network algorithms:
+ * This module implements GCN, GAT, and GraphSAGE for graph-structured data
+ * learning with model serialization and catalog storage.
  *
- * 1. Graph Convolutional Network (GCN): Spectral convolution on graphs
- *    - Aggregates neighbor features
- *    - Layer-wise propagation rule
- *
- * 2. Graph Attention Network (GAT): Attention mechanism for graphs
- *    - Learns attention weights for neighbors
- *    - Multi-head attention support
- *
- * 3. GraphSAGE: Sample and Aggregate
- *    - Inductive learning on large graphs
- *    - Samples neighbors for aggregation
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_graph_neural_networks.c
@@ -48,7 +37,8 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
-#include "neurondb_spi_safe.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 /* GCN layer structure */
 typedef struct GCNLayer
@@ -98,7 +88,7 @@ normalize_adjacency(float **adj, int n_nodes, float **norm_adj)
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(degrees);
+	NDB_FREE(degrees);
 }
 
 /*
@@ -138,8 +128,8 @@ gcn_forward(float **features, float **adj_norm, float **weights, float *bias,
 	}
 
 	for (i = 0; i < n_nodes; i++)
-		NDB_SAFE_PFREE_AND_NULL(ah[i]);
-	NDB_SAFE_PFREE_AND_NULL(ah);
+		NDB_FREE(ah[i]);
+	NDB_FREE(ah);
 }
 
 /*
@@ -205,18 +195,24 @@ gcn_train(PG_FUNCTION_ARGS)
 	feat_tbl = text_to_cstring(features_table);
 	label_tbl = text_to_cstring(labels_table);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Initialize adjacency matrix */
-	adjacency = (float **) palloc(sizeof(float *) * n_nodes);
-	adj_norm = (float **) palloc(sizeof(float *) * n_nodes);
+	NDB_DECLARE(float **, adjacency);
+	NDB_DECLARE(float **, adj_norm);
+	NDB_ALLOC(adjacency, float *, n_nodes);
+	NDB_ALLOC(adj_norm, float *, n_nodes);
 	for (i = 0; i < n_nodes; i++)
 	{
-		adjacency[i] = (float *) palloc0(sizeof(float) * n_nodes);
-		adj_norm[i] = (float *) palloc0(sizeof(float) * n_nodes);
+		NDB_DECLARE(float *, adj_row);
+		NDB_DECLARE(float *, adj_norm_row);
+		NDB_ALLOC(adj_row, float, n_nodes);
+		NDB_ALLOC(adj_norm_row, float, n_nodes);
+		adjacency[i] = adj_row;
+		adj_norm[i] = adj_norm_row;
 		/* Self-connections */
 		adjacency[i][i] = 1.0;
 	}
@@ -226,27 +222,43 @@ gcn_train(PG_FUNCTION_ARGS)
 		StringInfoData query;
 		int			ret;
 
-		initStringInfo(&query);
+		ndb_spi_stringinfo_init(spi_session, &query);
 		appendStringInfo(&query,
 						 "SELECT node_id, neighbor_id, COALESCE(weight, 1.0) FROM %s",
 						 graph_tbl);
 
-		ret = ndb_spi_execute_safe(query.data, true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(spi_session, query.data, true, 0);
 		if (ret == SPI_OK_SELECT)
 		{
 			for (i = 0; i < SPI_processed; i++)
 			{
+				/* Safe access to SPI_tuptable - validate before access */
+				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+					i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+				{
+					continue;
+				}
 				HeapTuple	tuple = SPI_tuptable->vals[i];
-				int			node_id = DatumGetInt32(SPI_getbinval(tuple,
-																  SPI_tuptable->tupdesc,
-																  1, NULL));
-				int			neighbor_id = DatumGetInt32(SPI_getbinval(tuple,
-																	  SPI_tuptable->tupdesc,
-																	  2, NULL));
-				float		weight = DatumGetFloat4(SPI_getbinval(tuple,
-																  SPI_tuptable->tupdesc,
-																  3, NULL));
+				TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+				if (tupdesc == NULL)
+				{
+					continue;
+				}
+				/* Use safe function for int32 values */
+				int32		node_id_val, neighbor_id_val;
+				if (!ndb_spi_get_int32(spi_session, i, 1, &node_id_val))
+					continue;
+				if (!ndb_spi_get_int32(spi_session, i, 2, &neighbor_id_val))
+					continue;
+				int			node_id = node_id_val;
+				int			neighbor_id = neighbor_id_val;
+				/* For float4, need to use SPI_getbinval with safe access */
+				float		weight = 0.0f;
+				if (tupdesc->natts >= 3)
+				{
+					Datum		weight_datum = SPI_getbinval(tuple, tupdesc, 3, NULL);
+					weight = DatumGetFloat4(weight_datum);
+				}
 
 				if (node_id >= 0 && node_id < n_nodes &&
 					neighbor_id >= 0 && neighbor_id < n_nodes)
@@ -256,37 +268,59 @@ gcn_train(PG_FUNCTION_ARGS)
 				}
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		ndb_spi_stringinfo_free(spi_session, &query);
 	}
 
 	/* Normalize adjacency */
 	normalize_adjacency(adjacency, n_nodes, adj_norm);
 
 	/* Load features */
-	features = (float **) palloc(sizeof(float *) * n_nodes);
+	NDB_DECLARE(float **, features);
+	NDB_ALLOC(features, float *, n_nodes);
 	for (i = 0; i < n_nodes; i++)
-		features[i] = (float *) palloc0(sizeof(float) * feature_dim);
+	{
+		NDB_DECLARE(float *, feat_row);
+		NDB_ALLOC(feat_row, float, feature_dim);
+		features[i] = feat_row;
+	}
 
 	{
 		StringInfoData query;
 		int			ret;
 
-		initStringInfo(&query);
+		ndb_spi_stringinfo_init(spi_session, &query);
 		appendStringInfo(&query,
 						 "SELECT node_id, features FROM %s", feat_tbl);
 
-		ret = ndb_spi_execute_safe(query.data, true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(spi_session, query.data, true, 0);
 		if (ret == SPI_OK_SELECT)
 		{
 			for (i = 0; i < SPI_processed; i++)
 			{
+				/* Safe access to SPI_tuptable - validate before access */
+				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+					i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+				{
+					continue;
+				}
 				HeapTuple	tuple = SPI_tuptable->vals[i];
-				int			node_id = DatumGetInt32(SPI_getbinval(tuple,
-																  SPI_tuptable->tupdesc,
-																  1, NULL));
-				ArrayType  *feat_array = DatumGetArrayTypeP(
-															SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, NULL));
+				TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+				if (tupdesc == NULL)
+				{
+					continue;
+				}
+				/* Use safe function for int32 values */
+				int32		node_id_val;
+				if (!ndb_spi_get_int32(spi_session, i, 1, &node_id_val))
+					continue;
+				int			node_id = node_id_val;
+				/* For ArrayType, need to use SPI_getbinval with safe access */
+				ArrayType  *feat_array = NULL;
+				if (tupdesc->natts >= 2)
+				{
+					Datum		feat_datum = SPI_getbinval(tuple, tupdesc, 2, NULL);
+					feat_array = DatumGetArrayTypeP(feat_datum);
+				}
 				float	   *feat_data;
 				int			feat_len;
 				int			d;
@@ -301,11 +335,12 @@ gcn_train(PG_FUNCTION_ARGS)
 					features[node_id][d] = feat_data[d];
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		ndb_spi_stringinfo_free(spi_session, &query);
 	}
 
 	/* Load labels */
-	labels = (int *) palloc(sizeof(int) * n_nodes);
+	NDB_DECLARE(int *, labels);
+	NDB_ALLOC(labels, int, n_nodes);
 	for (i = 0; i < n_nodes; i++)
 		labels[i] = 0;
 
@@ -313,88 +348,122 @@ gcn_train(PG_FUNCTION_ARGS)
 		StringInfoData query;
 		int			ret;
 
-		initStringInfo(&query);
+		ndb_spi_stringinfo_init(spi_session, &query);
 		appendStringInfo(&query,
 						 "SELECT node_id, label FROM %s", label_tbl);
 
-		ret = ndb_spi_execute_safe(query.data, true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(spi_session, query.data, true, 0);
 		if (ret == SPI_OK_SELECT)
 		{
 			for (i = 0; i < SPI_processed; i++)
 			{
-				HeapTuple	tuple = SPI_tuptable->vals[i];
-				int			node_id = DatumGetInt32(SPI_getbinval(tuple,
-																  SPI_tuptable->tupdesc,
-																  1, NULL));
-				int			label = DatumGetInt32(SPI_getbinval(tuple,
-																SPI_tuptable->tupdesc,
-																2, NULL));
+				/* Safe access to SPI_tuptable - validate before access */
+				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+					i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+				{
+					continue;
+				}
+				/* Use safe function to get int32 values */
+				int32		node_id_val, label_val;
+				if (!ndb_spi_get_int32(spi_session, i, 1, &node_id_val))
+					continue;
+				if (!ndb_spi_get_int32(spi_session, i, 2, &label_val))
+					continue;
+				int			node_id = node_id_val;
+				int			label = label_val;
 
 				if (node_id >= 0 && node_id < n_nodes)
 					labels[node_id] = label;
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		ndb_spi_stringinfo_free(spi_session, &query);
 	}
 
 	/* Initialize GCN layers */
 	GCNLayer	layer1,
 				layer2;
-	float	  **w1,
-			  **w2;
-	float	   *b1,
-			   *b2;
+	NDB_DECLARE(float **, w1);
+	NDB_DECLARE(float **, w2);
+	NDB_DECLARE(float *, b1);
+	NDB_DECLARE(float *, b2);
 	int			l;
 
 	/* Layer 1: feature_dim -> hidden_dim */
-	w1 = (float **) palloc(sizeof(float *) * feature_dim);
+	NDB_ALLOC(w1, float *, feature_dim);
 	for (i = 0; i < feature_dim; i++)
 	{
-		w1[i] = (float *) palloc(sizeof(float) * hidden_dim);
+		NDB_DECLARE(float *, w1_row);
+		NDB_ALLOC(w1_row, float, hidden_dim);
+		w1[i] = w1_row;
 		for (j = 0; j < hidden_dim; j++)
 			w1[i][j] = ((float) rand() / (float) RAND_MAX - 0.5) * 0.1;
-	}
-	b1 = (float *) palloc0(sizeof(float) * hidden_dim);
+		}
+	NDB_ALLOC(b1, float, hidden_dim);
 
 	/* Layer 2: hidden_dim -> output_dim */
-	w2 = (float **) palloc(sizeof(float *) * hidden_dim);
+	NDB_ALLOC(w2, float *, hidden_dim);
 	for (i = 0; i < hidden_dim; i++)
 	{
-		w2[i] = (float *) palloc(sizeof(float) * output_dim);
+		NDB_DECLARE(float *, w2_row);
+		NDB_ALLOC(w2_row, float, output_dim);
+		w2[i] = w2_row;
 		for (j = 0; j < output_dim; j++)
 			w2[i][j] = ((float) rand() / (float) RAND_MAX - 0.5) * 0.1;
-	}
-	b2 = (float *) palloc0(sizeof(float) * output_dim);
+		}
+	NDB_ALLOC(b2, float, output_dim);
 
 	/* Training loop (simplified - would need proper backprop) */
-	float	  **h1 = (float **) palloc(sizeof(float *) * n_nodes);
-	float	  **h2 = (float **) palloc(sizeof(float *) * n_nodes);
+	NDB_DECLARE(float **, h1);
+	NDB_DECLARE(float **, h2);
+	NDB_ALLOC(h1, float *, n_nodes);
+	NDB_ALLOC(h2, float *, n_nodes);
 
 	for (i = 0; i < n_nodes; i++)
 	{
-		h1[i] = (float *) palloc(sizeof(float) * hidden_dim);
-		h2[i] = (float *) palloc(sizeof(float) * output_dim);
+		NDB_DECLARE(float *, h1_row);
+		NDB_DECLARE(float *, h2_row);
+		NDB_ALLOC(h1_row, float, hidden_dim);
+		NDB_ALLOC(h2_row, float, output_dim);
+		h1[i] = h1_row;
+		h2[i] = h2_row;
 	}
 
 	/* Allocate gradient arrays */
-	float	  **grad_h2 = (float **) palloc(sizeof(float *) * n_nodes);
-	float	  **grad_h1 = (float **) palloc(sizeof(float *) * n_nodes);
-	float	  **grad_w2 = (float **) palloc(sizeof(float *) * hidden_dim);
-	float	  **grad_w1 = (float **) palloc(sizeof(float *) * feature_dim);
-	float	   *grad_b2 = (float *) palloc0(sizeof(float) * output_dim);
-	float	   *grad_b1 = (float *) palloc0(sizeof(float) * hidden_dim);
+	NDB_DECLARE(float **, grad_h2);
+	NDB_DECLARE(float **, grad_h1);
+	NDB_DECLARE(float **, grad_w2);
+	NDB_DECLARE(float **, grad_w1);
+	NDB_DECLARE(float *, grad_b2);
+	NDB_DECLARE(float *, grad_b1);
+	NDB_ALLOC(grad_h2, float *, n_nodes);
+	NDB_ALLOC(grad_h1, float *, n_nodes);
+	NDB_ALLOC(grad_w2, float *, hidden_dim);
+	NDB_ALLOC(grad_w1, float *, feature_dim);
+	NDB_ALLOC(grad_b2, float, output_dim);
+	NDB_ALLOC(grad_b1, float, hidden_dim);
 
 	for (i = 0; i < n_nodes; i++)
 	{
-		grad_h2[i] = (float *) palloc0(sizeof(float) * output_dim);
-		grad_h1[i] = (float *) palloc0(sizeof(float) * hidden_dim);
+		NDB_DECLARE(float *, grad_h2_row);
+		NDB_DECLARE(float *, grad_h1_row);
+		NDB_ALLOC(grad_h2_row, float, output_dim);
+		NDB_ALLOC(grad_h1_row, float, hidden_dim);
+		grad_h2[i] = grad_h2_row;
+		grad_h1[i] = grad_h1_row;
 	}
 
 	for (i = 0; i < hidden_dim; i++)
-		grad_w2[i] = (float *) palloc0(sizeof(float) * output_dim);
+	{
+		NDB_DECLARE(float *, grad_w2_row);
+		NDB_ALLOC(grad_w2_row, float, output_dim);
+		grad_w2[i] = grad_w2_row;
+	}
 	for (i = 0; i < feature_dim; i++)
-		grad_w1[i] = (float *) palloc0(sizeof(float) * hidden_dim);
+	{
+		NDB_DECLARE(float *, grad_w1_row);
+		NDB_ALLOC(grad_w1_row, float, hidden_dim);
+		grad_w1[i] = grad_w1_row;
+	}
 
 	for (l = 0; l < epochs; l++)
 	{
@@ -480,8 +549,8 @@ gcn_train(PG_FUNCTION_ARGS)
 			}
 
 			for (i = 0; i < n_nodes; i++)
-				NDB_SAFE_PFREE_AND_NULL(grad_h2_w2[i]);
-			NDB_SAFE_PFREE_AND_NULL(grad_h2_w2);
+				NDB_FREE(grad_h2_w2[i]);
+			NDB_FREE(grad_h2_w2);
 		}
 
 		/* Compute weight gradients for layer 2 */
@@ -520,8 +589,8 @@ gcn_train(PG_FUNCTION_ARGS)
 			}
 
 			for (i = 0; i < n_nodes; i++)
-				NDB_SAFE_PFREE_AND_NULL(adj_grad_h2[i]);
-			NDB_SAFE_PFREE_AND_NULL(adj_grad_h2);
+				NDB_FREE(adj_grad_h2[i]);
+			NDB_FREE(adj_grad_h2);
 		}
 
 		/* Backpropagate through layer 1 */
@@ -547,8 +616,8 @@ gcn_train(PG_FUNCTION_ARGS)
 			 * update)
 			 */
 			for (i = 0; i < n_nodes; i++)
-				NDB_SAFE_PFREE_AND_NULL(grad_h1_w1[i]);
-			NDB_SAFE_PFREE_AND_NULL(grad_h1_w1);
+				NDB_FREE(grad_h1_w1[i]);
+			NDB_FREE(grad_h1_w1);
 		}
 
 		/* Compute weight gradients for layer 1 */
@@ -587,8 +656,8 @@ gcn_train(PG_FUNCTION_ARGS)
 			}
 
 			for (i = 0; i < n_nodes; i++)
-				NDB_SAFE_PFREE_AND_NULL(adj_grad_h1[i]);
-			NDB_SAFE_PFREE_AND_NULL(adj_grad_h1);
+				NDB_FREE(adj_grad_h1[i]);
+			NDB_FREE(adj_grad_h1);
 		}
 
 		/* Update weights */
@@ -641,19 +710,19 @@ gcn_train(PG_FUNCTION_ARGS)
 	/* Cleanup gradient arrays */
 	for (i = 0; i < n_nodes; i++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(grad_h2[i]);
-		NDB_SAFE_PFREE_AND_NULL(grad_h1[i]);
+		NDB_FREE(grad_h2[i]);
+		NDB_FREE(grad_h1[i]);
 	}
 	for (i = 0; i < hidden_dim; i++)
-		NDB_SAFE_PFREE_AND_NULL(grad_w2[i]);
+		NDB_FREE(grad_w2[i]);
 	for (i = 0; i < feature_dim; i++)
-		NDB_SAFE_PFREE_AND_NULL(grad_w1[i]);
-	NDB_SAFE_PFREE_AND_NULL(grad_h2);
-	NDB_SAFE_PFREE_AND_NULL(grad_h1);
-	NDB_SAFE_PFREE_AND_NULL(grad_w2);
-	NDB_SAFE_PFREE_AND_NULL(grad_w1);
-	NDB_SAFE_PFREE_AND_NULL(grad_b2);
-	NDB_SAFE_PFREE_AND_NULL(grad_b1);
+		NDB_FREE(grad_w1[i]);
+	NDB_FREE(grad_h2);
+	NDB_FREE(grad_h1);
+	NDB_FREE(grad_w2);
+	NDB_FREE(grad_w1);
+	NDB_FREE(grad_b2);
+	NDB_FREE(grad_b1);
 
 	/* Serialize GCN model */
 	{
@@ -720,16 +789,16 @@ gcn_train(PG_FUNCTION_ARGS)
 						 graph_tbl,
 						 feat_tbl,
 						 label_tbl);
-		params_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(paramsbuf.data)));
-		NDB_SAFE_PFREE_AND_NULL(paramsbuf.data);
+		params_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(paramsbuf.data)));
+		NDB_FREE(paramsbuf.data);
 
 		/* Build metrics JSON */
 		initStringInfo(&metricsbuf);
 		appendStringInfo(&metricsbuf,
 						 "{\"n_nodes\":%d,"
 						 "\"training_complete\":true}");
-		metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(metricsbuf.data)));
-		NDB_SAFE_PFREE_AND_NULL(metricsbuf.data);
+		metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metricsbuf.data)));
+		NDB_FREE(metricsbuf.data);
 
 		/* Register model in catalog */
 		memset(&spec, 0, sizeof(MLCatalogModelSpec));
@@ -745,30 +814,30 @@ gcn_train(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	for (i = 0; i < n_nodes; i++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(adjacency[i]);
-		NDB_SAFE_PFREE_AND_NULL(adj_norm[i]);
-		NDB_SAFE_PFREE_AND_NULL(features[i]);
-		NDB_SAFE_PFREE_AND_NULL(h1[i]);
-		NDB_SAFE_PFREE_AND_NULL(h2[i]);
+		NDB_FREE(adjacency[i]);
+		NDB_FREE(adj_norm[i]);
+		NDB_FREE(features[i]);
+		NDB_FREE(h1[i]);
+		NDB_FREE(h2[i]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(adjacency);
-	NDB_SAFE_PFREE_AND_NULL(adj_norm);
-	NDB_SAFE_PFREE_AND_NULL(features);
-	NDB_SAFE_PFREE_AND_NULL(labels);
+	NDB_FREE(adjacency);
+	NDB_FREE(adj_norm);
+	NDB_FREE(features);
+	NDB_FREE(labels);
 	for (i = 0; i < feature_dim; i++)
-		NDB_SAFE_PFREE_AND_NULL(w1[i]);
-	NDB_SAFE_PFREE_AND_NULL(w1);
-	NDB_SAFE_PFREE_AND_NULL(b1);
+		NDB_FREE(w1[i]);
+	NDB_FREE(w1);
+	NDB_FREE(b1);
 	for (i = 0; i < hidden_dim; i++)
-		NDB_SAFE_PFREE_AND_NULL(w2[i]);
-	NDB_SAFE_PFREE_AND_NULL(w2);
-	NDB_SAFE_PFREE_AND_NULL(b2);
-	NDB_SAFE_PFREE_AND_NULL(h1);
-	NDB_SAFE_PFREE_AND_NULL(h2);
-	NDB_SAFE_PFREE_AND_NULL(graph_tbl);
-	NDB_SAFE_PFREE_AND_NULL(feat_tbl);
-	NDB_SAFE_PFREE_AND_NULL(label_tbl);
-	SPI_finish();
+		NDB_FREE(w2[i]);
+	NDB_FREE(w2);
+	NDB_FREE(b2);
+	NDB_FREE(h1);
+	NDB_FREE(h2);
+	NDB_FREE(graph_tbl);
+	NDB_FREE(feat_tbl);
+	NDB_FREE(label_tbl);
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_INT32(model_id);
 }
@@ -819,29 +888,28 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 	graph_tbl = text_to_cstring(graph_table);
 	feat_tbl = text_to_cstring(features_table);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Load graph structure and extract feature dimension */
 	{
 		StringInfoData query;
 		int			ret;
-		int		   *neighbors = NULL;
+		NDB_DECLARE(int *, neighbors);
 		int			neighbor_count = 0;
 		int			max_neighbors = n_samples * depth;
-		float	  **neighbor_features = NULL;
+		NDB_DECLARE(float **, neighbor_features);
 		int			sampled_count = 0;
 
 		/* First, get feature dimension from features table */
-		initStringInfo(&query);
+		ndb_spi_stringinfo_init(spi_session, &query);
 		appendStringInfo(&query,
 						 "SELECT features FROM %s WHERE node_id = %d LIMIT 1",
 						 feat_tbl, node_id);
 
-		ret = ndb_spi_execute_safe(query.data, true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(spi_session, query.data, true, 0);
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
 			HeapTuple	tuple = SPI_tuptable->vals[0];
@@ -853,12 +921,11 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 		else
 		{
 			/* Fallback: try to get dimension from any row */
-			NDB_SAFE_PFREE_AND_NULL(query.data);
-			initStringInfo(&query);
+			ndb_spi_stringinfo_free(spi_session, &query);
+			ndb_spi_stringinfo_init(spi_session, &query);
 			appendStringInfo(&query,
 							 "SELECT features FROM %s LIMIT 1", feat_tbl);
-			ret = ndb_spi_execute_safe(query.data, true, 0);
-			NDB_CHECK_SPI_TUPTABLE();
+			ret = ndb_spi_execute(spi_session, query.data, true, 0);
 			if (ret == SPI_OK_SELECT && SPI_processed > 0)
 			{
 				HeapTuple	tuple = SPI_tuptable->vals[0];
@@ -872,11 +939,11 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 				feature_dim = 64;	/* Default fallback */
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		ndb_spi_stringinfo_free(spi_session, &query);
 
 		/* Load neighbors from graph structure */
-		neighbors = (int *) palloc(sizeof(int) * max_neighbors);
-		neighbor_features = (float **) palloc(sizeof(float *) * max_neighbors);
+		NDB_ALLOC(neighbors, int, max_neighbors);
+		NDB_ALLOC(neighbor_features, float *, max_neighbors);
 
 		/* Sample neighbors at each depth */
 		{
@@ -901,20 +968,27 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 					int			sampled = 0;
 
 					/* Query neighbors from graph table */
-					initStringInfo(&query);
+					ndb_spi_stringinfo_init(spi_session, &query);
 					appendStringInfo(&query,
 									 "SELECT neighbor_id FROM %s WHERE node_id = %d ORDER BY random() LIMIT %d",
 									 graph_tbl, current_node, samples_needed);
 
-					ret = ndb_spi_execute_safe(query.data, true, 0);
-					NDB_CHECK_SPI_TUPTABLE();
+					ret = ndb_spi_execute(spi_session, query.data, true, 0);
 					if (ret == SPI_OK_SELECT)
 					{
 						for (j = 0; j < SPI_processed && sampled < samples_needed && total_sampled < max_neighbors; j++)
 						{
-							HeapTuple	tuple = SPI_tuptable->vals[j];
-							int			neighbor_id = DatumGetInt32(SPI_getbinval(tuple,
-																				  SPI_tuptable->tupdesc, 1, NULL));
+							/* Safe access to SPI_tuptable - validate before access */
+							if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+								j >= SPI_processed || SPI_tuptable->vals[j] == NULL)
+							{
+								continue;
+							}
+							/* Use safe function to get int32 neighbor_id */
+							int32		neighbor_id_val;
+							if (!ndb_spi_get_int32(spi_session, j, 1, &neighbor_id_val))
+								continue;
+							int			neighbor_id = neighbor_id_val;
 
 							if (total_sampled < max_neighbors)
 							{
@@ -926,7 +1000,7 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 							}
 						}
 					}
-					NDB_SAFE_PFREE_AND_NULL(query.data);
+					ndb_spi_stringinfo_free(spi_session, &query);
 				}
 
 				/* Move to next depth */
@@ -939,20 +1013,20 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 		}
 
 		/* Load features for sampled neighbors */
-		aggregated = (float *) palloc0(sizeof(float) * feature_dim);
+		NDB_DECLARE(float *, aggregated);
+		NDB_ALLOC(aggregated, float, feature_dim);
 
 		if (sampled_count > 0)
 		{
 			/* Load features for each neighbor */
 			for (i = 0; i < sampled_count; i++)
 			{
-				initStringInfo(&query);
+				ndb_spi_stringinfo_init(spi_session, &query);
 				appendStringInfo(&query,
 								 "SELECT features FROM %s WHERE node_id = %d",
 								 feat_tbl, neighbors[i]);
 
-				ret = ndb_spi_execute_safe(query.data, true, 0);
-				NDB_CHECK_SPI_TUPTABLE();
+				ret = ndb_spi_execute(spi_session, query.data, true, 0);
 				if (ret == SPI_OK_SELECT && SPI_processed > 0)
 				{
 					HeapTuple	tuple = SPI_tuptable->vals[0];
@@ -961,7 +1035,9 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 					float	   *feat_data = (float *) ARR_DATA_PTR(feat_array);
 					int			feat_len = ARR_DIMS(feat_array)[0];
 
-					neighbor_features[i] = (float *) palloc(sizeof(float) * feature_dim);
+					NDB_DECLARE(float *, neighbor_feat);
+					NDB_ALLOC(neighbor_feat, float, feature_dim);
+					neighbor_features[i] = neighbor_feat;
 					for (j = 0; j < feature_dim && j < feat_len; j++)
 						neighbor_features[i][j] = feat_data[j];
 					for (; j < feature_dim; j++)
@@ -969,9 +1045,11 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 				}
 				else
 				{
-					neighbor_features[i] = (float *) palloc0(sizeof(float) * feature_dim);
+					NDB_DECLARE(float *, neighbor_feat);
+					NDB_ALLOC(neighbor_feat, float, feature_dim);
+					neighbor_features[i] = neighbor_feat;
 				}
-				NDB_SAFE_PFREE_AND_NULL(query.data);
+				ndb_spi_stringinfo_free(spi_session, &query);
 			}
 
 			/* Aggregate: mean of neighbor features */
@@ -990,11 +1068,11 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 
 			/* Cleanup neighbor features */
 			for (i = 0; i < sampled_count; i++)
-				NDB_SAFE_PFREE_AND_NULL(neighbor_features[i]);
+				NDB_FREE(neighbor_features[i]);
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(neighbors);
-		NDB_SAFE_PFREE_AND_NULL(neighbor_features);
+		NDB_FREE(neighbors);
+		NDB_FREE(neighbor_features);
 	}
 
 	/* Build result array */
@@ -1009,11 +1087,11 @@ graphsage_aggregate(PG_FUNCTION_ARGS)
 							 FLOAT4PASSBYVAL,
 							 'i');
 
-	NDB_SAFE_PFREE_AND_NULL(aggregated);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(graph_tbl);
-	NDB_SAFE_PFREE_AND_NULL(feat_tbl);
-	SPI_finish();
+	NDB_FREE(aggregated);
+	NDB_FREE(result_datums);
+	NDB_FREE(graph_tbl);
+	NDB_FREE(feat_tbl);
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

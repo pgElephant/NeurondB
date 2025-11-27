@@ -28,6 +28,8 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_json.h"
 
 extern char *neurondb_onnx_model_path;
 extern bool neurondb_onnx_use_gpu;
@@ -49,9 +51,7 @@ typedef struct
 }			ONNXGenParams;
 
 /* Forward declarations */
-static int	parse_gen_params(const char *params_json,
-							 ONNXGenParams * gen_params,
-							 char **errstr);
+/* parse_gen_params is now replaced by ndb_json_parse_gen_params from neurondb_json.h */
 static int	sample_token_greedy(float *logits, int vocab_size);
 static int
 			sample_token_multinomial(float *logits, int vocab_size, float temperature);
@@ -120,10 +120,10 @@ neurondb_hf_embedding(PG_FUNCTION_ARGS)
 	PG_CATCH();
 	{
 		neurondb_onnx_free_tensor(input_tensor);
-		NDB_SAFE_PFREE_AND_NULL(input_data);
-		NDB_SAFE_PFREE_AND_NULL(token_ids);
-		NDB_SAFE_PFREE_AND_NULL(model_name);
-		NDB_SAFE_PFREE_AND_NULL(txt);
+		NDB_FREE(input_data);
+		NDB_FREE(token_ids);
+		NDB_FREE(model_name);
+		NDB_FREE(txt);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -148,10 +148,10 @@ neurondb_hf_embedding(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	neurondb_onnx_free_tensor(input_tensor);
 	neurondb_onnx_free_tensor(output_tensor);
-	NDB_SAFE_PFREE_AND_NULL(input_data);
-	NDB_SAFE_PFREE_AND_NULL(token_ids);
-	NDB_SAFE_PFREE_AND_NULL(model_name);
-	NDB_SAFE_PFREE_AND_NULL(txt);
+	NDB_FREE(input_data);
+	NDB_FREE(token_ids);
+	NDB_FREE(model_name);
+	NDB_FREE(txt);
 
 	PG_RETURN_POINTER(result);
 }
@@ -213,10 +213,10 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 	PG_CATCH();
 	{
 		neurondb_onnx_free_tensor(input_tensor);
-		NDB_SAFE_PFREE_AND_NULL(input_data);
-		NDB_SAFE_PFREE_AND_NULL(token_ids);
-		NDB_SAFE_PFREE_AND_NULL(model_name);
-		NDB_SAFE_PFREE_AND_NULL(txt);
+		NDB_FREE(input_data);
+		NDB_FREE(token_ids);
+		NDB_FREE(model_name);
+		NDB_FREE(txt);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -263,10 +263,10 @@ neurondb_hf_classify(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	neurondb_onnx_free_tensor(input_tensor);
 	neurondb_onnx_free_tensor(output_tensor);
-	NDB_SAFE_PFREE_AND_NULL(input_data);
-	NDB_SAFE_PFREE_AND_NULL(token_ids);
-	NDB_SAFE_PFREE_AND_NULL(model_name);
-	NDB_SAFE_PFREE_AND_NULL(txt);
+	NDB_FREE(input_data);
+	NDB_FREE(token_ids);
+	NDB_FREE(model_name);
+	NDB_FREE(txt);
 
 	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
@@ -330,10 +330,10 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 	PG_CATCH();
 	{
 		neurondb_onnx_free_tensor(input_tensor);
-		NDB_SAFE_PFREE_AND_NULL(input_data);
-		NDB_SAFE_PFREE_AND_NULL(token_ids);
-		NDB_SAFE_PFREE_AND_NULL(model_name);
-		NDB_SAFE_PFREE_AND_NULL(txt);
+		NDB_FREE(input_data);
+		NDB_FREE(token_ids);
+		NDB_FREE(model_name);
+		NDB_FREE(txt);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -374,10 +374,10 @@ neurondb_hf_ner(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	neurondb_onnx_free_tensor(input_tensor);
 	neurondb_onnx_free_tensor(output_tensor);
-	NDB_SAFE_PFREE_AND_NULL(input_data);
-	NDB_SAFE_PFREE_AND_NULL(token_ids);
-	NDB_SAFE_PFREE_AND_NULL(model_name);
-	NDB_SAFE_PFREE_AND_NULL(txt);
+	NDB_FREE(input_data);
+	NDB_FREE(token_ids);
+	NDB_FREE(model_name);
+	NDB_FREE(txt);
 
 	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
@@ -448,11 +448,11 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 	PG_CATCH();
 	{
 		neurondb_onnx_free_tensor(input_tensor);
-		NDB_SAFE_PFREE_AND_NULL(input_data);
-		NDB_SAFE_PFREE_AND_NULL(token_ids);
-		NDB_SAFE_PFREE_AND_NULL(model_name);
-		NDB_SAFE_PFREE_AND_NULL(question);
-		NDB_SAFE_PFREE_AND_NULL(context);
+		NDB_FREE(input_data);
+		NDB_FREE(token_ids);
+		NDB_FREE(model_name);
+		NDB_FREE(question);
+		NDB_FREE(context);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -498,11 +498,11 @@ neurondb_hf_qa(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	neurondb_onnx_free_tensor(input_tensor);
 	neurondb_onnx_free_tensor(output_tensor);
-	NDB_SAFE_PFREE_AND_NULL(input_data);
-	NDB_SAFE_PFREE_AND_NULL(token_ids);
-	NDB_SAFE_PFREE_AND_NULL(model_name);
-	NDB_SAFE_PFREE_AND_NULL(question);
-	NDB_SAFE_PFREE_AND_NULL(context);
+	NDB_FREE(input_data);
+	NDB_FREE(token_ids);
+	NDB_FREE(model_name);
+	NDB_FREE(question);
+	NDB_FREE(context);
 
 	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
@@ -540,174 +540,7 @@ neurondb_onnx_info(PG_FUNCTION_ARGS)
  *   "seed": 42
  * }
  */
-static int
-parse_gen_params(const char *params_json,
-				 ONNXGenParams * gen_params,
-				 char **errstr)
-{
-	char	   *json_copy = NULL;
-	char	   *p = NULL;
-	char	   *key = NULL;
-	char	   *endptr = NULL;
-	float		float_val;
-	int			int_val;
-
-	if (errstr)
-		*errstr = NULL;
-	if (!params_json || !gen_params)
-	{
-		if (errstr)
-			*errstr = pstrdup(
-							  "invalid parameters for parse_gen_params");
-		return -1;
-	}
-
-	/* Initialize with defaults */
-	memset(gen_params, 0, sizeof(ONNXGenParams));
-	gen_params->temperature = 1.0f;
-	gen_params->top_p = 1.0f;
-	gen_params->top_k = 0;		/* 0 = disabled */
-	gen_params->max_tokens = 100;
-	gen_params->min_tokens = 0;
-	gen_params->repetition_penalty = 1.0f;
-	gen_params->do_sample = false;
-	gen_params->return_prompt = false;
-	gen_params->seed = 0;
-
-	/* Skip empty JSON */
-	if (strlen(params_json) == 0 || strcmp(params_json, "{}") == 0)
-		return 0;
-
-	/* Simple JSON parsing - find key-value pairs */
-	json_copy = pstrdup(params_json);
-	p = json_copy;
-
-	/* Skip whitespace and opening brace */
-	while (*p && (isspace((unsigned char) *p) || *p == '{'))
-		p++;
-
-	/* Parse key-value pairs */
-	while (*p && *p != '}')
-	{
-		/* Skip whitespace and commas */
-		while (*p && (isspace((unsigned char) *p) || *p == ','))
-			p++;
-
-		if (*p == '}' || *p == '\0')
-			break;
-
-		/* Find key */
-		if (*p != '"')
-		{
-			NDB_SAFE_PFREE_AND_NULL(json_copy);
-			if (errstr)
-				*errstr = pstrdup(
-								  "invalid JSON format: expected key");
-			return -1;
-		}
-		p++;					/* Skip opening quote */
-		key = p;
-		while (*p && *p != '"')
-			p++;
-		if (*p != '"')
-		{
-			NDB_SAFE_PFREE_AND_NULL(json_copy);
-			if (errstr)
-				*errstr = pstrdup("invalid JSON format: "
-								  "unterminated key");
-			return -1;
-		}
-		*p = '\0';				/* Null-terminate key */
-		p++;					/* Skip closing quote */
-
-		/* Skip colon */
-		while (*p && (isspace((unsigned char) *p) || *p == ':'))
-			p++;
-
-		/* Parse value based on key */
-		if (strcmp(key, "temperature") == 0)
-		{
-			float_val = strtof(p, &endptr);
-			if (endptr != p && float_val > 0.0f)
-				gen_params->temperature = float_val;
-		}
-		else if (strcmp(key, "top_p") == 0)
-		{
-			float_val = strtof(p, &endptr);
-			if (endptr != p && float_val > 0.0f
-				&& float_val <= 1.0f)
-				gen_params->top_p = float_val;
-		}
-		else if (strcmp(key, "top_k") == 0)
-		{
-			int_val = (int) strtol(p, &endptr, 10);
-			if (endptr != p && int_val >= 0)
-				gen_params->top_k = int_val;
-		}
-		else if (strcmp(key, "max_tokens") == 0
-				 || strcmp(key, "max_length") == 0)
-		{
-			int_val = (int) strtol(p, &endptr, 10);
-			if (endptr != p && int_val > 0)
-				gen_params->max_tokens = int_val;
-		}
-		else if (strcmp(key, "min_tokens") == 0
-				 || strcmp(key, "min_length") == 0)
-		{
-			int_val = (int) strtol(p, &endptr, 10);
-			if (endptr != p && int_val >= 0)
-				gen_params->min_tokens = int_val;
-		}
-		else if (strcmp(key, "repetition_penalty") == 0)
-		{
-			float_val = strtof(p, &endptr);
-			if (endptr != p && float_val > 0.0f)
-				gen_params->repetition_penalty = float_val;
-		}
-		else if (strcmp(key, "do_sample") == 0)
-		{
-			if (strncmp(p, "true", 4) == 0
-				|| strncmp(p, "TRUE", 4) == 0)
-				gen_params->do_sample = true;
-			else if (strncmp(p, "false", 5) == 0
-					 || strncmp(p, "FALSE", 5) == 0)
-				gen_params->do_sample = false;
-		}
-		else if (strcmp(key, "return_prompt") == 0)
-		{
-			if (strncmp(p, "true", 4) == 0
-				|| strncmp(p, "TRUE", 4) == 0)
-				gen_params->return_prompt = true;
-			else if (strncmp(p, "false", 5) == 0
-					 || strncmp(p, "FALSE", 5) == 0)
-				gen_params->return_prompt = false;
-		}
-		else if (strcmp(key, "seed") == 0)
-		{
-			int_val = (int) strtol(p, &endptr, 10);
-			if (endptr != p)
-				gen_params->seed = int_val;
-		}
-
-		/* Skip to next key or closing brace */
-		while (*p && *p != ',' && *p != '}')
-		{
-			if (*p == '"')
-			{
-				p++;
-				while (*p && *p != '"')
-					p++;
-				if (*p == '"')
-					p++;
-			}
-			else
-				p++;
-		}
-	}
-
-	NDB_SAFE_PFREE_AND_NULL(json_copy);
-	return 0;
-}
+/* parse_gen_params is now replaced by ndb_json_parse_gen_params from neurondb_json.h */
 
 /*
  * sample_token_greedy
@@ -775,7 +608,7 @@ sample_token_multinomial(float *logits, int vocab_size, float temperature)
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(probs);
+	NDB_FREE(probs);
 	return selected;
 }
 
@@ -865,13 +698,28 @@ ndb_onnx_hf_complete(const char *model_name,
 	/* Parse generation parameters */
 	if (params_json && strlen(params_json) > 0)
 	{
-		rc = parse_gen_params(params_json, &gen_params, errstr);
+		NdbGenParams ndb_params = {0};
+		rc = ndb_json_parse_gen_params(params_json, &ndb_params, errstr);
 		if (rc != 0)
 		{
+			/* Free any allocated resources */
+			ndb_json_parse_gen_params_free(&ndb_params);
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(complete_context);
 			return -1;
 		}
+		/* Map from NdbGenParams to ONNXGenParams */
+		gen_params.temperature = ndb_params.temperature;
+		gen_params.top_p = ndb_params.top_p;
+		gen_params.top_k = ndb_params.top_k;
+		gen_params.max_tokens = ndb_params.max_tokens;
+		gen_params.min_tokens = ndb_params.min_tokens;
+		gen_params.repetition_penalty = ndb_params.repetition_penalty;
+		gen_params.do_sample = ndb_params.do_sample;
+		gen_params.return_prompt = ndb_params.return_prompt;
+		gen_params.seed = ndb_params.seed;
+		/* Free allocated resources from NdbGenParams */
+		ndb_json_parse_gen_params_free(&ndb_params);
 	}
 	else
 	{
@@ -936,7 +784,7 @@ ndb_onnx_hf_complete(const char *model_name,
 
 		/* Allocate input data */
 		if (input_data)
-			NDB_SAFE_PFREE_AND_NULL(input_data);
+			NDB_FREE(input_data);
 		input_data = (float *) palloc(current_seq_len * sizeof(float));
 
 		/* Copy prompt tokens */
@@ -970,11 +818,11 @@ ndb_onnx_hf_complete(const char *model_name,
 			if (input_tensor)
 				neurondb_onnx_free_tensor(input_tensor);
 			if (input_data)
-				NDB_SAFE_PFREE_AND_NULL(input_data);
+				NDB_FREE(input_data);
 			if (generated_token_ids)
-				NDB_SAFE_PFREE_AND_NULL(generated_token_ids);
+				NDB_FREE(generated_token_ids);
 			if (input_token_ids)
-				NDB_SAFE_PFREE_AND_NULL(input_token_ids);
+				NDB_FREE(input_token_ids);
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(complete_context);
 			PG_RE_THROW();
@@ -1011,11 +859,11 @@ ndb_onnx_hf_complete(const char *model_name,
 			if (output_tensor)
 				neurondb_onnx_free_tensor(output_tensor);
 			if (input_data)
-				NDB_SAFE_PFREE_AND_NULL(input_data);
+				NDB_FREE(input_data);
 			if (generated_token_ids)
-				NDB_SAFE_PFREE_AND_NULL(generated_token_ids);
+				NDB_FREE(generated_token_ids);
 			if (input_token_ids)
-				NDB_SAFE_PFREE_AND_NULL(input_token_ids);
+				NDB_FREE(input_token_ids);
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(complete_context);
 			return -1;
@@ -1082,11 +930,11 @@ ndb_onnx_hf_complete(const char *model_name,
 	if (output_tensor)
 		neurondb_onnx_free_tensor(output_tensor);
 	if (input_data)
-		NDB_SAFE_PFREE_AND_NULL(input_data);
+		NDB_FREE(input_data);
 	if (generated_token_ids)
-		NDB_SAFE_PFREE_AND_NULL(generated_token_ids);
+		NDB_FREE(generated_token_ids);
 	if (input_token_ids)
-		NDB_SAFE_PFREE_AND_NULL(input_token_ids);
+		NDB_FREE(input_token_ids);
 
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(complete_context);
@@ -1250,8 +1098,8 @@ ndb_onnx_hf_embed(const char *model_name,
 		MemoryContextSwitchTo(workcontext);
 		neurondb_onnx_free_tensor(input_tensor);
 		neurondb_onnx_free_tensor(output_tensor);
-		NDB_SAFE_PFREE_AND_NULL(input_data);
-		NDB_SAFE_PFREE_AND_NULL(token_ids);
+		NDB_FREE(input_data);
+		NDB_FREE(token_ids);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(workcontext);
 	}
@@ -1259,15 +1107,15 @@ ndb_onnx_hf_embed(const char *model_name,
 	{
 		/* Cleanup on error */
 		if (result_vec)
-			NDB_SAFE_PFREE_AND_NULL(result_vec);
+			NDB_FREE(result_vec);
 		if (input_tensor)
 			neurondb_onnx_free_tensor(input_tensor);
 		if (output_tensor)
 			neurondb_onnx_free_tensor(output_tensor);
 		if (input_data)
-			NDB_SAFE_PFREE_AND_NULL(input_data);
+			NDB_FREE(input_data);
 		if (token_ids)
-			NDB_SAFE_PFREE_AND_NULL(token_ids);
+			NDB_FREE(token_ids);
 		if (workcontext)
 		{
 			MemoryContextSwitchTo(oldcontext);
@@ -1379,25 +1227,105 @@ ndb_onnx_hf_image_embed(const char *model_name,
 				 * production, integrate with libjpeg, libpng, or stb_image.
 				 */
 
-				/*
-				 * Basic preprocessing: assume input is already decoded and
-				 * normalized
-				 */
-				/*
-				 * For now, initialize with normalized random values as
-				 * placeholder
-				 */
-				/* In production, this would decode and preprocess the image */
-				for (int idx = 0; idx < total_size; idx++)
+			/*
+			 * Image preprocessing implementation:
+			 * 1. Try to decode image if it's JPEG/PNG (basic detection)
+			 * 2. Resize to 224x224 if needed
+			 * 3. Normalize pixel values to [0,1] range
+			 * 4. Convert to RGB format (NCHW: [1, 3, 224, 224])
+			 *
+			 * Note: Full JPEG/PNG decoding requires external libraries.
+			 * This implementation handles raw RGB data and basic preprocessing.
+			 */
+			{
+				/* Detect image format from magic bytes */
+				bool		is_jpeg = (image_size >= 2 && image_data[0] == 0xFF && image_data[1] == 0xD8);
+				bool		is_png = (image_size >= 8 && image_data[0] == 0x89 && image_data[1] == 0x50
+									  && image_data[2] == 0x4E && image_data[3] == 0x47);
+				bool		is_raw_rgb = false;
+				int			src_width = 0;
+				int			src_height = 0;
+				int			src_channels = 3;
+				unsigned char *decoded_data = NULL;
+
+				if (is_jpeg || is_png)
 				{
-					/* Placeholder: normalized values in [0,1] range */
-					/* Real implementation would decode image and normalize */
-					input_data[idx] = 0.0f;
+					/*
+					 * Image format detected but decoding not available.
+					 * For production, integrate libjpeg/libpng or stb_image.
+					 */
+					elog(WARNING,
+						 "neurondb: JPEG/PNG image detected but decoding not available. "
+						 "Please use pre-processed RGB data or integrate image decoding library.");
+					/* Fall through to treat as raw RGB */
+					is_raw_rgb = true;
+				}
+				else
+				{
+					/* Assume raw RGB data: [width * height * channels] bytes */
+					/* Try to infer dimensions from size */
+					int			total_pixels = image_size / src_channels;
+
+					if (total_pixels > 0)
+					{
+						/* Assume square image for simplicity, or use common aspect ratios */
+						src_width = (int) sqrt(total_pixels);
+						src_height = total_pixels / src_width;
+						if (src_width * src_height * src_channels == image_size)
+						{
+							is_raw_rgb = true;
+							decoded_data = (unsigned char *) image_data;
+						}
+					}
 				}
 
-				elog(WARNING,
-					 "neurondb: Image preprocessing not fully implemented. "
-					 "Input image should be pre-processed externally or use HTTP API.");
+				if (is_raw_rgb && decoded_data != NULL && src_width > 0 && src_height > 0)
+				{
+					/* Resize and normalize raw RGB data */
+					int			dst_width = img_size;
+					int			dst_height = img_size;
+					int			x, y, c;
+					float		scale_x = (float) src_width / (float) dst_width;
+					float		scale_y = (float) src_height / (float) dst_height;
+
+					/* Resize using nearest-neighbor interpolation */
+					for (y = 0; y < dst_height; y++)
+					{
+						for (x = 0; x < dst_width; x++)
+						{
+							int			src_x = (int) (x * scale_x);
+							int			src_y = (int) (y * scale_y);
+
+							if (src_x >= src_width)
+								src_x = src_width - 1;
+							if (src_y >= src_height)
+								src_y = src_height - 1;
+
+							for (c = 0; c < channels; c++)
+							{
+								/* NCHW format: [batch, channel, height, width] */
+								int			dst_idx = c * dst_height * dst_width + y * dst_width + x;
+								int			src_idx = (src_y * src_width + src_x) * src_channels + c;
+								unsigned char pixel_val = decoded_data[src_idx];
+
+								/* Normalize to [0, 1] range */
+								input_data[dst_idx] = (float) pixel_val / 255.0f;
+							}
+						}
+					}
+				}
+				else
+				{
+					/* Fallback: zero-filled array if decoding fails */
+					elog(WARNING,
+						 "neurondb: Could not decode image data. Using zero-filled array. "
+						 "Please provide pre-processed RGB data or integrate image decoding library.");
+					for (int idx = 0; idx < total_size; idx++)
+					{
+						input_data[idx] = 0.0f;
+					}
+				}
+			}
 
 				/* CLIP input shape: [batch, channels, height, width] */
 				input_shape[0] = 1;
@@ -1408,7 +1336,7 @@ ndb_onnx_hf_image_embed(const char *model_name,
 				input_tensor = neurondb_onnx_create_tensor(input_data, input_shape, 4);
 				if (!input_tensor)
 				{
-					NDB_SAFE_PFREE_AND_NULL(input_data);
+					NDB_FREE(input_data);
 					input_data = NULL;
 					if (errstr)
 						*errstr = pstrdup("Failed to create input tensor");
@@ -1422,7 +1350,7 @@ ndb_onnx_hf_image_embed(const char *model_name,
 					{
 						neurondb_onnx_free_tensor(input_tensor);
 						if (input_data)
-							NDB_SAFE_PFREE_AND_NULL(input_data);
+							NDB_FREE(input_data);
 						if (errstr)
 							*errstr = pstrdup("ONNX inference failed");
 						rc = -1;
@@ -1437,7 +1365,7 @@ ndb_onnx_hf_image_embed(const char *model_name,
 							neurondb_onnx_free_tensor(input_tensor);
 							neurondb_onnx_free_tensor(output_tensor);
 							if (input_data)
-								NDB_SAFE_PFREE_AND_NULL(input_data);
+								NDB_FREE(input_data);
 							if (errstr)
 								*errstr = pstrdup("Memory allocation failed");
 							*dim_out = 0;
@@ -1463,7 +1391,7 @@ ndb_onnx_hf_image_embed(const char *model_name,
 							neurondb_onnx_free_tensor(input_tensor);
 							neurondb_onnx_free_tensor(output_tensor);
 							if (input_data)
-								NDB_SAFE_PFREE_AND_NULL(input_data);
+								NDB_FREE(input_data);
 
 							rc = 0;
 						}
@@ -1480,10 +1408,10 @@ ndb_onnx_hf_image_embed(const char *model_name,
 		if (output_tensor)
 			neurondb_onnx_free_tensor(output_tensor);
 		if (input_data)
-			NDB_SAFE_PFREE_AND_NULL(input_data);
+			NDB_FREE(input_data);
 		if (*vec_out)
 		{
-			NDB_SAFE_PFREE_AND_NULL(*vec_out);
+			NDB_FREE(*vec_out);
 			*vec_out = NULL;
 			*dim_out = 0;
 		}
@@ -1545,11 +1473,11 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
 				*errstr = psprintf("Text embedding failed: %s",
 								   text_err ? text_err : "unknown error");
 			if (text_err)
-				NDB_SAFE_PFREE_AND_NULL(text_err);
+				NDB_FREE(text_err);
 			return -1;
 		}
 		if (text_err)
-			NDB_SAFE_PFREE_AND_NULL(text_err);
+			NDB_FREE(text_err);
 	}
 
 	/* Get image embedding */
@@ -1560,16 +1488,16 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
 									&image_vec, &image_dim, &img_err) != 0)
 		{
 			if (text_vec)
-				NDB_SAFE_PFREE_AND_NULL(text_vec);
+				NDB_FREE(text_vec);
 			if (errstr)
 				*errstr = psprintf("Image embedding failed: %s",
 								   img_err ? img_err : "unknown error");
 			if (img_err)
-				NDB_SAFE_PFREE_AND_NULL(img_err);
+				NDB_FREE(img_err);
 			return -1;
 		}
 		if (img_err)
-			NDB_SAFE_PFREE_AND_NULL(img_err);
+			NDB_FREE(img_err);
 	}
 
 	/* Combine embeddings (CLIP uses shared space) */
@@ -1581,9 +1509,9 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
 		if (!*vec_out)
 		{
 			if (text_vec)
-				NDB_SAFE_PFREE_AND_NULL(text_vec);
+				NDB_FREE(text_vec);
 			if (image_vec)
-				NDB_SAFE_PFREE_AND_NULL(image_vec);
+				NDB_FREE(image_vec);
 			if (errstr)
 				*errstr = pstrdup("Memory allocation failed");
 			*dim_out = 0;
@@ -1606,18 +1534,18 @@ ndb_onnx_hf_multimodal_embed(const char *model_name,
 
 		/* Cleanup */
 		if (text_vec)
-			NDB_SAFE_PFREE_AND_NULL(text_vec);
+			NDB_FREE(text_vec);
 		if (image_vec)
-			NDB_SAFE_PFREE_AND_NULL(image_vec);
+			NDB_FREE(image_vec);
 
 		rc = 0;
 	}
 	else
 	{
 		if (text_vec)
-			NDB_SAFE_PFREE_AND_NULL(text_vec);
+			NDB_FREE(text_vec);
 		if (image_vec)
-			NDB_SAFE_PFREE_AND_NULL(image_vec);
+			NDB_FREE(image_vec);
 		if (errstr)
 			*errstr = pstrdup("Failed to combine embeddings (dimension mismatch)");
 		rc = -1;
@@ -1700,7 +1628,7 @@ ndb_onnx_hf_rerank(const char *model_name,
 		{
 			if (errstr)
 				*errstr = pstrdup("Failed to load ONNX cross-encoder model");
-			NDB_SAFE_PFREE_AND_NULL(scores);
+			NDB_FREE(scores);
 			rc = -1;
 		}
 		else
@@ -1712,9 +1640,9 @@ ndb_onnx_hf_rerank(const char *model_name,
 			{
 				if (errstr)
 					*errstr = pstrdup("Failed to tokenize query");
-				NDB_SAFE_PFREE_AND_NULL(scores);
+				NDB_FREE(scores);
 				if (query_token_ids)
-					NDB_SAFE_PFREE_AND_NULL(query_token_ids);
+					NDB_FREE(query_token_ids);
 				rc = -1;
 			}
 			else
@@ -1735,7 +1663,7 @@ ndb_onnx_hf_rerank(const char *model_name,
 					{
 						scores[i] = 0.0f;
 						if (doc_token_ids)
-							NDB_SAFE_PFREE_AND_NULL(doc_token_ids);
+							NDB_FREE(doc_token_ids);
 						continue;
 					}
 
@@ -1769,7 +1697,7 @@ ndb_onnx_hf_rerank(const char *model_name,
 					{
 						scores[i] = 0.0f;
 						if (doc_token_ids)
-							NDB_SAFE_PFREE_AND_NULL(doc_token_ids);
+							NDB_FREE(doc_token_ids);
 						continue;
 					}
 
@@ -1801,9 +1729,9 @@ ndb_onnx_hf_rerank(const char *model_name,
 					{
 						scores[i] = 0.0f;
 						if (combined_token_ids)
-							NDB_SAFE_PFREE_AND_NULL(combined_token_ids);
+							NDB_FREE(combined_token_ids);
 						if (doc_token_ids)
-							NDB_SAFE_PFREE_AND_NULL(doc_token_ids);
+							NDB_FREE(doc_token_ids);
 						continue;
 					}
 
@@ -1819,11 +1747,11 @@ ndb_onnx_hf_rerank(const char *model_name,
 					{
 						scores[i] = 0.0f;
 						if (input_data)
-							NDB_SAFE_PFREE_AND_NULL(input_data);
+							NDB_FREE(input_data);
 						if (combined_token_ids)
-							NDB_SAFE_PFREE_AND_NULL(combined_token_ids);
+							NDB_FREE(combined_token_ids);
 						if (doc_token_ids)
-							NDB_SAFE_PFREE_AND_NULL(doc_token_ids);
+							NDB_FREE(doc_token_ids);
 						continue;
 					}
 
@@ -1835,11 +1763,11 @@ ndb_onnx_hf_rerank(const char *model_name,
 						scores[i] = 0.0f;
 						neurondb_onnx_free_tensor(input_tensor);
 						if (input_data)
-							NDB_SAFE_PFREE_AND_NULL(input_data);
+							NDB_FREE(input_data);
 						if (combined_token_ids)
-							NDB_SAFE_PFREE_AND_NULL(combined_token_ids);
+							NDB_FREE(combined_token_ids);
 						if (doc_token_ids)
-							NDB_SAFE_PFREE_AND_NULL(doc_token_ids);
+							NDB_FREE(doc_token_ids);
 						continue;
 					}
 
@@ -1865,11 +1793,11 @@ ndb_onnx_hf_rerank(const char *model_name,
 					neurondb_onnx_free_tensor(input_tensor);
 					neurondb_onnx_free_tensor(output_tensor);
 					if (input_data)
-						NDB_SAFE_PFREE_AND_NULL(input_data);
+						NDB_FREE(input_data);
 					if (combined_token_ids)
-						NDB_SAFE_PFREE_AND_NULL(combined_token_ids);
+						NDB_FREE(combined_token_ids);
 					if (doc_token_ids)
-						NDB_SAFE_PFREE_AND_NULL(doc_token_ids);
+						NDB_FREE(doc_token_ids);
 					input_tensor = NULL;
 					output_tensor = NULL;
 					input_data = NULL;
@@ -1879,7 +1807,7 @@ ndb_onnx_hf_rerank(const char *model_name,
 
 				/* Cleanup query tokens */
 				if (query_token_ids)
-					NDB_SAFE_PFREE_AND_NULL(query_token_ids);
+					NDB_FREE(query_token_ids);
 
 				*scores_out = scores;
 				rc = 0;
@@ -1894,15 +1822,15 @@ ndb_onnx_hf_rerank(const char *model_name,
 		if (output_tensor)
 			neurondb_onnx_free_tensor(output_tensor);
 		if (input_data)
-			NDB_SAFE_PFREE_AND_NULL(input_data);
+			NDB_FREE(input_data);
 		if (combined_token_ids)
-			NDB_SAFE_PFREE_AND_NULL(combined_token_ids);
+			NDB_FREE(combined_token_ids);
 		if (doc_token_ids)
-			NDB_SAFE_PFREE_AND_NULL(doc_token_ids);
+			NDB_FREE(doc_token_ids);
 		if (query_token_ids)
-			NDB_SAFE_PFREE_AND_NULL(query_token_ids);
+			NDB_FREE(query_token_ids);
 		if (scores)
-			NDB_SAFE_PFREE_AND_NULL(scores);
+			NDB_FREE(scores);
 		if (errstr && !*errstr)
 			*errstr = pstrdup("ONNX reranking error");
 		*scores_out = NULL;

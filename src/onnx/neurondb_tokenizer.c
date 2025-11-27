@@ -40,6 +40,7 @@
 #include <unistd.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* External declarations */
 extern char *neurondb_onnx_model_path;
@@ -304,19 +305,19 @@ evict_lru_tokenizer(void)
 			{
 				next = vocab_entry->next;
 				if (vocab_entry->token)
-					NDB_SAFE_PFREE_AND_NULL(vocab_entry->token);
-				NDB_SAFE_PFREE_AND_NULL(vocab_entry);
+					NDB_FREE(vocab_entry->token);
+				NDB_FREE(vocab_entry);
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(lru_entry->vocab_table);
+		NDB_FREE(lru_entry->vocab_table);
 	}
 
 	/* Free cache entry */
 	if (lru_entry->model_name)
-		NDB_SAFE_PFREE_AND_NULL(lru_entry->model_name);
+		NDB_FREE(lru_entry->model_name);
 	if (lru_entry->vocab_path)
-		NDB_SAFE_PFREE_AND_NULL(lru_entry->vocab_path);
-	NDB_SAFE_PFREE_AND_NULL(lru_entry);
+		NDB_FREE(lru_entry->vocab_path);
+	NDB_FREE(lru_entry);
 
 	g_tokenizer_cache_count--;
 }
@@ -456,7 +457,7 @@ tokenize_text(const char *text, int *num_tokens)
 	}
 
 	/* Free the temporary, mutable copy */
-	NDB_SAFE_PFREE_AND_NULL(text_copy);
+	NDB_FREE(text_copy);
 
 	*num_tokens = count;
 	return tokens;
@@ -559,10 +560,10 @@ neurondb_tokenize_with_model(const char *text,
 			token_id = TOKEN_UNK_ID;
 		}
 		token_ids[output_idx++] = token_id;
-		NDB_SAFE_PFREE_AND_NULL(tokens[i]); /* Free each token string */
+		NDB_FREE(tokens[i]); /* Free each token string */
 	}
 	/* Free the tokens array itself */
-	NDB_SAFE_PFREE_AND_NULL(tokens);
+	NDB_FREE(tokens);
 
 	/* Always add [SEP] if there is room */
 	if (output_idx < max_length)
@@ -812,12 +813,12 @@ neurondb_hf_tokenize(PG_FUNCTION_ARGS)
 							 dvalues, output_length, INT4OID, sizeof(int32), true, 'i');
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(token_ids);
-	NDB_SAFE_PFREE_AND_NULL(dvalues);
-	NDB_SAFE_PFREE_AND_NULL(dnulls);
-	NDB_SAFE_PFREE_AND_NULL(text_str);
+	NDB_FREE(token_ids);
+	NDB_FREE(dvalues);
+	NDB_FREE(dnulls);
+	NDB_FREE(text_str);
 	if (model_name)
-		NDB_SAFE_PFREE_AND_NULL(model_name);
+		NDB_FREE(model_name);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -923,11 +924,11 @@ neurondb_hf_detokenize(PG_FUNCTION_ARGS)
 	text_str = neurondb_detokenize(token_ids, length, model_name);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(token_ids);
-	NDB_SAFE_PFREE_AND_NULL(dvalues);
-	NDB_SAFE_PFREE_AND_NULL(dnulls);
+	NDB_FREE(token_ids);
+	NDB_FREE(dvalues);
+	NDB_FREE(dnulls);
 	if (model_name)
-		NDB_SAFE_PFREE_AND_NULL(model_name);
+		NDB_FREE(model_name);
 
 	PG_RETURN_TEXT_P(cstring_to_text(text_str));
 }

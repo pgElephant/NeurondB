@@ -7,7 +7,7 @@
  * Handles periodic HNSW index compaction, edge cleanup, level rebalancing,
  * tombstone pruning, and maintenance window scheduling for optimal performance.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/worker/worker_defrag.c
@@ -48,18 +48,46 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "neurondb_bgworkers.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_guc.h"
 
-/* Defrag configuration parameters (GUCs; see also neurandefrag_init_guc) */
-static int	neurandefrag_naptime = 300000;
-static int	neurandefrag_compact_threshold = 10000;
-static double neurandefrag_fragmentation_threshold = 0.3;
-static bool neurandefrag_enabled = true;
-static char *neurandefrag_maintenance_window = "02:00-04:00";
+/* GUC variables are now centralized in neurondb_guc.c */
+/* Use GetConfigOption() to retrieve GUC values */
+
+/* Helper to get int GUC value */
+static int
+get_guc_int(const char *name, int default_val)
+{
+	const char *val = GetConfigOption(name, true, false);
+	return val ? atoi(val) : default_val;
+}
+
+/* Helper to get double GUC value */
+/* Unused function - kept for potential future use */
+static double __attribute__((unused))
+get_guc_double(const char *name, double default_val)
+{
+	const char *val = GetConfigOption(name, true, false);
+	return val ? atof(val) : default_val;
+}
+
+/* Helper to get bool GUC value */
+static bool
+get_guc_bool(const char *name, bool default_val)
+{
+	const char *val = GetConfigOption(name, true, false);
+	if (!val)
+		return default_val;
+	return (strcmp(val, "on") == 0 || strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
+}
 
 /* Shared state structure for defrag worker, lives in shmem */
 typedef struct NeurandefragSharedState
@@ -96,13 +124,15 @@ neurandefrag_run(PG_FUNCTION_ARGS)
 	StringInfoData query;
 	int			n_indexes = 0;
 	bool		success = false;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	elog(DEBUG1, "neurondb: neurandefrag_run invoked");
 
 	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 	{
-		elog(WARNING, "neurondb: neurandefrag_run: SPI_connect failed");
+		elog(WARNING, "neurondb: neurandefrag_run: failed to begin SPI session");
 		PG_RETURN_BOOL(false);
 	}
 
@@ -117,9 +147,8 @@ neurandefrag_run(PG_FUNCTION_ARGS)
 					 "AND c.relkind = 'i' "
 					 "AND n.nspname NOT IN ('pg_catalog', 'information_schema')");
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
-	NDB_SAFE_PFREE_AND_NULL(query.data);
+	ret = ndb_spi_execute(session, query.data, true, 0);
+	NDB_FREE(query.data);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
@@ -177,7 +206,7 @@ neurandefrag_run(PG_FUNCTION_ARGS)
 		}
 	}
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 
 	if (success)
 	{
@@ -238,71 +267,7 @@ neurandefrag_segv_handler(int signum)
 }
 
 /* Register all tunable parameters (GUCs) for the defrag worker. */
-void
-neurandefrag_init_guc(void)
-{
-	DefineCustomIntVariable("neurondb.neurandefrag_naptime",
-							"Duration between maintenance cycles (ms)",
-							NULL,
-							&neurandefrag_naptime,
-							300000,
-							60000,
-							3600000,
-							PGC_SIGHUP,
-							0,
-							NULL,
-							NULL,
-							NULL);
-
-	DefineCustomIntVariable("neurondb.neurandefrag_compact_threshold",
-							"Edge count threshold for compaction trigger",
-							NULL,
-							&neurandefrag_compact_threshold,
-							10000,
-							1000,
-							1000000,
-							PGC_SIGHUP,
-							0,
-							NULL,
-							NULL,
-							NULL);
-
-	DefineCustomRealVariable(
-							 "neurondb.neurandefrag_fragmentation_threshold",
-							 "Fragmentation ratio necessary to trigger a full rebuild",
-							 NULL,
-							 &neurandefrag_fragmentation_threshold,
-							 0.3,
-							 0.1,
-							 0.9,
-							 PGC_SIGHUP,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
-
-	DefineCustomStringVariable("neurondb.neurandefrag_maintenance_window",
-							   "Maintenance window in HH:MM-HH:MM format",
-							   NULL,
-							   &neurandefrag_maintenance_window,
-							   "02:00-04:00",
-							   PGC_SIGHUP,
-							   0,
-							   NULL,
-							   NULL,
-							   NULL);
-
-	DefineCustomBoolVariable("neurondb.neurandefrag_enabled",
-							 "Enable/disable the Neurandefrag background worker",
-							 NULL,
-							 &neurandefrag_enabled,
-							 true,
-							 PGC_SIGHUP,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
-}
+/* GUC initialization is now centralized in neurondb_guc.c */
 
 /* Shared memory size required for the worker */
 Size
@@ -416,7 +381,7 @@ neurandefrag_main(Datum main_arg)
 
 	while (!got_sigterm)
 	{
-		long		timeout_ms = Max(neurandefrag_naptime, 1000);
+		long		timeout_ms = Max(get_guc_int("neurondb.neurandefrag_naptime", 300000), 1000);
 
 		wait_events = WaitLatch(MyLatch,
 								WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
@@ -440,7 +405,7 @@ neurandefrag_main(Datum main_arg)
 							"processed SIGHUP")));
 		}
 
-		if (!neurandefrag_enabled)
+		if (!get_guc_bool("neurondb.neurandefrag_enabled", true))
 			continue;
 
 		oldctx = MemoryContextSwitchTo(worker_memctx);
@@ -465,12 +430,14 @@ neurandefrag_main(Datum main_arg)
 			 * Start transaction - required before SPI operations and relation
 			 * access
 			 */
+			NDB_DECLARE(NdbSpiSession *, nested_session);
 			StartTransactionCommand();
 			PushActiveSnapshot(GetTransactionSnapshot());
 
-			PG_TRY();
+			nested_session = ndb_spi_session_begin(CurrentMemoryContext, false);
+			if (nested_session != NULL)
 			{
-				if (SPI_connect() == SPI_OK_CONNECT)
+				PG_TRY();
 				{
 					/* Find HNSW indexes that need maintenance */
 					initStringInfo(&sql);
@@ -483,8 +450,7 @@ neurandefrag_main(Datum main_arg)
 									 "AND c.relkind = 'i' "
 									 "LIMIT 10");
 
-					ret = ndb_spi_execute_safe(sql.data, true, 0);
-					NDB_CHECK_SPI_TUPTABLE();
+					ret = ndb_spi_execute(nested_session, sql.data, true, 0);
 					if (ret == SPI_OK_SELECT && SPI_processed > 0)
 					{
 						int			idx_count;
@@ -519,7 +485,7 @@ neurandefrag_main(Datum main_arg)
 													  &isnull);
 							if (isnull)
 							{
-								NDB_SAFE_PFREE_AND_NULL(relname);
+								NDB_FREE(relname);
 								continue;
 							}
 							indexOid = DatumGetObjectId(oid_datum);
@@ -575,44 +541,14 @@ neurandefrag_main(Datum main_arg)
 							}
 
 							index_close(indexRel, AccessShareLock);
-							NDB_SAFE_PFREE_AND_NULL(relname);
+							NDB_FREE(relname);
 						}
 
 						SPI_freetuptable(tuptable);
 					}
 
-					NDB_SAFE_PFREE_AND_NULL(sql.data);
+					NDB_FREE(sql.data);
 				}
-				SPI_finish();
-
-				/* Update shared state with statistics */
-				LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
-				neurandefrag_state->tombstones_pruned += tombstones_found;
-				neurandefrag_state->edges_cleaned += edges_cleaned;
-				neurandefrag_state->compactions_done += compactions_done;
-				neurandefrag_state->rebalances_done += rebalances_done;
-				LWLockRelease(AddinShmemInitLock);
-
-				if (tombstones_found > 0 || edges_cleaned > 0)
-				{
-					ereport(LOG,
-							(errmsg("neurondb: neurandefrag processed: "
-									"%lld tombstones, %lld edges cleaned",
-									(long long) tombstones_found,
-									(long long) edges_cleaned)));
-				}
-				else
-				{
-					ereport(DEBUG1,
-							(errmsg("neurondb: neurandefrag worker heartbeat (PID "
-									"%d) - no maintenance needed",
-									MyProcPid)));
-				}
-
-				/* Commit transaction */
-				PopActiveSnapshot();
-				CommitTransactionCommand();
-			}
 			PG_CATCH();
 			{
 				/* Clean up on error */
@@ -626,13 +562,43 @@ neurandefrag_main(Datum main_arg)
 				 * Ensure SPI is disconnected - safe to call even if not
 				 * connected
 				 */
-				SPI_finish();
+				ndb_spi_session_end(&nested_session);
 
 				elog(LOG,
 					 "neurondb: neurandefrag worker caught exception, all "
 					 "cleaned up. Restarting loop.");
 			}
 			PG_END_TRY();
+			ndb_spi_session_end(&nested_session);
+			}
+
+			/* Update shared state with statistics */
+			LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+			neurandefrag_state->tombstones_pruned += tombstones_found;
+			neurandefrag_state->edges_cleaned += edges_cleaned;
+			neurandefrag_state->compactions_done += compactions_done;
+			neurandefrag_state->rebalances_done += rebalances_done;
+			LWLockRelease(AddinShmemInitLock);
+
+			if (tombstones_found > 0 || edges_cleaned > 0)
+			{
+				ereport(LOG,
+						(errmsg("neurondb: neurandefrag processed: "
+								"%lld tombstones, %lld edges cleaned",
+								(long long) tombstones_found,
+								(long long) edges_cleaned)));
+			}
+			else
+			{
+				ereport(DEBUG1,
+						(errmsg("neurondb: neurandefrag worker heartbeat (PID "
+								"%d) - no maintenance needed",
+								MyProcPid)));
+			}
+
+			/* Commit transaction */
+			PopActiveSnapshot();
+			CommitTransactionCommand();
 
 			MemoryContextSwitchTo(oldctx);
 			MemoryContextReset(worker_memctx);

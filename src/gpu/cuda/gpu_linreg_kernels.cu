@@ -421,4 +421,47 @@ launch_linreg_eval_kernel(const float *features,
 	return err;
 }
 
+/*
+ * CUDA kernel to add lambda to diagonal of matrix (for Ridge regression)
+ * Adds lambda to diagonal elements starting from index 1 (skipping intercept)
+ */
+__global__ void
+ndb_cuda_ridge_add_lambda_diagonal_kernel(double *matrix,
+										  double lambda,
+										  int dim)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	/* Add lambda to diagonal elements (excluding first element, which is intercept) */
+	if (idx > 0 && idx < dim)
+	{
+		matrix[idx * dim + idx] += lambda;
+	}
+}
+
+/*
+ * Host launch wrapper for ridge_add_lambda_diagonal_kernel
+ */
+extern "C" cudaError_t
+launch_ridge_add_lambda_diagonal_kernel(double *matrix,
+										double lambda,
+										int dim)
+{
+	if (dim <= 0 || matrix == NULL)
+		return cudaErrorInvalidValue;
+
+	int threads_per_block = 256;
+	int blocks = (dim + threads_per_block - 1) / threads_per_block;
+
+	if (blocks > 65535)
+		blocks = 65535;
+
+	ndb_cuda_ridge_add_lambda_diagonal_kernel<<<blocks, threads_per_block>>>(
+		matrix,
+		lambda,
+		dim);
+
+	return cudaGetLastError();
+}
+
 #endif /* NDB_GPU_CUDA */

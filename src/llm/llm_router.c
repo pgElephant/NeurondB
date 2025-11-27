@@ -17,6 +17,7 @@
 #include "neurondb_onnx.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #endif
 
 static bool provider_is(const char *provider, const char *name);
@@ -220,7 +221,7 @@ ndb_llm_route_complete(const NdbLLMConfig * cfg,
 					out->tokens_in =
 						0;
 				if (token_ids)
-					NDB_SAFE_PFREE_AND_NULL(token_ids);
+					NDB_FREE(token_ids);
 
 #ifdef HAVE_ONNX_RUNTIME
 				PG_TRY();
@@ -279,7 +280,7 @@ ndb_llm_route_complete(const NdbLLMConfig * cfg,
 						}
 					}
 					if (output_token_ids)
-						NDB_SAFE_PFREE_AND_NULL(output_token_ids);
+						NDB_FREE(output_token_ids);
 				}
 				PG_CATCH();
 				{
@@ -357,7 +358,7 @@ ndb_llm_route_complete(const NdbLLMConfig * cfg,
 				out->json = NULL;
 				out->http_status = 200;
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				return NDB_LLM_ROUTE_SUCCESS;
 			}
 			if (opts != NULL && opts->require_gpu)
@@ -371,15 +372,15 @@ ndb_llm_route_complete(const NdbLLMConfig * cfg,
 						(errmsg("neurondb: GPU HF completion "
 								"failed")));
 				if (gpu_text)
-					NDB_SAFE_PFREE_AND_NULL(gpu_text);
+					NDB_FREE(gpu_text);
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				return NDB_LLM_ROUTE_ERROR;
 			}
 			if (gpu_text)
-				NDB_SAFE_PFREE_AND_NULL(gpu_text);
+				NDB_FREE(gpu_text);
 			if (gpu_err)
-				NDB_SAFE_PFREE_AND_NULL(gpu_err);
+				NDB_FREE(gpu_err);
 		}
 #ifdef HAVE_ONNX_RUNTIME
 		if (!neurondb_onnx_available())
@@ -414,7 +415,7 @@ ndb_llm_route_complete(const NdbLLMConfig * cfg,
 					out->tokens_in =
 						0;
 				if (token_ids)
-					NDB_SAFE_PFREE_AND_NULL(token_ids);
+					NDB_FREE(token_ids);
 
 #ifdef HAVE_ONNX_RUNTIME
 				PG_TRY();
@@ -474,7 +475,7 @@ ndb_llm_route_complete(const NdbLLMConfig * cfg,
 						}
 					}
 					if (output_token_ids)
-						NDB_SAFE_PFREE_AND_NULL(output_token_ids);
+						NDB_FREE(output_token_ids);
 				}
 				PG_CATCH();
 				{
@@ -552,7 +553,7 @@ ndb_llm_route_complete(const NdbLLMConfig * cfg,
 				out->json = NULL;
 				out->http_status = 200;
 				if (onnx_err)
-					NDB_SAFE_PFREE_AND_NULL(onnx_err);
+					NDB_FREE(onnx_err);
 				return NDB_LLM_ROUTE_SUCCESS;
 			}
 			if (opts != NULL && opts->require_gpu)
@@ -566,15 +567,15 @@ ndb_llm_route_complete(const NdbLLMConfig * cfg,
 						(errmsg("neurondb: ONNX HF completion "
 								"failed")));
 				if (onnx_text)
-					NDB_SAFE_PFREE_AND_NULL(onnx_text);
+					NDB_FREE(onnx_text);
 				if (onnx_err)
-					NDB_SAFE_PFREE_AND_NULL(onnx_err);
+					NDB_FREE(onnx_err);
 				return NDB_LLM_ROUTE_ERROR;
 			}
 			if (onnx_text)
-				NDB_SAFE_PFREE_AND_NULL(onnx_text);
+				NDB_FREE(onnx_text);
 			if (onnx_err)
-				NDB_SAFE_PFREE_AND_NULL(onnx_err);
+				NDB_FREE(onnx_err);
 			return fallback_complete(cfg,
 									 opts,
 									 "ONNX completion failed",
@@ -652,13 +653,13 @@ ndb_llm_route_vision_complete(const NdbLLMConfig * cfg,
 										 * yet */
 					out->tokens_out = 0;
 					if (gpu_err)
-						NDB_SAFE_PFREE_AND_NULL(gpu_err);
+						NDB_FREE(gpu_err);
 					return NDB_LLM_ROUTE_SUCCESS;
 				}
 				if (gpu_text)
-					NDB_SAFE_PFREE_AND_NULL(gpu_text);
+					NDB_FREE(gpu_text);
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				if (opts != NULL && opts->require_gpu)
 				{
 					return NDB_LLM_ROUTE_ERROR;
@@ -698,7 +699,7 @@ ndb_llm_route_embed(const NdbLLMConfig * cfg,
 			char	   *gpu_err = NULL;
 			int			rc;
 
-			elog(NOTICE, "neurondb: Attempting GPU embedding with model: %s", cfg->model);
+			elog(DEBUG1, "neurondb: Attempting GPU embedding with model: %s", cfg->model);
 			rc = neurondb_gpu_hf_embed(
 									   cfg->model, text, &gpu_vec, &gpu_dim, &gpu_err);
 			if (rc == 0 && gpu_vec != NULL && gpu_dim > 0)
@@ -706,7 +707,7 @@ ndb_llm_route_embed(const NdbLLMConfig * cfg,
 				*vec_out = gpu_vec;
 				*dim_out = gpu_dim;
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				return NDB_LLM_ROUTE_SUCCESS;
 			}
 			if (opts != NULL && opts->require_gpu)
@@ -720,15 +721,15 @@ ndb_llm_route_embed(const NdbLLMConfig * cfg,
 						(errmsg("neurondb: GPU HF embedding "
 								"failed")));
 				if (gpu_vec)
-					NDB_SAFE_PFREE_AND_NULL(gpu_vec);
+					NDB_FREE(gpu_vec);
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				return NDB_LLM_ROUTE_ERROR;
 			}
 			if (gpu_vec)
-				NDB_SAFE_PFREE_AND_NULL(gpu_vec);
+				NDB_FREE(gpu_vec);
 			if (gpu_err)
-				NDB_SAFE_PFREE_AND_NULL(gpu_err);
+				NDB_FREE(gpu_err);
 		}
 		/* Fall back to HTTP API */
 		return ndb_hf_embed(cfg, text, vec_out, dim_out);
@@ -753,7 +754,7 @@ ndb_llm_route_embed(const NdbLLMConfig * cfg,
 				*vec_out = gpu_vec;
 				*dim_out = gpu_dim;
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				return NDB_LLM_ROUTE_SUCCESS;
 			}
 			if (opts != NULL && opts->require_gpu)
@@ -767,15 +768,15 @@ ndb_llm_route_embed(const NdbLLMConfig * cfg,
 						(errmsg("neurondb: GPU HF embedding "
 								"failed")));
 				if (gpu_vec)
-					NDB_SAFE_PFREE_AND_NULL(gpu_vec);
+					NDB_FREE(gpu_vec);
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				return NDB_LLM_ROUTE_ERROR;
 			}
 			if (gpu_vec)
-				NDB_SAFE_PFREE_AND_NULL(gpu_vec);
+				NDB_FREE(gpu_vec);
 			if (gpu_err)
-				NDB_SAFE_PFREE_AND_NULL(gpu_err);
+				NDB_FREE(gpu_err);
 		}
 #ifdef HAVE_ONNX_RUNTIME
 		if (!neurondb_onnx_available())
@@ -837,7 +838,7 @@ ndb_llm_route_embed(const NdbLLMConfig * cfg,
 					}
 					else if (token_length <= 0)
 					{
-						NDB_SAFE_PFREE_AND_NULL(token_ids);
+						NDB_FREE(token_ids);
 						token_ids = NULL;
 						rc = fallback_embed(cfg,
 											opts,
@@ -883,9 +884,9 @@ ndb_llm_route_embed(const NdbLLMConfig * cfg,
 								neurondb_onnx_free_tensor(
 														  input_tensor);
 							if (input_data)
-								NDB_SAFE_PFREE_AND_NULL(input_data);
+								NDB_FREE(input_data);
 							if (token_ids)
-								NDB_SAFE_PFREE_AND_NULL(token_ids);
+								NDB_FREE(token_ids);
 							rc = fallback_embed(cfg,
 												opts,
 												"ONNX "
@@ -946,9 +947,9 @@ ndb_llm_route_embed(const NdbLLMConfig * cfg,
 								neurondb_onnx_free_tensor(
 														  output_tensor);
 							if (input_data)
-								NDB_SAFE_PFREE_AND_NULL(input_data);
+								NDB_FREE(input_data);
 							if (token_ids)
-								NDB_SAFE_PFREE_AND_NULL(token_ids);
+								NDB_FREE(token_ids);
 
 							rc = NDB_LLM_ROUTE_SUCCESS;
 						}
@@ -967,12 +968,12 @@ ndb_llm_route_embed(const NdbLLMConfig * cfg,
 					neurondb_onnx_free_tensor(
 											  output_tensor);
 				if (input_data)
-					NDB_SAFE_PFREE_AND_NULL(input_data);
+					NDB_FREE(input_data);
 				if (token_ids)
-					NDB_SAFE_PFREE_AND_NULL(token_ids);
+					NDB_FREE(token_ids);
 				if (*vec_out)
 				{
-					NDB_SAFE_PFREE_AND_NULL(*vec_out);
+					NDB_FREE(*vec_out);
 					*vec_out = NULL;
 					*dim_out = 0;
 				}
@@ -1053,7 +1054,7 @@ ndb_llm_route_rerank(const NdbLLMConfig * cfg,
 			{
 				*scores_out = gpu_scores;
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				return NDB_LLM_ROUTE_SUCCESS;
 			}
 			if (opts != NULL && opts->require_gpu)
@@ -1067,15 +1068,15 @@ ndb_llm_route_rerank(const NdbLLMConfig * cfg,
 						(errmsg("neurondb: GPU HF reranking "
 								"failed")));
 				if (gpu_scores)
-					NDB_SAFE_PFREE_AND_NULL(gpu_scores);
+					NDB_FREE(gpu_scores);
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				return NDB_LLM_ROUTE_ERROR;
 			}
 			if (gpu_scores)
-				NDB_SAFE_PFREE_AND_NULL(gpu_scores);
+				NDB_FREE(gpu_scores);
 			if (gpu_err)
-				NDB_SAFE_PFREE_AND_NULL(gpu_err);
+				NDB_FREE(gpu_err);
 		}
 #ifdef HAVE_ONNX_RUNTIME
 		if (!neurondb_onnx_available())
@@ -1102,7 +1103,7 @@ ndb_llm_route_rerank(const NdbLLMConfig * cfg,
 			{
 				*scores_out = onnx_scores;
 				if (onnx_err)
-					NDB_SAFE_PFREE_AND_NULL(onnx_err);
+					NDB_FREE(onnx_err);
 				return NDB_LLM_ROUTE_SUCCESS;
 			}
 			if (opts != NULL && opts->require_gpu)
@@ -1116,15 +1117,15 @@ ndb_llm_route_rerank(const NdbLLMConfig * cfg,
 						(errmsg("neurondb: ONNX HF reranking "
 								"failed")));
 				if (onnx_scores)
-					NDB_SAFE_PFREE_AND_NULL(onnx_scores);
+					NDB_FREE(onnx_scores);
 				if (onnx_err)
-					NDB_SAFE_PFREE_AND_NULL(onnx_err);
+					NDB_FREE(onnx_err);
 				return NDB_LLM_ROUTE_ERROR;
 			}
 			if (onnx_scores)
-				NDB_SAFE_PFREE_AND_NULL(onnx_scores);
+				NDB_FREE(onnx_scores);
 			if (onnx_err)
-				NDB_SAFE_PFREE_AND_NULL(onnx_err);
+				NDB_FREE(onnx_err);
 			/* Fall back to HTTP */
 			return fallback_rerank(cfg,
 								   opts,
@@ -1227,7 +1228,7 @@ ndb_llm_route_complete_batch(const NdbLLMConfig * cfg,
 							out->tokens_in[i] =
 								0;
 						if (token_ids)
-							NDB_SAFE_PFREE_AND_NULL(token_ids);
+							NDB_FREE(token_ids);
 
 						out->texts[i] =
 							batch_results[i].text
@@ -1246,14 +1247,14 @@ ndb_llm_route_complete_batch(const NdbLLMConfig * cfg,
 						out->tokens_out[i] = 0;
 						out->http_status[i] = 500;
 						if (batch_results[i].error)
-							NDB_SAFE_PFREE_AND_NULL(batch_results[i]
+							NDB_FREE(batch_results[i]
 													.error);
 					}
 				}
 				out->num_success = num_success;
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
-				NDB_SAFE_PFREE_AND_NULL(batch_results);
+					NDB_FREE(gpu_err);
+				NDB_FREE(batch_results);
 				return (num_success > 0) ? NDB_LLM_ROUTE_SUCCESS
 					: NDB_LLM_ROUTE_ERROR;
 			}
@@ -1269,13 +1270,13 @@ ndb_llm_route_complete_batch(const NdbLLMConfig * cfg,
 						(errmsg("neurondb: GPU HF batch "
 								"completion failed")));
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
-				NDB_SAFE_PFREE_AND_NULL(batch_results);
+					NDB_FREE(gpu_err);
+				NDB_FREE(batch_results);
 				return NDB_LLM_ROUTE_ERROR;
 			}
 			if (gpu_err)
-				NDB_SAFE_PFREE_AND_NULL(gpu_err);
-			NDB_SAFE_PFREE_AND_NULL(batch_results);
+				NDB_FREE(gpu_err);
+			NDB_FREE(batch_results);
 #endif
 		}
 		else
@@ -1466,16 +1467,16 @@ ndb_llm_route_embed_batch(const NdbLLMConfig * cfg,
 					dims[i] = gpu_dim;
 					num_success++;
 					if (gpu_err)
-						NDB_SAFE_PFREE_AND_NULL(gpu_err);
+						NDB_FREE(gpu_err);
 				}
 				else
 				{
 					vecs[i] = NULL;
 					dims[i] = 0;
 					if (gpu_vec)
-						NDB_SAFE_PFREE_AND_NULL(gpu_vec);
+						NDB_FREE(gpu_vec);
 					if (gpu_err)
-						NDB_SAFE_PFREE_AND_NULL(gpu_err);
+						NDB_FREE(gpu_err);
 					/* If GPU required, fail entire batch */
 					if (opts != NULL && opts->require_gpu)
 					{
@@ -1483,10 +1484,10 @@ ndb_llm_route_embed_batch(const NdbLLMConfig * cfg,
 						for (i = 0; i < num_texts; i++)
 						{
 							if (vecs[i])
-								NDB_SAFE_PFREE_AND_NULL(vecs[i]);
+								NDB_FREE(vecs[i]);
 						}
-						NDB_SAFE_PFREE_AND_NULL(vecs);
-						NDB_SAFE_PFREE_AND_NULL(dims);
+						NDB_FREE(vecs);
+						NDB_FREE(dims);
 						return NDB_LLM_ROUTE_ERROR;
 					}
 				}
@@ -1524,10 +1525,10 @@ ndb_llm_route_embed_batch(const NdbLLMConfig * cfg,
 				for (i = 0; i < num_texts; i++)
 				{
 					if (vecs[i])
-						NDB_SAFE_PFREE_AND_NULL(vecs[i]);
+						NDB_FREE(vecs[i]);
 				}
-				NDB_SAFE_PFREE_AND_NULL(vecs);
-				NDB_SAFE_PFREE_AND_NULL(dims);
+				NDB_FREE(vecs);
+				NDB_FREE(dims);
 				vecs = NULL;
 				dims = NULL;
 				num_success = 0;
@@ -1548,10 +1549,10 @@ ndb_llm_route_embed_batch(const NdbLLMConfig * cfg,
 				for (i = 0; i < num_texts; i++)
 				{
 					if (vecs[i])
-						NDB_SAFE_PFREE_AND_NULL(vecs[i]);
+						NDB_FREE(vecs[i]);
 				}
-				NDB_SAFE_PFREE_AND_NULL(vecs);
-				NDB_SAFE_PFREE_AND_NULL(dims);
+				NDB_FREE(vecs);
+				NDB_FREE(dims);
 			}
 
 			rc = ndb_hf_embed_batch(cfg, texts, num_texts,
@@ -1574,8 +1575,8 @@ ndb_llm_route_embed_batch(const NdbLLMConfig * cfg,
 	else
 	{
 		/* Unknown provider */
-		NDB_SAFE_PFREE_AND_NULL(vecs);
-		NDB_SAFE_PFREE_AND_NULL(dims);
+		NDB_FREE(vecs);
+		NDB_FREE(dims);
 		return NDB_LLM_ROUTE_ERROR;
 	}
 
@@ -1633,13 +1634,13 @@ ndb_llm_route_image_embed(const NdbLLMConfig * cfg,
 					*vec_out = gpu_vec;
 					*dim_out = gpu_dim;
 					if (gpu_err)
-						NDB_SAFE_PFREE_AND_NULL(gpu_err);
+						NDB_FREE(gpu_err);
 					return NDB_LLM_ROUTE_SUCCESS;
 				}
 				if (gpu_vec)
-					NDB_SAFE_PFREE_AND_NULL(gpu_vec);
+					NDB_FREE(gpu_vec);
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				if (opts != NULL && opts->require_gpu)
 				{
 					return NDB_LLM_ROUTE_ERROR;
@@ -1659,12 +1660,12 @@ ndb_llm_route_image_embed(const NdbLLMConfig * cfg,
 				if (onnx_rc == 0 && *vec_out != NULL && *dim_out > 0)
 				{
 					if (onnx_err)
-						NDB_SAFE_PFREE_AND_NULL(onnx_err);
+						NDB_FREE(onnx_err);
 					return NDB_LLM_ROUTE_SUCCESS;
 				}
 				/* ONNX failed, fall through to HTTP */
 				if (onnx_err)
-					NDB_SAFE_PFREE_AND_NULL(onnx_err);
+					NDB_FREE(onnx_err);
 				if (opts != NULL && opts->require_gpu)
 				{
 					/* GPU required but failed */
@@ -1729,13 +1730,13 @@ ndb_llm_route_multimodal_embed(const NdbLLMConfig * cfg,
 					*vec_out = gpu_vec;
 					*dim_out = gpu_dim;
 					if (gpu_err)
-						NDB_SAFE_PFREE_AND_NULL(gpu_err);
+						NDB_FREE(gpu_err);
 					return NDB_LLM_ROUTE_SUCCESS;
 				}
 				if (gpu_vec)
-					NDB_SAFE_PFREE_AND_NULL(gpu_vec);
+					NDB_FREE(gpu_vec);
 				if (gpu_err)
-					NDB_SAFE_PFREE_AND_NULL(gpu_err);
+					NDB_FREE(gpu_err);
 				if (opts != NULL && opts->require_gpu)
 				{
 					return NDB_LLM_ROUTE_ERROR;
@@ -1759,12 +1760,12 @@ ndb_llm_route_multimodal_embed(const NdbLLMConfig * cfg,
 				if (onnx_rc == 0 && *vec_out != NULL && *dim_out > 0)
 				{
 					if (onnx_err)
-						NDB_SAFE_PFREE_AND_NULL(onnx_err);
+						NDB_FREE(onnx_err);
 					return NDB_LLM_ROUTE_SUCCESS;
 				}
 				/* ONNX failed, fall through to HTTP */
 				if (onnx_err)
-					NDB_SAFE_PFREE_AND_NULL(onnx_err);
+					NDB_FREE(onnx_err);
 				if (opts != NULL && opts->require_gpu)
 				{
 					/* GPU required but failed */

@@ -7,7 +7,7 @@
  * including MVCC-aware time-travel queries, cold-tier compression,
  * vector-aware VACUUM, and index rebalancing.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/data_management.c
@@ -30,8 +30,10 @@
 #include "storage/bufmgr.h"
 #include "access/heapam.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * vector_time_travel
@@ -110,7 +112,7 @@ vector_time_travel(PG_FUNCTION_ARGS)
 			 tm.tm_min,
 			 tm.tm_sec);
 
-	elog(INFO, "neurondb: formatted time for time-travel: %s", timebuf);
+	elog(DEBUG2, "neurondb: formatted time for time-travel: %s", timebuf);
 
 	/* Start a temporary memory context for this function execution */
 	tmpcontext = AllocSetContextCreate(CurrentMemoryContext,
@@ -119,34 +121,34 @@ vector_time_travel(PG_FUNCTION_ARGS)
 	oldcontext = MemoryContextSwitchTo(tmpcontext);
 
 	/* Check that table exists */
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(tmpcontext, false);
+	if (session == NULL)
+	{
+		NDB_FREE(tbl_str);
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(tmpcontext);
+		ereport(ERROR,
+				(errmsg("neurondb: failed to begin SPI session in "
+						"vector_time_travel")));
+	}
+
 	initStringInfo(&check_sql);
 	appendStringInfo(&check_sql,
 					 "SELECT 1 FROM information_schema.tables WHERE table_schema = "
 					 "'public' AND table_name = '%s'",
 					 tbl_str);
-
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(check_sql.data);
-		MemoryContextSwitchTo(oldcontext);
-		MemoryContextDelete(tmpcontext);
-		ereport(ERROR,
-				(errmsg("neurondb: SPI_connect failed in "
-						"vector_time_travel")));
-	}
-	ret = ndb_spi_execute_safe(check_sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, check_sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		table_exists = true;
 	else
 		table_exists = false;
-	NDB_SAFE_PFREE_AND_NULL(check_sql.data);
+	NDB_FREE(check_sql.data);
 
 	if (!table_exists)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		SPI_finish();
+		NDB_FREE(tbl_str);
+		ndb_spi_session_end(&session);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(tmpcontext);
 		ereport(ERROR,
@@ -174,14 +176,13 @@ vector_time_travel(PG_FUNCTION_ARGS)
 					 timebuf);
 
 
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 0);
 
 	if (ret != SPI_OK_SELECT)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(tbl_str);
+		ndb_spi_session_end(&session);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(tmpcontext);
 		ereport(ERROR,
@@ -189,7 +190,7 @@ vector_time_travel(PG_FUNCTION_ARGS)
 				 errmsg("neurondb: failed to perform "
 						"time-travel query")));
 	}
-	if (SPI_processed > 0)
+	if (SPI_processed > 0 && SPI_tuptable != NULL)
 	{
 		count_datum = SPI_getbinval(SPI_tuptable->vals[0],
 									SPI_tuptable->tupdesc,
@@ -209,9 +210,9 @@ vector_time_travel(PG_FUNCTION_ARGS)
 
 
 	/* Clean up and free all allocated memory */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	SPI_finish();
+	NDB_FREE(sql.data);
+	NDB_FREE(tbl_str);
+	ndb_spi_session_end(&session);
 
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(tmpcontext);
@@ -282,33 +283,34 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 	oldcontext = MemoryContextSwitchTo(tmpcontext);
 
 	/* Check source table existence */
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(tmpcontext, false);
+	if (session == NULL)
+	{
+		NDB_FREE(tbl_str);
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(tmpcontext);
+		ereport(ERROR,
+				(errmsg("neurondb: failed to begin SPI session in "
+						"compress_cold_tier")));
+	}
+
 	initStringInfo(&check_sql);
 	appendStringInfo(&check_sql,
 					 "SELECT 1 FROM information_schema.tables WHERE table_schema = "
 					 "'public' AND table_name = '%s';",
 					 tbl_str);
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		NDB_SAFE_PFREE_AND_NULL(check_sql.data);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		MemoryContextSwitchTo(oldcontext);
-		MemoryContextDelete(tmpcontext);
-		ereport(ERROR,
-				(errmsg("neurondb: SPI_connect failed in "
-						"compress_cold_tier")));
-	}
-	ret = ndb_spi_execute_safe(check_sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, check_sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		table_exists = true;
 	else
 		table_exists = false;
-	NDB_SAFE_PFREE_AND_NULL(check_sql.data);
+	NDB_FREE(check_sql.data);
 
 	if (!table_exists)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		SPI_finish();
+		NDB_FREE(tbl_str);
+		ndb_spi_session_end(&session);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(tmpcontext);
 		ereport(ERROR,
@@ -333,8 +335,7 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 					 "  metadata JSONB"
 					 ");",
 					 cold_tbl_str);
-	ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ndb_spi_execute(session, sql.data, false, 0);
 
 	/* Always verify cold tier destination table actually exists */
 	resetStringInfo(&check_sql);
@@ -342,19 +343,18 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 					 "SELECT 1 FROM information_schema.tables WHERE table_schema = "
 					 "'public' AND table_name = '%s';",
 					 cold_tbl_str);
-	ret = ndb_spi_execute_safe(check_sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, check_sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		coldtable_exists = true;
 	else
 		coldtable_exists = false;
-	NDB_SAFE_PFREE_AND_NULL(check_sql.data);
+	NDB_FREE(check_sql.data);
 	if (!coldtable_exists)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(cold_tbl_str);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(tbl_str);
+		NDB_FREE(cold_tbl_str);
+		ndb_spi_session_end(&session);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(tmpcontext);
 		ereport(ERROR,
@@ -373,10 +373,9 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 					 tbl_str,
 					 age_days,
 					 age_days);
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 
-	if (ret == SPI_OK_SELECT && SPI_processed > 0)
+	if (ret == SPI_OK_SELECT && SPI_processed > 0 && SPI_tuptable != NULL)
 	{
 		bool		isnull;
 		Datum		d = SPI_getbinval(SPI_tuptable->vals[0],
@@ -422,8 +421,7 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 						 age_days,
 						 cold_tbl_str,
 						 tbl_str);
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(session, sql.data, false, 0);
 
 		/* If insert succeeds, count moved by how many were inserted */
 		resetStringInfo(&sql);
@@ -434,9 +432,8 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 						 tbl_str,
 						 age_days,
 						 age_days);
-		ret = ndb_spi_execute_safe(sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
-		if (ret == SPI_OK_SELECT && SPI_processed > 0)
+		ret = ndb_spi_execute(session, sql.data, true, 1);
+		if (ret == SPI_OK_SELECT && SPI_processed > 0 && SPI_tuptable != NULL)
 		{
 			bool		isnull;
 			Datum		d = SPI_getbinval(SPI_tuptable->vals[0],
@@ -473,8 +470,7 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 						 tbl_str,
 						 age_days,
 						 age_days);
-		ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ndb_spi_execute(session, sql.data, false, 0);
 	}
 	else
 	{
@@ -486,11 +482,11 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 	}
 
 	/* Clean up */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	NDB_SAFE_PFREE_AND_NULL(cold_table.data);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(cold_tbl_str);
-	SPI_finish();
+	NDB_FREE(sql.data);
+	NDB_FREE(cold_table.data);
+	NDB_FREE(tbl_str);
+	NDB_FREE(cold_tbl_str);
+	ndb_spi_session_end(&session);
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(tmpcontext);
 
@@ -562,23 +558,24 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 					 "SELECT 1 FROM information_schema.tables WHERE table_schema = "
 					 "'public' AND table_name = '%s';",
 					 tbl_str);
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(tmpcontext, false);
+	if (session == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
+		NDB_FREE(sql.data);
+		NDB_FREE(tbl_str);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(tmpcontext);
 		ereport(ERROR,
-				(errmsg("neurondb: SPI_connect failed for "
+				(errmsg("neurondb: failed to begin SPI session for "
 						"vacuum_vectors")));
 	}
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 	if (!(ret == SPI_OK_SELECT && SPI_processed > 0))
 	{
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		SPI_finish();
+		NDB_FREE(sql.data);
+		NDB_FREE(tbl_str);
+		ndb_spi_session_end(&session);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(tmpcontext);
 		ereport(ERROR,
@@ -586,7 +583,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 						"vacuum_vector",
 						tbl_str)));
 	}
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 
 	/* Step 1: Detailed table stats extraction */
 	initStringInfo(&stat_sql);
@@ -596,8 +593,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 					 "FROM pg_stat_user_tables WHERE schemaname = 'public' AND "
 					 "relname = '%s';",
 					 tbl_str);
-	ret = ndb_spi_execute_safe(stat_sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, stat_sql.data, true, 1);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
@@ -620,7 +616,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 			 (long) dead_tuples,
 			 (long) live_tuples);
 	}
-	NDB_SAFE_PFREE_AND_NULL(stat_sql.data);
+	NDB_FREE(stat_sql.data);
 
 	/* Step 2: Identify and remove orphaned vectors: ids with no embedding */
 	initStringInfo(&sql);
@@ -634,8 +630,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 					 "SELECT COUNT(*) FROM deleted_orphaned;",
 					 tbl_str,
 					 tbl_str);
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		Datum		orphan_datum = SPI_getbinval(SPI_tuptable->vals[0],
@@ -647,7 +642,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 			orphan_count = DatumGetInt64(orphan_datum);
 	}
 	cleaned_count += orphan_count;
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 
 	elog(DEBUG1,
 		 "neurondb: removed %ld orphaned vectors from \"%s\"",
@@ -663,10 +658,9 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 		appendStringInfo(
 						 &sql, "VACUUM (ANALYZE, VERBOSE) %s;", tbl_str);
 
-	elog(INFO, "neurondb: executing vacuum command: %s", sql.data);
+	elog(DEBUG1, "neurondb: executing vacuum command: %s", sql.data);
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret < 0)
 		elog(WARNING,
 			 "neurondb: PostgreSQL VACUUM failed on \"%s\"",
@@ -676,7 +670,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 			 "neurondb: PostgreSQL VACUUM completed successfully "
 			 "for \"%s\"",
 			 tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 
 	/* Step 4: Update and persist neurondb-specific statistics */
 	initStringInfo(&sql);
@@ -689,7 +683,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 					 "  dead_tuples_cleaned BIGINT, "
 					 "  stats_json JSONB"
 					 ");");
-	ndb_spi_execute_safe(sql.data, false, 0);
+	ndb_spi_execute(session, sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	resetStringInfo(&sql);
 
@@ -715,9 +709,9 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 					 tbl_str,
 					 tbl_str,
 					 (long) cleaned_count);
-	ndb_spi_execute_safe(sql.data, false, 0);
+	ndb_spi_execute(session, sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 
 	/* Generate and emit overall statistics and status */
 	initStringInfo(&statmsg);
@@ -728,10 +722,10 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 					 (long) dead_tuples,
 					 (long) orphan_count);
 
-	NDB_SAFE_PFREE_AND_NULL(statmsg.data);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
+	NDB_FREE(statmsg.data);
+	NDB_FREE(tbl_str);
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(tmpcontext);
 
@@ -805,28 +799,29 @@ rebalance_index(PG_FUNCTION_ARGS)
 					 "indexname = '%s';",
 					 idx_str);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(tmpcontext, false);
+	if (session == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(check_sql.data);
-		NDB_SAFE_PFREE_AND_NULL(idx_str);
+		NDB_FREE(check_sql.data);
+		NDB_FREE(idx_str);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(tmpcontext);
 		ereport(ERROR,
-				(errmsg("neurondb: SPI_connect failed for "
+				(errmsg("neurondb: failed to begin SPI session for "
 						"rebalance_index")));
 	}
-	ret = ndb_spi_execute_safe(check_sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, check_sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		index_exists = true;
 	else
 		index_exists = false;
-	NDB_SAFE_PFREE_AND_NULL(check_sql.data);
+	NDB_FREE(check_sql.data);
 
 	if (!index_exists)
 	{
-		NDB_SAFE_PFREE_AND_NULL(idx_str);
-		SPI_finish();
+		NDB_FREE(idx_str);
+		ndb_spi_session_end(&session);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(tmpcontext);
 		ereport(ERROR,
@@ -848,7 +843,7 @@ rebalance_index(PG_FUNCTION_ARGS)
 					 "    last_rebalance TIMESTAMPTZ,"
 					 "    metadata JSONB"
 					 ");");
-	ndb_spi_execute_safe(sql.data, false, 0);
+	ndb_spi_execute(session, sql.data, false, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 
 	/* Query the current index metadata for node/edge structure */
@@ -857,8 +852,7 @@ rebalance_index(PG_FUNCTION_ARGS)
 					 "SELECT COALESCE(num_nodes, 0), COALESCE(balance_factor, 0.0) "
 					 "FROM neurondb_index_metadata WHERE index_name = '%s';",
 					 idx_str);
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
@@ -908,8 +902,7 @@ rebalance_index(PG_FUNCTION_ARGS)
 					 (long) rebalanced_edges,
 					 target_balance);
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret < 0)
 		elog(WARNING,
 			 "neurondb: updating index metadata failed for \"%s\"",
@@ -922,9 +915,9 @@ rebalance_index(PG_FUNCTION_ARGS)
 		 idx_str,
 		 target_balance);
 
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
-	NDB_SAFE_PFREE_AND_NULL(idx_str);
-	SPI_finish();
+	NDB_FREE(sql.data);
+	NDB_FREE(idx_str);
+	ndb_spi_session_end(&session);
 
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(tmpcontext);

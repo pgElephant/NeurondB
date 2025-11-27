@@ -10,7 +10,7 @@
  * - Centroid quality metrics for IVF
  * - Dead tuple detection
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/index/index_validator.c
@@ -47,7 +47,10 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_constants.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #include "executor/spi.h"
 #include "catalog/index.h"
 #include "access/genam.h"
@@ -685,7 +688,7 @@ check_hnsw_connectivity(Relation index, ValidateResult * result)
 				UnlockReleaseBuffer(nodeBuf);
 			}
 
-			NDB_SAFE_PFREE_AND_NULL(queue);
+			NDB_FREE(queue);
 		}
 
 		/* Count unreachable nodes */
@@ -730,7 +733,7 @@ check_hnsw_connectivity(Relation index, ValidateResult * result)
 			UnlockReleaseBuffer(nodeBuf);
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(visited);
+		NDB_FREE(visited);
 	}
 
 	if (orphanCount > 0)
@@ -1111,28 +1114,28 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 			char	   *inner_indexName;
 			char	   *rebuildCmd;
 			StringInfoData cmd;
+			NDB_DECLARE(NdbSpiSession *, session);
 
 			inner_indexName = pstrdup(RelationGetRelationName(indexRel));
 			initStringInfo(&cmd);
 			appendStringInfo(&cmd, "REINDEX INDEX %s", inner_indexName);
 			rebuildCmd = cmd.data;
-
-			if (SPI_connect() != SPI_OK_CONNECT)
+			session = ndb_spi_session_begin(CurrentMemoryContext, false);
+			if (session == NULL)
 			{
 				pfree(indexInfo);
-				NDB_SAFE_PFREE_AND_NULL(inner_indexName);
-				NDB_SAFE_PFREE_AND_NULL(rebuildCmd);
+				NDB_FREE(inner_indexName);
+				NDB_FREE(rebuildCmd);
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("neurondb: SPI_connect failed during index rebuild")));
+						 errmsg("neurondb: failed to begin SPI session during index rebuild")));
 			}
 
-			ndb_spi_execute_safe(rebuildCmd, false, 0);
-			NDB_CHECK_SPI_TUPTABLE();
-			SPI_finish();
+			ndb_spi_execute(session, rebuildCmd, false, 0);
+			ndb_spi_session_end(&session);
 
-			NDB_SAFE_PFREE_AND_NULL(indexName);
-			NDB_SAFE_PFREE_AND_NULL(rebuildCmd);
+			NDB_FREE(indexName);
+			NDB_FREE(rebuildCmd);
 
 			elog(INFO,
 				 "neurondb: Index %s rebuilt successfully",
@@ -1143,30 +1146,31 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 		indexRel = index_open(indexOid, AccessShareLock);
 
 		/* Track rebuild history */
+		NDB_DECLARE(NdbSpiSession *, session2);
 		indexName = pstrdup(RelationGetRelationName(indexRel));
-		if (SPI_connect() != SPI_OK_CONNECT)
+		session2 = ndb_spi_session_begin(CurrentMemoryContext, false);
+		if (session2 == NULL)
 		{
 			pfree(indexInfo);
 			relation_close(heapRel, AccessShareLock);
 			index_close(indexRel, AccessExclusiveLock);
-			NDB_SAFE_PFREE_AND_NULL(indexName);
+			NDB_FREE(indexName);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed during rebuild history tracking")));
+					 errmsg("neurondb: failed to begin SPI session during rebuild history tracking")));
 		}
 
 		/* Create rebuild history table if it doesn't exist */
 		{
 			initStringInfo(&sql);
 			appendStringInfo(&sql,
-							 "CREATE TABLE IF NOT EXISTS neurondb_index_rebuild_history ("
+							 "CREATE TABLE IF NOT EXISTS " NDB_FQ_INDEX_REBUILD_HISTORY " ("
 							 "index_oid OID PRIMARY KEY, "
 							 "index_name TEXT NOT NULL, "
 							 "last_rebuild_time TIMESTAMPTZ NOT NULL, "
 							 "rebuild_count BIGINT DEFAULT 1)");
-			(void) ndb_spi_execute_safe(sql.data, false, 0);
-			NDB_CHECK_SPI_TUPTABLE();
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
+			(void) ndb_spi_execute(session2, sql.data, false, 0);
+			NDB_FREE(sql.data);
 		}
 		/* Upsert rebuild history */
 		{
@@ -1177,22 +1181,21 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 
 			initStringInfo(&sql);
 			appendStringInfo(&sql,
-							 "INSERT INTO neurondb_index_rebuild_history "
+							 "INSERT INTO " NDB_FQ_INDEX_REBUILD_HISTORY " "
 							 "(index_oid, index_name, last_rebuild_time, rebuild_count) "
 							 "VALUES (%u, %s, %s::timestamptz, 1) "
 							 "ON CONFLICT (index_oid) DO UPDATE SET "
 							 "last_rebuild_time = EXCLUDED.last_rebuild_time, "
-							 "rebuild_count = neurondb_index_rebuild_history.rebuild_count + 1",
+							 "rebuild_count = " NDB_FQ_INDEX_REBUILD_HISTORY ".rebuild_count + 1",
 							 indexOid,
 							 quote_literal_cstr(indexName),
 							 quote_literal_cstr(rebuildTimeStr));
-			(void) ndb_spi_execute_safe(sql.data, false, 0);
-			NDB_CHECK_SPI_TUPTABLE();
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			NDB_SAFE_PFREE_AND_NULL(rebuildTimeStr);
+			(void) ndb_spi_execute(session2, sql.data, false, 0);
+			NDB_FREE(sql.data);
+			NDB_FREE(rebuildTimeStr);
 		}
-		NDB_SAFE_PFREE_AND_NULL(indexName);
-		SPI_finish();
+		NDB_FREE(indexName);
+		ndb_spi_session_end(&session2);
 
 		pfree(indexInfo);
 	}
@@ -1235,7 +1238,7 @@ index_statistics(PG_FUNCTION_ARGS)
 		HeapTuple	nstuple;
 		Form_pg_namespace nsform;
 
-		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetDatum("public"));
+		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetTextDatum("public"));
 		if (HeapTupleIsValid(nstuple))
 		{
 			nsform = (Form_pg_namespace) GETSTRUCT(nstuple);
@@ -1258,7 +1261,7 @@ index_statistics(PG_FUNCTION_ARGS)
 	if (!RelationIsValid(indexRel))
 	{
 		index_close(indexRel, AccessShareLock);
-		NDB_SAFE_PFREE_AND_NULL(idx_name);
+		NDB_FREE(idx_name);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid index: %s", idx_name)));
@@ -1338,10 +1341,10 @@ index_statistics(PG_FUNCTION_ARGS)
 					 (long long) diag->orphan_nodes);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(idx_name);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(idx_name);
 	index_close(indexRel, AccessShareLock);
 
 	PG_RETURN_POINTER(result_jsonb);
@@ -1378,7 +1381,7 @@ index_health(PG_FUNCTION_ARGS)
 		HeapTuple	nstuple;
 		Form_pg_namespace nsform;
 
-		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetDatum("public"));
+		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetTextDatum("public"));
 		if (HeapTupleIsValid(nstuple))
 		{
 			nsform = (Form_pg_namespace) GETSTRUCT(nstuple);
@@ -1401,7 +1404,7 @@ index_health(PG_FUNCTION_ARGS)
 	if (!RelationIsValid(indexRel))
 	{
 		index_close(indexRel, AccessShareLock);
-		NDB_SAFE_PFREE_AND_NULL(idx_name);
+		NDB_FREE(idx_name);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid index: %s", idx_name)));
@@ -1447,10 +1450,10 @@ index_health(PG_FUNCTION_ARGS)
 					 diag->recommendations.data);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(idx_name);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(idx_name);
 	index_close(indexRel, AccessShareLock);
 
 	PG_RETURN_POINTER(result_jsonb);
@@ -1488,7 +1491,7 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 		HeapTuple	nstuple;
 		Form_pg_namespace nsform;
 
-		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetDatum("public"));
+		nstuple = SearchSysCache1(NAMESPACENAME, CStringGetTextDatum("public"));
 		if (HeapTupleIsValid(nstuple))
 		{
 			nsform = (Form_pg_namespace) GETSTRUCT(nstuple);
@@ -1511,7 +1514,7 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 	if (!RelationIsValid(indexRel))
 	{
 		index_close(indexRel, AccessShareLock);
-		NDB_SAFE_PFREE_AND_NULL(idx_name);
+		NDB_FREE(idx_name);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid index: %s", idx_name)));
@@ -1529,15 +1532,16 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 		int			ret;
 		StringInfoData sql;
 
-		if (SPI_connect() == SPI_OK_CONNECT)
+		NDB_DECLARE(NdbSpiSession *, session3);
+		session3 = ndb_spi_session_begin(CurrentMemoryContext, false);
+		if (session3 != NULL)
 		{
 			initStringInfo(&sql);
 			appendStringInfo(&sql,
-							 "SELECT last_rebuild_time FROM neurondb_index_rebuild_history "
+							 "SELECT last_rebuild_time FROM " NDB_FQ_INDEX_REBUILD_HISTORY " "
 							 "WHERE index_oid = %u",
 							 indexOid);
-			ret = ndb_spi_execute_safe(sql.data, true, 0);
-			NDB_CHECK_SPI_TUPTABLE();
+			ret = ndb_spi_execute(session3, sql.data, true, 0);
 			if (ret == SPI_OK_SELECT && SPI_processed > 0)
 			{
 				bool		isnull;
@@ -1552,8 +1556,8 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 					days_since_last_rebuild = (GetCurrentTimestamp() - last_rebuild_time) / (24 * 60 * 60 * 1000000.0);
 				}
 			}
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
-			SPI_finish();
+			NDB_FREE(sql.data);
+			ndb_spi_session_end(&session3);
 		}
 	}
 
@@ -1605,10 +1609,10 @@ index_rebuild_recommendation(PG_FUNCTION_ARGS)
 					 should_rebuild ? (orphan_nodes > 0 ? "high" : (dead_ratio > 0.3f ? "high" : "medium")) : "low");
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(idx_name);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(idx_name);
 	index_close(indexRel, AccessShareLock);
 
 	PG_RETURN_POINTER(result_jsonb);

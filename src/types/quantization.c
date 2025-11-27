@@ -8,10 +8,10 @@
  * and binary quantization (32x compression). Includes optimized
  * Hamming distance for binary vectors.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/quantization.c
+ *	  src/types/quantization.c
  *
  *-------------------------------------------------------------------------
  */
@@ -31,6 +31,7 @@
 #include <stdint.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Forward declaration */
 PGDLLEXPORT float fp16_to_float(uint16 h);
@@ -457,9 +458,9 @@ quantize_analyze_int8(PG_FUNCTION_ARGS)
 						 "\"compression_ratio\":%.2f,\"relative_error\":0.0}",
 						 8.0);
 		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetDatum(json_buf.data)));
-		NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-		NDB_SAFE_PFREE_AND_NULL(quantized);
+														  jsonb_in, CStringGetTextDatum(json_buf.data)));
+		NDB_FREE(json_buf.data);
+		NDB_FREE(quantized);
 		PG_RETURN_POINTER(result_jsonb);
 	}
 
@@ -509,11 +510,11 @@ quantize_analyze_int8(PG_FUNCTION_ARGS)
 					 quantized_bytes);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(quantized);
-	NDB_SAFE_PFREE_AND_NULL(dequantized);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(quantized);
+	NDB_FREE(dequantized);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -598,11 +599,11 @@ quantize_analyze_fp16(PG_FUNCTION_ARGS)
 					 quantized_bytes);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(quantized);
-	NDB_SAFE_PFREE_AND_NULL(dequantized);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(quantized);
+	NDB_FREE(dequantized);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -695,11 +696,11 @@ quantize_analyze_binary(PG_FUNCTION_ARGS)
 					 quantized_bytes);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(quantized);
-	NDB_SAFE_PFREE_AND_NULL(dequantized);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(quantized);
+	NDB_FREE(dequantized);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -772,8 +773,8 @@ quantize_compare_distances(PG_FUNCTION_ARGS)
 		for (i = 0; i < b_original->dim; i++)
 			b_dequantized->data[i] = ((float4) bq->data[i]) / scale_b;
 
-		NDB_SAFE_PFREE_AND_NULL(aq);
-		NDB_SAFE_PFREE_AND_NULL(bq);
+		NDB_FREE(aq);
+		NDB_FREE(bq);
 	}
 	else if (strcmp(qtype, "fp16") == 0)
 	{
@@ -792,8 +793,8 @@ quantize_compare_distances(PG_FUNCTION_ARGS)
 		for (i = 0; i < b_original->dim; i++)
 			b_dequantized->data[i] = fp16_to_float(bq->data[i]);
 
-		NDB_SAFE_PFREE_AND_NULL(aq);
-		NDB_SAFE_PFREE_AND_NULL(bq);
+		NDB_FREE(aq);
+		NDB_FREE(bq);
 	}
 	else if (strcmp(qtype, "binary") == 0)
 	{
@@ -824,12 +825,12 @@ quantize_compare_distances(PG_FUNCTION_ARGS)
 				(bq->data[byte_idx] & (1 << bit_idx)) ? 1.0f : -1.0f;
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(aq);
-		NDB_SAFE_PFREE_AND_NULL(bq);
+		NDB_FREE(aq);
+		NDB_FREE(bq);
 	}
 	else
 	{
-		NDB_SAFE_PFREE_AND_NULL(qtype);
+		NDB_FREE(qtype);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("quantization type must be 'int8', 'fp16', or 'binary'")));
@@ -861,12 +862,12 @@ quantize_compare_distances(PG_FUNCTION_ARGS)
 					 qtype);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(qtype);
-	NDB_SAFE_PFREE_AND_NULL(a_dequantized);
-	NDB_SAFE_PFREE_AND_NULL(b_dequantized);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(qtype);
+	NDB_FREE(a_dequantized);
+	NDB_FREE(b_dequantized);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -940,9 +941,9 @@ quantize_analyze_uint8(PG_FUNCTION_ARGS)
 						 "\"compression_ratio\":%.2f,\"relative_error\":0.0}",
 						 4.0);
 		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetDatum(json_buf.data)));
-		NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-		NDB_SAFE_PFREE_AND_NULL(quantized);
+														  jsonb_in, CStringGetTextDatum(json_buf.data)));
+		NDB_FREE(json_buf.data);
+		NDB_FREE(quantized);
 		PG_RETURN_POINTER(result_jsonb);
 	}
 
@@ -992,11 +993,11 @@ quantize_analyze_uint8(PG_FUNCTION_ARGS)
 					 quantized_bytes);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(quantized);
-	NDB_SAFE_PFREE_AND_NULL(dequantized);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(quantized);
+	NDB_FREE(dequantized);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -1107,11 +1108,11 @@ quantize_analyze_ternary(PG_FUNCTION_ARGS)
 					 quantized_bytes);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(quantized);
-	NDB_SAFE_PFREE_AND_NULL(dequantized);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(quantized);
+	NDB_FREE(dequantized);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -1177,9 +1178,9 @@ quantize_analyze_int4(PG_FUNCTION_ARGS)
 						 "\"compression_ratio\":%.2f,\"relative_error\":0.0}",
 						 8.0);
 		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetDatum(json_buf.data)));
-		NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-		NDB_SAFE_PFREE_AND_NULL(quantized);
+														  jsonb_in, CStringGetTextDatum(json_buf.data)));
+		NDB_FREE(json_buf.data);
+		NDB_FREE(quantized);
 		PG_RETURN_POINTER(result_jsonb);
 	}
 
@@ -1237,11 +1238,11 @@ quantize_analyze_int4(PG_FUNCTION_ARGS)
 					 quantized_bytes);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(quantized);
-	NDB_SAFE_PFREE_AND_NULL(dequantized);
+	NDB_FREE(json_buf.data);
+	NDB_FREE(quantized);
+	NDB_FREE(dequantized);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -1646,7 +1647,7 @@ halfvec_in(PG_FUNCTION_ARGS)
 	for (i = 0; i < dim; i++)
 		result->data[i] = float4_to_fp16(temp_data[i]);
 
-	NDB_SAFE_PFREE_AND_NULL(temp_data);
+	NDB_FREE(temp_data);
 	PG_RETURN_POINTER(result);
 }
 
@@ -1987,7 +1988,7 @@ vector_to_bit(PG_FUNCTION_ARGS)
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(vb);
+	NDB_FREE(vb);
 	PG_RETURN_VARBIT_P(result);
 }
 

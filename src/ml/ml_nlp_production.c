@@ -1,15 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * ml_nlp_production.c
- *	  Production-Grade Natural Language Processing for NeuronDB
+ *    Production-grade natural language processing.
  *
- * Implements text embeddings, classification, sentiment analysis,
- * named entity recognition, and text generation.
- *
- * IDENTIFICATION
- *	  src/ml/ml_nlp_production.c
+ * This module implements text embeddings, classification, sentiment
+ * analysis, named entity recognition, and text generation.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/ml/ml_nlp_production.c
+ *
  *-------------------------------------------------------------------------
  */
 
@@ -25,6 +26,8 @@
 #include "neurondb_pgcompat.h"
 #include "neurondb.h"
 #include "neurondb_validation.h"
+#include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 #include <math.h>
 #include <string.h>
@@ -88,10 +91,10 @@ generate_text_embedding(PG_FUNCTION_ARGS)
 	result_array = construct_array(
 								   elems, embedding_dim, FLOAT4OID, sizeof(float4), true, 'i');
 
-	NDB_SAFE_PFREE_AND_NULL(embedding);
-	NDB_SAFE_PFREE_AND_NULL(elems);
-	NDB_SAFE_PFREE_AND_NULL(text_str);
-	NDB_SAFE_PFREE_AND_NULL(model_str);
+	NDB_FREE(embedding);
+	NDB_FREE(elems);
+	NDB_FREE(text_str);
+	NDB_FREE(model_str);
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
@@ -148,8 +151,8 @@ classify_text_production(PG_FUNCTION_ARGS)
 	result_array = construct_array(
 								   result_elems, 2, INT4OID, sizeof(int32), true, 'i');
 
-	NDB_SAFE_PFREE_AND_NULL(result_elems);
-	NDB_SAFE_PFREE_AND_NULL(text_str);
+	NDB_FREE(result_elems);
+	NDB_FREE(text_str);
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
@@ -218,8 +221,8 @@ analyze_sentiment_advanced(PG_FUNCTION_ARGS)
 		appendStringInfo(&result, "%.3f", sentiment_score);
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(text_str);
-	NDB_SAFE_PFREE_AND_NULL(lower_text);
+	NDB_FREE(text_str);
+	NDB_FREE(lower_text);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -249,7 +252,7 @@ extract_entities(PG_FUNCTION_ARGS)
 					 " {\"entity\": \"NeuronDB\", \"type\": \"PRODUCT\", "
 					 "\"confidence\": 0.98}]");
 
-	NDB_SAFE_PFREE_AND_NULL(text_str);
+	NDB_FREE(text_str);
 
 	PG_RETURN_TEXT_P(cstring_to_text(result.data));
 }
@@ -291,7 +294,7 @@ summarize_text(PG_FUNCTION_ARGS)
 		strcpy(summary + max_length, "...");
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(text_str);
+	NDB_FREE(text_str);
 
 	PG_RETURN_TEXT_P(cstring_to_text(summary));
 }
@@ -332,8 +335,8 @@ text_similarity_semantic(PG_FUNCTION_ARGS)
 
 	similarity = (float) common_chars / (len1 + len2 - common_chars + 1);
 
-	NDB_SAFE_PFREE_AND_NULL(str1);
-	NDB_SAFE_PFREE_AND_NULL(str2);
+	NDB_FREE(str1);
+	NDB_FREE(str2);
 
 	PG_RETURN_FLOAT8(similarity);
 }
@@ -369,7 +372,7 @@ detect_language(PG_FUNCTION_ARGS)
 	else
 		language = "unknown";
 
-	NDB_SAFE_PFREE_AND_NULL(text_str);
+	NDB_FREE(text_str);
 
 	PG_RETURN_TEXT_P(cstring_to_text(language));
 }
@@ -398,8 +401,8 @@ answer_question(PG_FUNCTION_ARGS)
 					 "Based on the context, the answer is: [extracted answer would "
 					 "appear here]");
 
-	NDB_SAFE_PFREE_AND_NULL(context_str);
-	NDB_SAFE_PFREE_AND_NULL(question_str);
+	NDB_FREE(context_str);
+	NDB_FREE(question_str);
 
 	PG_RETURN_TEXT_P(cstring_to_text(answer.data));
 }
@@ -411,6 +414,7 @@ answer_question(PG_FUNCTION_ARGS)
 #include "neurondb_gpu_model.h"
 #include "ml_gpu_registry.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 typedef struct NLPProductionGpuModelState
 {
@@ -443,7 +447,7 @@ nlp_production_model_serialize_to_bytea(int vocab_size, int embedding_dim, int m
 	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -523,7 +527,7 @@ nlp_production_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 																	NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "model_type") == 0 && v.type == jbvString)
 					strncpy(model_type, v.val.string.val, sizeof(model_type) - 1);
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -556,7 +560,7 @@ nlp_production_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 					 vocab_size, embedding_dim, max_seq_len, model_type, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+	NDB_FREE(metrics_json.data);
 
 	state = (NLPProductionGpuModelState *) palloc0(sizeof(NLPProductionGpuModelState));
 	state->model_blob = model_data;
@@ -568,7 +572,7 @@ nlp_production_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 	strncpy(state->model_type, model_type, sizeof(state->model_type) - 1);
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -655,7 +659,7 @@ nlp_production_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -699,7 +703,7 @@ nlp_production_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -738,7 +742,7 @@ nlp_production_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 
 	if (nlp_production_model_deserialize_from_bytea(payload_copy, &vocab_size, &embedding_dim, &max_seq_len, model_type, sizeof(model_type)) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("nlp_production_gpu_deserialize: failed to deserialize");
 		return false;
@@ -771,7 +775,7 @@ nlp_production_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -781,7 +785,7 @@ nlp_production_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -802,10 +806,10 @@ nlp_production_gpu_destroy(MLGpuModel * model)
 	{
 		state = (NLPProductionGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->metrics);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

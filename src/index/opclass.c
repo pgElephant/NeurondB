@@ -10,7 +10,7 @@
  *
  * Each operator class supports both HNSW and IVF access methods.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/index/opclass.c
@@ -34,7 +34,9 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 /*
  * Distance function implementations for operator support
@@ -752,12 +754,14 @@ neurondb_has_opclass(PG_FUNCTION_ARGS)
 	StringInfoData query;
 
 	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(name);
+		NDB_FREE(name);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: neurondb_has_opclass: SPI_connect failed")));
+				 errmsg("neurondb: neurondb_has_opclass: failed to begin SPI session")));
 	}
 
 	/* Query pg_opclass to check if operator class exists */
@@ -768,23 +772,22 @@ neurondb_has_opclass(PG_FUNCTION_ARGS)
 					 "WHERE oc.opcname = '%s' AND n.nspname = 'neurondb'",
 					 name);
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
-	NDB_SAFE_PFREE_AND_NULL(query.data);
+	ret = ndb_spi_execute(session, query.data, true, 0);
+	NDB_FREE(query.data);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		exists = true;
 	}
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 
 	elog(DEBUG1,
 		 "neurondb: Checking for operator class '%s': %s",
 		 name,
 		 exists ? "found" : "not found");
 
-	NDB_SAFE_PFREE_AND_NULL(name);
+	NDB_FREE(name);
 
 	PG_RETURN_BOOL(exists);
 }

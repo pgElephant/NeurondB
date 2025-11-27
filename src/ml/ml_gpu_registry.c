@@ -1,7 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_gpu_registry.c
- *    Registers GPU-capable ML model implementations.
+ *    GPU-capable ML model registry.
+ *
+ * This module registers GPU-capable ML model implementations for
+ * accelerated training and inference.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/ml/ml_gpu_registry.c
  *
  *-------------------------------------------------------------------------
  */
@@ -9,6 +17,8 @@
 #include "postgres.h"
 
 #include "ml_gpu_registry.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 /* Declarations for per-algorithm registration routines */
 /* Core Supervised */

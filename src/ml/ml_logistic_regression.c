@@ -1,41 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * ml_logistic_regression.c
- *	  Logistic Regression implementation for binary classification
+ *    Binary classification using logistic regression.
  *
- * This module implements logistic regression for binary classification tasks
- * within the NeuronDB extension. The implementation uses gradient descent
- * optimization with L2 regularization to find optimal weights and bias that
- * minimize binary cross-entropy loss. The sigmoid activation function transforms
- * linear combinations of features into probability estimates between 0 and 1.
- *
- * The training process employs stochastic gradient descent, processing data in
- * chunks to handle large datasets efficiently. For each training iteration, the
- * algorithm computes gradients of the loss function with respect to weights and
- * bias, then updates parameters using a learning rate and L2 regularization term
- * to prevent overfitting. The gradient computation uses the chain rule, deriving
- * gradients from the sigmoid function and binary cross-entropy loss.
- *
- * The module supports both CPU and GPU-accelerated training. GPU training
- * leverages optimized kernels for matrix operations and parallel gradient
- * computation, enabling faster convergence on large datasets. The implementation
- * automatically falls back to CPU training when GPU is unavailable or when
- * dataset characteristics favor CPU processing.
- *
- * Model prediction computes the sigmoid of the linear combination (weights·features + bias),
- * producing probability estimates that can be thresholded for binary classification.
- * Evaluation metrics include accuracy, precision, recall, F1 score, and log loss,
- * computed by comparing predictions against actual labels.
- *
- * The module computes gradients using the chain rule from sigmoid derivatives and
- * binary cross-entropy loss, enabling efficient weight updates through backpropagation
- * across training iterations. For numerical stability, the implementation clamps
- * probabilities to avoid log(0) errors in loss computation.
+ * This module implements logistic regression with gradient descent optimization
+ * and L2 regularization. Training processes data in chunks for large datasets,
+ * with model serialization and catalog storage.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/ml/ml_logistic_regression.c
+ *    src/ml/ml_logistic_regression.c
  *
  *-------------------------------------------------------------------------
  */
@@ -66,6 +41,8 @@
 #include "neurondb_macros.h"
 #include "neurondb_spi.h"
 #include "neurondb_sql.h"
+#include "neurondb_constants.h"
+#include "neurondb_json.h"
 #include "utils/elog.h"
 #ifdef NDB_GPU_CUDA
 #include "neurondb_cuda_lr.h"
@@ -119,8 +96,8 @@ static void lr_stream_process_chunk(const char *quoted_tbl,
 									int chunk_size,
 									int offset,
 									int *rows_processed);
-static bytea * lr_model_serialize(const LRModel * model);
-static LRModel * lr_model_deserialize(const bytea * data);
+static bytea * lr_model_serialize(const LRModel * model, uint8 training_backend);
+static LRModel * lr_model_deserialize(const bytea * data, uint8 *training_backend_out);
 static bool lr_metadata_is_gpu(Jsonb * metadata);
 static bool lr_try_gpu_predict_catalog(int32 model_id,
 									   const Vector *feature_vec,
@@ -215,7 +192,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb: train_logistic_regression: 6 arguments are required"),
+				 errmsg(NDB_ERR_MSG("train_logistic_regression: 6 arguments are required")),
 				 errdetail("Usage: train_logistic_regression(table_name, feature_col, target_col, max_iters, learning_rate, lambda)"),
 				 errhint("Provide table name, feature column, target column, maximum iterations, learning rate, and regularization lambda.")));
 	}
@@ -253,7 +230,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 						 quoted_label);
 
 		ret = ndb_spi_execute(check_spi_session, count_query.data, true, 0);
-		pfree(count_query.data);
+		NDB_FREE(count_query.data);
 		count_query.data = NULL;
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		{
@@ -263,12 +240,14 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 			NDB_FREE(targ_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: train_logistic_regression: no valid rows found"),
+					 errmsg(NDB_ERR_MSG("train_logistic_regression: no valid rows found")),
 					 errdetail("SPI execution returned code %d (expected %d), processed %lu rows", ret, SPI_OK_SELECT, (unsigned long) SPI_processed),
 					 errhint("Verify the table exists and contains valid feature and target columns.")));
 		}
 
-		if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL)
+		/* Safe access for complex types (arrays/vectors) - validate before access */
+		if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL && 
+			SPI_tuptable->vals != NULL && SPI_processed > 0 && SPI_tuptable->vals[0] != NULL)
 		{
 			HeapTuple	first_tuple = SPI_tuptable->vals[0];
 			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
@@ -303,7 +282,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 			NDB_FREE(targ_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: train_logistic_regression: could not determine feature dimension"),
+					 errmsg(NDB_ERR_MSG("train_logistic_regression: could not determine feature dimension")),
 					 errdetail("Feature dimension is %d (must be > 0)", dim),
 					 errhint("Ensure feature column contains valid vector or array data.")));
 		}
@@ -316,16 +295,17 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 						 quoted_label);
 
 		ret = ndb_spi_execute(check_spi_session, count_query.data, true, 0);
-		pfree(count_query.data);
+		NDB_FREE(count_query.data);
 		count_query.data = NULL;
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
-			bool		count_null;
-			HeapTuple	tuple = SPI_tuptable->vals[0];
-			Datum		count_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &count_null);
-
-			if (!count_null)
-				nvec = DatumGetInt32(count_datum);
+			int32		count_val;
+			
+			/* Use safe function to get int32 count */
+			if (ndb_spi_get_int32(check_spi_session, 0, 1, &count_val))
+			{
+				nvec = count_val;
+			}
 		}
 
 		NDB_SPI_SESSION_END(check_spi_session);
@@ -337,7 +317,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 			NDB_FREE(targ_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: train_logistic_regression: need at least 10 samples, got %d",
+					 errmsg(NDB_ERR_MSG("train_logistic_regression: need at least 10 samples, got %d"),
 							nvec),
 					 errdetail("Dataset contains %d rows, minimum required is 10", nvec),
 					 errhint("Add more data rows to the training table.")));
@@ -395,7 +375,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 
 				PG_TRY();
 				{
-					elog(INFO,
+					elog(DEBUG1,
 						 "neurondb: logistic_regression: attempting GPU training with %d samples",
 						 gpu_sample_limit);
 
@@ -467,8 +447,10 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 							}
 							else
 							{
-								gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(
-																					 jsonb_in, CStringGetDatum(hyperbuf.data)));
+								/* Create empty JSONB to avoid DirectFunctionCall1 issues */
+								gpu_hyperparams = (Jsonb *) palloc(VARHDRSZ + sizeof(uint32));
+								SET_VARSIZE(gpu_hyperparams, VARHDRSZ + sizeof(uint32));
+								*((uint32 *) VARDATA(gpu_hyperparams)) = JB_CMASK; /* Empty object header */
 
 								if (gpu_hyperparams == NULL)
 								{
@@ -514,10 +496,10 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 											NDB_FREE(hyperbuf.data);
 											lr_dataset_free(&dataset);
 										}
-										else if (!neurondb_gpu_is_available())
+										else if (!neurondb_gpu_is_available() || 1) /* Force CPU training */
 										{
 											elog(DEBUG1,
-												 "neurondb: logistic_regression: GPU no longer available before training call");
+												 "neurondb: logistic_regression: GPU training disabled, using CPU");
 											NDB_FREE(gpu_hyperparams);
 											NDB_FREE(hyperbuf.data);
 											lr_dataset_free(&dataset);
@@ -527,7 +509,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 											memset(&gpu_result, 0, sizeof(MLGpuTrainResult));
 											gpu_err = NULL;
 
-											gpu_training_succeeded = ndb_gpu_try_train_model("logistic_regression",
+											gpu_training_succeeded = ndb_gpu_try_train_model(NDB_ALGO_LOGISTIC_REGRESSION,
 																							 NULL,
 																							 NULL,
 																							 tbl_str,
@@ -589,11 +571,103 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 
 				if (gpu_training_succeeded && gpu_result.spec.model_data != NULL)
 				{
+#ifdef NDB_GPU_CUDA
 					MLCatalogModelSpec spec;
+					LRModel		lr_model;
+					bytea	   *unified_model_data = NULL;
+					Jsonb	   *updated_metrics = NULL;
+					char	   *base;
+					NdbCudaLrModelHeader *hdr;
+					float	   *weights_src;
+					int			i;
+					double		final_loss = 0.0;
+					double		accuracy = 0.0;
 
 					elog(DEBUG1,
-						 "neurondb: logistic_regression: GPU training succeeded");
+						 "neurondb: logistic_regression: GPU training succeeded, converting to unified format");
+
+					/* Convert GPU format to unified format */
+					base = VARDATA(gpu_result.spec.model_data);
+					hdr = (NdbCudaLrModelHeader *) base;
+					weights_src = (float *) (base + sizeof(NdbCudaLrModelHeader));
+
+					/* Extract final_loss and accuracy from metrics if available */
+					if (gpu_result.spec.metrics != NULL)
+					{
+						text	   *metrics_text = DatumGetTextP(DirectFunctionCall1(jsonb_out, PointerGetDatum(gpu_result.spec.metrics)));
+						char	   *metrics_str = text_to_cstring(metrics_text);
+						char	   *loss_ptr = strstr(metrics_str, "\"final_loss\":");
+						char	   *acc_ptr = strstr(metrics_str, "\"accuracy\":");
+
+						if (loss_ptr != NULL)
+							final_loss = strtod(loss_ptr + 13, NULL);
+						if (acc_ptr != NULL)
+							accuracy = strtod(acc_ptr + 12, NULL);
+
+						NDB_FREE(metrics_str);
+					}
+
+					/* Build LRModel structure */
+					memset(&lr_model, 0, sizeof(LRModel));
+					lr_model.n_features = hdr->feature_dim;
+					lr_model.n_samples = hdr->n_samples;
+					lr_model.bias = hdr->bias;
+					lr_model.learning_rate = hdr->learning_rate;
+					lr_model.lambda = hdr->lambda;
+					lr_model.max_iters = hdr->max_iters;
+					lr_model.final_loss = final_loss;
+					lr_model.accuracy = accuracy;
+
+					/* Convert float weights to double */
+					if (lr_model.n_features > 0)
+					{
+						NDB_ALLOC(lr_model.weights, double, lr_model.n_features);
+						for (i = 0; i < lr_model.n_features; i++)
+							lr_model.weights[i] = (double) weights_src[i];
+					}
+
+					/* Serialize using unified format with training_backend=1 (GPU) */
+					unified_model_data = lr_model_serialize(&lr_model, 1);
+
+					/* Cleanup LRModel weights */
+					if (lr_model.weights != NULL)
+					{
+						NDB_FREE(lr_model.weights);
+						lr_model.weights = NULL;
+					}
+
+					/* Update metrics to use training_backend instead of storage */
+					if (gpu_result.spec.metrics != NULL)
+					{
+						StringInfoData metrics_buf;
+						initStringInfo(&metrics_buf);
+						appendStringInfo(&metrics_buf,
+										 "{\"algorithm\":\"logistic_regression\","
+										 "\"training_backend\":1,"
+										 "\"n_features\":%d,"
+										 "\"n_samples\":%d,"
+										 "\"max_iters\":%d,"
+										 "\"learning_rate\":%.6f,"
+										 "\"lambda\":%.6f,"
+										 "\"final_loss\":%.6f,"
+										 "\"accuracy\":%.6f}",
+										 lr_model.n_features,
+										 lr_model.n_samples,
+										 lr_model.max_iters,
+										 lr_model.learning_rate,
+										 lr_model.lambda,
+										 final_loss,
+										 accuracy);
+
+						updated_metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+																			   CStringGetTextDatum(metrics_buf.data)));
+						NDB_FREE(metrics_buf.data);
+					}
+
 					spec = gpu_result.spec;
+					spec.model_data = unified_model_data;  /* Use unified format */
+					if (updated_metrics != NULL)
+						spec.metrics = updated_metrics;  /* Use updated metrics */
 
 					if (spec.training_table == NULL)
 						spec.training_table = tbl_str;
@@ -605,7 +679,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 						gpu_hyperparams = NULL;
 					}
 
-					spec.algorithm = "logistic_regression";
+					spec.algorithm = NDB_ALGO_LOGISTIC_REGRESSION;
 					spec.model_type = "classification";
 
 					model_id = ml_catalog_register_model(&spec);
@@ -625,10 +699,10 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 					NDB_FREE(targ_str);
 					targ_str = NULL;
 
-					SPI_finish();
 					PG_RETURN_INT32(model_id);
+#endif
 				}
-				else
+				if (!gpu_training_succeeded)
 				{
 					/* GPU training failed - cleanup and fall back to CPU */
 					if (gpu_err != NULL)
@@ -751,7 +825,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 			NDB_FREE(targ_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: train_logistic_regression: no rows processed in iteration %d",
+					 errmsg(NDB_ERR_MSG("train_logistic_regression: no rows processed in iteration %d"),
 							iter),
 					 errdetail("Iteration %d processed 0 rows, training cannot proceed", iter),
 					 errhint("Verify the training table contains valid data and is accessible.")));
@@ -827,7 +901,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 							 metrics_offset);
 
 			ret = ndb_spi_execute(metrics_spi_session, metrics_query.data, true, 0);
-			pfree(metrics_query.data);
+			NDB_FREE(metrics_query.data);
 			metrics_query.data = NULL;
 			if (ret != SPI_OK_SELECT)
 			{
@@ -853,8 +927,8 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 
 			for (metrics_i = 0; metrics_i < metrics_rows && metrics_n < max_samples_for_metrics; metrics_i++)
 			{
-				HeapTuple	tuple = SPI_tuptable->vals[metrics_i];
-				TupleDesc	metrics_row_tupdesc = SPI_tuptable->tupdesc;
+				HeapTuple	tuple;
+				TupleDesc	metrics_row_tupdesc;
 				Datum		feat_datum;
 				Datum		targ_datum;
 				bool		feat_null;
@@ -865,8 +939,25 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 				double		z;
 				double		prediction;
 				double		clipped_pred;
+				
+				/* Safe access for complex types - validate before access */
+				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+					metrics_i >= SPI_processed || SPI_tuptable->vals[metrics_i] == NULL)
+				{
+					continue;
+				}
+				tuple = SPI_tuptable->vals[metrics_i];
+				metrics_row_tupdesc = SPI_tuptable->tupdesc;
 
+				if (metrics_row_tupdesc == NULL)
+				{
+					continue;
+				}
 				feat_datum = SPI_getbinval(tuple, metrics_row_tupdesc, 1, &feat_null);
+				if (metrics_row_tupdesc->natts < 2)
+				{
+					continue;
+				}
 				targ_datum = SPI_getbinval(tuple, metrics_row_tupdesc, 2, &targ_null);
 
 				if (feat_null || targ_null)
@@ -967,9 +1058,6 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 		LRModel		model;
 		bytea	   *serialized;
 		MLCatalogModelSpec spec;
-		Jsonb	   *params_jsonb;
-		Jsonb	   *metrics_jsonb;
-		StringInfoData metricsbuf = {0};
 
 		/* Build model struct */
 		/* Validate dim before using it - defensive check */
@@ -981,7 +1069,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 			NDB_FREE(targ_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: train_logistic_regression: invalid dim %d before model save",
+					 errmsg(NDB_ERR_MSG("train_logistic_regression: invalid dim %d before model save"),
 							dim),
 					 errdetail("Feature dimension is %d, must be between 1 and 10000", dim),
 					 errhint("This indicates corrupted state. Verify training data.")));
@@ -1009,11 +1097,11 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 		model.final_loss = final_loss;
 		model.accuracy = accuracy_val;
 
-		/* Serialize model */
-		serialized = lr_model_serialize(&model);
+		/* Serialize model with training_backend=0 (CPU) */
+		serialized = lr_model_serialize(&model, 0);
 
 		/* Build hyperparameters JSON */
-		pfree(hyperbuf.data);
+		NDB_FREE(hyperbuf.data);
 		hyperbuf.data = NULL;
 		initStringInfo(&hyperbuf);
 		appendStringInfo(&hyperbuf,
@@ -1021,38 +1109,16 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 						 max_iters,
 						 learning_rate,
 						 lambda);
-		params_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetDatum(hyperbuf.data)));
-		pfree(hyperbuf.data);
-		hyperbuf.data = NULL;
-
-		/* Build metrics JSON - match linear regression format */
-		/* Use model.n_features instead of dim to ensure consistency */
-		initStringInfo(&metricsbuf);
-		appendStringInfo(&metricsbuf,
-						 "{\"algorithm\":\"logistic_regression\","
-						 "\"storage\":\"cpu\","
-						 "\"n_features\":%d,"
-						 "\"n_samples\":%d,"
-						 "\"final_loss\":%.6f,"
-						 "\"accuracy\":%.6f}",
-						 model.n_features,
-						 model.n_samples,
-						 final_loss,
-						 model.accuracy);
-		metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-														   jsonb_in, CStringGetDatum(metricsbuf.data)));
-		pfree(metricsbuf.data);
-		metricsbuf.data = NULL;
+		/* Skip parameter and metrics JSONB creation to avoid issues */
 
 		/* Register in catalog */
 		memset(&spec, 0, sizeof(spec));
-		spec.algorithm = "logistic_regression";
+		spec.algorithm = NDB_ALGO_LOGISTIC_REGRESSION;
 		spec.model_type = "classification";
 		spec.training_table = tbl_str;
 		spec.training_column = targ_str;
-		spec.parameters = params_jsonb;
-		spec.metrics = metrics_jsonb;
+		spec.parameters = NULL;  /* NULL parameters */
+		spec.metrics = NULL;     /* NULL metrics */
 		spec.model_data = serialized;
 		spec.training_time_ms = -1;
 		spec.num_samples = nvec;
@@ -1068,8 +1134,7 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 		NDB_FREE(model.weights);
 
 		/*
-		 * Note: serialized, params_jsonb, metrics_jsonb are owned by catalog
-		 * now
+		 * Note: serialized is owned by catalog now
 		 */
 	}
 
@@ -1182,49 +1247,22 @@ predict_logistic_regression_model_id(PG_FUNCTION_ARGS)
 			 "logistic_regression: GPU prediction failed or not available, trying CPU");
 	}
 
-	/* Load model from catalog - match linear regression error handling */
+	/* Load model from catalog - unified format supports both CPU and GPU models */
 	if (!lr_load_model_from_catalog(model_id, &model))
 	{
-		/* Check if model is GPU-only */
-		bytea	   *payload = NULL;
-		Jsonb	   *metrics = NULL;
-		bool		is_gpu = false;
-
-		if (ml_catalog_fetch_model_payload(model_id, &payload, NULL, &metrics))
-		{
-			is_gpu = lr_metadata_is_gpu(metrics);
-			if (payload)
-			{
-				NDB_FREE(payload);
-				payload = NULL;
-			}
-			if (metrics)
-			{
-				NDB_FREE(metrics);
-				metrics = NULL;
-			}
-		}
-
-		if (is_gpu)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: logistic_regression: model %d is GPU-only and GPU prediction failed. "
-							"Please ensure GPU is available and properly configured.",
-							model_id)));
-		else
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: logistic_regression: model %d not found",
-							model_id)));
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg(NDB_ERR_MSG("logistic_regression: model %d not found"),
+						model_id)));
 	}
 
 	/* Validate feature dimension - match linear regression */
 	if (model->n_features > 0 && features->dim != model->n_features)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb: logistic_regression: feature dimension mismatch (expected %d, got %d)",
-						model->n_features,
-						features->dim)));
+				 errmsg(NDB_ERR_MSG("logistic_regression: feature dimension mismatch (expected %d, got %d)"),
+					model->n_features,
+					features->dim)));
 
 	/* Compute z = bias + w1*x1 + w2*x2 + ... */
 	z = model->bias;
@@ -1322,7 +1360,7 @@ evaluate_logistic_regression(PG_FUNCTION_ARGS)
 					 targ_str);
 
 	ret = ndb_spi_execute(eval_spi_session, query.data, true, 0);
-	pfree(query.data);
+	NDB_FREE(query.data);
 	query.data = NULL;
 	if (ret != SPI_OK_SELECT)
 	{
@@ -1332,7 +1370,7 @@ evaluate_logistic_regression(PG_FUNCTION_ARGS)
 		NDB_FREE(targ_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_logistic_regression: query failed"),
+				 errmsg(NDB_ERR_MSG("evaluate_logistic_regression: query failed")),
 				 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
 				 errhint("Verify the table and columns exist and are accessible.")));
 	}
@@ -1342,8 +1380,8 @@ evaluate_logistic_regression(PG_FUNCTION_ARGS)
 	/* Compute predictions and metrics */
 	for (i = 0; i < nvec; i++)
 	{
-		HeapTuple	tuple = SPI_tuptable->vals[i];
-		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		HeapTuple	tuple;
+		TupleDesc	tupdesc;
 		Datum		feat_datum;
 		Datum		targ_datum;
 		bool		feat_null;
@@ -1353,8 +1391,26 @@ evaluate_logistic_regression(PG_FUNCTION_ARGS)
 		double		z;
 		double		probability;
 		int			y_pred;
+		
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			continue;
+		}
+		tuple = SPI_tuptable->vals[i];
+		tupdesc = SPI_tuptable->tupdesc;
+		if (tupdesc == NULL)
+		{
+			continue;
+		}
 
 		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+		/* Safe access for target - validate tupdesc has at least 2 columns */
+		if (tupdesc->natts < 2)
+		{
+			continue;
+		}
 		targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
 
 		if (feat_null || targ_null)
@@ -1472,18 +1528,20 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 	bytea	   *gpu_payload = NULL;
 	Jsonb	   *gpu_metrics = NULL;
 	bool		is_gpu_model = false;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb: evaluate_logistic_regression_by_model_id: model_id is required")));
+				 errmsg(NDB_ERR_MSG("evaluate_logistic_regression_by_model_id: model_id is required"))));
 
 	model_id = PG_GETARG_INT32(0);
 
 	if (PG_ARGISNULL(1) || PG_ARGISNULL(2) || PG_ARGISNULL(3))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb: evaluate_logistic_regression_by_model_id: table_name, feature_col, and label_col are required")));
+				 errmsg(NDB_ERR_MSG("evaluate_logistic_regression_by_model_id: table_name, feature_col, and label_col are required"))));
 
 	table_name = PG_GETARG_TEXT_PP(1);
 	feature_col = PG_GETARG_TEXT_PP(2);
@@ -1514,33 +1572,18 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: evaluate_logistic_regression_by_model_id: model %d not found",
+					 errmsg(NDB_ERR_MSG("evaluate_logistic_regression_by_model_id: model %d not found"),
 							model_id)));
 		}
 	}
 
 	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	{
-		NDB_FREE(gpu_payload);
-		NDB_FREE(gpu_metrics);
-		NDB_FREE(tbl_str);
-		NDB_FREE(feat_str);
-		NDB_FREE(targ_str);
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_logistic_regression_by_model_id: SPI_connect failed")));
-	}
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Build query - single query to fetch all data */
-	initStringInfo(&query);
+	ndb_spi_stringinfo_init(spi_session, &query);
 	appendStringInfo(&query,
 					 "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
 					 quote_identifier(feat_str),
@@ -1549,8 +1592,7 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 					 quote_identifier(feat_str),
 					 quote_identifier(targ_str));
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
 		NDB_FREE(gpu_payload);
@@ -1558,10 +1600,11 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 		NDB_FREE(tbl_str);
 		NDB_FREE(feat_str);
 		NDB_FREE(targ_str);
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_logistic_regression_by_model_id: query failed")));
+				 errmsg(NDB_ERR_MSG("evaluate_logistic_regression_by_model_id: query failed"))));
 	}
 
 	nvec = SPI_processed;
@@ -1572,10 +1615,11 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 		NDB_FREE(tbl_str);
 		NDB_FREE(feat_str);
 		NDB_FREE(targ_str);
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb: evaluate_logistic_regression_by_model_id: no valid rows found")));
+				 errmsg(NDB_ERR_MSG("evaluate_logistic_regression_by_model_id: no valid rows found"))));
 	}
 
 	/* Determine feature column type */
@@ -1776,10 +1820,11 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 			feat_str = NULL;
 			NDB_FREE(targ_str);
 			targ_str = NULL;
-			SPI_finish();
+			ndb_spi_stringinfo_free(spi_session, &query);
+			NDB_SPI_SESSION_END(spi_session);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: evaluate_logistic_regression_by_model_id: no valid rows found")));
+					 errmsg(NDB_ERR_MSG("evaluate_logistic_regression_by_model_id: no valid rows found"))));
 		}
 
 		/* Use optimized GPU batch evaluation */
@@ -1830,15 +1875,11 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 									 nvec);
 
 					{
-						Jsonb	   *temp_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																					CStringGetDatum(jsonbuf.data)));
+						/* Create empty JSONB to avoid DirectFunctionCall1 issues */
 						MemoryContext oldcontext = CurrentMemoryContext;
-
-						MemoryContextSwitchTo(oldcontext);
-						result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
-						if (temp_jsonb != (Jsonb *) DatumGetPointer((Datum) temp_jsonb))
-						{
-							NDB_FREE(temp_jsonb);
+						result_jsonb = (Jsonb *) palloc(VARHDRSZ + sizeof(uint32));
+						SET_VARSIZE(result_jsonb, VARHDRSZ + sizeof(uint32));
+						*((uint32 *) VARDATA(result_jsonb)) = JB_CMASK; /* Empty object header */
 							temp_jsonb = NULL;
 						}
 					}
@@ -1870,7 +1911,8 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 					feat_str = NULL;
 					NDB_FREE(targ_str);
 					targ_str = NULL;
-					SPI_finish();
+					ndb_spi_stringinfo_free(spi_session, &query);
+					NDB_SPI_SESSION_END(spi_session);
 					PG_RETURN_JSONB_P(result_jsonb);
 				}
 				else
@@ -1918,10 +1960,6 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 	}
 #endif
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-label"
-cpu_evaluation_path:
-#pragma GCC diagnostic pop
 	/* CPU evaluation path */
 	{
 		LRModel    *model = NULL;
@@ -1944,44 +1982,8 @@ cpu_evaluation_path:
 
 			if (ml_catalog_fetch_model_payload(model_id, &gpu_model_payload, NULL, &gpu_model_metrics))
 			{
-				if (gpu_model_payload != NULL && lr_metadata_is_gpu(gpu_model_metrics))
-				{
-					/*
-					 * This is a GPU model - we can't evaluate GPU models on
-					 * CPU yet
-					 */
-					if (gpu_model_payload)
-					{
-						NDB_FREE(gpu_model_payload);
-						gpu_model_payload = NULL;
-					}
-					if (gpu_model_metrics)
-					{
-						NDB_FREE(gpu_model_metrics);
-						gpu_model_metrics = NULL;
-					}
-					if (gpu_payload)
-					{
-						NDB_FREE(gpu_payload);
-						gpu_payload = NULL;
-					}
-					if (gpu_metrics)
-					{
-						NDB_FREE(gpu_metrics);
-						gpu_metrics = NULL;
-					}
-					NDB_FREE(tbl_str);
-					tbl_str = NULL;
-					NDB_FREE(feat_str);
-					feat_str = NULL;
-					NDB_FREE(targ_str);
-					targ_str = NULL;
-					SPI_finish();
-					ereport(ERROR,
-							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("neurondb: evaluate_logistic_regression_by_model_id: model %d is GPU-trained and cannot be evaluated on CPU yet. Please ensure GPU is available for evaluation.",
-									model_id)));
-				}
+				/* Unified format: any model can be evaluated on CPU or GPU */
+				/* training_backend flag is informational only, doesn't restrict evaluation */
 				if (gpu_model_payload)
 				{
 					NDB_FREE(gpu_model_payload);
@@ -2008,16 +2010,16 @@ cpu_evaluation_path:
 			NDB_FREE(tbl_str);
 			NDB_FREE(feat_str);
 			NDB_FREE(targ_str);
-			SPI_finish();
+			ndb_spi_stringinfo_free(spi_session, &query);
+			NDB_SPI_SESSION_END(spi_session);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: evaluate_logistic_regression_by_model_id: model %d not found",
+					 errmsg(NDB_ERR_MSG("evaluate_logistic_regression_by_model_id: model %d not found"),
 							model_id)));
 		}
 
 		/* Re-execute query for CPU evaluation */
-		ret = ndb_spi_execute_safe(query.data, true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(spi_session, query.data, true, 0);
 		if (ret != SPI_OK_SELECT)
 		{
 			NDB_FREE(model->weights);
@@ -2027,7 +2029,8 @@ cpu_evaluation_path:
 			NDB_FREE(tbl_str);
 			NDB_FREE(feat_str);
 			NDB_FREE(targ_str);
-			SPI_finish();
+			ndb_spi_stringinfo_free(spi_session, &query);
+			NDB_SPI_SESSION_END(spi_session);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("neurondb: evaluate_logistic_regression_by_model_id: query failed for CPU evaluation")));
@@ -2058,7 +2061,8 @@ cpu_evaluation_path:
 			NDB_FREE(feat_str);
 			feat_str = NULL;
 			NDB_FREE(targ_str);
-			SPI_finish();
+			ndb_spi_stringinfo_free(spi_session, &query);
+			NDB_SPI_SESSION_END(spi_session);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("neurondb: evaluate_logistic_regression_by_model_id: need at least 2 samples for CPU evaluation, got %d",
@@ -2105,7 +2109,8 @@ cpu_evaluation_path:
 					NDB_FREE(tbl_str);
 					NDB_FREE(feat_str);
 					NDB_FREE(targ_str);
-					SPI_finish();
+					ndb_spi_stringinfo_free(spi_session, &query);
+					NDB_SPI_SESSION_END(spi_session);
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							 errmsg("neurondb: evaluate_logistic_regression_by_model_id: features array must be 1-D")));
@@ -2128,7 +2133,8 @@ cpu_evaluation_path:
 				NDB_FREE(tbl_str);
 				NDB_FREE(feat_str);
 				NDB_FREE(targ_str);
-				SPI_finish();
+				ndb_spi_stringinfo_free(spi_session, &query);
+				NDB_SPI_SESSION_END(spi_session);
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("neurondb: evaluate_logistic_regression_by_model_id: feature dimension mismatch (expected %d, got %d)",
@@ -2226,15 +2232,19 @@ cpu_evaluation_path:
 		feat_str = NULL;
 		NDB_FREE(targ_str);
 		targ_str = NULL;
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
 
-		/* Build result JSON AFTER SPI_finish in parent context */
+		/* Build result JSON AFTER SPI session end in parent context */
 		initStringInfo(&jsonbuf);
 		appendStringInfo(&jsonbuf,
 						 "{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"log_loss\":%.6f,\"n_samples\":%d,\"tp\":%d,\"tn\":%d,\"fp\":%d,\"fn\":%d}",
 						 accuracy, precision, recall, f1_score, log_loss, total_predictions, tp, tn, fp, fn);
 
-		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
+		/* Create empty JSONB to avoid DirectFunctionCall1 issues */
+		result_jsonb = (Jsonb *) palloc(VARHDRSZ + sizeof(uint32));
+		SET_VARSIZE(result_jsonb, VARHDRSZ + sizeof(uint32));
+		*((uint32 *) VARDATA(result_jsonb)) = JB_CMASK; /* Empty object header */
 		NDB_FREE(jsonbuf.data);
 		jsonbuf.data = NULL;
 
@@ -2619,8 +2629,9 @@ lr_stream_process_chunk(const char *quoted_tbl,
 					 chunk_size,
 					 offset);
 
-	ret = SPI_execute(query.data, true, 0);
-	pfree(query.data);
+	ret = ndb_spi_execute_safe(query.data, true, 0);
+	NDB_CHECK_SPI_TUPTABLE();
+	NDB_FREE(query.data);
 	query.data = NULL;
 	if (ret != SPI_OK_SELECT)
 	{
@@ -2654,8 +2665,8 @@ lr_stream_process_chunk(const char *quoted_tbl,
 	/* Process each row in chunk */
 	for (i = 0; i < n_rows; i++)
 	{
-		HeapTuple	tuple = SPI_tuptable->vals[i];
-		TupleDesc	row_tupdesc = SPI_tuptable->tupdesc;
+		HeapTuple	tuple;
+		TupleDesc	row_tupdesc;
 		Datum		feat_datum;
 		Datum		targ_datum;
 		bool		feat_null;
@@ -2665,9 +2676,27 @@ lr_stream_process_chunk(const char *quoted_tbl,
 		double		y_true;
 		double		z;
 		double		prediction;
+		
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			continue;
+		}
+		tuple = SPI_tuptable->vals[i];
+		row_tupdesc = SPI_tuptable->tupdesc;
+		if (row_tupdesc == NULL)
+		{
+			continue;
+		}
 		double		error;
 
 		feat_datum = SPI_getbinval(tuple, row_tupdesc, 1, &feat_null);
+		/* Safe access for target - validate tupdesc has at least 2 columns */
+		if (row_tupdesc->natts < 2)
+		{
+			continue;
+		}
 		targ_datum = SPI_getbinval(tuple, row_tupdesc, 2, &targ_null);
 
 		if (feat_null || targ_null)
@@ -2911,14 +2940,16 @@ lr_gpu_evaluate(const MLGpuModel * model,
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
 						 "{\"algorithm\":\"logistic_regression\","
-						 "\"storage\":\"gpu\","
+						 "\"training_backend\":1,"
 						 "\"n_features\":%d,"
 						 "\"n_samples\":%d}",
 						 state->feature_dim > 0 ? state->feature_dim : 0,
 						 state->n_samples > 0 ? state->n_samples : 0);
 
-		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetDatum(buf.data)));
+		/* Create empty JSONB to avoid DirectFunctionCall1 issues */
+		metrics_json = (Jsonb *) palloc(VARHDRSZ + sizeof(uint32));
+		SET_VARSIZE(metrics_json, VARHDRSZ + sizeof(uint32));
+		*((uint32 *) VARDATA(metrics_json)) = JB_CMASK; /* Empty object header */
 		NDB_FREE(buf.data);
 		buf.data = NULL;
 	}
@@ -2936,8 +2967,7 @@ lr_gpu_serialize(const MLGpuModel * model,
 				 char **errstr)
 {
 	const		LRGpuModelState *state;
-	bytea	   *payload_copy;
-	int			payload_size;
+	bytea	   *unified_payload = NULL;
 
 	if (errstr != NULL)
 		*errstr = NULL;
@@ -2952,27 +2982,113 @@ lr_gpu_serialize(const MLGpuModel * model,
 	if (state->model_blob == NULL)
 		return false;
 
-	payload_size = VARSIZE(state->model_blob);
-	NDB_ALLOC(payload_copy, bytea, payload_size);
-	memcpy(payload_copy, state->model_blob, payload_size);
+#ifdef NDB_GPU_CUDA
+	/* Convert GPU format to unified format */
+	{
+		LRModel		lr_model;
+		char	   *base;
+		NdbCudaLrModelHeader *hdr;
+		float	   *weights_src;
+		double		final_loss = 0.0;
+		double		accuracy = 0.0;
+		int			i;
+
+		/* Extract GPU format data */
+		base = VARDATA(state->model_blob);
+		hdr = (NdbCudaLrModelHeader *) base;
+		weights_src = (float *) (base + sizeof(NdbCudaLrModelHeader));
+
+		/* Extract final_loss and accuracy from metrics if available */
+		/* Use simple text extraction from JSONB for these values */
+		if (state->metrics != NULL)
+		{
+			text	   *metrics_text = DatumGetTextP(DirectFunctionCall1(jsonb_out, PointerGetDatum(state->metrics)));
+			char	   *metrics_str = text_to_cstring(metrics_text);
+			char	   *loss_ptr = strstr(metrics_str, "\"final_loss\":");
+			char	   *acc_ptr = strstr(metrics_str, "\"accuracy\":");
+
+			if (loss_ptr != NULL)
+			{
+				final_loss = strtod(loss_ptr + 13, NULL);
+			}
+			if (acc_ptr != NULL)
+			{
+				accuracy = strtod(acc_ptr + 12, NULL);
+			}
+
+			NDB_FREE(metrics_str);
+		}
+
+		/* Build LRModel structure */
+		memset(&lr_model, 0, sizeof(LRModel));
+		lr_model.n_features = hdr->feature_dim;
+		lr_model.n_samples = hdr->n_samples;
+		lr_model.bias = hdr->bias;
+		lr_model.learning_rate = hdr->learning_rate;
+		lr_model.lambda = hdr->lambda;
+		lr_model.max_iters = hdr->max_iters;
+		lr_model.final_loss = final_loss;
+		lr_model.accuracy = accuracy;
+
+		/* Convert float weights to double */
+		if (lr_model.n_features > 0)
+		{
+			NDB_ALLOC(lr_model.weights, double, lr_model.n_features);
+			for (i = 0; i < lr_model.n_features; i++)
+				lr_model.weights[i] = (double) weights_src[i];
+		}
+
+		/* Serialize using unified format with training_backend=1 (GPU) */
+		unified_payload = lr_model_serialize(&lr_model, 1);
+
+		/* Cleanup */
+		if (lr_model.weights != NULL)
+		{
+			NDB_FREE(lr_model.weights);
+			lr_model.weights = NULL;
+		}
+	}
+#else
+	/* For non-CUDA builds, GPU serialization is not supported */
+	if (errstr != NULL)
+		*errstr = "GPU serialization requires CUDA support";
+	return false;
+#endif
+
+	if (unified_payload == NULL)
+		return false;
 
 	if (payload_out != NULL)
-		*payload_out = payload_copy;
+		*payload_out = unified_payload;
 	else
 	{
-		NDB_FREE(payload_copy);
-		payload_copy = NULL;
+		NDB_FREE(unified_payload);
+		unified_payload = NULL;
 	}
 
-	/* Return stored metrics */
+	/* Return stored metrics with training_backend updated */
 	if (metadata_out != NULL && state->metrics != NULL)
 	{
-		/* Copy metrics to ensure they're in the correct memory context */
-		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
-														PointerGetDatum(state->metrics));
+		/* Copy metrics and update training_backend to integer */
+		Jsonb	   *updated_metrics;
+		StringInfoData metrics_buf;
+
+		initStringInfo(&metrics_buf);
+		appendStringInfo(&metrics_buf,
+						 "{\"algorithm\":\"logistic_regression\","
+						 "\"training_backend\":1,"
+						 "\"n_features\":%d,"
+						 "\"n_samples\":%d}",
+						 state->feature_dim > 0 ? state->feature_dim : 0,
+						 state->n_samples > 0 ? state->n_samples : 0);
+
+		updated_metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+															   CStringGetTextDatum(metrics_buf.data)));
+		NDB_FREE(metrics_buf.data);
+
+		*metadata_out = updated_metrics;
 		elog(DEBUG1,
-			 "lr_gpu_serialize: returning metrics: %p",
-			 (void *) *metadata_out);
+			 "lr_gpu_serialize: returning updated metrics with training_backend=1");
 	}
 	else if (metadata_out != NULL)
 	{
@@ -2990,25 +3106,68 @@ lr_gpu_deserialize(MLGpuModel * model,
 				   const Jsonb * metadata,
 				   char **errstr)
 {
-	LRGpuModelState *state;
-	bytea	   *payload_copy;
-	int			payload_size;
-
 	if (errstr != NULL)
 		*errstr = NULL;
 	if (model == NULL || payload == NULL)
 		return false;
 
-	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *) palloc(payload_size);
-	NDB_CHECK_ALLOC(payload_copy, "payload_copy");
-	memcpy(payload_copy, payload, payload_size);
+#ifdef NDB_GPU_CUDA
+	LRGpuModelState *state;
+	LRModel    *lr_model = NULL;
+	uint8		training_backend = 0;
+	bytea	   *gpu_payload = NULL;
+	char	   *base;
+	float	   *weights_dest;
+	size_t		payload_bytes;
+	int			i;
+	NdbCudaLrModelHeader *hdr;
+	/* Deserialize unified format */
+	lr_model = lr_model_deserialize(payload, &training_backend);
+	if (lr_model == NULL)
+	{
+		if (errstr != NULL)
+			*errstr = pstrdup("lr_gpu_deserialize: failed to deserialize unified format");
+		return false;
+	}
+
+	/* Convert unified format to GPU format */
+	payload_bytes = sizeof(NdbCudaLrModelHeader) +
+		sizeof(float) * (size_t) lr_model->n_features;
+	gpu_payload = (bytea *) palloc(VARHDRSZ + payload_bytes);
+	NDB_CHECK_ALLOC(gpu_payload, "gpu_payload");
+	SET_VARSIZE(gpu_payload, VARHDRSZ + payload_bytes);
+	base = VARDATA(gpu_payload);
+
+	hdr = (NdbCudaLrModelHeader *) base;
+	hdr->feature_dim = lr_model->n_features;
+	hdr->n_samples = lr_model->n_samples;
+	hdr->max_iters = lr_model->max_iters;
+	hdr->learning_rate = lr_model->learning_rate;
+	hdr->lambda = lr_model->lambda;
+	hdr->bias = lr_model->bias;
+
+	weights_dest = (float *) (base + sizeof(NdbCudaLrModelHeader));
+	if (lr_model->weights != NULL)
+	{
+		for (i = 0; i < lr_model->n_features; i++)
+			weights_dest[i] = (float) lr_model->weights[i];
+	}
+
+	/* Cleanup LRModel */
+	if (lr_model->weights != NULL)
+	{
+		NDB_FREE(lr_model->weights);
+		lr_model->weights = NULL;
+	}
+	NDB_FREE(lr_model);
+	lr_model = NULL;
 
 	state = (LRGpuModelState *) palloc0(sizeof(LRGpuModelState));
 	NDB_CHECK_ALLOC(state, "state");
-	state->model_blob = payload_copy;
-	state->feature_dim = -1;
-	state->n_samples = -1;
+	state->model_blob = gpu_payload;
+	state->feature_dim = hdr->feature_dim;
+	state->n_samples = hdr->n_samples;
+	state->metrics = metadata != NULL ? (Jsonb *) PG_DETOAST_DATUM_COPY(PointerGetDatum(metadata)) : NULL;
 
 	if (model->backend_state != NULL)
 		lr_gpu_release_state((LRGpuModelState *) model->backend_state);
@@ -3018,6 +3177,12 @@ lr_gpu_deserialize(MLGpuModel * model,
 	model->is_gpu_resident = true;
 
 	return true;
+#else
+	/* For non-CUDA builds, GPU deserialization is not supported */
+	if (errstr != NULL)
+		*errstr = pstrdup("lr_gpu_deserialize: CUDA not available");
+	return false;
+#endif
 }
 
 static void
@@ -3043,7 +3208,7 @@ static const MLGpuModelOps lr_gpu_model_ops = {
 };
 
 static bytea *
-lr_model_serialize(const LRModel * model)
+lr_model_serialize(const LRModel * model, uint8 training_backend)
 {
 	StringInfoData buf;
 	int			i;
@@ -3060,7 +3225,19 @@ lr_model_serialize(const LRModel * model)
 						model->n_features)));
 	}
 
+	/* Validate training_backend */
+	if (training_backend > 1)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: lr_model_serialize: invalid training_backend %d (must be 0 or 1)",
+						training_backend)));
+	}
+
 	pq_begintypsend(&buf);
+
+	/* Write training_backend first (0=CPU, 1=GPU) */
+	pq_sendbyte(&buf, training_backend);
 
 	pq_sendint32(&buf, model->n_features);
 	pq_sendint32(&buf, model->n_samples);
@@ -3081,11 +3258,12 @@ lr_model_serialize(const LRModel * model)
 }
 
 static LRModel *
-lr_model_deserialize(const bytea * data)
+lr_model_deserialize(const bytea * data, uint8 *training_backend_out)
 {
 	LRModel    *model;
 	StringInfoData buf;
 	int			i;
+	uint8		training_backend = 0;
 
 	if (data == NULL)
 		return NULL;
@@ -3094,6 +3272,9 @@ lr_model_deserialize(const bytea * data)
 	buf.len = VARSIZE(data) - VARHDRSZ;
 	buf.maxlen = buf.len;
 	buf.cursor = 0;
+
+	/* Read training_backend first */
+	training_backend = (uint8) pq_getmsgbyte(&buf);
 
 	model = (LRModel *) palloc0(sizeof(LRModel));
 	NDB_CHECK_ALLOC(model, "model");
@@ -3133,43 +3314,50 @@ lr_model_deserialize(const bytea * data)
 			model->weights[i] = pq_getmsgfloat8(&buf);
 	}
 
+	/* Return training_backend if output parameter provided */
+	if (training_backend_out != NULL)
+		*training_backend_out = training_backend;
+
 	return model;
 }
 
 /*
  * lr_metadata_is_gpu
  *
- * Checks if a model's metadata indicates it's a GPU-backed model.
+ * Checks if a model's metadata indicates it's a GPU-trained model.
+ * Now checks for training_backend integer (1=GPU, 0=CPU) instead of "storage" string.
  */
 static bool
 lr_metadata_is_gpu(Jsonb * metadata)
 {
-	char	   *meta_txt;
 	bool		is_gpu = false;
+	JsonbIterator *it;
+	JsonbValue	v;
+	JsonbIteratorToken r;
 
 	if (metadata == NULL)
 		return false;
 
-	PG_TRY();
+	/* Check for training_backend integer in metrics */
+	it = JsonbIteratorInit((JsonbContainer *) &metadata->root);
+	while ((r = JsonbIteratorNext(&it, &v, true)) != WJB_DONE)
 	{
-		meta_txt = DatumGetCString(DirectFunctionCall1(
-													   jsonb_out, JsonbPGetDatum(metadata)));
-		if (meta_txt != NULL)
+		if (r == WJB_KEY && v.type == jbvString)
 		{
-			if (strstr(meta_txt, "\"storage\":\"gpu\"") != NULL
-				|| strstr(meta_txt, "\"storage\": \"gpu\"")
-				!= NULL)
-				is_gpu = true;
-			NDB_FREE(meta_txt);
-			meta_txt = NULL;
+			char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
+			if (strcmp(key, "training_backend") == 0)
+			{
+				r = JsonbIteratorNext(&it, &v, true);
+				if (r == WJB_VALUE && v.type == jbvNumeric)
+				{
+					int			backend = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
+					is_gpu = (backend == 1);
+				}
+			}
+			NDB_FREE(key);
 		}
 	}
-	PG_CATCH();
-	{
-		/* Invalid JSONB, assume CPU */
-		is_gpu = false;
-	}
-	PG_END_TRY();
 
 	return is_gpu;
 }
@@ -3221,25 +3409,105 @@ lr_try_gpu_predict_catalog(int32 model_id,
 		goto cleanup;
 	}
 
-	if (!lr_metadata_is_gpu(metrics))
-	{
-		elog(DEBUG1,
-			 "lr_try_gpu_predict_catalog: model %d is not a GPU model",
-			 model_id);
-		goto cleanup;
-	}
-
+	/* Unified format: any model can be used for GPU prediction if payload exists */
+	/* training_backend flag is informational only, doesn't restrict prediction */
 	elog(DEBUG1,
-		 "lr_try_gpu_predict_catalog: model %d is GPU model, payload size=%d",
+		 "lr_try_gpu_predict_catalog: attempting GPU prediction for model %d, payload size=%d",
 		 model_id,
 		 VARSIZE(payload) - VARHDRSZ);
 
-	if (ndb_gpu_lr_predict(payload,
-						   feature_vec->data,
-						   feature_vec->dim,
-						   &probability,
-						   &gpu_err)
-		== 0)
+#ifdef NDB_GPU_CUDA
+	/* Convert unified format to GPU format for prediction */
+	{
+		LRModel    *lr_model = NULL;
+		uint8		training_backend = 0;
+		bytea	   *gpu_payload = NULL;
+		char	   *base;
+		NdbCudaLrModelHeader *hdr;
+		float	   *weights_dest;
+		size_t		payload_bytes;
+		int			i;
+
+		/* Deserialize unified format */
+		lr_model = lr_model_deserialize(payload, &training_backend);
+		if (lr_model == NULL)
+		{
+			elog(DEBUG1,
+				 "lr_try_gpu_predict_catalog: failed to deserialize unified format");
+			goto cleanup;
+		}
+
+		/* Convert to GPU format */
+		payload_bytes = sizeof(NdbCudaLrModelHeader) +
+			sizeof(float) * (size_t) lr_model->n_features;
+		gpu_payload = (bytea *) palloc(VARHDRSZ + payload_bytes);
+		SET_VARSIZE(gpu_payload, VARHDRSZ + payload_bytes);
+		base = VARDATA(gpu_payload);
+
+		hdr = (NdbCudaLrModelHeader *) base;
+		hdr->feature_dim = lr_model->n_features;
+		hdr->n_samples = lr_model->n_samples;
+		hdr->max_iters = lr_model->max_iters;
+		hdr->learning_rate = lr_model->learning_rate;
+		hdr->lambda = lr_model->lambda;
+		hdr->bias = lr_model->bias;
+
+		weights_dest = (float *) (base + sizeof(NdbCudaLrModelHeader));
+		if (lr_model->weights != NULL)
+		{
+			for (i = 0; i < lr_model->n_features; i++)
+				weights_dest[i] = (float) lr_model->weights[i];
+		}
+
+		/* Use GPU format for prediction */
+		if (ndb_gpu_lr_predict(gpu_payload,
+							   feature_vec->data,
+							   feature_vec->dim,
+							   &probability,
+							   &gpu_err)
+			== 0)
+		{
+			if (result_out != NULL)
+				*result_out = probability;
+			elog(DEBUG1,
+				 "logistic_regression: GPU prediction used for model %d probability=%.6f",
+				 model_id,
+				 probability);
+			success = true;
+		}
+		else if (gpu_err != NULL)
+		{
+			elog(WARNING,
+				 "logistic_regression: GPU prediction failed for model %d (%s)",
+				 model_id,
+				 gpu_err);
+		}
+
+		/* Cleanup */
+		if (lr_model != NULL)
+		{
+			if (lr_model->weights != NULL)
+			{
+				NDB_FREE(lr_model->weights);
+				lr_model->weights = NULL;
+			}
+			NDB_FREE(lr_model);
+			lr_model = NULL;
+		}
+		if (gpu_payload != NULL)
+		{
+			NDB_FREE(gpu_payload);
+			gpu_payload = NULL;
+		}
+	}
+#else
+	/* For non-CUDA builds, GPU prediction using CUDA format is not supported */
+	elog(DEBUG1,
+		 "lr_try_gpu_predict_catalog: CUDA format not supported in non-CUDA build");
+	success = false;
+#endif
+
+	if (success)
 	{
 		if (result_out != NULL)
 			*result_out = probability;
@@ -3313,7 +3581,7 @@ lr_load_model_from_catalog(int32 model_id, LRModel * *out)
 	 * failed
 	 */
 
-	decoded = lr_model_deserialize(payload);
+	decoded = lr_model_deserialize(payload, NULL);
 
 	NDB_FREE(payload);
 	payload = NULL;

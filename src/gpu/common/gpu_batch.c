@@ -1,15 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_batch.c
- *		GPU-accelerated batch distance operations
+ *    Accelerated batch distance operations.
  *
- * Computes distance matrices between query vectors and database vectors
- * efficiently using GPU batch operations (cuBLAS/rocBLAS matrix operations).
+ * This module computes distance matrices between query vectors and database
+ * vectors efficiently using batch operations.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/gpu_batch.c
+ *    src/gpu/common/gpu_batch.c
  *
  *-------------------------------------------------------------------------
  */

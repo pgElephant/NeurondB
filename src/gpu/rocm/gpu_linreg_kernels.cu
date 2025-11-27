@@ -1,12 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_linreg_kernels.cu
- *    CUDA kernels for Linear Regression operations
+ *    ROCm kernels for Linear Regression operations
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *    src/gpu/cuda/gpu_linreg_kernels.cu
+ *    src/gpu/rocm/gpu_linreg_kernels.cu
  *
  *-------------------------------------------------------------------------
  */
@@ -429,8 +429,55 @@ launch_linreg_eval_kernel(const float *features,
 		return err;
 	
 	/* Synchronize to ensure kernel completes */
-	err = cudaDeviceSynchronize();
+	err = hipDeviceSynchronize();
 	return err;
+}
+
+/*
+ * HIP kernel to add lambda to diagonal of matrix (for Ridge regression)
+ * Adds lambda to diagonal elements starting from index 1 (skipping intercept)
+ */
+__global__ void
+ndb_rocm_ridge_add_lambda_diagonal_kernel(double *matrix,
+										  double lambda,
+										  int dim)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	/* Add lambda to diagonal elements (excluding first element, which is intercept) */
+	if (idx > 0 && idx < dim)
+	{
+		matrix[idx * dim + idx] += lambda;
+	}
+}
+
+/*
+ * Host launch wrapper for ridge_add_lambda_diagonal_kernel
+ */
+extern "C" hipError_t
+launch_ridge_add_lambda_diagonal_kernel(double *matrix,
+										 double lambda,
+										 int dim)
+{
+	if (dim <= 0 || matrix == NULL)
+		return hipErrorInvalidValue;
+
+	int threads_per_block = 256;
+	int blocks = (dim + threads_per_block - 1) / threads_per_block;
+
+	if (blocks > 65535)
+		blocks = 65535;
+
+	hipLaunchKernelGGL(ndb_rocm_ridge_add_lambda_diagonal_kernel,
+					   dim3(blocks),
+					   dim3(threads_per_block),
+					   0,
+					   0,
+					   matrix,
+					   lambda,
+					   dim);
+
+	return hipGetLastError();
 }
 
 #endif /* NDB_GPU_HIP */

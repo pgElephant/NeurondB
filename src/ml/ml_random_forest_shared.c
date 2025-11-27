@@ -27,6 +27,7 @@
 #include "ml_random_forest_shared.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Single-set Gini impurity */
 double
@@ -195,21 +196,43 @@ rf_build_metrics_json(const RFMetricsSpec * spec)
 	StringInfoData buf;
 	bool		first = true;
 	Jsonb	   *result;
+	Datum		jsonb_datum;
+
+	elog(DEBUG1, "neurondb: rf_build_metrics_json: function entry");
 
 	if (spec == NULL)
+	{
+		elog(DEBUG1, "neurondb: rf_build_metrics_json: spec is NULL, returning NULL");
 		return NULL;
+	}
+
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: about to initStringInfo")));
 
 	initStringInfo(&buf);
+
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: StringInfo initialized, about to append opening brace")));
+
 	appendStringInfoChar(&buf, '{');
+
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: opening brace appended")));
 
 	if (spec->storage != NULL)
 	{
+		ereport(DEBUG2,
+				(errmsg("rf_build_metrics_json: appending storage field"),
+				 errdetail("storage=%s", spec->storage)));
 		appendStringInfo(&buf, "\"storage\":\"%s\"", spec->storage);
 		first = false;
 	}
 
 	if (spec->algorithm != NULL)
 	{
+		ereport(DEBUG2,
+				(errmsg("rf_build_metrics_json: appending algorithm field"),
+				 errdetail("algorithm=%s, first=%s", spec->algorithm, first ? "true" : "false")));
 		appendStringInfo(&buf,
 						 "%s\"algorithm\":\"%s\"",
 						 first ? "" : ",",
@@ -219,6 +242,9 @@ rf_build_metrics_json(const RFMetricsSpec * spec)
 
 	if (spec->tree_count >= 0)
 	{
+		ereport(DEBUG2,
+				(errmsg("rf_build_metrics_json: appending tree_count field"),
+				 errdetail("tree_count=%d, first=%s", spec->tree_count, first ? "true" : "false")));
 		appendStringInfo(&buf,
 						 "%s\"n_trees\":%d",
 						 first ? "" : ",",
@@ -228,6 +254,9 @@ rf_build_metrics_json(const RFMetricsSpec * spec)
 
 	if (spec->majority_class >= 0)
 	{
+		ereport(DEBUG2,
+				(errmsg("rf_build_metrics_json: appending majority_class field"),
+				 errdetail("majority_class=%d, first=%s", spec->majority_class, first ? "true" : "false")));
 		appendStringInfo(&buf,
 						 "%s\"majority_class\":%d",
 						 first ? "" : ",",
@@ -237,6 +266,9 @@ rf_build_metrics_json(const RFMetricsSpec * spec)
 
 	if (spec->majority_fraction >= 0.0)
 	{
+		ereport(DEBUG2,
+				(errmsg("rf_build_metrics_json: appending majority_fraction field"),
+				 errdetail("majority_fraction=%f, first=%s", spec->majority_fraction, first ? "true" : "false")));
 		appendStringInfo(&buf,
 						 "%s\"majority_fraction\":%.6f",
 						 first ? "" : ",",
@@ -246,6 +278,9 @@ rf_build_metrics_json(const RFMetricsSpec * spec)
 
 	if (spec->gini >= 0.0)
 	{
+		ereport(DEBUG2,
+				(errmsg("rf_build_metrics_json: appending gini field"),
+				 errdetail("gini=%f, first=%s", spec->gini, first ? "true" : "false")));
 		appendStringInfo(
 						 &buf, "%s\"gini\":%.6f", first ? "" : ",", spec->gini);
 		first = false;
@@ -253,6 +288,9 @@ rf_build_metrics_json(const RFMetricsSpec * spec)
 
 	if (spec->oob_accuracy >= 0.0)
 	{
+		ereport(DEBUG2,
+				(errmsg("rf_build_metrics_json: appending oob_accuracy field"),
+				 errdetail("oob_accuracy=%f, first=%s", spec->oob_accuracy, first ? "true" : "false")));
 		appendStringInfo(&buf,
 						 "%s\"oob_accuracy\":%.6f",
 						 first ? "" : ",",
@@ -260,15 +298,57 @@ rf_build_metrics_json(const RFMetricsSpec * spec)
 		first = false;
 	}
 
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: about to append closing brace"),
+			 errdetail("buf.data=%p, buf.len=%d", (void *)buf.data, buf.len)));
+
 	appendStringInfoChar(&buf, '}');
 
-	if (buf.data == NULL)
-		return NULL;
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: closing brace appended"),
+			 errdetail("buf.data=%p, buf.len=%d", (void *)buf.data, buf.len)));
 
-	result = DatumGetJsonbP(
-							DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+	if (buf.data == NULL)
+	{
+		elog(DEBUG1, "neurondb: rf_build_metrics_json: buf.data is NULL, returning NULL");
+		return NULL;
+	}
+
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: about to call DirectFunctionCall1(jsonb_in)"),
+			 errdetail("buf.data=%s, buf.len=%d, CurrentMemoryContext=%p",
+					  buf.data ? buf.data : "NULL", buf.len, (void *)CurrentMemoryContext)));
+
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: about to call CStringGetTextDatum"),
+			 errdetail("buf.data=%p", (void *)buf.data)));
+
+	jsonb_datum = CStringGetTextDatum(buf.data);
+
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: CStringGetTextDatum returned"),
+			 errdetail("jsonb_datum=%lu", (unsigned long)jsonb_datum)));
+
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: about to call DirectFunctionCall1"),
+			 errdetail("jsonb_datum=%lu", (unsigned long)jsonb_datum)));
+
+	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, jsonb_datum));
+
+	ereport(DEBUG2,
+			(errmsg("rf_build_metrics_json: DirectFunctionCall1 returned"),
+			 errdetail("result=%p", (void *)result)));
+
 	if (buf.data != NULL)
-		NDB_SAFE_PFREE_AND_NULL(buf.data);
+	{
+		ereport(DEBUG2,
+				(errmsg("rf_build_metrics_json: about to free buf.data")));
+		NDB_FREE(buf.data);
+		ereport(DEBUG2,
+				(errmsg("rf_build_metrics_json: buf.data freed")));
+	}
+
+	elog(DEBUG1, "neurondb: rf_build_metrics_json: about to return result");
 
 	return result;
 }

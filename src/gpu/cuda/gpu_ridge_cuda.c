@@ -1,7 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_ridge_cuda.c
- *    CUDA backend bridge for Ridge Regression training and prediction.
+ *    Ridge regression bridge implementation.
+ *
+ * This module provides bridge functions for ridge regression training
+ * and prediction.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
@@ -32,6 +35,7 @@
 #include <cublas_v2.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #endif
 
 /* Reuse linear regression kernels */
@@ -51,6 +55,9 @@ extern cudaError_t launch_linreg_eval_kernel(const float *features,
 											 double *sse_out,
 											 double *sae_out,
 											 long long *count_out);
+extern cudaError_t launch_ridge_add_lambda_diagonal_kernel(double *matrix,
+															double lambda,
+															int dim);
 
 int
 ndb_cuda_ridge_pack_model(const RidgeModel * model,
@@ -106,7 +113,7 @@ ndb_cuda_ridge_pack_model(const RidgeModel * model,
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
 						 "{\"algorithm\":\"ridge\","
-						 "\"storage\":\"gpu\","
+						 "\"training_backend\":1,"
 						 "\"n_features\":%d,"
 						 "\"n_samples\":%d,"
 						 "\"lambda\":%.6f,"
@@ -121,8 +128,8 @@ ndb_cuda_ridge_pack_model(const RidgeModel * model,
 						 model->mae);
 
 		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetDatum(buf.data)));
-		NDB_SAFE_PFREE_AND_NULL(buf.data);
+														  jsonb_in, CStringGetTextDatum(buf.data)));
+		NDB_FREE(buf.data);
 		*metrics = metrics_json;
 	}
 
@@ -380,21 +387,14 @@ ndb_cuda_ridge_train(const float *features,
 		}
 
 		/* Add Ridge penalty (λI) to diagonal (excluding intercept) on GPU */
-		/* Use a simple GPU kernel to add lambda to diagonal */
-		/* For now, copy back to host, add lambda, then copy back */
-		/* TODO: Create a GPU kernel for adding lambda to diagonal */
-		status = cudaMemcpy(h_XtX, d_XtX, XtX_bytes, cudaMemcpyDeviceToHost);
+		status = launch_ridge_add_lambda_diagonal_kernel(d_XtX, lambda, dim_with_intercept);
 		if (status != cudaSuccess)
 		{
 			elog(WARNING,
-				 "ndb_cuda_ridge_train: cudaMemcpy h_XtX failed: %s",
+				 "ndb_cuda_ridge_train: launch_ridge_add_lambda_diagonal_kernel failed: %s",
 				 cudaGetErrorString(status));
 			goto gpu_cleanup;
 		}
-
-		/* Add Ridge penalty (λI) to diagonal (excluding intercept) */
-		for (i = 1; i < dim_with_intercept; i++)
-			h_XtX[i * dim_with_intercept + i] += lambda;
 
 		/* Copy Xty to host for CPU fallback */
 		status = cudaMemcpy(h_Xty, d_Xty, Xty_bytes, cudaMemcpyDeviceToHost);
@@ -485,7 +485,7 @@ cpu_fallback:
 			h_Xty[j] += xi[j] * targets[i];
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(xi);
+		NDB_FREE(xi);
 	}
 
 	/* Add Ridge penalty (λI) to diagonal (excluding intercept) */
@@ -567,15 +567,15 @@ matrix_inversion:
 		}
 
 		for (row = 0; row < dim_with_intercept; row++)
-			NDB_SAFE_PFREE_AND_NULL(augmented[row]);
-		NDB_SAFE_PFREE_AND_NULL(augmented);
+			NDB_FREE(augmented[row]);
+		NDB_FREE(augmented);
 
 		if (!invert_success)
 		{
-			NDB_SAFE_PFREE_AND_NULL(h_XtX);
-			NDB_SAFE_PFREE_AND_NULL(h_Xty);
-			NDB_SAFE_PFREE_AND_NULL(h_XtX_inv);
-			NDB_SAFE_PFREE_AND_NULL(h_beta);
+			NDB_FREE(h_XtX);
+			NDB_FREE(h_Xty);
+			NDB_FREE(h_XtX_inv);
+			NDB_FREE(h_beta);
 			if (d_XtX)
 				cudaFree(d_XtX);
 			if (d_Xty)
@@ -709,14 +709,14 @@ build_model:
 		rc = ndb_cuda_ridge_pack_model(
 									   &model, &payload, &metrics_json, errstr);
 
-		NDB_SAFE_PFREE_AND_NULL(model.coefficients);
+		NDB_FREE(model.coefficients);
 	}
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(h_XtX);
-	NDB_SAFE_PFREE_AND_NULL(h_Xty);
-	NDB_SAFE_PFREE_AND_NULL(h_XtX_inv);
-	NDB_SAFE_PFREE_AND_NULL(h_beta);
+	NDB_FREE(h_XtX);
+	NDB_FREE(h_Xty);
+	NDB_FREE(h_XtX_inv);
+	NDB_FREE(h_beta);
 	if (d_XtX)
 		cudaFree(d_XtX);
 	if (d_Xty)
@@ -735,9 +735,9 @@ build_model:
 	}
 
 	if (payload != NULL)
-		NDB_SAFE_PFREE_AND_NULL(payload);
+		NDB_FREE(payload);
 	if (metrics_json != NULL)
-		NDB_SAFE_PFREE_AND_NULL(metrics_json);
+		NDB_FREE(metrics_json);
 
 	return -1;
 }
@@ -1067,7 +1067,7 @@ ndb_cuda_ridge_evaluate(const bytea * model_data,
 			h_coefficients_double[i] = (double) coefficients[i];
 
 		cuda_err = cudaMemcpy(d_coefficients, h_coefficients_double, coeff_bytes, cudaMemcpyHostToDevice);
-		NDB_SAFE_PFREE_AND_NULL(h_coefficients_double);
+		NDB_FREE(h_coefficients_double);
 
 		if (cuda_err != cudaSuccess)
 		{

@@ -1,25 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_davies_bouldin.c
- *	  Davies-Bouldin Index for cluster quality evaluation
+ *    Davies-Bouldin index for cluster quality evaluation.
  *
- * The Davies-Bouldin Index (DBI) measures the average similarity between each
- * cluster and its most similar cluster. Lower values indicate better clustering
- * (more separated clusters). Unlike silhouette score, DBI uses cluster centroids
- * and is computationally efficient.
- *
- * Formula:
- *   DBI = (1/k) * Σ_i max_j≠i [(s_i + s_j) / d(c_i, c_j)]
- *
- * Where:
- *   - k: number of clusters
- *   - s_i: average distance of points in cluster i to centroid c_i
- *   - d(c_i, c_j): distance between centroids i and j
+ * This module implements the Davies-Bouldin index to measure cluster quality,
+ * with lower values indicating better separated clusters.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/ml/ml_davies_bouldin.c
+ *    src/ml/ml_davies_bouldin.c
  *
  *-------------------------------------------------------------------------
  */
@@ -35,6 +25,9 @@
 #include "neurondb_ml.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 #include <math.h>
 #include <float.h>
@@ -83,6 +76,8 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	int			d;
 	StringInfoData sql;
 	int			ret;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 #include "ml_gpu_registry.h"
 
 	/* Parse input arguments */
@@ -105,20 +100,23 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_DATA_EXCEPTION),
 				 errmsg("Need at least 2 vectors for DBI calculation")));
 
-	cluster_labels = (int *) palloc(sizeof(int) * nvec);
+	oldcontext = CurrentMemoryContext;
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
-	{
-		initStringInfo(&sql);
-		appendStringInfo(&sql, "SELECT %s FROM %s ORDER BY ctid", cluster_col_str, tbl_str);
-		ret = ndb_spi_execute_safe(sql.data, true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
-	}
+	NDB_ALLOC(cluster_labels, int, nvec);
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &sql);
+	appendStringInfo(&sql, "SELECT %s FROM %s ORDER BY ctid", cluster_col_str, tbl_str);
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 
 	if (ret != SPI_OK_SELECT || (int) SPI_processed != nvec)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(cluster_labels);
+		NDB_FREE(tbl_str);
+		NDB_FREE(cluster_col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_EXCEPTION),
 				 errmsg("Failed to fetch cluster labels (expected %d, got %d)",
@@ -128,20 +126,22 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 	num_clusters = 0;
 	for (i = 0; i < nvec; i++)
 	{
-		bool		isnull;
-		Datum		val;
+		int32		val;
 
-		val = SPI_getbinval(SPI_tuptable->vals[i],
-							SPI_tuptable->tupdesc,
-							1,
-							&isnull);
-
-		cluster_labels[i] = isnull ? -1 : DatumGetInt32(val);
-		if (cluster_labels[i] > num_clusters)
-			num_clusters = cluster_labels[i];
+		if (ndb_spi_get_int32(spi_session, i, 1, &val))
+		{
+			cluster_labels[i] = val;
+			if (cluster_labels[i] > num_clusters)
+				num_clusters = cluster_labels[i];
+		}
+		else
+		{
+			cluster_labels[i] = -1;
+		}
 	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 
 	if (num_clusters < 2)
 		ereport(ERROR,
@@ -149,11 +149,15 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 				 errmsg("Need at least 2 clusters for DBI (found %d)", num_clusters)));
 
 
-	cluster_sizes = (int *) palloc0(sizeof(int) * num_clusters);
-	cluster_centroids = (float **) palloc(sizeof(float *) * num_clusters);
+	NDB_ALLOC(cluster_sizes, int, num_clusters);
+	NDB_ALLOC(cluster_centroids, float *, num_clusters);
 
 	for (c = 0; c < num_clusters; c++)
-		cluster_centroids[c] = (float *) palloc0(sizeof(float) * dim);
+	{
+		NDB_DECLARE(float *, centroid_row);
+		NDB_ALLOC(centroid_row, float, dim);
+		cluster_centroids[c] = centroid_row;
+	}
 
 	for (i = 0; i < nvec; i++)
 	{
@@ -179,7 +183,7 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 		}
 	}
 
-	cluster_scatter = (double *) palloc0(sizeof(double) * num_clusters);
+	NDB_ALLOC(cluster_scatter, double, num_clusters);
 
 	for (i = 0; i < nvec; i++)
 	{
@@ -244,19 +248,19 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
 
 
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-	NDB_SAFE_PFREE_AND_NULL(vectors);
-	NDB_SAFE_PFREE_AND_NULL(cluster_labels);
-	NDB_SAFE_PFREE_AND_NULL(cluster_sizes);
+		NDB_FREE(vectors[i]);
+	NDB_FREE(vectors);
+	NDB_FREE(cluster_labels);
+	NDB_FREE(cluster_sizes);
 
 	for (c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(cluster_centroids[c]);
-	NDB_SAFE_PFREE_AND_NULL(cluster_centroids);
+		NDB_FREE(cluster_centroids[c]);
+	NDB_FREE(cluster_centroids);
 
-	NDB_SAFE_PFREE_AND_NULL(cluster_scatter);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(vec_col_str);
-	NDB_SAFE_PFREE_AND_NULL(cluster_col_str);
+	NDB_FREE(cluster_scatter);
+	NDB_FREE(tbl_str);
+	NDB_FREE(vec_col_str);
+	NDB_FREE(cluster_col_str);
 
 	PG_RETURN_FLOAT8(db_index);
 }
@@ -267,6 +271,7 @@ davies_bouldin_index(PG_FUNCTION_ARGS)
  */
 #include "neurondb_gpu_model.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 typedef struct DaviesBouldinGpuModelState
 {
@@ -301,7 +306,7 @@ davies_bouldin_model_serialize_to_bytea(float **centroids, int *cluster_sizes, i
 	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -395,7 +400,7 @@ davies_bouldin_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 				if (strcmp(key, "n_clusters") == 0 && v.type == jbvNumeric)
 					num_clusters = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																	 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -512,7 +517,7 @@ davies_bouldin_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 					 num_clusters, dim, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+	NDB_FREE(metrics_json.data);
 
 	state = (DaviesBouldinGpuModelState *) palloc0(sizeof(DaviesBouldinGpuModelState));
 	state->model_blob = model_data;
@@ -524,7 +529,7 @@ davies_bouldin_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 	state->n_samples = nvec;
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -532,9 +537,9 @@ davies_bouldin_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 
 	/* Cleanup temp data */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(labels);
+		NDB_FREE(data[i]);
+	NDB_FREE(data);
+	NDB_FREE(labels);
 
 	return true;
 }
@@ -705,10 +710,10 @@ davies_bouldin_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec
 
 				/* Cleanup */
 				for (s = 0; s < nvec; s++)
-					NDB_SAFE_PFREE_AND_NULL(data[s]);
-				NDB_SAFE_PFREE_AND_NULL(data);
-				NDB_SAFE_PFREE_AND_NULL(cluster_assignments);
-				NDB_SAFE_PFREE_AND_NULL(cluster_counts);
+					NDB_FREE(data[s]);
+				NDB_FREE(data);
+				NDB_FREE(cluster_assignments);
+				NDB_FREE(cluster_counts);
 			}
 			else
 			{
@@ -716,8 +721,8 @@ davies_bouldin_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec
 				if (data != NULL)
 				{
 					for (s = 0; s < nvec; s++)
-						NDB_SAFE_PFREE_AND_NULL(data[s]);
-					NDB_SAFE_PFREE_AND_NULL(data);
+						NDB_FREE(data[s]);
+					NDB_FREE(data);
 				}
 				for (c = 0; c < state->n_clusters; c++)
 					scatter[c] = 0.0;
@@ -755,7 +760,7 @@ davies_bouldin_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec
 		}
 		db_index /= state->n_clusters;
 
-		NDB_SAFE_PFREE_AND_NULL(scatter);
+		NDB_FREE(scatter);
 	}
 
 	initStringInfo(&buf);
@@ -769,7 +774,7 @@ davies_bouldin_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -813,7 +818,7 @@ davies_bouldin_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -853,7 +858,7 @@ davies_bouldin_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	if (davies_bouldin_model_deserialize_from_bytea(payload_copy,
 													&centroids, &cluster_sizes, &n_clusters, &dim) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("davies_bouldin_gpu_deserialize: failed to deserialize");
 		return false;
@@ -886,7 +891,7 @@ davies_bouldin_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -896,7 +901,7 @@ davies_bouldin_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -917,18 +922,18 @@ davies_bouldin_gpu_destroy(MLGpuModel * model)
 	{
 		state = (DaviesBouldinGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
+			NDB_FREE(state->metrics);
 		if (state->centroids != NULL)
 		{
 			for (int c = 0; c < state->n_clusters; c++)
-				NDB_SAFE_PFREE_AND_NULL(state->centroids[c]);
-			NDB_SAFE_PFREE_AND_NULL(state->centroids);
+				NDB_FREE(state->centroids[c]);
+			NDB_FREE(state->centroids);
 		}
 		if (state->cluster_sizes != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->cluster_sizes);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->cluster_sizes);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

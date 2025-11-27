@@ -30,6 +30,7 @@
 #include "neurondb_cuda_gmm.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -154,7 +155,7 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 			{
 				if (errstr)
 					*errstr = pstrdup("invalid GMM model: mixing_coeffs contains invalid value");
-				NDB_SAFE_PFREE_AND_NULL(blob);
+				NDB_FREE(blob);
 				return -1;
 			}
 			mixing_dest[i] = coeff;
@@ -165,7 +166,7 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 		{
 			if (errstr)
 				*errstr = pstrdup("invalid GMM model: mixing_coeffs do not sum to 1.0");
-			NDB_SAFE_PFREE_AND_NULL(blob);
+			NDB_FREE(blob);
 			return -1;
 		}
 	}
@@ -193,7 +194,7 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 					{
 						if (errstr)
 							*errstr = pstrdup("invalid GMM model: means contains non-finite value");
-						NDB_SAFE_PFREE_AND_NULL(blob);
+						NDB_FREE(blob);
 						return -1;
 					}
 					means_dest[i * model->dim + j] = mean_val;
@@ -228,7 +229,7 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 					{
 						if (errstr)
 							*errstr = pstrdup("invalid GMM model: variances contains invalid value");
-						NDB_SAFE_PFREE_AND_NULL(blob);
+						NDB_FREE(blob);
 						return -1;
 					}
 					/* Regularize to avoid division by zero */
@@ -269,7 +270,7 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 		PG_TRY();
 		{
 			metrics_json = DatumGetJsonbP(
-										  DirectFunctionCall1(jsonb_in, CStringGetDatum(buf.data)));
+										  DirectFunctionCall1(jsonb_in, CStringGetTextDatum(buf.data)));
 		}
 		PG_CATCH();
 		{
@@ -279,7 +280,7 @@ ndb_cuda_gmm_pack_model(const struct GMMModel *model,
 		}
 		PG_END_TRY();
 
-		NDB_SAFE_PFREE_AND_NULL(buf.data);
+		NDB_FREE(buf.data);
 		*metrics = metrics_json;
 	}
 
@@ -658,19 +659,19 @@ ndb_cuda_gmm_train(const float *features,
 cleanup:
 	/* Free model structure arrays (not the data they point to) */
 	if (means_2d != NULL)
-		NDB_SAFE_PFREE_AND_NULL(means_2d);
+		NDB_FREE(means_2d);
 	if (variances_2d != NULL)
-		NDB_SAFE_PFREE_AND_NULL(variances_2d);
+		NDB_FREE(variances_2d);
 
 	/* Free host memory */
 	if (mixing_coeffs != NULL)
-		NDB_SAFE_PFREE_AND_NULL(mixing_coeffs);
+		NDB_FREE(mixing_coeffs);
 	if (means != NULL)
-		NDB_SAFE_PFREE_AND_NULL(means);
+		NDB_FREE(means);
 	if (variances != NULL)
-		NDB_SAFE_PFREE_AND_NULL(variances);
+		NDB_FREE(variances);
 	if (responsibilities != NULL)
-		NDB_SAFE_PFREE_AND_NULL(responsibilities);
+		NDB_FREE(responsibilities);
 
 	return rc;
 }
@@ -763,7 +764,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 			char	   *msg = psprintf("CUDA GMM predict: feature dimension mismatch (expected %d, got %d)", hdr->n_features, feature_dim);
 
 			*errstr = pstrdup(msg);
-			NDB_SAFE_PFREE_AND_NULL(msg);
+			NDB_FREE(msg);
 		}
 		return -1;
 	}
@@ -821,7 +822,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA GMM predict: invalid mixing coefficient in model");
-			NDB_SAFE_PFREE_AND_NULL(component_probs);
+			NDB_FREE(component_probs);
 			return -1;
 		}
 
@@ -838,7 +839,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("CUDA GMM predict: invalid mean or variance in model");
-				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				NDB_FREE(component_probs);
 				return -1;
 			}
 
@@ -850,7 +851,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("CUDA GMM predict: variance is zero or negative");
-				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				NDB_FREE(component_probs);
 				return -1;
 			}
 
@@ -859,7 +860,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("CUDA GMM predict: computed non-finite log variance");
-				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				NDB_FREE(component_probs);
 				return -1;
 			}
 
@@ -868,7 +869,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood contribution");
-				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				NDB_FREE(component_probs);
 				return -1;
 			}
 
@@ -881,7 +882,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA GMM predict: computed non-finite log-likelihood");
-			NDB_SAFE_PFREE_AND_NULL(component_probs);
+			NDB_FREE(component_probs);
 			return -1;
 		}
 
@@ -890,7 +891,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA GMM predict: computed invalid exp value");
-			NDB_SAFE_PFREE_AND_NULL(component_probs);
+			NDB_FREE(component_probs);
 			return -1;
 		}
 
@@ -899,7 +900,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA GMM predict: computed invalid component probability");
-			NDB_SAFE_PFREE_AND_NULL(component_probs);
+			NDB_FREE(component_probs);
 			return -1;
 		}
 	}
@@ -911,7 +912,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA GMM predict: first component probability is non-finite");
-		NDB_SAFE_PFREE_AND_NULL(component_probs);
+		NDB_FREE(component_probs);
 		return -1;
 	}
 
@@ -921,7 +922,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA GMM predict: component probability is non-finite");
-			NDB_SAFE_PFREE_AND_NULL(component_probs);
+			NDB_FREE(component_probs);
 			return -1;
 		}
 		if (component_probs[i] > max_prob)
@@ -942,7 +943,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("CUDA GMM predict: component probability is non-finite during normalization");
-				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				NDB_FREE(component_probs);
 				return -1;
 			}
 			sum += component_probs[k];
@@ -952,7 +953,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 		{
 			if (errstr)
 				*errstr = pstrdup("CUDA GMM predict: sum of probabilities is non-finite");
-			NDB_SAFE_PFREE_AND_NULL(component_probs);
+			NDB_FREE(component_probs);
 			return -1;
 		}
 
@@ -963,7 +964,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 			{
 				if (errstr)
 					*errstr = pstrdup("CUDA GMM predict: sum of probabilities is zero or non-finite");
-				NDB_SAFE_PFREE_AND_NULL(component_probs);
+				NDB_FREE(component_probs);
 				return -1;
 			}
 
@@ -974,7 +975,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 				{
 					if (errstr)
 						*errstr = pstrdup("CUDA GMM predict: computed invalid normalized probability");
-					NDB_SAFE_PFREE_AND_NULL(component_probs);
+					NDB_FREE(component_probs);
 					return -1;
 				}
 			}
@@ -995,7 +996,7 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA GMM predict: invalid best_component index");
-		NDB_SAFE_PFREE_AND_NULL(component_probs);
+		NDB_FREE(component_probs);
 		return -1;
 	}
 
@@ -1004,13 +1005,13 @@ ndb_cuda_gmm_predict(const bytea * model_data,
 	{
 		if (errstr)
 			*errstr = pstrdup("CUDA GMM predict: computed invalid final probability");
-		NDB_SAFE_PFREE_AND_NULL(component_probs);
+		NDB_FREE(component_probs);
 		return -1;
 	}
 
 	*cluster_out = best_component;
 	*probability_out = final_prob;
-	NDB_SAFE_PFREE_AND_NULL(component_probs);
+	NDB_FREE(component_probs);
 
 	return 0;
 }

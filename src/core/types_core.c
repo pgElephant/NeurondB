@@ -6,7 +6,7 @@
  * Implements vectorp (packed SIMD), vecmap (sparse), rtext (retrievable
  * text), and vgraph (compact graph) data types with I/O functions.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/types_core.c
@@ -28,6 +28,7 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * vectorp_in: Parse vectorp from text
@@ -105,7 +106,7 @@ vectorp_in(PG_FUNCTION_ARGS)
 	result->flags = 0;
 
 	memcpy(result->data, temp_data, sizeof(float4) * dim);
-	NDB_SAFE_PFREE_AND_NULL(temp_data);
+	NDB_FREE(temp_data);
 
 	PG_RETURN_POINTER(result);
 }
@@ -310,8 +311,8 @@ vecmap_in(PG_FUNCTION_ARGS)
 	memcpy(VECMAP_INDICES(result), indices, sizeof(int32) * nnz);
 	memcpy(VECMAP_VALUES(result), values, sizeof(float4) * nnz);
 
-	NDB_SAFE_PFREE_AND_NULL(indices);
-	NDB_SAFE_PFREE_AND_NULL(values);
+	NDB_FREE(indices);
+	NDB_FREE(values);
 
 	PG_RETURN_POINTER(result);
 }
@@ -585,7 +586,7 @@ vgraph_in(PG_FUNCTION_ARGS)
 
 	memcpy(VGRAPH_EDGES(result), edges, sizeof(GraphEdge) * num_edges);
 
-	NDB_SAFE_PFREE_AND_NULL(edges);
+	NDB_FREE(edges);
 
 	PG_RETURN_POINTER(result);
 }

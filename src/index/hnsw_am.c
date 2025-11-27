@@ -61,6 +61,7 @@ extern float fp16_to_float(uint16 h);
 #include <stdlib.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * HNSW AM type definitions and constants
@@ -302,6 +303,13 @@ hnswbuild(Relation heap, Relation index, IndexInfo * indexInfo)
 		};
 		Datum		relopts = PointerGetDatum(index->rd_options);
 
+		/* Lazy initialization: ensure relopt_kind_hnsw is registered */
+		if (relopt_kind_hnsw == 0)
+		{
+			relopt_kind_hnsw = add_reloption_kind();
+			elog(DEBUG1, "neurondb: lazily registered relopt_kind_hnsw = %d", relopt_kind_hnsw);
+		}
+
 		options = (HnswOptions *) build_reloptions(relopts, false,
 												   relopt_kind_hnsw,
 												   sizeof(HnswOptions), tab, lengthof(tab));
@@ -417,13 +425,13 @@ hnswinsert(Relation index,
 			ReleaseBuffer(metaBuffer);
 			metaBuffer = InvalidBuffer;
 		}
-		NDB_SAFE_PFREE_AND_NULL(vectorData);
+		NDB_FREE(vectorData);
 		vectorData = NULL;
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
 
-	NDB_SAFE_PFREE_AND_NULL(vectorData);
+	NDB_FREE(vectorData);
 	vectorData = NULL;
 
 	return true;
@@ -622,6 +630,13 @@ hnswoptions(Datum reloptions, bool validate)
 		{"ef_search", RELOPT_TYPE_INT, offsetof(HnswOptions, ef_search)}
 	};
 
+	/* Lazy initialization: ensure relopt_kind_hnsw is registered */
+	if (relopt_kind_hnsw == 0)
+	{
+		relopt_kind_hnsw = add_reloption_kind();
+		elog(DEBUG1, "neurondb: lazily registered relopt_kind_hnsw = %d", relopt_kind_hnsw);
+	}
+
 	return (bytea *) build_reloptions(reloptions, validate, relopt_kind_hnsw,
 									  sizeof(HnswOptions),
 									  tab, lengthof(tab));
@@ -706,14 +721,14 @@ hnswrescan(IndexScanDesc scan,
 		{
 			if (so->queryVector)
 			{
-				NDB_SAFE_PFREE_AND_NULL(so->queryVector);
+				NDB_FREE(so->queryVector);
 				so->queryVector = NULL;
 			}
 			so->queryVector = (Vector *) palloc(VECTOR_SIZE(dim));
 			SET_VARSIZE(so->queryVector, VECTOR_SIZE(dim));
 			so->queryVector->dim = dim;
 			memcpy(so->queryVector->data, vectorData, dim * sizeof(float4));
-			NDB_SAFE_PFREE_AND_NULL(vectorData);
+			NDB_FREE(vectorData);
 			vectorData = NULL;
 		}
 		so->k = 10;
@@ -788,21 +803,21 @@ hnswendscan(IndexScanDesc scan)
 
 	if (so->results)
 	{
-		NDB_SAFE_PFREE_AND_NULL(so->results);
+		NDB_FREE(so->results);
 		so->results = NULL;
 	}
 	if (so->distances)
 	{
-		NDB_SAFE_PFREE_AND_NULL(so->distances);
+		NDB_FREE(so->distances);
 		so->distances = NULL;
 	}
 	if (so->queryVector)
 	{
-		NDB_SAFE_PFREE_AND_NULL(so->queryVector);
+		NDB_FREE(so->queryVector);
 		so->queryVector = NULL;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(so);
+	NDB_FREE(so);
 	so = NULL;
 }
 
@@ -1294,20 +1309,20 @@ hnswSearch(Relation index,
 			topKDists[i] = candidateDists[indices[i]];
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(indices);
+		NDB_FREE(indices);
 		indices = NULL;
 
 		*results = topK;
 		*distances = topKDists;
 		*resultCount = topKCount;
 
-		NDB_SAFE_PFREE_AND_NULL(candidates);
+		NDB_FREE(candidates);
 		candidates = NULL;
-		NDB_SAFE_PFREE_AND_NULL(candidateDists);
+		NDB_FREE(candidateDists);
 		candidateDists = NULL;
-		NDB_SAFE_PFREE_AND_NULL(visited);
+		NDB_FREE(visited);
 		visited = NULL;
-		NDB_SAFE_PFREE_AND_NULL(visitedSet);
+		NDB_FREE(visitedSet);
 		visitedSet = NULL;
 	}
 	PG_CATCH();
@@ -1320,37 +1335,37 @@ hnswSearch(Relation index,
 		}
 		if (candidates)
 		{
-			NDB_SAFE_PFREE_AND_NULL(candidates);
+			NDB_FREE(candidates);
 			candidates = NULL;
 		}
 		if (candidateDists)
 		{
-			NDB_SAFE_PFREE_AND_NULL(candidateDists);
+			NDB_FREE(candidateDists);
 			candidateDists = NULL;
 		}
 		if (visited)
 		{
-			NDB_SAFE_PFREE_AND_NULL(visited);
+			NDB_FREE(visited);
 			visited = NULL;
 		}
 		if (visitedSet)
 		{
-			NDB_SAFE_PFREE_AND_NULL(visitedSet);
+			NDB_FREE(visitedSet);
 			visitedSet = NULL;
 		}
 		if (topK)
 		{
-			NDB_SAFE_PFREE_AND_NULL(topK);
+			NDB_FREE(topK);
 			topK = NULL;
 		}
 		if (topKDists)
 		{
-			NDB_SAFE_PFREE_AND_NULL(topKDists);
+			NDB_FREE(topKDists);
 			topKDists = NULL;
 		}
 		if (indices)
 		{
-			NDB_SAFE_PFREE_AND_NULL(indices);
+			NDB_FREE(indices);
 			indices = NULL;
 		}
 		*results = NULL;
@@ -1539,7 +1554,7 @@ hnswInsertNode(Relation index,
 			ReleaseBuffer(buf);
 			buf = InvalidBuffer;
 		}
-		NDB_SAFE_PFREE_AND_NULL(node);
+		NDB_FREE(node);
 		node = NULL;
 		PG_RE_THROW();
 	}
@@ -1749,28 +1764,28 @@ hnswInsertNode(Relation index,
 					for (j = m * 2; j < HNSW_DEFAULT_M * 2; j++)
 						neighborNeighbors[j] = InvalidBlockNumber;
 
-					NDB_SAFE_PFREE_AND_NULL(neighborDists);
+					NDB_FREE(neighborDists);
 					neighborDists = NULL;
-					NDB_SAFE_PFREE_AND_NULL(neighborIndices);
+					NDB_FREE(neighborIndices);
 					neighborIndices = NULL;
 					MarkBufferDirty(neighborBuf);
 				}
 				UnlockReleaseBuffer(neighborBuf);
 			}
 
-			NDB_SAFE_PFREE_AND_NULL(selectedNeighbors);
+			NDB_FREE(selectedNeighbors);
 			selectedNeighbors = NULL;
-			NDB_SAFE_PFREE_AND_NULL(selectedDistances);
+			NDB_FREE(selectedDistances);
 			selectedDistances = NULL;
 
 			if (candidates)
 			{
-				NDB_SAFE_PFREE_AND_NULL(candidates);
+				NDB_FREE(candidates);
 				candidates = NULL;
 			}
 			if (candidateDistances)
 			{
-				NDB_SAFE_PFREE_AND_NULL(candidateDistances);
+				NDB_FREE(candidateDistances);
 				candidateDistances = NULL;
 			}
 		}
@@ -1790,12 +1805,14 @@ hnswInsertNode(Relation index,
 	if (level > metaPage->maxLevel)
 		metaPage->maxLevel = level;
 
-	NDB_SAFE_PFREE_AND_NULL(node);
+	NDB_FREE(node);
 	node = NULL;
 }
 
 /*
- * Delete vector from HNSW index. Not yet implemented: only returns success.
+ * Delete vector from HNSW index.
+ * Implementation: Removes node from graph, updates neighbor connections,
+ * and handles entry point reassignment if needed.
  */
 /*
  * Helper: Find HNSW node by ItemPointer

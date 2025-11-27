@@ -1,11 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_model_registry.c
- *    Registry of GPU model operators.
+ *    Model operator registry.
  *
- * Allows individual algorithms to register GPU-native implementations.
- * The registry is consulted by the unified ML entry points when routing
- * training and prediction to GPU.
+ * This module allows individual algorithms to register native implementations.
+ * The registry is consulted by unified ML entry points for training and
+ * prediction routing.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/common/gpu_model_registry.c
  *
  *-------------------------------------------------------------------------
  */

@@ -1,17 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * analytics.c
- *    Vector analytics and machine learning analysis functions
+ *    Vector analytics and machine learning analysis.
  *
- * This file implements comprehensive vector analytics including
- * clustering (k-means, DBSCAN), dimensionality reduction (PCA, UMAP),
- * outlier detection, similarity graphs, quality metrics, and topic
- * modeling. Essential for understanding and analyzing vector embeddings.
+ * This module implements comprehensive vector analytics including clustering,
+ * dimensionality reduction, outlier detection, and quality metrics.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *    src/analytics.c
+ *    src/ml/analytics.c
  *
  *-------------------------------------------------------------------------
  */
@@ -33,7 +31,8 @@
 #include <stdlib.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
-#include "neurondb_spi_safe.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 /*
  * feedback_loop_integrate
@@ -54,14 +53,15 @@ feedback_loop_integrate(PG_FUNCTION_ARGS)
 	StringInfoData sql;
 	const char *tbl_def;
 	int			ret;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	query_str = text_to_cstring(query);
 	result_str = text_to_cstring(result);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed")));
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	tbl_def = "CREATE TABLE IF NOT EXISTS neurondb_feedback ("
 		"id SERIAL PRIMARY KEY, "
@@ -70,37 +70,41 @@ feedback_loop_integrate(PG_FUNCTION_ARGS)
 		"rating REAL NOT NULL, "
 		"ts TIMESTAMPTZ NOT NULL DEFAULT now()"
 		")";
-	ret = ndb_spi_execute_safe(tbl_def, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, tbl_def, false, 0);
 	if (ret != SPI_OK_UTILITY)
 	{
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(query_str);
+		NDB_FREE(result_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: failed to create neurondb_feedback table")));
 	}
 
 	/* Insert feedback row. */
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 					 "INSERT INTO neurondb_feedback (query, result, rating) VALUES "
 					 "($$%s$$, $$%s$$, %g)",
 					 query_str,
 					 result_str,
 					 user_rating);
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, false, 0);
 	if (ret != SPI_OK_INSERT)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(query_str);
+		NDB_FREE(result_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: failed to insert feedback row")));
 	}
 
-	SPI_finish();
-	NDB_SAFE_PFREE_AND_NULL(query_str);
-	NDB_SAFE_PFREE_AND_NULL(result_str);
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
+	NDB_FREE(query_str);
+	NDB_FREE(result_str);
 
 	PG_RETURN_BOOL(true);
 }
@@ -130,7 +134,7 @@ pca_power_iteration(float **data,
 				j;
 	double		norm;
 
-	y = (float *) palloc0(sizeof(float) * dim);
+	NDB_ALLOC(y, float, dim);
 
 	/* Initialize with random vector */
 	for (i = 0; i < dim; i++)
@@ -172,7 +176,7 @@ pca_power_iteration(float **data,
 			eigvec[i] = y[i] / norm;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(y);
+	NDB_FREE(y);
 }
 
 /* Deflate matrix by removing component of eigenvector */
@@ -252,7 +256,7 @@ reduce_pca(PG_FUNCTION_ARGS)
 						dim)));
 
 	/* Center the data (subtract mean) */
-	mean = (float *) palloc0(sizeof(float) * dim);
+	NDB_ALLOC(mean, float, dim);
 	for (j = 0; j < nvec; j++)
 		for (i = 0; i < dim; i++)
 			mean[i] += data[j][i];
@@ -263,10 +267,12 @@ reduce_pca(PG_FUNCTION_ARGS)
 			data[j][i] -= mean[i];
 
 	/* Compute principal components using power iteration */
-	components = (float **) palloc(sizeof(float *) * n_components);
+	NDB_ALLOC(components, float *, n_components);
 	for (c = 0; c < n_components; c++)
 	{
-		components[c] = (float *) palloc(sizeof(float) * dim);
+		NDB_DECLARE(float *, component_row);
+		NDB_ALLOC(component_row, float, dim);
+		components[c] = component_row;
 		pca_power_iteration(data, nvec, dim, components[c], 100);
 		pca_deflate(data, nvec, dim, components[c]);
 	}
@@ -280,10 +286,12 @@ reduce_pca(PG_FUNCTION_ARGS)
 			data[j][i] -= mean[i];
 
 	/* Project data onto principal components */
-	projected = (float **) palloc(sizeof(float *) * nvec);
+	NDB_ALLOC(projected, float *, nvec);
 	for (j = 0; j < nvec; j++)
 	{
-		projected[j] = (float *) palloc0(sizeof(float) * n_components);
+		NDB_DECLARE(float *, projected_row);
+		NDB_ALLOC(projected_row, float, n_components);
+		projected[j] = projected_row;
 		for (c = 0; c < n_components; c++)
 		{
 			double		dot = 0.0;
@@ -295,16 +303,16 @@ reduce_pca(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result array of arrays */
-	result_datums = (Datum *) palloc(sizeof(Datum) * nvec);
+	NDB_ALLOC(result_datums, Datum, nvec);
 	for (j = 0; j < nvec; j++)
 	{
 		ArrayType  *vec_array;
-		Datum	   *vec_datums;
+		NDB_DECLARE(Datum *, vec_datums);
 		int16		typlen;
 		bool		typbyval;
 		char		typalign;
 
-		vec_datums = (Datum *) palloc(sizeof(Datum) * n_components);
+		NDB_ALLOC(vec_datums, Datum, n_components);
 		for (c = 0; c < n_components; c++)
 			vec_datums[c] = Float4GetDatum(projected[j][c]);
 
@@ -316,7 +324,7 @@ reduce_pca(PG_FUNCTION_ARGS)
 									typbyval,
 									typalign);
 		result_datums[j] = PointerGetDatum(vec_array);
-		NDB_SAFE_PFREE_AND_NULL(vec_datums);
+		NDB_FREE(vec_datums);
 	}
 
 	{
@@ -337,18 +345,18 @@ reduce_pca(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	for (j = 0; j < nvec; j++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(data[j]);
-		NDB_SAFE_PFREE_AND_NULL(projected[j]);
+		NDB_FREE(data[j]);
+		NDB_FREE(projected[j]);
 	}
 	for (c = 0; c < n_components; c++)
-		NDB_SAFE_PFREE_AND_NULL(components[c]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(projected);
-	NDB_SAFE_PFREE_AND_NULL(components);
-	NDB_SAFE_PFREE_AND_NULL(mean);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(components[c]);
+	NDB_FREE(data);
+	NDB_FREE(projected);
+	NDB_FREE(components);
+	NDB_FREE(mean);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
@@ -428,8 +436,8 @@ build_iso_tree(float **data,
 	node->split_val = split_val;
 
 	/* Partition indices */
-	left_indices = (int *) palloc(sizeof(int) * n);
-	right_indices = (int *) palloc(sizeof(int) * n);
+	NDB_ALLOC(left_indices, int, n);
+	NDB_ALLOC(right_indices, int, n);
 	left_count = right_count = 0;
 
 	for (i = 0; i < n; i++)
@@ -456,8 +464,8 @@ build_iso_tree(float **data,
 									 depth + 1,
 									 max_depth);
 
-	NDB_SAFE_PFREE_AND_NULL(left_indices);
-	NDB_SAFE_PFREE_AND_NULL(right_indices);
+	NDB_FREE(left_indices);
+	NDB_FREE(right_indices);
 
 	return node;
 }
@@ -495,7 +503,7 @@ free_iso_tree(IsoTreeNode * node)
 		return;
 	free_iso_tree(node->left);
 	free_iso_tree(node->right);
-	NDB_SAFE_PFREE_AND_NULL(node);
+	NDB_FREE(node);
 }
 
 PG_FUNCTION_INFO_V1(detect_outliers);
@@ -598,7 +606,7 @@ detect_outliers(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result array */
-	result_datums = (Datum *) palloc(sizeof(Datum) * nvec);
+	NDB_ALLOC(result_datums, Datum, nvec);
 	for (i = 0; i < nvec; i++)
 		result_datums[i] = Float4GetDatum((float) scores[i]);
 
@@ -610,14 +618,14 @@ detect_outliers(PG_FUNCTION_ARGS)
 	for (t = 0; t < n_trees; t++)
 		free_iso_tree(forest[t]);
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(forest);
-	NDB_SAFE_PFREE_AND_NULL(scores);
-	NDB_SAFE_PFREE_AND_NULL(indices);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(data[i]);
+	NDB_FREE(data);
+	NDB_FREE(forest);
+	NDB_FREE(scores);
+	NDB_FREE(indices);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
@@ -754,12 +762,12 @@ build_knn_graph(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(edges);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(data[i]);
+	NDB_FREE(data);
+	NDB_FREE(edges);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result_array);
 }
@@ -794,6 +802,8 @@ compute_embedding_quality(PG_FUNCTION_ARGS)
 	double		silhouette;
 	StringInfoData sql;
 	int			ret;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	/* Parse arguments */
 	table_name = PG_GETARG_TEXT_PP(0);
@@ -818,21 +828,22 @@ compute_embedding_quality(PG_FUNCTION_ARGS)
 				 errmsg("No vectors found")));
 
 	/* Fetch cluster assignments */
-	clusters = (int *) palloc(sizeof(int) * nvec);
+	oldcontext = CurrentMemoryContext;
+	NDB_ALLOC(clusters, int, nvec);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed")));
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql, "SELECT %s FROM %s", cluster_col_str, tbl_str);
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 
 	if (ret != SPI_OK_SELECT || (int) SPI_processed != nvec)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(clusters);
+		NDB_FREE(tbl_str);
+		NDB_FREE(cluster_col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_EXCEPTION),
 				 errmsg("Failed to fetch cluster assignments")));
@@ -840,23 +851,24 @@ compute_embedding_quality(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < nvec; i++)
 	{
-		bool		isnull;
-		Datum		val = SPI_getbinval(SPI_tuptable->vals[i],
-										SPI_tuptable->tupdesc,
-										1,
-										&isnull);
+		int32		val;
 
-		if (isnull)
-			clusters[i] = -1;
+		if (ndb_spi_get_int32(spi_session, i, 1, &val))
+		{
+			clusters[i] = val;
+		}
 		else
-			clusters[i] = DatumGetInt32(val);
+		{
+			clusters[i] = -1;
+		}
 	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 
 	/* Compute silhouette score */
-	a_scores = (double *) palloc0(sizeof(double) * nvec);
-	b_scores = (double *) palloc0(sizeof(double) * nvec);
+	NDB_ALLOC(a_scores, double, nvec);
+	NDB_ALLOC(b_scores, double, nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
@@ -929,14 +941,14 @@ compute_embedding_quality(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(clusters);
-	NDB_SAFE_PFREE_AND_NULL(a_scores);
-	NDB_SAFE_PFREE_AND_NULL(b_scores);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
-	NDB_SAFE_PFREE_AND_NULL(cluster_col_str);
+		NDB_FREE(data[i]);
+	NDB_FREE(data);
+	NDB_FREE(clusters);
+	NDB_FREE(a_scores);
+	NDB_FREE(b_scores);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
+	NDB_FREE(cluster_col_str);
 
 	PG_RETURN_FLOAT8(silhouette);
 }

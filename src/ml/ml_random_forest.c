@@ -1,10 +1,11 @@
 /*-------------------------------------------------------------------------
  *
  * ml_random_forest.c
- *    Random Forest implementation for classification and regression
+ *    Random forest ensemble learning.
  *
- * Implements Random Forest as an ensemble of decision trees using
- * bootstrap aggregating (bagging) and random feature selection.
+ * This module implements random forest for classification and regression using
+ * bootstrap aggregating and random feature selection. Models are serialized
+ * and stored in the catalog for prediction.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
@@ -40,6 +41,8 @@
 #include "ml_gpu_random_forest.h"
 #include "neurondb_gpu.h"
 #include "ml_catalog.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 #include "gtree.h"
 #include "ml_random_forest_internal.h"
 #include "ml_random_forest_shared.h"
@@ -48,6 +51,8 @@
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_sql.h"
+#include "utils/elog.h"
 
 #ifdef NDB_GPU_CUDA
 #include "neurondb_cuda_runtime.h"
@@ -117,8 +122,8 @@ static int	rf_build_branch_tree(GTree * tree,
 static double rf_tree_predict_row(const GTree * tree, const float *row, int dim);
 static void rf_serialize_tree(StringInfo buf, const GTree * tree);
 static GTree * rf_deserialize_tree(StringInfo buf);
-static bytea * rf_model_serialize(const RFModel * model);
-static RFModel * rf_model_deserialize(const bytea * data);
+static bytea * rf_model_serialize(const RFModel * model, uint8 training_backend);
+static RFModel * rf_model_deserialize(const bytea * data, uint8 *training_backend_out);
 static void rf_free_deserialized_model(RFModel * model);
 static bool rf_load_model_from_catalog(int32 model_id, RFModel * *out);
 static bool rf_metadata_is_gpu(Jsonb * metadata);
@@ -216,7 +221,7 @@ rf_select_split(const float *features,
 	{
 		int			feature_idx =
 			(feature_order != NULL) ? feature_order[f] : f;
-		RFSplitPair *pairs;
+		RFSplitPair *pairs = NULL;
 		int		   *left_counts_tmp;
 		int		   *right_counts_tmp;
 		int			pair_count = 0;
@@ -237,7 +242,10 @@ rf_select_split(const float *features,
 					 pairs_size, count);
 				return false;
 			}
-			pairs = (RFSplitPair *) palloc(pairs_size);
+			{
+				size_t		pair_count_tmp = pairs_size / sizeof(RFSplitPair);
+				NDB_ALLOC(pairs, RFSplitPair, pair_count_tmp);
+			}
 			if (pairs == NULL)
 			{
 				elog(WARNING, "rf_select_split: palloc failed for pairs (count=%d)", count);
@@ -275,12 +283,9 @@ rf_select_split(const float *features,
 			{
 				float	   *gpu_features;
 				uint8_t    *gpu_labels;
-
-				gpu_features = (float *) palloc(
-												sizeof(float) * pair_count);
+				NDB_ALLOC(gpu_features, float, pair_count);
 				NDB_CHECK_ALLOC(gpu_features, "gpu_features");
-				gpu_labels = (uint8_t *) palloc(
-												sizeof(uint8_t) * pair_count);
+				NDB_ALLOC(gpu_labels, uint8_t, pair_count);
 				NDB_CHECK_ALLOC(gpu_labels, "gpu_labels");
 				{
 					bool		labels_ok = true;
@@ -322,18 +327,18 @@ rf_select_split(const float *features,
 							*best_feature = feature_idx;
 						}
 
-						NDB_SAFE_PFREE_AND_NULL(gpu_features);
+						NDB_FREE(gpu_features);
 						gpu_features = NULL;
-						NDB_SAFE_PFREE_AND_NULL(gpu_labels);
+						NDB_FREE(gpu_labels);
 						gpu_labels = NULL;
-						NDB_SAFE_PFREE_AND_NULL(pairs);
+						NDB_FREE(pairs);
 						pairs = NULL;
 						continue;
 					}
 
-					NDB_SAFE_PFREE_AND_NULL(gpu_features);
+					NDB_FREE(gpu_features);
 					gpu_features = NULL;
-					NDB_SAFE_PFREE_AND_NULL(gpu_labels);
+					NDB_FREE(gpu_labels);
 					gpu_labels = NULL;
 				}
 			}
@@ -341,7 +346,7 @@ rf_select_split(const float *features,
 
 		if (pair_count <= 1)
 		{
-			NDB_SAFE_PFREE_AND_NULL(pairs);
+			NDB_FREE(pairs);
 			pairs = NULL;
 			continue;
 		}
@@ -350,10 +355,9 @@ rf_select_split(const float *features,
 			  pair_count,
 			  sizeof(RFSplitPair),
 			  rf_split_pair_cmp);
-
-		left_counts_tmp = (int *) palloc0(sizeof(int) * n_classes);
+		NDB_ALLOC(left_counts_tmp, int, n_classes);
 		NDB_CHECK_ALLOC(left_counts_tmp, "left_counts_tmp");
-		right_counts_tmp = (int *) palloc0(sizeof(int) * n_classes);
+		NDB_ALLOC(right_counts_tmp, int, n_classes);
 		NDB_CHECK_ALLOC(right_counts_tmp, "right_counts_tmp");
 
 		for (i = 0; i < pair_count; i++)
@@ -398,11 +402,11 @@ rf_select_split(const float *features,
 			}
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(left_counts_tmp);
+		NDB_FREE(left_counts_tmp);
 		left_counts_tmp = NULL;
-		NDB_SAFE_PFREE_AND_NULL(right_counts_tmp);
+		NDB_FREE(right_counts_tmp);
 		right_counts_tmp = NULL;
-		NDB_SAFE_PFREE_AND_NULL(pairs);
+		NDB_FREE(pairs);
 		pairs = NULL;
 	}
 
@@ -439,7 +443,7 @@ rf_build_branch_tree(GTree * tree,
 		|| indices == NULL || count <= 0)
 		return gtree_add_leaf(tree, 0.0);
 
-	class_counts = (int *) palloc0(sizeof(int) * n_classes);
+	NDB_ALLOC(class_counts, int, n_classes);
 	NDB_CHECK_ALLOC(class_counts, "class_counts");
 
 	for (i = 0; i < count; i++)
@@ -462,7 +466,7 @@ rf_build_branch_tree(GTree * tree,
 
 	if (majority_idx < 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(class_counts);
+		NDB_FREE(class_counts);
 		class_counts = NULL;
 		return gtree_add_leaf(tree, 0.0);
 	}
@@ -473,7 +477,7 @@ rf_build_branch_tree(GTree * tree,
 	{
 		double		value = (double) majority_idx;
 
-		NDB_SAFE_PFREE_AND_NULL(class_counts);
+		NDB_FREE(class_counts);
 		class_counts = NULL;
 		return gtree_add_leaf(tree, value);
 	}
@@ -492,7 +496,7 @@ rf_build_branch_tree(GTree * tree,
 	{
 		double		value = (double) majority_idx;
 
-		NDB_SAFE_PFREE_AND_NULL(class_counts);
+		NDB_FREE(class_counts);
 		class_counts = NULL;
 		return gtree_add_leaf(tree, value);
 	}
@@ -501,7 +505,7 @@ rf_build_branch_tree(GTree * tree,
 	{
 		double		value = (double) majority_idx;
 
-		NDB_SAFE_PFREE_AND_NULL(class_counts);
+		NDB_FREE(class_counts);
 		class_counts = NULL;
 		return gtree_add_leaf(tree, value);
 	}
@@ -512,9 +516,9 @@ rf_build_branch_tree(GTree * tree,
 		int			left_count = 0;
 		int			right_count = 0;
 
-		left_indices = (int *) palloc(sizeof(int) * count);
+		NDB_ALLOC(left_indices, int, count);
 		NDB_CHECK_ALLOC(left_indices, "left_indices");
-		right_indices = (int *) palloc(sizeof(int) * count);
+		NDB_ALLOC(right_indices, int, count);
 		NDB_CHECK_ALLOC(right_indices, "right_indices");
 
 		for (i = 0; i < count; i++)
@@ -537,11 +541,11 @@ rf_build_branch_tree(GTree * tree,
 		{
 			double		value = (double) majority_idx;
 
-			NDB_SAFE_PFREE_AND_NULL(left_indices);
+			NDB_FREE(left_indices);
 			left_indices = NULL;
-			NDB_SAFE_PFREE_AND_NULL(right_indices);
+			NDB_FREE(right_indices);
 			right_indices = NULL;
-			NDB_SAFE_PFREE_AND_NULL(class_counts);
+			NDB_FREE(class_counts);
 			class_counts = NULL;
 			return gtree_add_leaf(tree, value);
 		}
@@ -610,11 +614,11 @@ rf_build_branch_tree(GTree * tree,
 			gtree_set_child(tree, node_idx, left_child, true);
 			gtree_set_child(tree, node_idx, right_child, false);
 
-			NDB_SAFE_PFREE_AND_NULL(left_indices);
+			NDB_FREE(left_indices);
 			left_indices = NULL;
-			NDB_SAFE_PFREE_AND_NULL(right_indices);
+			NDB_FREE(right_indices);
 			right_indices = NULL;
-			NDB_SAFE_PFREE_AND_NULL(class_counts);
+			NDB_FREE(class_counts);
 			class_counts = NULL;
 			return node_idx;
 		}
@@ -775,7 +779,7 @@ rf_store_model(int32 model_id,
 
 	if (rf_model_count == 0)
 	{
-		rf_models = (RFModel *) palloc(sizeof(RFModel));
+		NDB_ALLOC(rf_models, RFModel, 1);
 		if (rf_models == NULL)
 		{
 			MemoryContextSwitchTo(oldctx);
@@ -795,9 +799,9 @@ rf_store_model(int32 model_id,
 		if (rf_models == NULL)
 		{
 			MemoryContextSwitchTo(oldctx);
-			elog(WARNING, "rf_store_model: rf_models is NULL before repalloc, resetting and using palloc");
+			elog(WARNING, "rf_store_model: rf_models is NULL before repalloc, resetting and using NDB_ALLOC");
 			rf_model_count = 0;
-			rf_models = (RFModel *) palloc(sizeof(RFModel));
+			NDB_ALLOC(rf_models, RFModel, 1);
 			if (rf_models == NULL)
 			{
 				elog(ERROR, "rf_store_model: palloc failed after reset");
@@ -836,7 +840,11 @@ rf_store_model(int32 model_id,
 		}
 		else
 		{
-			int		   *copy = (int *) palloc(class_counts_size);
+			NDB_DECLARE(int *, copy);
+			{
+				size_t		count = class_counts_size / sizeof(int);
+				NDB_ALLOC(copy, int, count);
+			}
 
 			if (copy == NULL)
 			{
@@ -861,7 +869,11 @@ rf_store_model(int32 model_id,
 		}
 		else
 		{
-			double	   *means_copy = (double *) palloc(means_size);
+			NDB_DECLARE(double *, means_copy);
+			{
+				size_t		count = means_size / sizeof(double);
+				NDB_ALLOC(means_copy, double, count);
+			}
 
 			if (means_copy == NULL)
 			{
@@ -887,7 +899,11 @@ rf_store_model(int32 model_id,
 		}
 		else
 		{
-			double	   *vars_copy = (double *) palloc(vars_size);
+			NDB_DECLARE(double *, vars_copy);
+			{
+				size_t		count = vars_size / sizeof(double);
+				NDB_ALLOC(vars_copy, double, count);
+			}
 
 			if (vars_copy == NULL)
 			{
@@ -946,7 +962,11 @@ rf_store_model(int32 model_id,
 		}
 		else
 		{
-			double	   *copy = (double *) palloc(left_means_size);
+			NDB_DECLARE(double *, copy);
+			{
+				size_t		count = left_means_size / sizeof(double);
+				NDB_ALLOC(copy, double, count);
+			}
 
 			if (copy == NULL)
 			{
@@ -970,7 +990,11 @@ rf_store_model(int32 model_id,
 		}
 		else
 		{
-			double	   *copy = (double *) palloc(right_means_size);
+			NDB_DECLARE(double *, copy);
+			{
+				size_t		count = right_means_size / sizeof(double);
+				NDB_ALLOC(copy, double, count);
+			}
 
 			if (copy == NULL)
 			{
@@ -988,7 +1012,6 @@ rf_store_model(int32 model_id,
 	{
 		size_t		trees_array_size;
 		size_t		tree_double_size;
-		GTree	  **tree_copy;
 
 		trees_array_size = sizeof(GTree *) * (size_t) tree_count;
 		if (trees_array_size > MaxAllocSize)
@@ -997,7 +1020,11 @@ rf_store_model(int32 model_id,
 		}
 		else
 		{
-			tree_copy = (GTree * *) palloc(trees_array_size);
+			NDB_DECLARE(GTree **, tree_copy);
+			{
+				size_t		count = trees_array_size / sizeof(GTree *);
+				NDB_ALLOC(tree_copy, GTree *, count);
+			}
 			if (tree_copy == NULL)
 			{
 				elog(WARNING, "rf_store_model: palloc failed for trees array");
@@ -1018,7 +1045,11 @@ rf_store_model(int32 model_id,
 				{
 					if (tree_majority != NULL)
 					{
-						double	   *majority_copy = (double *) palloc(tree_double_size);
+						NDB_DECLARE(double *, majority_copy);
+						{
+							size_t		count = tree_double_size / sizeof(double);
+							NDB_ALLOC(majority_copy, double, count);
+						}
 
 						if (majority_copy == NULL)
 						{
@@ -1034,7 +1065,11 @@ rf_store_model(int32 model_id,
 
 					if (tree_majority_fraction != NULL)
 					{
-						double	   *fraction_copy = (double *) palloc(tree_double_size);
+						NDB_DECLARE(double *, fraction_copy);
+						{
+							size_t		count = tree_double_size / sizeof(double);
+							NDB_ALLOC(fraction_copy, double, count);
+						}
 
 						if (fraction_copy == NULL)
 						{
@@ -1050,7 +1085,11 @@ rf_store_model(int32 model_id,
 
 					if (tree_second != NULL)
 					{
-						double	   *second_copy = (double *) palloc(tree_double_size);
+						NDB_DECLARE(double *, second_copy);
+						{
+							size_t		count = tree_double_size / sizeof(double);
+							NDB_ALLOC(second_copy, double, count);
+						}
 
 						if (second_copy == NULL)
 						{
@@ -1066,7 +1105,11 @@ rf_store_model(int32 model_id,
 
 					if (tree_second_fraction != NULL)
 					{
-						double	   *second_fraction_copy = (double *) palloc(tree_double_size);
+						NDB_DECLARE(double *, second_fraction_copy);
+						{
+							size_t		count = tree_double_size / sizeof(double);
+							NDB_ALLOC(second_fraction_copy, double, count);
+						}
 
 						if (second_fraction_copy == NULL)
 						{
@@ -1082,7 +1125,11 @@ rf_store_model(int32 model_id,
 
 					if (tree_oob_accuracy != NULL)
 					{
-						double	   *oob_copy = (double *) palloc(tree_double_size);
+						NDB_DECLARE(double *, oob_copy);
+						{
+							size_t		count = tree_double_size / sizeof(double);
+							NDB_ALLOC(oob_copy, double, count);
+						}
 
 						if (oob_copy == NULL)
 						{
@@ -1169,7 +1216,9 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	const char *quoted_feat = NULL;
 	const char *quoted_label = NULL;
 
-	StringInfoData query;
+	StringInfoData query = {0};
+	MemoryContext oldcontext;
+	NDB_DECLARE (NdbSpiSession *, train_spi_session);
 
 	int			feature_dim = 0;
 	int			n_classes = 0;
@@ -1177,6 +1226,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	int			second_count = 0;
 	int			second_idx = -1;
 	int		   *class_counts_tmp = NULL;
+	int		   *counts = NULL;
 	int			feature_sum_count = 0;
 	int			split_feature = -1;
 	int		   *left_counts = NULL;
@@ -1259,8 +1309,9 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	if (PG_NARGS() < 3)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("random_forest: requires table, feature "
-						"column, and label column")));
+				 errmsg("neurondb: train_random_forest_classifier: requires table, feature column, and label column"),
+				 errdetail("Function received %d arguments, minimum required is 3", PG_NARGS()),
+				 errhint("Provide table name, feature column name, and label column name as arguments.")));
 
 	table_name_text = PG_GETARG_TEXT_PP(0);
 	feature_col_text = PG_GETARG_TEXT_PP(1);
@@ -1273,9 +1324,9 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		if (arg_trees < 1)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("random_forest: number of trees "
-							"must "
-							"be at least 1")));
+					 errmsg("neurondb: train_random_forest_classifier: number of trees must be at least 1"),
+					 errdetail("Received %d trees, minimum allowed is 1", arg_trees),
+					 errhint("Specify a positive number of trees for the random forest ensemble.")));
 		if (arg_trees > 1024)
 			arg_trees = 1024;
 		forest_trees_arg = arg_trees;
@@ -1288,9 +1339,9 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		if (arg_depth < 1)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("random_forest: max depth must "
-							"be at "
-							"least 1")));
+					 errmsg("neurondb: train_random_forest_classifier: max depth must be at least 1"),
+					 errdetail("Received max depth %d, minimum allowed is 1", arg_depth),
+					 errhint("Specify a positive maximum depth for decision trees.")));
 		if (arg_depth > GTREE_MAX_DEPTH)
 			arg_depth = GTREE_MAX_DEPTH;
 		max_depth_arg = arg_depth;
@@ -1303,9 +1354,9 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		if (arg_min_samples < 1)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("random_forest: min samples "
-							"must be at "
-							"least 1")));
+					 errmsg("neurondb: train_random_forest_classifier: min samples must be at least 1"),
+					 errdetail("Received min samples %d, minimum allowed is 1", arg_min_samples),
+					 errhint("Specify a positive minimum number of samples for tree splits.")));
 		if (arg_min_samples > 1000000)
 			arg_min_samples = 1000000;
 		min_samples_arg = arg_min_samples;
@@ -1320,21 +1371,11 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 	quoted_feat = quote_identifier(feature_col);
 	quoted_label = quote_identifier(label_col);
 
-	initStringInfo(&query);
+	oldcontext = CurrentMemoryContext;
+	Assert(oldcontext != NULL);
+	NDB_SPI_SESSION_BEGIN(train_spi_session, oldcontext);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		NDB_SAFE_PFREE_AND_NULL(table_name);
-		table_name = NULL;
-		NDB_SAFE_PFREE_AND_NULL(feature_col);
-		feature_col = NULL;
-		NDB_SAFE_PFREE_AND_NULL(label_col);
-		label_col = NULL;
-		NDB_SAFE_PFREE_AND_NULL(query.data);
-		query.data = NULL;
-		query.data = NULL;
-		ereport(ERROR, (errmsg("random_forest: SPI_connect failed")));
-	}
+	initStringInfo(&query);
 
 	rf_dataset_load(
 					quoted_tbl, quoted_feat, quoted_label, &dataset, &query);
@@ -1367,7 +1408,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 							 max_depth_arg,
 							 min_samples_arg);
 			gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(
-																 jsonb_in, CStringGetDatum(hyperbuf.data)));
+																 jsonb_in, CStringGetTextDatum(hyperbuf.data)));
 
 			if (ndb_gpu_try_train_model("random_forest",
 										NULL,
@@ -1408,12 +1449,12 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 				if (gpu_hyperparams)
 				{
-					NDB_SAFE_PFREE_AND_NULL(gpu_hyperparams);
+					NDB_FREE(gpu_hyperparams);
 					gpu_hyperparams = NULL;
 				}
 				if (hyperbuf.data)
 				{
-					NDB_SAFE_PFREE_AND_NULL(hyperbuf.data);
+					NDB_FREE(hyperbuf.data);
 					hyperbuf.data = NULL;
 				}
 
@@ -1430,27 +1471,28 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				}
 
 				rf_dataset_free(&dataset);
-				SPI_finish();
+				/* Free query.data BEFORE ending SPI session (it's allocated in SPI context) */
+				if (query.data)
+				{
+					NDB_FREE(query.data);
+					query.data = NULL;
+				}
+				NDB_SPI_SESSION_END(train_spi_session);
 
 				if (table_name)
 				{
-					NDB_SAFE_PFREE_AND_NULL(table_name);
+					NDB_FREE(table_name);
 					table_name = NULL;
 				}
 				if (feature_col)
 				{
-					NDB_SAFE_PFREE_AND_NULL(feature_col);
+					NDB_FREE(feature_col);
 					feature_col = NULL;
 				}
 				if (label_col)
 				{
-					NDB_SAFE_PFREE_AND_NULL(label_col);
+					NDB_FREE(label_col);
 					label_col = NULL;
-				}
-				if (query.data)
-				{
-					NDB_SAFE_PFREE_AND_NULL(query.data);
-					query.data = NULL;
 				}
 
 				PG_RETURN_INT32(model_id);
@@ -1473,12 +1515,12 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 			if (gpu_hyperparams != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(gpu_hyperparams);
+				NDB_FREE(gpu_hyperparams);
 				gpu_hyperparams = NULL;
 			}
 			if (hyperbuf.data)
 			{
-				NDB_SAFE_PFREE_AND_NULL(hyperbuf.data);
+				NDB_FREE(hyperbuf.data);
 				hyperbuf.data = NULL;
 			}
 		}
@@ -1488,15 +1530,17 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		int			i;
 
 		if (feature_dim > 0)
-			feature_importance_tmp =
-				(double *) palloc0(sizeof(double) * feature_dim);
+		{
+			NDB_DECLARE(double *, feature_importance_tmp);
+			NDB_ALLOC(feature_importance_tmp, double, feature_dim);
+		}
 
 		if (feature_dim > 0)
 		{
 			int			j;
 
-			feature_order =
-				(int *) palloc(sizeof(int) * feature_dim);
+			NDB_DECLARE(int *, feature_order);
+			NDB_ALLOC(feature_order, int, feature_dim);
 			for (j = 0; j < feature_dim; j++)
 				feature_order[j] = j;
 		}
@@ -1511,10 +1555,11 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		{
 			if (!pg_prng_strong_seed(&rng))
 				ereport(ERROR,
-						(errmsg("random_forest: failed to seed "
-								"PRNG")));
-			bootstrap_indices =
-				(int *) palloc(sizeof(int) * sample_count);
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: train_random_forest_classifier: failed to seed PRNG"),
+						 errdetail("Random number generator initialization failed"),
+						 errhint("This is an internal error. Please report this issue.")));
+			NDB_ALLOC(bootstrap_indices, int, sample_count);
 			for (i = 0; i < sample_count; i++)
 				bootstrap_indices[i] =
 					(int) pg_prng_uint64_range_inclusive(&rng,
@@ -1525,10 +1570,8 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 		if (feature_dim > 0 && sample_count > 0
 			&& stage_features != NULL)
 		{
-			feature_sums =
-				(double *) palloc0(sizeof(double) * feature_dim);
-			feature_sums_sq =
-				(double *) palloc0(sizeof(double) * feature_dim);
+			NDB_ALLOC(feature_sums, double, feature_dim);
+			NDB_ALLOC(feature_sums_sq, double, feature_dim);
 
 			for (i = 0; i < sample_count; i++)
 			{
@@ -1558,9 +1601,8 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 		if (n_classes > 0)
 		{
-			int		   *counts = (int *) palloc0(sizeof(int) * n_classes);
-
-			NDB_CHECK_ALLOC(counts, "counts");
+			NDB_ALLOC(counts, int, n_classes);
+			if (counts != NULL)
 			{
 				int			best_idx = 0;
 
@@ -1652,7 +1694,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 					}
 					appendStringInfoChar(&histogram, ']');
 					elog(DEBUG1, "random_forest: class histogram %s", histogram.data);
-					NDB_SAFE_PFREE_AND_NULL(histogram.data);
+					NDB_FREE(histogram.data);
 				}
 			}
 
@@ -1662,10 +1704,8 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				StringInfoData mean_log;
 				StringInfoData var_log;
 
-				feature_means_tmp =
-					(double *) palloc(sizeof(double) * feature_dim);
-				feature_vars_tmp =
-					(double *) palloc(sizeof(double) * feature_dim);
+				NDB_ALLOC(feature_means_tmp, double, feature_dim);
+				NDB_ALLOC(feature_vars_tmp, double, feature_dim);
 				for (j = 0; j < feature_dim; j++)
 				{
 					double		mean = feature_sums[j]
@@ -1697,7 +1737,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				elog(DEBUG1,
 					 "random_forest: feature means %s",
 					 mean_log.data);
-				NDB_SAFE_PFREE_AND_NULL(mean_log.data);
+				NDB_FREE(mean_log.data);
 
 				initStringInfo(&var_log);
 				appendStringInfo(&var_log, "[");
@@ -1714,7 +1754,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				elog(DEBUG1,
 					 "random_forest: feature variances %s",
 					 var_log.data);
-				NDB_SAFE_PFREE_AND_NULL(var_log.data);
+				NDB_FREE(var_log.data);
 			}
 
 			if (feature_dim > 0 && sample_count > 0 && n_classes > 0
@@ -1733,15 +1773,19 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 						elog(WARNING, "rf_build_branch_tree: allocation sizes exceed MaxAllocSize (n_classes=%d, feature_limit=%d)", n_classes, feature_limit);
 						return -1;
 					}
-					class_feature_sums = (double *) palloc0(sums_size);
-					class_feature_counts = (int *) palloc0(counts_size);
+					{
+						size_t		sums_count = sums_size / sizeof(double);
+						size_t		counts_count = counts_size / sizeof(int);
+						NDB_ALLOC(class_feature_sums, double, sums_count);
+						NDB_ALLOC(class_feature_counts, int, counts_count);
+					}
 					if (class_feature_sums == NULL || class_feature_counts == NULL)
 					{
 						elog(WARNING, "rf_build_branch_tree: palloc0 failed for class feature arrays");
 						if (class_feature_sums != NULL)
-							NDB_SAFE_PFREE_AND_NULL(class_feature_sums);
+							NDB_FREE(class_feature_sums);
 						if (class_feature_counts != NULL)
-							NDB_SAFE_PFREE_AND_NULL(class_feature_counts);
+							NDB_FREE(class_feature_counts);
 						return -1;
 					}
 				}
@@ -1879,8 +1923,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 					? split_feature
 					: 0;
 
-				split_pairs = (RFSplitPair *) palloc(
-													 sizeof(RFSplitPair) * sample_count);
+				NDB_ALLOC(split_pairs, RFSplitPair, sample_count);
 				NDB_CHECK_ALLOC(split_pairs, "split_pairs");
 				split_pair_count = 0;
 
@@ -1909,12 +1952,12 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 				if (split_pair_count > 1)
 				{
-					int		   *left_counts_tmp =
-						(int *) palloc0(sizeof(int) * n_classes);
-					int		   *right_counts_tmp =
-						(int *) palloc0(sizeof(int) * n_classes);
+					NDB_DECLARE(int *, left_counts_tmp);
+					NDB_DECLARE(int *, right_counts_tmp);
 					int			right_total_eval = 0;
 					int			left_total_eval = 0;
+					NDB_ALLOC(left_counts_tmp, int, n_classes);
+					NDB_ALLOC(right_counts_tmp, int, n_classes);
 
 					qsort(split_pairs,
 						  split_pair_count,
@@ -1991,8 +2034,8 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 						}
 					}
 
-					NDB_SAFE_PFREE_AND_NULL(left_counts_tmp);
-					NDB_SAFE_PFREE_AND_NULL(right_counts_tmp);
+					NDB_FREE(left_counts_tmp);
+					NDB_FREE(right_counts_tmp);
 				}
 
 				if (best_split_valid)
@@ -2011,7 +2054,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 				if (split_pairs)
 				{
-					NDB_SAFE_PFREE_AND_NULL(split_pairs);
+					NDB_FREE(split_pairs);
 					split_pairs = NULL;
 				}
 			}
@@ -2036,23 +2079,19 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				if (class_mean_threshold_valid)
 					threshold = class_mean_threshold;
 
-				left_counts = (int *) palloc0(sizeof(int) * n_classes);
+				NDB_ALLOC(left_counts, int, n_classes);
 				NDB_CHECK_ALLOC(left_counts, "left_counts");
-				right_counts = (int *) palloc0(sizeof(int) * n_classes);
+				NDB_ALLOC(right_counts, int, n_classes);
 				NDB_CHECK_ALLOC(right_counts, "right_counts");
 				if (feature_limit > 0)
 				{
-					left_feature_sums_vec = (double *) palloc0(
-															   sizeof(double) * feature_limit);
+					NDB_ALLOC(left_feature_sums_vec, double, feature_limit);
 					NDB_CHECK_ALLOC(left_feature_sums_vec, "left_feature_sums_vec");
-					right_feature_sums_vec = (double *) palloc0(
-																sizeof(double) * feature_limit);
+					NDB_ALLOC(right_feature_sums_vec, double, feature_limit);
 					NDB_CHECK_ALLOC(right_feature_sums_vec, "right_feature_sums_vec");
-					left_feature_counts_vec = (int *) palloc0(
-															  sizeof(int) * feature_limit);
+					NDB_ALLOC(left_feature_counts_vec, int, feature_limit);
 					NDB_CHECK_ALLOC(left_feature_counts_vec, "left_feature_counts_vec");
-					right_feature_counts_vec = (int *) palloc0(
-															   sizeof(int) * feature_limit);
+					NDB_ALLOC(right_feature_counts_vec, int, feature_limit);
 					NDB_CHECK_ALLOC(right_feature_counts_vec, "right_feature_counts_vec");
 				}
 
@@ -2169,11 +2208,11 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				{
 					int			f;
 
-					left_branch_means_vec = (double *) palloc(
-															  sizeof(double) * feature_limit);
+					NDB_DECLARE(double *, left_branch_means_vec);
+					NDB_DECLARE(double *, right_branch_means_vec);
+					NDB_ALLOC(left_branch_means_vec, double, feature_limit);
 					NDB_CHECK_ALLOC(left_branch_means_vec, "left_branch_means_vec");
-					right_branch_means_vec = (double *) palloc(
-															   sizeof(double) * feature_limit);
+					NDB_ALLOC(right_branch_means_vec, double, feature_limit);
 					NDB_CHECK_ALLOC(right_branch_means_vec, "right_branch_means_vec");
 
 					for (f = 0; f < feature_limit; f++)
@@ -2276,9 +2315,9 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 					second_fraction = right_branch_fraction;
 
 				if (left_counts)
-					NDB_SAFE_PFREE_AND_NULL(left_counts);
+					NDB_FREE(left_counts);
 				if (right_counts)
-					NDB_SAFE_PFREE_AND_NULL(right_counts);
+					NDB_FREE(right_counts);
 				left_counts = NULL;
 				right_counts = NULL;
 
@@ -2313,23 +2352,17 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 			if (forest_trees > 0)
 			{
-				trees = (GTree * *) palloc0(
-											sizeof(GTree *) * forest_trees);
+				NDB_ALLOC(trees, GTree *, forest_trees);
 				NDB_CHECK_ALLOC(trees, "trees");
-				tree_majorities = (double *) palloc0(
-													 sizeof(double) * forest_trees);
+				NDB_ALLOC(tree_majorities, double, forest_trees);
 				NDB_CHECK_ALLOC(tree_majorities, "tree_majorities");
-				tree_majority_fractions = (double *) palloc0(
-															 sizeof(double) * forest_trees);
+				NDB_ALLOC(tree_majority_fractions, double, forest_trees);
 				NDB_CHECK_ALLOC(tree_majority_fractions, "tree_majority_fractions");
-				tree_seconds = (double *) palloc0(
-												  sizeof(double) * forest_trees);
+				NDB_ALLOC(tree_seconds, double, forest_trees);
 				NDB_CHECK_ALLOC(tree_seconds, "tree_seconds");
-				tree_second_fractions = (double *) palloc0(
-														   sizeof(double) * forest_trees);
+				NDB_ALLOC(tree_second_fractions, double, forest_trees);
 				NDB_CHECK_ALLOC(tree_second_fractions, "tree_second_fractions");
-				tree_oob_accuracy = (double *) palloc0(
-													   sizeof(double) * forest_trees);
+				NDB_ALLOC(tree_oob_accuracy, double, forest_trees);
 				NDB_CHECK_ALLOC(tree_oob_accuracy, "tree_oob_accuracy");
 			}
 
@@ -2385,8 +2418,10 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				int			right_index_count = 0;
 
 				if (n_classes > 0)
-					tree_counts =
-						(int *) palloc0(sizeof(int) * n_classes);
+				{
+					NDB_DECLARE(int *, tree_counts);
+					NDB_ALLOC(tree_counts, int, n_classes);
+				}
 
 				if (n_samples > 0)
 				{
@@ -2400,15 +2435,14 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 				if (n_samples > 0)
 				{
-					inbag = (bool *) palloc0(
-											 sizeof(bool) * n_samples);
+					NDB_DECLARE(bool *, inbag);
+					NDB_ALLOC(inbag, bool, n_samples);
 					NDB_CHECK_ALLOC(inbag, "inbag");
 				}
 
 				if (sample_target > 0 && n_samples > 0)
 				{
-					tree_bootstrap = (int *) palloc(
-													sizeof(int) * sample_target);
+					NDB_ALLOC(tree_bootstrap, int, sample_target);
 					NDB_CHECK_ALLOC(tree_bootstrap, "tree_bootstrap");
 				}
 
@@ -2550,9 +2584,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 							|| feature_idx >= feature_dim)
 							continue;
 
-						tree_pairs = (RFSplitPair *) palloc(
-															sizeof(RFSplitPair)
-															* boot_samples);
+						NDB_ALLOC(tree_pairs, RFSplitPair, boot_samples);
 						NDB_CHECK_ALLOC(tree_pairs, "tree_pairs");
 						tree_pair_count = 0;
 
@@ -2592,8 +2624,8 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 						if (tree_pair_count > 1)
 						{
-							int		   *left_counts_tmp;
-							int		   *right_counts_tmp;
+							NDB_DECLARE(int *, left_counts_tmp);
+							NDB_DECLARE(int *, right_counts_tmp);
 							int			left_total_eval = 0;
 							int			right_total_eval = 0;
 
@@ -2602,14 +2634,8 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 								  sizeof(RFSplitPair),
 								  rf_split_pair_cmp);
 
-							left_counts_tmp =
-								(int *) palloc0(
-												sizeof(int)
-												* n_classes);
-							right_counts_tmp =
-								(int *) palloc0(
-												sizeof(int)
-												* n_classes);
+							NDB_ALLOC(left_counts_tmp, int, n_classes);
+							NDB_ALLOC(right_counts_tmp, int, n_classes);
 
 							for (s = 0; s < tree_pair_count;
 								 s++)
@@ -2686,13 +2712,13 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 								}
 							}
 
-							NDB_SAFE_PFREE_AND_NULL(left_counts_tmp);
-							NDB_SAFE_PFREE_AND_NULL(right_counts_tmp);
+							NDB_FREE(left_counts_tmp);
+							NDB_FREE(right_counts_tmp);
 						}
 
 						if (tree_pairs != NULL)
 						{
-							NDB_SAFE_PFREE_AND_NULL(tree_pairs);
+							NDB_FREE(tree_pairs);
 							tree_pairs = NULL;
 						}
 					}
@@ -2712,25 +2738,17 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 					&& labels != NULL && tree_feature >= 0
 					&& tree_feature < feature_dim)
 				{
-					left_tmp =
-						(int *) palloc0(sizeof(int) * n_classes);
-					right_tmp =
-						(int *) palloc0(sizeof(int) * n_classes);
+					NDB_ALLOC(left_tmp, int, n_classes);
+					NDB_ALLOC(right_tmp, int, n_classes);
 
 					left_index_count = 0;
 					right_index_count = 0;
 					if (boot_samples > 0)
 					{
 						if (left_indices_local == NULL)
-							left_indices_local =
-								(int *) palloc(
-											   sizeof(int)
-											   * boot_samples);
+							NDB_ALLOC(left_indices_local, int, boot_samples);
 						if (right_indices_local == NULL)
-							right_indices_local =
-								(int *) palloc(
-											   sizeof(int)
-											   * boot_samples);
+							NDB_ALLOC(right_indices_local, int, boot_samples);
 					}
 
 					for (j = 0; j < boot_samples; j++)
@@ -2812,8 +2830,8 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 						&& tree_right_fraction > 0.0)
 						tree_second_frac = tree_right_fraction;
 
-					NDB_SAFE_PFREE_AND_NULL(left_tmp);
-					NDB_SAFE_PFREE_AND_NULL(right_tmp);
+					NDB_FREE(left_tmp);
+					NDB_FREE(right_tmp);
 				}
 
 				feature_for_split = tree_feature;
@@ -2825,9 +2843,9 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				if (tree == NULL)
 				{
 					if (tree_counts)
-						NDB_SAFE_PFREE_AND_NULL(tree_counts);
+						NDB_FREE(tree_counts);
 					if (tree_bootstrap)
-						NDB_SAFE_PFREE_AND_NULL(tree_bootstrap);
+						NDB_FREE(tree_bootstrap);
 					continue;
 				}
 
@@ -3017,15 +3035,15 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 				}
 
 				if (tree_counts)
-					NDB_SAFE_PFREE_AND_NULL(tree_counts);
+					NDB_FREE(tree_counts);
 				if (tree_bootstrap)
-					NDB_SAFE_PFREE_AND_NULL(tree_bootstrap);
+					NDB_FREE(tree_bootstrap);
 				if (inbag)
-					NDB_SAFE_PFREE_AND_NULL(inbag);
+					NDB_FREE(inbag);
 				if (left_indices_local)
-					NDB_SAFE_PFREE_AND_NULL(left_indices_local);
+					NDB_FREE(left_indices_local);
 				if (right_indices_local)
-					NDB_SAFE_PFREE_AND_NULL(right_indices_local);
+					NDB_FREE(right_indices_local);
 			}
 		}
 
@@ -3161,7 +3179,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 							 max_depth_arg,
 							 min_samples_arg);
 			params_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-															  jsonb_in, CStringGetDatum(params_buf.data)));
+															  jsonb_in, CStringGetTextDatum(params_buf.data)));
 
 			initStringInfo(&metrics_buf);
 			appendStringInfo(&metrics_buf,
@@ -3171,7 +3189,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 							 gini_impurity,
 							 majority_fraction);
 			metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-															   jsonb_in, CStringGetDatum(metrics_buf.data)));
+															   jsonb_in, CStringGetTextDatum(metrics_buf.data)));
 
 			if (neurondb_gpu_is_available())
 			{
@@ -3186,7 +3204,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 					if (gpu_metrics != NULL)
 					{
 						if (metrics_jsonb)
-							NDB_SAFE_PFREE_AND_NULL(metrics_jsonb);
+							NDB_FREE(metrics_jsonb);
 						metrics_jsonb = gpu_metrics;
 						gpu_metrics = NULL;
 					}
@@ -3208,7 +3226,7 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			}
 
 			if (!gpu_packed)
-				serialized = rf_model_serialize(stored_model);
+				serialized = rf_model_serialize(stored_model, 0);
 
 			memset(&spec, 0, sizeof(spec));
 			spec.algorithm = "random_forest";
@@ -3234,43 +3252,43 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			 */
 			if (serialized != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(serialized);
+				NDB_FREE(serialized);
 				serialized = NULL;
 			}
 			if (params_jsonb != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(params_jsonb);
+				NDB_FREE(params_jsonb);
 				params_jsonb = NULL;
 			}
 			if (metrics_jsonb != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(metrics_jsonb);
+				NDB_FREE(metrics_jsonb);
 				metrics_jsonb = NULL;
 			}
 			if (params_buf.data != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(params_buf.data);
+				NDB_FREE(params_buf.data);
 				params_buf.data = NULL;
 			}
 			if (metrics_buf.data != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(metrics_buf.data);
+				NDB_FREE(metrics_buf.data);
 				metrics_buf.data = NULL;
 			}
 			if (gpu_metrics != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+				NDB_FREE(gpu_metrics);
 				gpu_metrics = NULL;
 			}
 			if (!gpu_packed && gpu_payload != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(gpu_payload);
+				NDB_FREE(gpu_payload);
 				gpu_payload = NULL;
 			}
 		}
 
-		elog(NOTICE,
-			 "train_random_forest_classifier: rows=%d, classes=%d, dim=%d, "
+		elog(DEBUG1,
+			 "neurondb: train_random_forest_classifier: rows=%d, classes=%d, dim=%d, "
 			 "majority=%.3f, frac=%.3f, second=%.3f, sfrac=%.3f, gini=%.3f, "
 			 "entropy=%.3f, oob=%.3f",
 			 n_samples,
@@ -3284,62 +3302,63 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			 label_entropy,
 			 forest_oob_accuracy);
 		if (class_counts_tmp)
-			NDB_SAFE_PFREE_AND_NULL(class_counts_tmp);
+			NDB_FREE(class_counts_tmp);
 		if (feature_means_tmp)
-			NDB_SAFE_PFREE_AND_NULL(feature_means_tmp);
+			NDB_FREE(feature_means_tmp);
 		if (feature_vars_tmp)
-			NDB_SAFE_PFREE_AND_NULL(feature_vars_tmp);
+			NDB_FREE(feature_vars_tmp);
 		if (feature_importance_tmp)
-			NDB_SAFE_PFREE_AND_NULL(feature_importance_tmp);
+			NDB_FREE(feature_importance_tmp);
 		if (feature_sums)
-			NDB_SAFE_PFREE_AND_NULL(feature_sums);
+			NDB_FREE(feature_sums);
 		if (feature_sums_sq)
-			NDB_SAFE_PFREE_AND_NULL(feature_sums_sq);
+			NDB_FREE(feature_sums_sq);
 		if (class_feature_sums)
-			NDB_SAFE_PFREE_AND_NULL(class_feature_sums);
+			NDB_FREE(class_feature_sums);
 		if (class_feature_counts)
-			NDB_SAFE_PFREE_AND_NULL(class_feature_counts);
+			NDB_FREE(class_feature_counts);
 		if (left_feature_sums_vec)
-			NDB_SAFE_PFREE_AND_NULL(left_feature_sums_vec);
+			NDB_FREE(left_feature_sums_vec);
 		if (right_feature_sums_vec)
-			NDB_SAFE_PFREE_AND_NULL(right_feature_sums_vec);
+			NDB_FREE(right_feature_sums_vec);
 		if (left_feature_counts_vec)
-			NDB_SAFE_PFREE_AND_NULL(left_feature_counts_vec);
+			NDB_FREE(left_feature_counts_vec);
 		if (right_feature_counts_vec)
-			NDB_SAFE_PFREE_AND_NULL(right_feature_counts_vec);
+			NDB_FREE(right_feature_counts_vec);
 		if (left_branch_means_vec)
-			NDB_SAFE_PFREE_AND_NULL(left_branch_means_vec);
+			NDB_FREE(left_branch_means_vec);
 		if (right_branch_means_vec)
-			NDB_SAFE_PFREE_AND_NULL(right_branch_means_vec);
+			NDB_FREE(right_branch_means_vec);
 		if (feature_order)
-			NDB_SAFE_PFREE_AND_NULL(feature_order);
+			NDB_FREE(feature_order);
 		if (trees)
-			NDB_SAFE_PFREE_AND_NULL(trees);
+			NDB_FREE(trees);
 		if (tree_majorities)
-			NDB_SAFE_PFREE_AND_NULL(tree_majorities);
+			NDB_FREE(tree_majorities);
 		if (tree_majority_fractions)
-			NDB_SAFE_PFREE_AND_NULL(tree_majority_fractions);
+			NDB_FREE(tree_majority_fractions);
 		if (tree_seconds)
-			NDB_SAFE_PFREE_AND_NULL(tree_seconds);
+			NDB_FREE(tree_seconds);
 		if (tree_second_fractions)
-			NDB_SAFE_PFREE_AND_NULL(tree_second_fractions);
+			NDB_FREE(tree_second_fractions);
 		if (tree_oob_accuracy)
-			NDB_SAFE_PFREE_AND_NULL(tree_oob_accuracy);
+			NDB_FREE(tree_oob_accuracy);
 		if (bootstrap_indices)
-			NDB_SAFE_PFREE_AND_NULL(bootstrap_indices);
+			NDB_FREE(bootstrap_indices);
 		rf_dataset_free(&dataset);
 	}
 
-	SPI_finish();
+	/* Free query.data BEFORE ending SPI session (it's allocated in SPI context) */
+	if (query.data)
+		NDB_FREE(query.data);
+	NDB_SPI_SESSION_END(train_spi_session);
 
 	if (table_name)
-		NDB_SAFE_PFREE_AND_NULL(table_name);
+		NDB_FREE(table_name);
 	if (feature_col)
-		NDB_SAFE_PFREE_AND_NULL(feature_col);
+		NDB_FREE(feature_col);
 	if (label_col)
-		NDB_SAFE_PFREE_AND_NULL(label_col);
-	if (query.data)
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		NDB_FREE(label_col);
 	PG_RETURN_INT32(model_id);
 }
 
@@ -3454,7 +3473,7 @@ rf_tree_predict_single(const GTree * tree,
 			 (edge_count < 0) ? 0 : (edge_count + 1),
 			 leaf_idx,
 			 path_log.data);
-		NDB_SAFE_PFREE_AND_NULL(path_log.data);
+		NDB_FREE(path_log.data);
 	}
 
 	if (left_dist != NULL && right_dist != NULL && vec != NULL
@@ -3527,7 +3546,9 @@ predict_random_forest(PG_FUNCTION_ARGS)
 	else
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("random_forest: model ID is required")));
+				 errmsg("neurondb: predict_random_forest: model ID is required"),
+				 errdetail("First argument (model_id) cannot be NULL"),
+				 errhint("Provide a valid model ID from the training function.")));
 
 	if (!PG_ARGISNULL(1))
 	{
@@ -3537,8 +3558,9 @@ predict_random_forest(PG_FUNCTION_ARGS)
 	else
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("random_forest: feature vector is "
-						"required")));
+				 errmsg("neurondb: predict_random_forest: feature vector is required"),
+				 errdetail("Second argument (feature vector) cannot be NULL"),
+				 errhint("Provide a valid feature vector for prediction.")));
 
 	if (!rf_lookup_model(model_id, &model))
 	{
@@ -3547,8 +3569,9 @@ predict_random_forest(PG_FUNCTION_ARGS)
 		if (!rf_load_model_from_catalog(model_id, &model))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("random_forest: model %d not found",
-							model_id)));
+					 errmsg("neurondb: predict_random_forest: model %d not found", model_id),
+					 errdetail("Model with ID %d does not exist in the catalog", model_id),
+					 errhint("Verify the model ID or train a new model.")));
 	}
 
 	fallback_value = model->second_value;
@@ -3560,10 +3583,9 @@ predict_random_forest(PG_FUNCTION_ARGS)
 		&& feature_vec->dim != model->n_features)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("random_forest: feature dimension "
-						"mismatch (expected %d got %d)",
-						model->n_features,
-						feature_vec->dim)));
+				 errmsg("neurondb: predict_random_forest: feature dimension mismatch"),
+				 errdetail("Model expects %d features but received %d", model->n_features, feature_vec->dim),
+				 errhint("Ensure the feature vector has the same dimension as the training data.")));
 
 	if (model->feature_means != NULL && feature_vec != NULL)
 	{
@@ -3658,8 +3680,7 @@ predict_random_forest(PG_FUNCTION_ARGS)
 	if (model->n_classes > 0)
 	{
 		vote_classes = model->n_classes;
-		vote_histogram =
-			(double *) palloc0(sizeof(double) * vote_classes);
+		NDB_ALLOC(vote_histogram, double, vote_classes);
 	}
 
 	if (model->tree_count > 0 && model->trees != NULL)
@@ -3775,7 +3796,7 @@ predict_random_forest(PG_FUNCTION_ARGS)
 				second_weight / vote_total_weight;
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(vote_histogram);
+		NDB_FREE(vote_histogram);
 		vote_histogram = NULL;
 	}
 
@@ -3919,7 +3940,9 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 	if (PG_NARGS() < 1 || PG_ARGISNULL(0))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("random_forest: model_id required")));
+				 errmsg("neurondb: evaluate_random_forest: model_id is required"),
+				 errdetail("First argument (model_id) cannot be NULL"),
+				 errhint("Provide a valid model ID from the training function.")));
 
 	model_id = PG_GETARG_INT32(0);
 
@@ -3981,8 +4004,8 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 				}
 				PG_CATCH();
 				{
-					elog(NOTICE,
-						 "evaluate_random_forest: jsonb_numeric failed, trying text extraction");
+					elog(DEBUG1,
+						 "neurondb: evaluate_random_forest: jsonb_numeric failed, trying text extraction");
 					{
 						Datum		acc_text;
 
@@ -4002,7 +4025,7 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 									 "evaluate_random_forest: extracted accuracy=%.6f from text",
 									 accuracy);
 							}
-							NDB_SAFE_PFREE_AND_NULL(acc_str);
+							NDB_FREE(acc_str);
 						}
 					}
 				}
@@ -4040,7 +4063,7 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 
 						if (gini_str != NULL && strlen(gini_str) > 0)
 							gini = strtod(gini_str, NULL);
-						NDB_SAFE_PFREE_AND_NULL(gini_str);
+						NDB_FREE(gini_str);
 					}
 				}
 				PG_END_TRY();
@@ -4050,9 +4073,9 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 			n_classes = 2;
 
 			if (metrics)
-				NDB_SAFE_PFREE_AND_NULL(metrics);
+				NDB_FREE(metrics);
 			if (payload)
-				NDB_SAFE_PFREE_AND_NULL(payload);
+				NDB_FREE(payload);
 
 			error_rate = (accuracy > 1.0) ? 0.0 : (1.0 - accuracy);
 
@@ -4079,9 +4102,9 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 					 "evaluate_random_forest: rf_load_model_from_catalog failed for model_id %d",
 					 model_id);
 				if (payload)
-					NDB_SAFE_PFREE_AND_NULL(payload);
+					NDB_FREE(payload);
 				if (metrics)
-					NDB_SAFE_PFREE_AND_NULL(metrics);
+					NDB_FREE(metrics);
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("random_forest: model %d not found or failed to load",
@@ -4092,9 +4115,9 @@ evaluate_random_forest(PG_FUNCTION_ARGS)
 		{
 			elog(WARNING, "evaluate_random_forest: exception during CPU model load for model_id %d", model_id);
 			if (payload)
-				NDB_SAFE_PFREE_AND_NULL(payload);
+				NDB_FREE(payload);
 			if (metrics)
-				NDB_SAFE_PFREE_AND_NULL(metrics);
+				NDB_FREE(metrics);
 			FlushErrorState();
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
@@ -4169,7 +4192,7 @@ rf_predict_batch(const RFModel * model,
 	}
 
 	if (vote_classes > 0)
-		vote_histogram = (double *) palloc0(sizeof(double) * vote_classes);
+		NDB_ALLOC(vote_histogram, double, vote_classes);
 	NDB_CHECK_ALLOC(vote_histogram, "vote_histogram");
 
 	for (i = 0; i < n_samples; i++)
@@ -4300,7 +4323,7 @@ rf_predict_batch(const RFModel * model,
 	}
 
 	if (vote_histogram != NULL)
-		NDB_SAFE_PFREE_AND_NULL(vote_histogram);
+		NDB_FREE(vote_histogram);
 
 	if (tp_out)
 		*tp_out = tp;
@@ -4347,9 +4370,10 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 	int			fp = 0;
 	int			fn = 0;
 	MemoryContext oldcontext;
-	StringInfoData query;
+	NDB_DECLARE (NdbSpiSession *, eval_spi_session);
+	StringInfoData query = {0};
 	RFModel    *model = NULL;
-	StringInfoData jsonbuf;
+	StringInfoData jsonbuf = {0};
 	Jsonb	   *result_jsonb = NULL;
 	bytea	   *gpu_payload = NULL;
 	Jsonb	   *gpu_metrics = NULL;
@@ -4392,7 +4416,7 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 				if (gpu_payload == NULL)
 				{
 					if (gpu_metrics)
-						NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+						NDB_FREE(gpu_metrics);
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							 errmsg("neurondb: evaluate_random_forest_by_model_id: model %d has no model_data (model may not have been trained or stored correctly)",
@@ -4405,9 +4429,9 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 				{
 					elog(DEBUG1, "evaluate_random_forest_by_model_id: model %d not marked as GPU, trying CPU load", model_id);
 					if (gpu_payload)
-						NDB_SAFE_PFREE_AND_NULL(gpu_payload);
+						NDB_FREE(gpu_payload);
 					if (gpu_metrics)
-						NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+						NDB_FREE(gpu_metrics);
 					gpu_payload = NULL;
 					gpu_metrics = NULL;
 					if (!rf_load_model_from_catalog(model_id, &model))
@@ -4435,24 +4459,9 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 				 errmsg("neurondb: evaluate_random_forest_by_model_id: model %d not found",
 						model_id)));
 
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	{
-		if (model != NULL)
-			rf_free_deserialized_model(model);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(feat_str);
-		NDB_SAFE_PFREE_AND_NULL(targ_str);
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_random_forest_by_model_id: SPI_connect failed")));
-	}
+	oldcontext = CurrentMemoryContext;
+	Assert(oldcontext != NULL);
+	NDB_SPI_SESSION_BEGIN(eval_spi_session, oldcontext);
 
 	initStringInfo(&query);
 	appendStringInfo(&query,
@@ -4468,31 +4477,35 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 	NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 	{
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		NDB_FREE(query.data);
 		if (model != NULL)
 			rf_free_deserialized_model(model);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(feat_str);
-		NDB_SAFE_PFREE_AND_NULL(targ_str);
-		SPI_finish();
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
+		NDB_FREE(targ_str);
+		NDB_SPI_SESSION_END(eval_spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_random_forest_by_model_id: query failed")));
+				 errmsg("neurondb: evaluate_random_forest_by_model_id: query failed"),
+				 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+				 errhint("Verify the table exists and contains valid feature and label columns.")));
 	}
 
 	nvec = SPI_processed;
 	if (nvec < 1)
 	{
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		NDB_FREE(query.data);
 		if (model != NULL)
 			rf_free_deserialized_model(model);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(feat_str);
-		NDB_SAFE_PFREE_AND_NULL(targ_str);
-		SPI_finish();
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
+		NDB_FREE(targ_str);
+		NDB_SPI_SESSION_END(eval_spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("neurondb: evaluate_random_forest_by_model_id: no valid rows found")));
+				 errmsg("neurondb: evaluate_random_forest_by_model_id: no valid rows found"),
+				 errdetail("Dataset contains %d rows, minimum required is 10", nvec),
+				 errhint("Add more data rows to the evaluation table.")));
 	}
 
 	if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL)
@@ -4553,8 +4566,8 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 				goto cpu_evaluation_path;
 			}
 
-			h_features = (float *) palloc(features_size);
-			h_labels = (int *) palloc(labels_size);
+			NDB_ALLOC(h_features, float, features_size / sizeof(float));
+			NDB_ALLOC(h_labels, int, labels_size / sizeof(int));
 
 			if (h_features == NULL || h_labels == NULL)
 			{
@@ -4562,12 +4575,12 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 					 "evaluate_random_forest_by_model_id: memory allocation failed, falling back to CPU");
 				if (h_features != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(h_features);
+					NDB_FREE(h_features);
 					h_features = NULL;
 				}
 				if (h_labels != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(h_labels);
+					NDB_FREE(h_labels);
 					h_labels = NULL;
 				}
 				goto cpu_evaluation_path;
@@ -4586,8 +4599,8 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 			{
 				elog(WARNING,
 					 "evaluate_random_forest_by_model_id: NULL TupleDesc, falling back to CPU");
-				NDB_SAFE_PFREE_AND_NULL(h_features);
-				NDB_SAFE_PFREE_AND_NULL(h_labels);
+				NDB_FREE(h_features);
+				NDB_FREE(h_labels);
 				goto cpu_evaluation_path;
 			}
 
@@ -4602,14 +4615,20 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 				ArrayType  *arr;
 				float	   *feat_row;
 
+				/* Safe access to SPI_tuptable - validate before access */
 				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || i >= SPI_processed)
 					break;
 
 				tuple = SPI_tuptable->vals[i];
-				if (tuple == NULL)
+				if (tuple == NULL || tupdesc == NULL)
 					continue;
 
 				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+				/* Safe access for target - validate tupdesc has at least 2 columns */
+				if (tupdesc->natts < 2)
+				{
+					continue;
+				}
 				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
 
 				if (feat_null || targ_null)
@@ -4685,48 +4704,50 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 		{
 			if (h_features != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(h_features);
+				NDB_FREE(h_features);
 				h_features = NULL;
 			}
 			if (h_labels != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(h_labels);
+				NDB_FREE(h_labels);
 				h_labels = NULL;
 			}
 			if (gpu_payload != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(gpu_payload);
+				NDB_FREE(gpu_payload);
 				gpu_payload = NULL;
 			}
 			if (gpu_metrics != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+				NDB_FREE(gpu_metrics);
 				gpu_metrics = NULL;
 			}
 			if (query.data != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(query.data);
+				NDB_FREE(query.data);
 				query.data = NULL;
 			}
 			if (tbl_str != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(tbl_str);
+				NDB_FREE(tbl_str);
 				tbl_str = NULL;
 			}
 			if (feat_str != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(feat_str);
+				NDB_FREE(feat_str);
 				feat_str = NULL;
 			}
 			if (targ_str != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(targ_str);
+				NDB_FREE(targ_str);
 				targ_str = NULL;
 			}
-			SPI_finish();
+			NDB_SPI_SESSION_END(eval_spi_session);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: evaluate_random_forest_by_model_id: no valid rows found")));
+					 errmsg("neurondb: evaluate_random_forest_by_model_id: no valid rows found"),
+					 errdetail("Dataset contains %d rows, minimum required is 10", nvec),
+					 errhint("Add more data rows to the evaluation table.")));
 		}
 
 		/* Use optimized GPU batch evaluation */
@@ -4753,14 +4774,14 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 				if (h_features != NULL && !h_features_freed)
 				{
 					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_features (early exit)");
-					NDB_SAFE_PFREE_AND_NULL(h_features);
+					NDB_FREE(h_features);
 					h_features = NULL;
 					h_features_freed = true;
 				}
 				if (h_labels != NULL && !h_labels_freed)
 				{
 					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_labels (early exit)");
-					NDB_SAFE_PFREE_AND_NULL(h_labels);
+					NDB_FREE(h_labels);
 					h_labels = NULL;
 					h_labels_freed = true;
 				}
@@ -4798,7 +4819,7 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 									 valid_rows);
 
 					result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																	  CStringGetDatum(jsonbuf.data)));
+																	  CStringGetTextDatum(jsonbuf.data)));
 
 					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] JSONB created, copying to caller context");
 
@@ -4807,7 +4828,7 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 					 * Must free StringInfo data before switching memory
 					 * contexts, as it's allocated in the SPI context.
 					 */
-					NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+					NDB_FREE(jsonbuf.data);
 					jsonbuf.data = NULL;
 					{
 						Jsonb	   *temp_jsonb = result_jsonb;
@@ -4830,27 +4851,27 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 					if (h_features != NULL && !h_features_freed)
 					{
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_features (success path)");
-						NDB_SAFE_PFREE_AND_NULL(h_features);
+						NDB_FREE(h_features);
 						h_features = NULL;
 						h_features_freed = true;
 					}
 					if (h_labels != NULL && !h_labels_freed)
 					{
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_labels (success path)");
-						NDB_SAFE_PFREE_AND_NULL(h_labels);
+						NDB_FREE(h_labels);
 						h_labels = NULL;
 						h_labels_freed = true;
 					}
 					if (gpu_payload != NULL)
 					{
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing gpu_payload");
-						NDB_SAFE_PFREE_AND_NULL(gpu_payload);
+						NDB_FREE(gpu_payload);
 						gpu_payload = NULL;
 					}
 					if (gpu_metrics != NULL)
 					{
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing gpu_metrics");
-						NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+						NDB_FREE(gpu_metrics);
 						gpu_metrics = NULL;
 					}
 
@@ -4875,25 +4896,25 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing SPI context allocations before SPI_finish()");
 					if (query.data)
 					{
-						NDB_SAFE_PFREE_AND_NULL(query.data);
+						NDB_FREE(query.data);
 						query.data = NULL;
 					}
 					if (tbl_str)
 					{
-						NDB_SAFE_PFREE_AND_NULL(tbl_str);
+						NDB_FREE(tbl_str);
 						tbl_str = NULL;
 					}
 					if (feat_str)
 					{
-						NDB_SAFE_PFREE_AND_NULL(feat_str);
+						NDB_FREE(feat_str);
 						feat_str = NULL;
 					}
 					if (targ_str)
 					{
-						NDB_SAFE_PFREE_AND_NULL(targ_str);
+						NDB_FREE(targ_str);
 						targ_str = NULL;
 					}
-					SPI_finish();
+					NDB_SPI_SESSION_END(eval_spi_session);
 					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] returning JSONB result");
 					PG_RETURN_JSONB_P(result_jsonb);
 				}
@@ -4907,14 +4928,14 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 					if (h_features != NULL && !h_features_freed)
 					{
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_features (failure path)");
-						NDB_SAFE_PFREE_AND_NULL(h_features);
+						NDB_FREE(h_features);
 						h_features = NULL;
 						h_features_freed = true;
 					}
 					if (h_labels != NULL && !h_labels_freed)
 					{
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] freeing h_labels (failure path)");
-						NDB_SAFE_PFREE_AND_NULL(h_labels);
+						NDB_FREE(h_labels);
 						h_labels = NULL;
 						h_labels_freed = true;
 					}
@@ -4953,7 +4974,7 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: freeing h_features, ptr=%p", (void *) h_features);
 						if (h_features != NULL)
 						{
-							NDB_SAFE_PFREE_AND_NULL(h_features);
+							NDB_FREE(h_features);
 							h_features = NULL;
 						}
 						h_features_freed = true;
@@ -4963,7 +4984,7 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 						elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] exception cleanup: freeing h_labels, ptr=%p", (void *) h_labels);
 						if (h_labels != NULL)
 						{
-							NDB_SAFE_PFREE_AND_NULL(h_labels);
+							NDB_FREE(h_labels);
 							h_labels = NULL;
 						}
 						h_labels_freed = true;
@@ -5051,9 +5072,9 @@ cpu_evaluation_path:
 		}
 
 		/* Allocate host buffers for features and labels */
-		h_features = (float *) palloc(sizeof(float) * (size_t) nvec * (size_t) feat_dim);
+		NDB_ALLOC(h_features, float, (size_t) nvec * (size_t) feat_dim);
 		NDB_CHECK_ALLOC(h_features, "h_features");
-		h_labels = (double *) palloc(sizeof(double) * (size_t) nvec);
+		NDB_ALLOC(h_labels, double, (size_t) nvec);
 		NDB_CHECK_ALLOC(h_labels, "h_labels");
 
 		/*
@@ -5066,7 +5087,19 @@ cpu_evaluation_path:
 
 			for (i = 0; i < nvec; i++)
 			{
-				HeapTuple	tuple = SPI_tuptable->vals[i];
+				HeapTuple	tuple;
+
+				/* Safe access to SPI_tuptable - validate before access */
+				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+					i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+				{
+					continue;
+				}
+				tuple = SPI_tuptable->vals[i];
+				if (tupdesc == NULL)
+				{
+					continue;
+				}
 				Datum		feat_datum;
 				Datum		targ_datum;
 				bool		feat_null;
@@ -5076,6 +5109,11 @@ cpu_evaluation_path:
 				float	   *feat_row;
 
 				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+				/* Safe access for target - validate tupdesc has at least 2 columns */
+				if (tupdesc->natts < 2)
+				{
+					continue;
+				}
 				targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
 
 				if (feat_null || targ_null)
@@ -5137,50 +5175,52 @@ cpu_evaluation_path:
 		{
 			if (h_features != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(h_features);
+				NDB_FREE(h_features);
 				h_features = NULL;
 			}
 			if (h_labels != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(h_labels);
+				NDB_FREE(h_labels);
 				h_labels = NULL;
 			}
 			if (model != NULL)
 				rf_free_deserialized_model(model);
 			if (gpu_payload != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(gpu_payload);
+				NDB_FREE(gpu_payload);
 				gpu_payload = NULL;
 			}
 			if (gpu_metrics != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+				NDB_FREE(gpu_metrics);
 				gpu_metrics = NULL;
 			}
 			if (query.data != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(query.data);
+				NDB_FREE(query.data);
 				query.data = NULL;
 			}
 			if (tbl_str != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(tbl_str);
+				NDB_FREE(tbl_str);
 				tbl_str = NULL;
 			}
 			if (feat_str != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(feat_str);
+				NDB_FREE(feat_str);
 				feat_str = NULL;
 			}
 			if (targ_str != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(targ_str);
+				NDB_FREE(targ_str);
 				targ_str = NULL;
 			}
-			SPI_finish();
+			NDB_SPI_SESSION_END(eval_spi_session);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: evaluate_random_forest_by_model_id: no valid rows found")));
+					 errmsg("neurondb: evaluate_random_forest_by_model_id: no valid rows found"),
+					 errdetail("Dataset contains %d rows, minimum required is 10", nvec),
+					 errhint("Add more data rows to the evaluation table.")));
 		}
 
 		/* For GPU models, we need to load CPU model for evaluation */
@@ -5197,7 +5237,7 @@ cpu_evaluation_path:
 				{
 					/* Try to deserialize GPU model as CPU model */
 					/* GPU models have compatible structure for CPU evaluation */
-					model = rf_model_deserialize(gpu_payload);
+					model = rf_model_deserialize(gpu_payload, NULL);
 					if (model != NULL)
 					{
 						elog(DEBUG1,
@@ -5220,48 +5260,50 @@ cpu_evaluation_path:
 			{
 				if (h_features != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(h_features);
+					NDB_FREE(h_features);
 					h_features = NULL;
 				}
 				if (h_labels != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(h_labels);
+					NDB_FREE(h_labels);
 					h_labels = NULL;
 				}
 				if (gpu_payload != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(gpu_payload);
+					NDB_FREE(gpu_payload);
 					gpu_payload = NULL;
 				}
 				if (gpu_metrics != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+					NDB_FREE(gpu_metrics);
 					gpu_metrics = NULL;
 				}
 				if (query.data != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(query.data);
+					NDB_FREE(query.data);
 					query.data = NULL;
 				}
 				if (tbl_str != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(tbl_str);
+					NDB_FREE(tbl_str);
 					tbl_str = NULL;
 				}
 				if (feat_str != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(feat_str);
+					NDB_FREE(feat_str);
 					feat_str = NULL;
 				}
 				if (targ_str != NULL)
 				{
-					NDB_SAFE_PFREE_AND_NULL(targ_str);
+					NDB_FREE(targ_str);
 					targ_str = NULL;
 				}
-				SPI_finish();
+				NDB_SPI_SESSION_END(eval_spi_session);
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("neurondb: evaluate_random_forest_by_model_id: unable to evaluate GPU model (GPU model format incompatible with CPU evaluation)")));
+						 errmsg("neurondb: evaluate_random_forest_by_model_id: unable to evaluate GPU model"),
+						 errdetail("GPU model format is incompatible with CPU evaluation"),
+						 errhint("Use GPU-enabled evaluation or retrain the model for CPU evaluation.")));
 			}
 
 			/* Use batch prediction helper */
@@ -5299,24 +5341,24 @@ cpu_evaluation_path:
 			/* Cleanup */
 			if (h_features != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(h_features);
+				NDB_FREE(h_features);
 				h_features = NULL;
 			}
 			if (h_labels != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(h_labels);
+				NDB_FREE(h_labels);
 				h_labels = NULL;
 			}
 			if (model != NULL)
 				rf_free_deserialized_model(model);
 			if (gpu_payload != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(gpu_payload);
+				NDB_FREE(gpu_payload);
 				gpu_payload = NULL;
 			}
 			if (gpu_metrics != NULL)
 			{
-				NDB_SAFE_PFREE_AND_NULL(gpu_metrics);
+				NDB_FREE(gpu_metrics);
 				gpu_metrics = NULL;
 			}
 		}
@@ -5329,25 +5371,25 @@ cpu_evaluation_path:
 		elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: freeing SPI context allocations before SPI_finish()");
 		if (query.data)
 		{
-			NDB_SAFE_PFREE_AND_NULL(query.data);
+			NDB_FREE(query.data);
 			query.data = NULL;
 		}
 		if (tbl_str)
 		{
-			NDB_SAFE_PFREE_AND_NULL(tbl_str);
+			NDB_FREE(tbl_str);
 			tbl_str = NULL;
 		}
 		if (feat_str)
 		{
-			NDB_SAFE_PFREE_AND_NULL(feat_str);
+			NDB_FREE(feat_str);
 			feat_str = NULL;
 		}
 		if (targ_str)
 		{
-			NDB_SAFE_PFREE_AND_NULL(targ_str);
+			NDB_FREE(targ_str);
 			targ_str = NULL;
 		}
-		SPI_finish();
+		NDB_SPI_SESSION_END(eval_spi_session);
 
 		/* Build jsonb result */
 		elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: building JSONB result, accuracy=%.6f, precision=%.6f, recall=%.6f, f1_score=%.6f, nvec=%d", accuracy, precision, recall, f1_score, nvec);
@@ -5363,7 +5405,7 @@ cpu_evaluation_path:
 		elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: JSONB string created, length=%d", jsonbuf.len);
 		{
 			Jsonb	   *temp_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																		CStringGetDatum(jsonbuf.data)));
+																		CStringGetTextDatum(jsonbuf.data)));
 
 			elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: JSONB created, copying to caller context");
 
@@ -5375,9 +5417,9 @@ cpu_evaluation_path:
 			MemoryContextSwitchTo(oldcontext);
 			result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
 			if (temp_jsonb != (Jsonb *) DatumGetPointer((Datum) temp_jsonb))
-				NDB_SAFE_PFREE_AND_NULL(temp_jsonb);
+				NDB_FREE(temp_jsonb);
 		}
-		NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+		NDB_FREE(jsonbuf.data);
 		elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: returning JSONB result");
 		PG_RETURN_JSONB_P(result_jsonb);
 	}
@@ -5434,11 +5476,11 @@ rf_deserialize_tree(StringInfo buf)
 	oldctx = MemoryContextSwitchTo(tree->ctx);
 
 	if (tree->nodes != NULL)
-		NDB_SAFE_PFREE_AND_NULL(tree->nodes);
+		NDB_FREE(tree->nodes);
 
 	if (count > 0)
 	{
-		tree->nodes = (GTreeNode *) palloc(sizeof(GTreeNode) * count);
+		NDB_ALLOC(tree->nodes, GTreeNode, count);
 		NDB_CHECK_ALLOC(tree, "tree");
 		for (i = 0; i < count; i++)
 		{
@@ -5546,7 +5588,7 @@ rf_read_int_array(StringInfo buf, int expected_count)
 		return NULL;
 	}
 
-	result = (int *) palloc(alloc_size);
+	NDB_ALLOC(result, int, len);
 	if (result == NULL)
 	{
 		elog(ERROR, "random_forest: palloc failed for int array of size %zu", alloc_size);
@@ -5561,7 +5603,7 @@ rf_read_int_array(StringInfo buf, int expected_count)
 			elog(ERROR,
 				 "random_forest: buffer overrun reading int array element %d",
 				 i);
-			NDB_SAFE_PFREE_AND_NULL(result);
+			NDB_FREE(result);
 			return NULL;
 		}
 		result[i] = pq_getmsgint(buf, 4);
@@ -5655,7 +5697,7 @@ rf_read_double_array(StringInfo buf, int expected_count)
 		return NULL;
 	}
 
-	result = (double *) palloc(alloc_size);
+	NDB_ALLOC(result, double, len);
 	if (result == NULL)
 	{
 		elog(ERROR, "random_forest: palloc failed for double array of size %zu", alloc_size);
@@ -5670,7 +5712,7 @@ rf_read_double_array(StringInfo buf, int expected_count)
 			elog(ERROR,
 				 "random_forest: buffer overrun reading double array element %d",
 				 i);
-			NDB_SAFE_PFREE_AND_NULL(result);
+			NDB_FREE(result);
 			return NULL;
 		}
 		result[i] = pq_getmsgfloat8(buf);
@@ -5680,12 +5722,24 @@ rf_read_double_array(StringInfo buf, int expected_count)
 }
 
 static bytea *
-rf_model_serialize(const RFModel * model)
+rf_model_serialize(const RFModel * model, uint8 training_backend)
 {
 	StringInfoData buf;
 	int			i;
 
+	/* Validate training_backend */
+	if (training_backend > 1)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: rf_model_serialize: invalid training_backend %d (must be 0 or 1)",
+						training_backend)));
+	}
+
 	pq_begintypsend(&buf);
+
+	/* Write training_backend first (0=CPU, 1=GPU) */
+	pq_sendbyte(&buf, training_backend);
 
 	pq_sendint32(&buf, model->n_features);
 	pq_sendint32(&buf, model->n_samples);
@@ -5738,11 +5792,12 @@ rf_model_serialize(const RFModel * model)
 }
 
 static RFModel *
-rf_model_deserialize(const bytea * data)
+rf_model_deserialize(const bytea * data, uint8 *training_backend_out)
 {
 	StringInfoData buf;
 	RFModel    *model = NULL;
 	int			i;
+	uint8		training_backend = 0;
 
 	elog(DEBUG1, "neurondb: rf_model_deserialize() called, data=%p, CurrentMemoryContext=%p",
 		 (void *) data, (void *) CurrentMemoryContext);
@@ -5774,7 +5829,7 @@ rf_model_deserialize(const bytea * data)
 	PG_TRY();
 	{
 		elog(DEBUG1, "neurondb: rf_model_deserialize() allocating RFModel structure");
-		model = (RFModel *) palloc0(sizeof(RFModel));
+		NDB_ALLOC(model, RFModel, 1);
 		if (model == NULL)
 		{
 			elog(ERROR, "rf_model_deserialize: palloc0 failed");
@@ -5783,6 +5838,12 @@ rf_model_deserialize(const bytea * data)
 		else
 		{
 			elog(DEBUG1, "neurondb: rf_model_deserialize() allocated model at %p", (void *) model);
+			
+			/* Read training_backend first */
+			training_backend = (uint8) pq_getmsgbyte(&buf);
+			if (training_backend_out != NULL)
+				*training_backend_out = training_backend;
+
 			model->n_features = pq_getmsgint(&buf, 4);
 			model->n_samples = pq_getmsgint(&buf, 4);
 			model->n_classes = pq_getmsgint(&buf, 4);
@@ -5794,7 +5855,7 @@ rf_model_deserialize(const bytea * data)
 			{
 				elog(WARNING, "rf_model_deserialize: invalid model parameters (n_features=%d, n_classes=%d, n_samples=%d)",
 					 model->n_features, model->n_classes, model->n_samples);
-				NDB_SAFE_PFREE_AND_NULL(model);
+				NDB_FREE(model);
 				model = NULL;
 			}
 		}
@@ -5826,7 +5887,7 @@ rf_model_deserialize(const bytea * data)
 			if (model->feature_limit < 0 || model->feature_limit > model->n_features)
 			{
 				elog(WARNING, "rf_model_deserialize: invalid feature_limit %d (n_features=%d)", model->feature_limit, model->n_features);
-				NDB_SAFE_PFREE_AND_NULL(model);
+				NDB_FREE(model);
 				model = NULL;
 			}
 			else
@@ -5836,7 +5897,7 @@ rf_model_deserialize(const bytea * data)
 				if (model->class_counts == NULL && model->n_classes > 0)
 				{
 					elog(WARNING, "rf_model_deserialize: failed to read class_counts");
-					NDB_SAFE_PFREE_AND_NULL(model);
+					NDB_FREE(model);
 					model = NULL;
 				}
 			}
@@ -5853,8 +5914,8 @@ rf_model_deserialize(const bytea * data)
 			{
 				elog(WARNING, "rf_model_deserialize: failed to read feature_means");
 				if (model->class_counts)
-					NDB_SAFE_PFREE_AND_NULL(model->class_counts);
-				NDB_SAFE_PFREE_AND_NULL(model);
+					NDB_FREE(model->class_counts);
+				NDB_FREE(model);
 				model = NULL;
 			}
 			else
@@ -5864,10 +5925,10 @@ rf_model_deserialize(const bytea * data)
 				{
 					elog(WARNING, "rf_model_deserialize: failed to read feature_variances");
 					if (model->class_counts)
-						NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+						NDB_FREE(model->class_counts);
 					if (model->feature_means)
-						NDB_SAFE_PFREE_AND_NULL(model->feature_means);
-					NDB_SAFE_PFREE_AND_NULL(model);
+						NDB_FREE(model->feature_means);
+					NDB_FREE(model);
 					model = NULL;
 				}
 				else
@@ -5922,12 +5983,12 @@ rf_model_deserialize(const bytea * data)
 								 saved_cursor_pos, buf.cursor, cursor_advance, buf.len);
 							/* Cleanup and abort */
 							if (model->class_counts)
-								NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+								NDB_FREE(model->class_counts);
 							if (model->feature_means)
-								NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+								NDB_FREE(model->feature_means);
 							if (model->feature_variances)
-								NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
-							NDB_SAFE_PFREE_AND_NULL(model);
+								NDB_FREE(model->feature_variances);
+							NDB_FREE(model);
 							model = NULL;
 						}
 						else if (cursor_advance < 0)
@@ -5936,12 +5997,12 @@ rf_model_deserialize(const bytea * data)
 							elog(ERROR, "rf_model_deserialize: cursor went backwards when reading feature_importance (saved_cursor_pos=%d, cursor_after=%d, buffer len=%d)",
 								 saved_cursor_pos, buf.cursor, buf.len);
 							if (model->class_counts)
-								NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+								NDB_FREE(model->class_counts);
 							if (model->feature_means)
-								NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+								NDB_FREE(model->feature_means);
 							if (model->feature_variances)
-								NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
-							NDB_SAFE_PFREE_AND_NULL(model);
+								NDB_FREE(model->feature_variances);
+							NDB_FREE(model);
 							model = NULL;
 						}
 						else
@@ -5953,12 +6014,12 @@ rf_model_deserialize(const bytea * data)
 							elog(ERROR, "rf_model_deserialize: cursor did not advance when reading feature_importance (cursor=%d, buffer len=%d)",
 								 buf.cursor, buf.len);
 							if (model->class_counts)
-								NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+								NDB_FREE(model->class_counts);
 							if (model->feature_means)
-								NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+								NDB_FREE(model->feature_means);
 							if (model->feature_variances)
-								NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
-							NDB_SAFE_PFREE_AND_NULL(model);
+								NDB_FREE(model->feature_variances);
+							NDB_FREE(model);
 							model = NULL;
 						}
 					}
@@ -5975,14 +6036,14 @@ rf_model_deserialize(const bytea * data)
 							elog(ERROR, "rf_model_deserialize: failed to read left_branch_means (required field, cursor=%d/%d, feature_limit=%d)",
 								 buf.cursor, buf.len, model->feature_limit);
 							if (model->class_counts)
-								NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+								NDB_FREE(model->class_counts);
 							if (model->feature_means)
-								NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+								NDB_FREE(model->feature_means);
 							if (model->feature_variances)
-								NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
+								NDB_FREE(model->feature_variances);
 							if (model->feature_importance)
-								NDB_SAFE_PFREE_AND_NULL(model->feature_importance);
-							NDB_SAFE_PFREE_AND_NULL(model);
+								NDB_FREE(model->feature_importance);
+							NDB_FREE(model);
 							model = NULL;
 						}
 						else if (model != NULL)
@@ -5995,16 +6056,16 @@ rf_model_deserialize(const bytea * data)
 								elog(ERROR, "rf_model_deserialize: failed to read right_branch_means (required field, cursor=%d/%d, feature_limit=%d)",
 									 buf.cursor, buf.len, model->feature_limit);
 								if (model->class_counts)
-									NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+									NDB_FREE(model->class_counts);
 								if (model->feature_means)
-									NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+									NDB_FREE(model->feature_means);
 								if (model->feature_variances)
-									NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
+									NDB_FREE(model->feature_variances);
 								if (model->feature_importance)
-									NDB_SAFE_PFREE_AND_NULL(model->feature_importance);
+									NDB_FREE(model->feature_importance);
 								if (model->left_branch_means)
-									NDB_SAFE_PFREE_AND_NULL(model->left_branch_means);
-								NDB_SAFE_PFREE_AND_NULL(model);
+									NDB_FREE(model->left_branch_means);
+								NDB_FREE(model);
 								model = NULL;
 							}
 							else if (model != NULL)
@@ -6014,39 +6075,39 @@ rf_model_deserialize(const bytea * data)
 								{
 									elog(WARNING, "rf_model_deserialize: invalid tree_count %d", model->tree_count);
 									if (model->class_counts)
-										NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+										NDB_FREE(model->class_counts);
 									if (model->feature_means)
-										NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+										NDB_FREE(model->feature_means);
 									if (model->feature_variances)
-										NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
+										NDB_FREE(model->feature_variances);
 									if (model->feature_importance)
-										NDB_SAFE_PFREE_AND_NULL(model->feature_importance);
+										NDB_FREE(model->feature_importance);
 									if (model->left_branch_means)
-										NDB_SAFE_PFREE_AND_NULL(model->left_branch_means);
+										NDB_FREE(model->left_branch_means);
 									if (model->right_branch_means)
-										NDB_SAFE_PFREE_AND_NULL(model->right_branch_means);
-									NDB_SAFE_PFREE_AND_NULL(model);
+										NDB_FREE(model->right_branch_means);
+									NDB_FREE(model);
 									model = NULL;
 								}
 								else if (model->tree_count > 0)
 								{
-									model->trees = (GTree * *) palloc(sizeof(GTree *) * model->tree_count);
+									NDB_ALLOC(model->trees, GTree *, model->tree_count);
 									if (model->trees == NULL)
 									{
 										elog(WARNING, "rf_model_deserialize: palloc failed for trees array");
 										if (model->class_counts)
-											NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+											NDB_FREE(model->class_counts);
 										if (model->feature_means)
-											NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+											NDB_FREE(model->feature_means);
 										if (model->feature_variances)
-											NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
+											NDB_FREE(model->feature_variances);
 										if (model->feature_importance)
-											NDB_SAFE_PFREE_AND_NULL(model->feature_importance);
+											NDB_FREE(model->feature_importance);
 										if (model->left_branch_means)
-											NDB_SAFE_PFREE_AND_NULL(model->left_branch_means);
+											NDB_FREE(model->left_branch_means);
 										if (model->right_branch_means)
-											NDB_SAFE_PFREE_AND_NULL(model->right_branch_means);
-										NDB_SAFE_PFREE_AND_NULL(model);
+											NDB_FREE(model->right_branch_means);
+										NDB_FREE(model);
 										model = NULL;
 									}
 									else
@@ -6067,20 +6128,20 @@ rf_model_deserialize(const bytea * data)
 													if (model->trees[i] != NULL)
 														gtree_free(model->trees[i]);
 												}
-												NDB_SAFE_PFREE_AND_NULL(model->trees);
+												NDB_FREE(model->trees);
 												if (model->class_counts)
-													NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+													NDB_FREE(model->class_counts);
 												if (model->feature_means)
-													NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+													NDB_FREE(model->feature_means);
 												if (model->feature_variances)
-													NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
+													NDB_FREE(model->feature_variances);
 												if (model->feature_importance)
-													NDB_SAFE_PFREE_AND_NULL(model->feature_importance);
+													NDB_FREE(model->feature_importance);
 												if (model->left_branch_means)
-													NDB_SAFE_PFREE_AND_NULL(model->left_branch_means);
+													NDB_FREE(model->left_branch_means);
 												if (model->right_branch_means)
-													NDB_SAFE_PFREE_AND_NULL(model->right_branch_means);
-												NDB_SAFE_PFREE_AND_NULL(model);
+													NDB_FREE(model->right_branch_means);
+												NDB_FREE(model);
 												model = NULL;
 											}
 										}
@@ -6104,21 +6165,21 @@ rf_model_deserialize(const bytea * data)
 												if (model->trees[i] != NULL)
 													gtree_free(model->trees[i]);
 											}
-											NDB_SAFE_PFREE_AND_NULL(model->trees);
+											NDB_FREE(model->trees);
 										}
 										if (model->class_counts)
-											NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+											NDB_FREE(model->class_counts);
 										if (model->feature_means)
-											NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+											NDB_FREE(model->feature_means);
 										if (model->feature_variances)
-											NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
+											NDB_FREE(model->feature_variances);
 										if (model->feature_importance)
-											NDB_SAFE_PFREE_AND_NULL(model->feature_importance);
+											NDB_FREE(model->feature_importance);
 										if (model->left_branch_means)
-											NDB_SAFE_PFREE_AND_NULL(model->left_branch_means);
+											NDB_FREE(model->left_branch_means);
 										if (model->right_branch_means)
-											NDB_SAFE_PFREE_AND_NULL(model->right_branch_means);
-										NDB_SAFE_PFREE_AND_NULL(model);
+											NDB_FREE(model->right_branch_means);
+										NDB_FREE(model);
 										model = NULL;
 									}
 									else
@@ -6167,31 +6228,31 @@ rf_free_deserialized_model(RFModel * model)
 		return;
 
 	if (model->class_counts)
-		NDB_SAFE_PFREE_AND_NULL(model->class_counts);
+		NDB_FREE(model->class_counts);
 	if (model->feature_means)
-		NDB_SAFE_PFREE_AND_NULL(model->feature_means);
+		NDB_FREE(model->feature_means);
 	if (model->feature_variances)
-		NDB_SAFE_PFREE_AND_NULL(model->feature_variances);
+		NDB_FREE(model->feature_variances);
 	if (model->feature_importance)
-		NDB_SAFE_PFREE_AND_NULL(model->feature_importance);
+		NDB_FREE(model->feature_importance);
 	if (model->left_branch_means)
-		NDB_SAFE_PFREE_AND_NULL(model->left_branch_means);
+		NDB_FREE(model->left_branch_means);
 	if (model->right_branch_means)
-		NDB_SAFE_PFREE_AND_NULL(model->right_branch_means);
+		NDB_FREE(model->right_branch_means);
 	if (model->tree_majority)
-		NDB_SAFE_PFREE_AND_NULL(model->tree_majority);
+		NDB_FREE(model->tree_majority);
 	if (model->tree_majority_fraction)
-		NDB_SAFE_PFREE_AND_NULL(model->tree_majority_fraction);
+		NDB_FREE(model->tree_majority_fraction);
 	if (model->tree_second)
-		NDB_SAFE_PFREE_AND_NULL(model->tree_second);
+		NDB_FREE(model->tree_second);
 	if (model->tree_second_fraction)
-		NDB_SAFE_PFREE_AND_NULL(model->tree_second_fraction);
+		NDB_FREE(model->tree_second_fraction);
 	if (model->tree_oob_accuracy)
-		NDB_SAFE_PFREE_AND_NULL(model->tree_oob_accuracy);
+		NDB_FREE(model->tree_oob_accuracy);
 	if (model->trees)
-		NDB_SAFE_PFREE_AND_NULL(model->trees);
+		NDB_FREE(model->trees);
 
-	NDB_SAFE_PFREE_AND_NULL(model);
+	NDB_FREE(model);
 }
 
 static void
@@ -6211,9 +6272,9 @@ rf_dataset_free(RFDataset * dataset)
 	if (dataset == NULL)
 		return;
 	if (dataset->features != NULL)
-		NDB_SAFE_PFREE_AND_NULL(dataset->features);
+		NDB_FREE(dataset->features);
 	if (dataset->labels != NULL)
-		NDB_SAFE_PFREE_AND_NULL(dataset->labels);
+		NDB_FREE(dataset->labels);
 	rf_dataset_init(dataset);
 }
 
@@ -6235,7 +6296,7 @@ rf_dataset_load(const char *quoted_tbl,
 
 	/* Try to get feature dimension - handle both vector and array types */
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(query->data);
+	NDB_FREE(query->data);
 	initStringInfo(query);
 	appendStringInfo(query,
 					 "SELECT %s FROM %s WHERE %s IS NOT NULL LIMIT 1",
@@ -6254,10 +6315,19 @@ rf_dataset_load(const char *quoted_tbl,
 		Oid			feat_type;
 
 		NDB_CHECK_SPI_TUPTABLE();
-		tup = SPI_tuptable->vals[0];
-		tupdesc = SPI_tuptable->tupdesc;
-
-		feat_datum = SPI_getbinval(tup, tupdesc, 1, &feat_null);
+		/* Safe access for complex types - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			SPI_tuptable->vals[0] == NULL || SPI_tuptable->tupdesc == NULL)
+		{
+			/* Cannot determine feature dimension */
+			feat_null = true;
+		}
+		else
+		{
+			tup = SPI_tuptable->vals[0];
+			tupdesc = SPI_tuptable->tupdesc;
+			feat_datum = SPI_getbinval(tup, tupdesc, 1, &feat_null);
+		}
 		if (!feat_null)
 		{
 			feat_type = SPI_gettypeid(tupdesc, 1);
@@ -6292,7 +6362,7 @@ rf_dataset_load(const char *quoted_tbl,
 	dataset->feature_dim = feature_dim;
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(query->data);
+	NDB_FREE(query->data);
 	initStringInfo(query);
 	appendStringInfo(query,
 					 "SELECT %s, (%s)::float8 FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
@@ -6348,12 +6418,11 @@ rf_dataset_load(const char *quoted_tbl,
 		}
 	}
 
-	dataset->labels = (double *) palloc(sizeof(double) * (size_t) n_samples);
+	NDB_ALLOC(dataset->labels, double, (size_t) n_samples);
 	NDB_CHECK_ALLOC(dataset->labels, "dataset->labels");
 	if (feature_dim > 0)
 	{
-		dataset->features = (float *) palloc0(
-											  sizeof(float) * (size_t) feature_dim * (size_t) n_samples);
+		NDB_ALLOC(dataset->features, float, (size_t) feature_dim * (size_t) n_samples);
 		NDB_CHECK_ALLOC(dataset->features, "dataset->features");
 	}
 
@@ -6485,24 +6554,24 @@ rf_load_model_from_catalog(int32 model_id, RFModel * *out)
 		{
 			elog(DEBUG1, "rf_load_model_from_catalog: payload is NULL for model_id %d", model_id);
 			if (metrics != NULL)
-				NDB_SAFE_PFREE_AND_NULL(metrics);
+				NDB_FREE(metrics);
 			result = false;
 		}
 		else if (VARSIZE(payload) < VARHDRSZ)
 		{
 			elog(WARNING, "rf_load_model_from_catalog: invalid payload size %d for model_id %d", VARSIZE(payload), model_id);
-			NDB_SAFE_PFREE_AND_NULL(payload);
+			NDB_FREE(payload);
 			if (metrics != NULL)
-				NDB_SAFE_PFREE_AND_NULL(metrics);
+				NDB_FREE(metrics);
 			result = false;
 		}
 		else if (rf_metadata_is_gpu(metrics))
 		{
 			elog(DEBUG1, "rf_load_model_from_catalog: model_id %d is GPU model, skipping CPU load", model_id);
 			if (payload != NULL)
-				NDB_SAFE_PFREE_AND_NULL(payload);
+				NDB_FREE(payload);
 			if (metrics != NULL)
-				NDB_SAFE_PFREE_AND_NULL(metrics);
+				NDB_FREE(metrics);
 			result = false;
 		}
 		else
@@ -6511,14 +6580,17 @@ rf_load_model_from_catalog(int32 model_id, RFModel * *out)
 				 VARSIZE(payload));
 
 			/* Deserialize with error handling */
-			decoded = rf_model_deserialize(payload);
+			{
+				uint8 training_backend = 0;
+				decoded = rf_model_deserialize(payload, &training_backend);
+			}
 
 			if (decoded == NULL)
 			{
 				elog(WARNING, "rf_load_model_from_catalog: rf_model_deserialize returned NULL for model_id %d", model_id);
-				NDB_SAFE_PFREE_AND_NULL(payload);
+				NDB_FREE(payload);
 				if (metrics != NULL)
-					NDB_SAFE_PFREE_AND_NULL(metrics);
+					NDB_FREE(metrics);
 				result = false;
 			}
 			else
@@ -6531,9 +6603,9 @@ rf_load_model_from_catalog(int32 model_id, RFModel * *out)
 					elog(WARNING, "rf_load_model_from_catalog: invalid model parameters for model_id %d (n_features=%d, n_classes=%d, tree_count=%d)",
 						 model_id, decoded->n_features, decoded->n_classes, decoded->tree_count);
 					rf_free_deserialized_model(decoded);
-					NDB_SAFE_PFREE_AND_NULL(payload);
+					NDB_FREE(payload);
 					if (metrics != NULL)
-						NDB_SAFE_PFREE_AND_NULL(metrics);
+						NDB_FREE(metrics);
 					result = false;
 				}
 				else
@@ -6545,9 +6617,9 @@ rf_load_model_from_catalog(int32 model_id, RFModel * *out)
 					{
 						elog(WARNING, "rf_load_model_from_catalog: TopMemoryContext is NULL, cannot store model %d", model_id);
 						rf_free_deserialized_model(decoded);
-						NDB_SAFE_PFREE_AND_NULL(payload);
+						NDB_FREE(payload);
 						if (metrics != NULL)
-							NDB_SAFE_PFREE_AND_NULL(metrics);
+							NDB_FREE(metrics);
 						result = false;
 					}
 					else
@@ -6599,11 +6671,11 @@ rf_load_model_from_catalog(int32 model_id, RFModel * *out)
 						rf_free_deserialized_model(decoded);
 						decoded = NULL;
 
-						NDB_SAFE_PFREE_AND_NULL(payload);
+						NDB_FREE(payload);
 						payload = NULL;
 						if (metrics != NULL)
 						{
-							NDB_SAFE_PFREE_AND_NULL(metrics);
+							NDB_FREE(metrics);
 							metrics = NULL;
 						}
 
@@ -6624,9 +6696,9 @@ rf_load_model_from_catalog(int32 model_id, RFModel * *out)
 		if (decoded != NULL)
 			rf_free_deserialized_model(decoded);
 		if (payload != NULL)
-			NDB_SAFE_PFREE_AND_NULL(payload);
+			NDB_FREE(payload);
 		if (metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(metrics);
+			NDB_FREE(metrics);
 
 		FlushErrorState();
 		result = false;
@@ -6639,32 +6711,34 @@ rf_load_model_from_catalog(int32 model_id, RFModel * *out)
 static bool
 rf_metadata_is_gpu(Jsonb * metadata)
 {
-	char	   *meta_txt;
 	bool		is_gpu = false;
+	JsonbIterator *it;
+	JsonbValue	v;
+	JsonbIteratorToken r;
 
 	if (metadata == NULL)
 		return false;
 
-	PG_TRY();
+	/* Check for training_backend integer in metrics */
+	it = JsonbIteratorInit((JsonbContainer *) &metadata->root);
+	while ((r = JsonbIteratorNext(&it, &v, true)) != WJB_DONE)
 	{
-		meta_txt = DatumGetCString(
-								   DirectFunctionCall1(jsonb_out, JsonbPGetDatum(metadata)));
-		if (meta_txt != NULL)
+		if (r == WJB_KEY && v.type == jbvString)
 		{
-			if (strstr(meta_txt, "\"storage\":\"gpu\"") != NULL
-				|| strstr(meta_txt, "\"storage\": \"gpu\"") != NULL)
+			char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
+			if (strcmp(key, "training_backend") == 0)
 			{
-				is_gpu = true;
+				r = JsonbIteratorNext(&it, &v, true);
+				if (r == WJB_VALUE && v.type == jbvNumeric)
+				{
+					int			backend = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(v.val.numeric)));
+					is_gpu = (backend == 1);
+				}
 			}
-			NDB_SAFE_PFREE_AND_NULL(meta_txt);
+			NDB_FREE(key);
 		}
 	}
-	PG_CATCH();
-	{
-		/* If jsonb parsing fails, assume not GPU */
-		is_gpu = false;
-	}
-	PG_END_TRY();
 
 	return is_gpu;
 }
@@ -6733,12 +6807,12 @@ cleanup:
 	}
 	if (payload != NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload);
+		NDB_FREE(payload);
 		payload = NULL;
 	}
 	if (metrics != NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(metrics);
+		NDB_FREE(metrics);
 		metrics = NULL;
 	}
 
@@ -6760,10 +6834,10 @@ rf_gpu_release_state(RFGpuModelState * state)
 	if (state == NULL)
 		return;
 	if (state->model_blob != NULL)
-		NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+		NDB_FREE(state->model_blob);
 	if (state->metrics != NULL)
-		NDB_SAFE_PFREE_AND_NULL(state->metrics);
-	NDB_SAFE_PFREE_AND_NULL(state);
+		NDB_FREE(state->metrics);
+	NDB_FREE(state);
 }
 
 static bool
@@ -6773,22 +6847,58 @@ rf_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 	bytea	   *payload;
 	Jsonb	   *metrics;
 	int			rc;
+	
+	ereport(DEBUG1,
+			(errmsg("rf_gpu_train: function entry"),
+			 errdetail("spec->sample_count=%d, spec->feature_dim=%d, spec->class_count=%d",
+					  spec ? spec->sample_count : 0,
+					  spec ? spec->feature_dim : 0,
+					  spec ? spec->class_count : 0)));
 
 	if (errstr != NULL)
 		*errstr = NULL;
+	
+	ereport(DEBUG1,
+			(errmsg("rf_gpu_train: validating parameters")));
+	
 	if (model == NULL || spec == NULL)
+	{
+		elog(DEBUG1, "neurondb: rf_gpu_train: model or spec is NULL");
 		return false;
+	}
 	if (!neurondb_gpu_is_available())
+	{
+		elog(DEBUG1, "neurondb: rf_gpu_train: GPU not available");
 		return false;
+	}
 	if (spec->feature_matrix == NULL || spec->label_vector == NULL)
+	{
+		elog(DEBUG1, "neurondb: rf_gpu_train: feature_matrix or label_vector is NULL");
 		return false;
+	}
 	if (spec->sample_count <= 0 || spec->feature_dim <= 0)
+	{
+		elog(DEBUG1, "neurondb: rf_gpu_train: invalid sample_count or feature_dim (sample_count=%d, feature_dim=%d)",
+			 spec->sample_count, spec->feature_dim);
 		return false;
+	}
 	if (spec->class_count <= 0)
+	{
+		elog(DEBUG1, "neurondb: rf_gpu_train: invalid class_count (class_count=%d)", spec->class_count);
 		return false;
+	}
+
+	ereport(DEBUG1,
+			(errmsg("rf_gpu_train: parameters validated, initializing payload and metrics")));
 
 	payload = NULL;
 	metrics = NULL;
+
+	ereport(DEBUG2,
+			(errmsg("rf_gpu_train: about to call ndb_gpu_rf_train"),
+			 errdetail("feature_matrix=%p, label_vector=%p, sample_count=%d, feature_dim=%d, class_count=%d",
+					  (void *)spec->feature_matrix, (void *)spec->label_vector,
+					  spec->sample_count, spec->feature_dim, spec->class_count)));
 
 	rc = ndb_gpu_rf_train(spec->feature_matrix,
 						  spec->label_vector,
@@ -6799,12 +6909,16 @@ rf_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 						  &payload,
 						  &metrics,
 						  errstr);
+	
+	ereport(DEBUG2,
+			(errmsg("rf_gpu_train: ndb_gpu_rf_train returned"),
+			 errdetail("rc=%d, payload=%p, metrics=%p", rc, (void *)payload, (void *)metrics)));
 	if (rc != 0 || payload == NULL)
 	{
 		if (payload != NULL)
-			NDB_SAFE_PFREE_AND_NULL(payload);
+			NDB_FREE(payload);
 		if (metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(metrics);
+			NDB_FREE(metrics);
 		return false;
 	}
 
@@ -6814,7 +6928,7 @@ rf_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 		model->backend_state = NULL;
 	}
 
-	state = (RFGpuModelState *) palloc0(sizeof(RFGpuModelState));
+	NDB_ALLOC(state, RFGpuModelState, 1);
 	NDB_CHECK_ALLOC(state, "state");
 	state->model_blob = payload;
 	state->metrics = metrics;
@@ -6900,8 +7014,8 @@ rf_gpu_evaluate(const MLGpuModel * model,
 					 state->sample_count > 0 ? state->sample_count : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+													  CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -6939,14 +7053,18 @@ rf_gpu_serialize(const MLGpuModel * model,
 		return false;
 
 	payload_size = VARSIZE(state->model_blob);
-	payload_copy = (bytea *) palloc(payload_size);
+	{
+		NDB_DECLARE(char *, payload_buf);
+		NDB_ALLOC(payload_buf, char, payload_size);
+		payload_copy = (bytea *) payload_buf;
+	}
 	NDB_CHECK_ALLOC(payload_copy, "payload_copy");
 	memcpy(payload_copy, state->model_blob, payload_size);
 
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 	{
@@ -6954,7 +7072,11 @@ rf_gpu_serialize(const MLGpuModel * model,
 		Jsonb	   *metadata_copy;
 
 		metadata_size = VARSIZE(state->metrics);
-		metadata_copy = (Jsonb *) palloc(metadata_size);
+		{
+			NDB_DECLARE(char *, metadata_buf);
+			NDB_ALLOC(metadata_buf, char, metadata_size);
+			metadata_copy = (Jsonb *) metadata_buf;
+		}
 		NDB_CHECK_ALLOC(metadata_copy, "metadata_copy");
 		memcpy(metadata_copy, state->metrics, metadata_size);
 		*metadata_out = metadata_copy;
@@ -6979,11 +7101,15 @@ rf_gpu_deserialize(MLGpuModel * model,
 		return false;
 
 	payload_size = VARSIZE(payload);
-	payload_copy = (bytea *) palloc(payload_size);
+	{
+		NDB_DECLARE(char *, payload_buf);
+		NDB_ALLOC(payload_buf, char, payload_size);
+		payload_copy = (bytea *) payload_buf;
+	}
 	NDB_CHECK_ALLOC(payload_copy, "payload_copy");
 	memcpy(payload_copy, payload, payload_size);
 
-	state = (RFGpuModelState *) palloc0(sizeof(RFGpuModelState));
+	NDB_ALLOC(state, RFGpuModelState, 1);
 	NDB_CHECK_ALLOC(state, "state");
 	state->model_blob = payload_copy;
 	state->feature_dim = -1;
@@ -6996,7 +7122,11 @@ rf_gpu_deserialize(MLGpuModel * model,
 		Jsonb	   *metadata_copy;
 
 		metadata_size = VARSIZE(metadata);
-		metadata_copy = (Jsonb *) palloc(metadata_size);
+		{
+			NDB_DECLARE(char *, metadata_buf);
+			NDB_ALLOC(metadata_buf, char, metadata_size);
+			metadata_copy = (Jsonb *) metadata_buf;
+		}
 		NDB_CHECK_ALLOC(metadata_copy, "metadata_copy");
 		memcpy(metadata_copy, metadata, metadata_size);
 		state->metrics = metadata_copy;

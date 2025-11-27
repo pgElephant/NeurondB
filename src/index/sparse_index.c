@@ -34,7 +34,9 @@
 #include "neurondb_types.h"
 #include <string.h>
 #include "neurondb_validation.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 /*
  * SparseIndexOptions: Index options for sparse index
@@ -77,6 +79,7 @@ sparse_index_create(PG_FUNCTION_ARGS)
 	char	   *idx_str = text_to_cstring(index_name);
 	StringInfoData sql;
 	int			ret;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	elog(INFO,
 		 "neurondb: Creating sparse index %s on %s.%s (min_freq=%d)",
@@ -84,9 +87,9 @@ sparse_index_create(PG_FUNCTION_ARGS)
 		 tbl_str,
 		 col_str,
 		 min_freq);
-
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed: %d", ret);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		elog(ERROR, "failed to begin SPI session");
 
 	/* Create metadata table for sparse index */
 	initStringInfo(&sql);
@@ -98,16 +101,19 @@ sparse_index_create(PG_FUNCTION_ARGS)
 					 ")",
 					 idx_str);
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
+	{
+		NDB_FREE(sql.data);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("Failed to create sparse index metadata table")));
+	}
 
 	/* Build inverted index by scanning table */
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "SELECT ctid, %s FROM %s WHERE %s IS NOT NULL",
@@ -115,12 +121,15 @@ sparse_index_create(PG_FUNCTION_ARGS)
 					 tbl_str,
 					 col_str);
 
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
+	{
+		NDB_FREE(sql.data);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("Failed to scan table for sparse index")));
+	}
 
 	/* Process results and build posting lists */
 
@@ -130,7 +139,8 @@ sparse_index_create(PG_FUNCTION_ARGS)
 	 * with doc IDs and weights 4. Store in metadata table
 	 */
 
-	SPI_finish();
+	NDB_FREE(sql.data);
+	ndb_spi_session_end(&session);
 
 	elog(INFO, "neurondb: Sparse index %s created successfully", idx_str);
 
@@ -149,7 +159,7 @@ sparse_index_search(PG_FUNCTION_ARGS)
 	Tuplestorestate *tupstore;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
-	int			ret;
+	NDB_DECLARE(NdbSpiSession *, session2);
 
 	PG_GETARG_TEXT_PP(0);		/* index_name - reserved for future use */
 
@@ -191,10 +201,11 @@ sparse_index_search(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldcontext);
 
 	/* Connect to SPI and perform search */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	session2 = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session2 == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed: %d", ret)));
+				 errmsg("failed to begin SPI session")));
 
 	/*
 	 * In a full implementation, this would: 1. Extract tokens from query
@@ -202,7 +213,7 @@ sparse_index_search(PG_FUNCTION_ARGS)
 	 * (dot product or BM25) 4. Return top-k results
 	 */
 
-	SPI_finish();
+	ndb_spi_session_end(&session2);
 
 	/* Return empty result set for now */
 	PG_RETURN_NULL();

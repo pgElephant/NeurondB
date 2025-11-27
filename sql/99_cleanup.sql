@@ -19,34 +19,34 @@ DROP TABLE IF EXISTS test_worker_data CASCADE;
 -- ============================================================================
 
 -- Remove test jobs from job queue
-DELETE FROM neurondb.neurondb_job_queue 
+DELETE FROM neurondb.job_queue 
 WHERE job_type IN ('vector_search', 'index_build', 'embedding_generation', 'test_job', 'vector_index')
    OR payload::text LIKE '%test%'
    OR payload::text LIKE '%Test%';
 
 -- Remove test query metrics
-DELETE FROM neurondb.neurondb_query_metrics 
+DELETE FROM neurondb.query_metrics 
 WHERE latency_ms < 100 OR recall_at_k > 0.8;
 
 -- Remove test embedding cache entries
-DELETE FROM neurondb.neurondb_embedding_cache 
+DELETE FROM neurondb.embedding_cache 
 WHERE cache_key LIKE 'test_%' 
    OR cache_key LIKE '%_123'
    OR model_name = 'test_model';
 
 -- Remove test index maintenance entries
-DELETE FROM neurondb.neurondb_index_maintenance 
+DELETE FROM neurondb.index_maintenance 
 WHERE index_name LIKE 'idx_test%'
    OR index_name LIKE 'test_%';
 
 -- Remove test LLM jobs
-DELETE FROM neurondb.neurondb_llm_jobs 
+DELETE FROM neurondb.llm_jobs 
 WHERE operation IN ('completion', 'embedding', 'rerank')
    AND (model_name LIKE '%test%' OR input_text LIKE '%Test%')
    OR job_id < 100; -- Assuming test jobs have low IDs
 
 -- Remove test Prometheus metrics
-DELETE FROM neurondb.neurondb_prometheus_metrics 
+DELETE FROM neurondb.prometheus_metrics 
 WHERE metric_name IN ('test_metric', 'queries_per_second', 'avg_latency_ms', 'total_queries', 'index_size_mb')
    OR metric_name LIKE '%test%';
 
@@ -54,7 +54,7 @@ WHERE metric_name IN ('test_metric', 'queries_per_second', 'avg_latency_ms', 'to
 -- Clean Histograms (if any test data)
 -- ============================================================================
 
-DELETE FROM neurondb.neurondb_histograms 
+DELETE FROM neurondb.histograms 
 WHERE metric_name LIKE '%test%';
 
 -- ============================================================================
@@ -73,39 +73,39 @@ SELECT
     'job_queue' AS table_name, 
     COUNT(*) AS remaining_count,
     CASE WHEN COUNT(*) = 0 THEN 'CLEAN' ELSE 'HAS_DATA' END AS status
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 WHERE job_type NOT IN ('vector_search', 'index_build', 'embedding_generation', 'test_job', 'vector_index')
 UNION ALL
 SELECT 
     'query_metrics',
     COUNT(*),
     CASE WHEN COUNT(*) = 0 THEN 'CLEAN' ELSE 'HAS_DATA' END
-FROM neurondb.neurondb_query_metrics
+FROM neurondb.query_metrics
 UNION ALL
 SELECT 
     'embedding_cache',
     COUNT(*),
     CASE WHEN COUNT(*) = 0 THEN 'CLEAN' ELSE 'HAS_DATA' END
-FROM neurondb.neurondb_embedding_cache
+FROM neurondb.embedding_cache
 UNION ALL
 SELECT 
     'index_maintenance',
     COUNT(*),
     CASE WHEN COUNT(*) = 0 THEN 'CLEAN' ELSE 'HAS_DATA' END
-FROM neurondb.neurondb_index_maintenance
+FROM neurondb.index_maintenance
 UNION ALL
 SELECT 
     'llm_jobs',
     COUNT(*),
     CASE WHEN COUNT(*) = 0 THEN 'CLEAN' ELSE 'HAS_DATA' END
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE job_id >= 100
 UNION ALL
 SELECT 
     'prometheus_metrics',
     COUNT(*),
     CASE WHEN COUNT(*) = 0 THEN 'CLEAN' ELSE 'HAS_DATA' END
-FROM neurondb.neurondb_prometheus_metrics
+FROM neurondb.prometheus_metrics
 WHERE metric_name NOT IN ('test_metric', 'queries_per_second', 'avg_latency_ms', 'total_queries', 'index_size_mb')
 ORDER BY table_name;
 

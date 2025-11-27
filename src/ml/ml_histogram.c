@@ -1,25 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_histogram.c
- *	  Similarity histogram and distance distribution analysis
+ *    Similarity histogram and distance distribution analysis.
  *
- * Analyzing the distribution of distances/similarities in embedding spaces
- * provides insights into:
- *	- Data quality and separability
- *	- Optimal distance thresholds
- *	- Cluster structure
- *	- Search quality expectations
- *
- * Metrics Computed:
- *	- Distance distribution histogram
- *	- Percentiles (p50, p90, p95, p99)
- *	- Mean, stddev, min, max
- *	- Entropy (distribution uniformity)
+ * This module analyzes distance and similarity distributions in embedding
+ * spaces to provide insights into data quality and cluster structure.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/ml/ml_histogram.c
+ *    src/ml/ml_histogram.c
  *
  *-------------------------------------------------------------------------
  */
@@ -39,6 +29,7 @@
 #include <stdlib.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 #define MAX_HISTOGRAM_BINS		100
 
@@ -201,11 +192,11 @@ similarity_histogram(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-	NDB_SAFE_PFREE_AND_NULL(vectors);
-	NDB_SAFE_PFREE_AND_NULL(distances);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(vec_col_str);
+		NDB_FREE(vectors[i]);
+	NDB_FREE(vectors);
+	NDB_FREE(distances);
+	NDB_FREE(tbl_str);
+	NDB_FREE(vec_col_str);
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(tuple));
 }

@@ -1,28 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_ltr.c
- *    Learning to Rank (LTR) - Pointwise linear model for reranking
+ *    Learning to rank implementation.
  *
- * LTR applies a learned linear model to rerank search results based on
- * multiple features. This pointwise approach scores each document
- * independently using a weighted feature combination.
+ * This module implements pointwise linear models for reranking search
+ * results based on multiple features.
  *
- * Model: score = w₁·f₁ + w₂·f₂ + ... + wₙ·fₙ + bias
- *
- * Features can include:
- *   - Semantic similarity score
- *   - BM25 score
- *   - Recency score
- *   - Click-through rate
- *   - Document quality metrics
- *   - Custom business logic scores
- *
- * Training (external): Use tools like LightGBM, XGBoost, or sklearn
- * to train weights on labeled data, then deploy weights here.
- *
- * This module provides inference only (scoring), not training.
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_ltr.c
@@ -43,6 +27,7 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * Document score structure
@@ -223,8 +208,8 @@ ltr_rerank_pointwise(PG_FUNCTION_ARGS)
 	}
 
 #if defined(NEURONDB_HAS_AVX2) || defined(NEURONDB_HAS_NEON)
-	NDB_SAFE_PFREE_AND_NULL(features_f);
-	NDB_SAFE_PFREE_AND_NULL(weights_f);
+	NDB_FREE(features_f);
+	NDB_FREE(weights_f);
 #endif
 
 	/* Sort by LTR score (descending) */
@@ -240,8 +225,8 @@ ltr_rerank_pointwise(PG_FUNCTION_ARGS)
 							 result_datums, num_docs, INT4OID, typlen, typbyval, typalign);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(doc_scores);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
+	NDB_FREE(doc_scores);
+	NDB_FREE(result_datums);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -316,8 +301,8 @@ ltr_score_features(PG_FUNCTION_ARGS)
 							 FLOAT8PASSBYVAL,
 							 'd');
 
-	NDB_SAFE_PFREE_AND_NULL(scores);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
+	NDB_FREE(scores);
+	NDB_FREE(result_datums);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

@@ -7,7 +7,7 @@
  * Uses SKIP LOCKED to avoid blocking and enforces per-job retry limits.
  * All crash scenarios are caught and handled robustly.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/bgworkers/neuranllm.c
@@ -30,10 +30,13 @@
 #include "utils/snapmgr.h"
 #include "lib/stringinfo.h"
 #include "neurondb_llm.h"
+#include "neurondb_guc.h"
 #include "neurondb_gpu.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 extern int	ndb_llm_job_enqueue(const char *job_type, const char *payload);
 extern bool ndb_llm_job_acquire(int *job_id, char **job_type, char **payload);
@@ -132,21 +135,22 @@ neuranllm_main(Datum main_arg)
 			{
 				int			ret;
 				uint64		table_check_processed;
+				NDB_DECLARE(NdbSpiSession *, session);
 
-				if (SPI_connect() != SPI_OK_CONNECT)
+				session = ndb_spi_session_begin(CurrentMemoryContext, false);
+				if (session == NULL)
 					elog(ERROR,
 						 "neurondb: LLM worker failed "
-						 "to connect to SPI");
+						 "to begin SPI session");
 
-				ret = ndb_spi_execute_safe(
-										   "SELECT 1 FROM pg_tables WHERE "
-										   "schemaname = 'neurondb' AND tablename "
-										   "= 'neurondb_llm_jobs'",
-										   true,
-										   0);
-				NDB_CHECK_SPI_TUPTABLE();
+				ret = ndb_spi_execute(session,
+									   "SELECT 1 FROM pg_tables WHERE "
+									   "schemaname = 'neurondb' AND tablename "
+									   "= 'neurondb_llm_jobs'",
+									   true,
+									   0);
 				table_check_processed = SPI_processed;
-				SPI_finish();
+				ndb_spi_session_end(&session);
 
 				if (ret != SPI_OK_SELECT
 					|| table_check_processed == 0)
@@ -194,14 +198,14 @@ neuranllm_main(Datum main_arg)
 				 * -- Always free job_type/payload after job processing, no
 				 * matter what
 				 */
-				if (job_type)
+				if (job_type != NULL)
 				{
-					ndb_safe_pfree((void *) job_type);
+					pfree((void *) job_type);
 					job_type = NULL;
 				}
-				if (payload)
+				if (payload != NULL)
 				{
-					ndb_safe_pfree((void *) payload);
+					pfree((void *) payload);
 					payload = NULL;
 				}
 			}
@@ -238,14 +242,14 @@ neuranllm_main(Datum main_arg)
 			 */
 			if (IsTransactionState())
 				AbortCurrentTransaction();
-			if (job_type)
+			if (job_type != NULL)
 			{
-				ndb_safe_pfree((void *) job_type);
+				pfree((void *) job_type);
 				job_type = NULL;
 			}
-			if (payload)
+			if (payload != NULL)
 			{
-				ndb_safe_pfree((void *) payload);
+				pfree((void *) payload);
 				payload = NULL;
 			}
 			elog(LOG,
@@ -433,9 +437,9 @@ process_llm_job(int job_id, const char *job_type, const char *payload)
 									   result_json.data,
 									   NULL);
 
-					NDB_SAFE_PFREE_AND_NULL(vec_str);
+					NDB_FREE(vec_str);
 					vec_str = NULL;
-					NDB_SAFE_PFREE_AND_NULL(vec);
+					NDB_FREE(vec);
 					vec = NULL;
 				}
 				else
@@ -482,17 +486,17 @@ process_llm_job(int job_id, const char *job_type, const char *payload)
 	/* Always cleanup local memory, regardless of outcome */
 	if (result_json.data)
 	{
-		NDB_SAFE_PFREE_AND_NULL(result_json.data);
+		NDB_FREE(result_json.data);
 		result_json.data = NULL;
 	}
 	if (resp.json)
 	{
-		NDB_SAFE_PFREE_AND_NULL(resp.json);
+		NDB_FREE(resp.json);
 		resp.json = NULL;
 	}
 	if (error_msg)
 	{
-		NDB_SAFE_PFREE_AND_NULL(error_msg);
+		NDB_FREE(error_msg);
 		error_msg = NULL;
 	}
 

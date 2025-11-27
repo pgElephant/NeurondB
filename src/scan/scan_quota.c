@@ -12,7 +12,7 @@
  * Quotas are checked during insert/update operations and enforced
  * before writing to the index.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/scan/scan_quota.c
@@ -37,7 +37,12 @@
 #include "funcapi.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_guc.h"
+#include <stdlib.h>
+#include <string.h>
 
 /*
  * Quota limits structure
@@ -64,68 +69,36 @@ typedef struct QuotaUsage
 	TimestampTz lastCheck;
 } QuotaUsage;
 
-/* GUCs for default quotas */
-static int64 default_max_vectors = 1000000;
-static int64 default_max_storage_mb = 10240; /* 10 GB */
-static int default_max_qps = 1000;
-static bool enforce_quotas = true;
+/* GUC variables are now centralized in neurondb_guc.c */
+/* Use GetConfigOption() to retrieve GUC values */
 
-/*
- * Module initialization
- */
-void
-ndb_quota_init_guc(void)
+/* Helper to get int GUC value */
+static int
+get_guc_int(const char *name, int default_val)
 {
-	DefineCustomIntVariable("neurondb.default_max_vectors",
-		"Default maximum vectors per tenant (thousands)",
-		NULL,
-		(int *)&default_max_vectors,
-		1000000,
-		1000,
-		INT_MAX,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomIntVariable("neurondb.default_max_storage_mb",
-		"Default maximum storage (MB) per tenant",
-		NULL,
-		(int *)&default_max_storage_mb,
-		10240,
-		100,
-		INT_MAX,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomIntVariable("neurondb.default_max_qps",
-		"Default maximum queries per second per tenant",
-		NULL,
-		&default_max_qps,
-		1000,
-		1,
-		INT_MAX,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomBoolVariable("neurondb.enforce_quotas",
-		"Enable hard quota enforcement",
-		NULL,
-		&enforce_quotas,
-		true,
-		PGC_SUSET,
-		0,
-		NULL,
-		NULL,
-		NULL);
+	const char *val = GetConfigOption(name, true, false);
+	return val ? atoi(val) : default_val;
 }
+
+/* Helper to get int64 GUC value */
+static int64
+get_guc_int64(const char *name, int64 default_val)
+{
+	const char *val = GetConfigOption(name, true, false);
+	return val ? atoll(val) : default_val;
+}
+
+/* Helper to get bool GUC value */
+static bool
+get_guc_bool(const char *name, bool default_val)
+{
+	const char *val = GetConfigOption(name, true, false);
+	if (!val)
+		return default_val;
+	return (strcmp(val, "on") == 0 || strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
+}
+
+/* GUC initialization is now centralized in neurondb_guc.c */
 
 /*
  * Get quota limits for a tenant
@@ -133,17 +106,19 @@ ndb_quota_init_guc(void)
 static QuotaLimits *
 get_tenant_quota(const char *tenantId)
 {
-	QuotaLimits *limits;
+	NDB_DECLARE(QuotaLimits *, limits);
+	NDB_DECLARE(NdbSpiSession *, session);
 
-	limits = (QuotaLimits *)palloc0(sizeof(QuotaLimits));
+	NDB_ALLOC(limits, QuotaLimits, 1);
 
 	/* Query neurondb.tenant_quotas table */
-	if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed")));
-		}
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+			 errmsg("neurondb: failed to begin SPI session in get_tenant_quota")));
+	}
 
 	{
 		int ret;
@@ -156,7 +131,8 @@ get_tenant_quota(const char *tenantId)
 			"max_qps, enforce_hard FROM neurondb.tenant_quotas "
 			"WHERE tenant_id = $1");
 
-		ret = SPI_execute_with_args(query.data,
+		ret = ndb_spi_execute_with_args(session,
+			query.data,
 			1,
 			(Oid[]){TEXTOID},
 			(Datum[]){CStringGetDatum(tenantId)},
@@ -174,49 +150,49 @@ get_tenant_quota(const char *tenantId)
 				1,
 				&isnull));
 			if (isnull)
-				limits->maxVectors = default_max_vectors;
+				limits->maxVectors = get_guc_int64("neurondb.default_max_vectors", 1000000);
 
 			limits->maxStorageBytes = DatumGetInt64(SPI_getbinval(tuple,
 				tupdesc,
 				2,
 				&isnull));
 			if (isnull)
-				limits->maxStorageBytes = default_max_storage_mb * 1024 * 1024;
+				limits->maxStorageBytes = get_guc_int64("neurondb.default_max_storage_mb", 10240) * 1024 * 1024;
 
 			limits->maxIndexSize = DatumGetInt64(SPI_getbinval(tuple,
 				tupdesc,
 				3,
 				&isnull));
 			if (isnull)
-				limits->maxIndexSize = default_max_storage_mb * 1024 * 1024;
+				limits->maxIndexSize = get_guc_int64("neurondb.default_max_storage_mb", 10240) * 1024 * 1024;
 
 			limits->maxQPS = DatumGetInt32(SPI_getbinval(tuple,
 				tupdesc,
 				4,
 				&isnull));
 			if (isnull)
-				limits->maxQPS = default_max_qps;
+				limits->maxQPS = get_guc_int("neurondb.default_max_qps", 1000);
 
 			limits->enforceHard = DatumGetBool(SPI_getbinval(tuple,
 				tupdesc,
 				5,
 				&isnull));
 			if (isnull)
-				limits->enforceHard = enforce_quotas;
+				limits->enforceHard = get_guc_bool("neurondb.enforce_quotas", true);
 		} else
 		{
-			/* Use defaults if no quota found */
-			limits->maxVectors = default_max_vectors;
-			limits->maxStorageBytes = default_max_storage_mb * 1024 * 1024;
-			limits->maxIndexSize = default_max_storage_mb * 1024 * 1024;
-			limits->maxQPS = default_max_qps;
-			limits->enforceHard = enforce_quotas;
+		/* Use defaults if no quota found */
+		limits->maxVectors = get_guc_int64("neurondb.default_max_vectors", 1000000);
+		limits->maxStorageBytes = get_guc_int64("neurondb.default_max_storage_mb", 10240) * 1024 * 1024;
+		limits->maxIndexSize = get_guc_int64("neurondb.default_max_storage_mb", 10240) * 1024 * 1024;
+		limits->maxQPS = get_guc_int("neurondb.default_max_qps", 1000);
+		limits->enforceHard = get_guc_bool("neurondb.enforce_quotas", true);
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		NDB_FREE(query.data);
 	}
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 
 	return limits;
 }
@@ -227,49 +203,57 @@ get_tenant_quota(const char *tenantId)
 static QuotaUsage *
 get_tenant_usage(const char *tenantId, Oid indexOid)
 {
-	QuotaUsage *usage;
 	int ret;
-	bool isnull;
-
-	usage = (QuotaUsage *)palloc0(sizeof(QuotaUsage));
+	NDB_DECLARE(QuotaUsage *, usage);
+	NDB_DECLARE(NdbSpiSession *, session);
+	int32		count_val;
+	int32		qps_val;
+	NDB_ALLOC(usage, QuotaUsage, 1);
 	usage->tenantId = pstrdup(tenantId);
 	usage->lastCheck = GetCurrentTimestamp();
 
 	/* Query usage from catalog */
-	if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed")));
-		}
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+			 errmsg("neurondb: failed to begin SPI session in get_tenant_usage")));
+	}
 
 	/* Get vector count */
-	ret = ndb_spi_execute_safe("SELECT count(*) FROM neurondb.tenant_usage WHERE "
-			  "tenant_id = $1",
+	ret = ndb_spi_execute_with_args(session,
+		"SELECT count(*) FROM neurondb.tenant_usage WHERE tenant_id = $1",
+		1,
+		(Oid[]){TEXTOID},
+		(Datum[]){CStringGetTextDatum(tenantId)},
+		NULL,
 		true,
 		0);
-	NDB_CHECK_SPI_TUPTABLE();
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
-		usage->vectorCount =
-			DatumGetInt64(SPI_getbinval(SPI_tuptable->vals[0],
-				SPI_tuptable->tupdesc,
-				1,
-				&isnull));
+		if (ndb_spi_get_int32(session, 0, 1, &count_val))
+			usage->vectorCount = (int64)count_val;
+		else
+			usage->vectorCount = 0;
+	}
+	else
+	{
+		usage->vectorCount = 0;
 	}
 
 	/* Get storage size from pg_class */
 	{
 		int ret2;
-		bool isnull2;
 		StringInfoData query;
 
 		initStringInfo(&query);
 		appendStringInfo(&query,
 			"SELECT pg_total_relation_size($1::regclass)");
 
-		ret2 = SPI_execute_with_args(query.data,
+		ret2 = ndb_spi_execute_with_args(session,
+			query.data,
 			1,
 			(Oid[]){OIDOID},
 			(Datum[]){ObjectIdGetDatum(indexOid)},
@@ -277,24 +261,31 @@ get_tenant_usage(const char *tenantId, Oid indexOid)
 			true,
 			0);
 
-		if (ret2 == SPI_OK_SELECT && SPI_processed > 0)
+		if (ret2 == SPI_OK_SELECT && SPI_processed > 0 && SPI_tuptable != NULL)
 		{
-			usage->storageBytes = DatumGetInt64(SPI_getbinval(
-				SPI_tuptable->vals[0],
+			bool		isnull2;
+			Datum		d;
+
+			d = SPI_getbinval(SPI_tuptable->vals[0],
 				SPI_tuptable->tupdesc,
 				1,
-				&isnull2));
-			if (isnull2)
+				&isnull2);
+			if (!isnull2)
+				usage->storageBytes = DatumGetInt64(d);
+			else
 				usage->storageBytes = 0;
 		}
+		else
+		{
+			usage->storageBytes = 0;
+		}
 
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		NDB_FREE(query.data);
 	}
 
 	/* Get QPS from stats */
 	{
 		int ret3;
-		bool isnull3;
 		StringInfoData query;
 
 		initStringInfo(&query);
@@ -303,27 +294,24 @@ get_tenant_usage(const char *tenantId, Oid indexOid)
 			"WHERE schemaname = 'neurondb' AND funcname LIKE '%%%s%%'",
 			tenantId);
 
-		ret3 = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+		ret3 = ndb_spi_execute(session, query.data, true, 0);
 
 		if (ret3 == SPI_OK_SELECT && SPI_processed > 0)
 		{
-			usage->currentQPS = DatumGetInt32(SPI_getbinval(
-				SPI_tuptable->vals[0],
-				SPI_tuptable->tupdesc,
-				1,
-				&isnull3));
-			if (isnull3)
+			if (ndb_spi_get_int32(session, 0, 1, &qps_val))
+				usage->currentQPS = qps_val;
+			else
 				usage->currentQPS = 0;
-		} else
+		}
+		else
 		{
 			usage->currentQPS = 0;
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(query.data);
+		NDB_FREE(query.data);
 	}
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 
 	return usage;
 }
@@ -341,7 +329,7 @@ ndb_quota_check(const char *tenantId,
 	QuotaUsage *usage;
 	bool allowed = true;
 
-	if (!enforce_quotas)
+	if (!get_guc_bool("neurondb.enforce_quotas", true))
 		return true;
 
 	if (tenantId == NULL)
@@ -400,8 +388,8 @@ ndb_quota_check(const char *tenantId,
 		allowed = false;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(limits);
-	NDB_SAFE_PFREE_AND_NULL(usage);
+	NDB_FREE(limits);
+	NDB_FREE(usage);
 
 	return allowed;
 }
@@ -437,6 +425,7 @@ ndb_quota_update_usage(const char *tenantId,
 	int64 bytesDelta)
 {
 	StringInfoData query;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	if (tenantId == NULL)
 		return;
@@ -461,15 +450,17 @@ ndb_quota_update_usage(const char *tenantId,
 		(long long)vectorsDelta,
 		(long long)bytesDelta);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed")));
-		}
-	ndb_spi_execute_safe(query.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
-	SPI_finish();
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+	{
+		NDB_FREE(query.data);
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+			 errmsg("neurondb: failed to begin SPI session in update_tenant_usage")));
+	}
+	ndb_spi_execute(session, query.data, false, 0);
+	NDB_FREE(query.data);
+	ndb_spi_session_end(&session);
 
 }
 
@@ -544,17 +535,16 @@ PG_FUNCTION_INFO_V1(neurondb_reset_quota);
 Datum
 neurondb_reset_quota(PG_FUNCTION_ARGS)
 {
-	if (SPI_connect() != SPI_OK_CONNECT)
-		{
-			ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed")));
-		}
-	ndb_spi_execute_safe("DELETE FROM neurondb.tenant_usage",
-		false,
-		0);
-	NDB_CHECK_SPI_TUPTABLE();
-	SPI_finish();
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_INTERNAL_ERROR),
+			 errmsg("neurondb: failed to begin SPI session in neurondb_reset_quota")));
+	}
+	ndb_spi_execute(session, "DELETE FROM neurondb.tenant_usage", false, 0);
+	ndb_spi_session_end(&session);
 
 
 	PG_RETURN_VOID();

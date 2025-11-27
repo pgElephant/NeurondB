@@ -28,6 +28,7 @@
 #include "neurondb_cuda_dt.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * Helper: Free tree recursively
@@ -42,7 +43,7 @@ dt_free_tree(DTNode * node)
 		dt_free_tree(node->left);
 		dt_free_tree(node->right);
 	}
-	NDB_SAFE_PFREE_AND_NULL(node);
+	NDB_FREE(node);
 }
 
 /*
@@ -169,7 +170,7 @@ ndb_cuda_dt_pack_model(const DTModel * model,
 									model->root, nodes, &node_idx, &node_count)
 		< 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(blob);
+		NDB_FREE(blob);
 		if (errstr)
 			*errstr = pstrdup(
 							  "failed to serialize decision tree nodes");
@@ -384,7 +385,7 @@ dt_build_tree_gpu(const float *features,
 					majority = i;
 			}
 			node->leaf_value = (double) majority;
-			NDB_SAFE_PFREE_AND_NULL(class_counts);
+			NDB_FREE(class_counts);
 		}
 		else
 		{
@@ -406,10 +407,10 @@ dt_build_tree_gpu(const float *features,
 		if (errstr)
 			*errstr = pstrdup("CUDA DT train: failed to allocate index arrays");
 		if (left_indices)
-			NDB_SAFE_PFREE_AND_NULL(left_indices);
+			NDB_FREE(left_indices);
 		if (right_indices)
-			NDB_SAFE_PFREE_AND_NULL(right_indices);
-		NDB_SAFE_PFREE_AND_NULL(node);
+			NDB_FREE(right_indices);
+		NDB_FREE(node);
 		return NULL;
 	}
 
@@ -423,14 +424,14 @@ dt_build_tree_gpu(const float *features,
 			if (errstr)
 				*errstr = pstrdup("CUDA DT train: failed to allocate classification arrays");
 			if (label_ints)
-				NDB_SAFE_PFREE_AND_NULL(label_ints);
+				NDB_FREE(label_ints);
 			if (left_counts)
-				NDB_SAFE_PFREE_AND_NULL(left_counts);
+				NDB_FREE(left_counts);
 			if (right_counts)
-				NDB_SAFE_PFREE_AND_NULL(right_counts);
-			NDB_SAFE_PFREE_AND_NULL(left_indices);
-			NDB_SAFE_PFREE_AND_NULL(right_indices);
-			NDB_SAFE_PFREE_AND_NULL(node);
+				NDB_FREE(right_counts);
+			NDB_FREE(left_indices);
+			NDB_FREE(right_indices);
+			NDB_FREE(node);
 			return NULL;
 		}
 
@@ -504,7 +505,7 @@ dt_build_tree_gpu(const float *features,
 						parent_counts[label]++;
 				}
 				parent_imp = dt_compute_gini(parent_counts, class_count, n_samples);
-				NDB_SAFE_PFREE_AND_NULL(parent_counts);
+				NDB_FREE(parent_counts);
 
 				/* Compute Gini impurity */
 				left_imp = dt_compute_gini(left_counts, class_count, left_total);
@@ -558,11 +559,11 @@ dt_build_tree_gpu(const float *features,
 
 	/* Clean up working arrays */
 	if (label_ints)
-		NDB_SAFE_PFREE_AND_NULL(label_ints);
+		NDB_FREE(label_ints);
 	if (left_counts)
-		NDB_SAFE_PFREE_AND_NULL(left_counts);
+		NDB_FREE(left_counts);
 	if (right_counts)
-		NDB_SAFE_PFREE_AND_NULL(right_counts);
+		NDB_FREE(right_counts);
 
 	/* If no good split found, make leaf */
 	if (best_feature < 0 || best_gain <= 0.0)
@@ -586,7 +587,7 @@ dt_build_tree_gpu(const float *features,
 					majority = i;
 			}
 			node->leaf_value = (double) majority;
-			NDB_SAFE_PFREE_AND_NULL(class_counts);
+			NDB_FREE(class_counts);
 		}
 		else
 		{
@@ -596,8 +597,8 @@ dt_build_tree_gpu(const float *features,
 				sum += labels[indices[i]];
 			node->leaf_value = (n_samples > 0) ? (sum / (double) n_samples) : 0.0;
 		}
-		NDB_SAFE_PFREE_AND_NULL(left_indices);
-		NDB_SAFE_PFREE_AND_NULL(right_indices);
+		NDB_FREE(left_indices);
+		NDB_FREE(right_indices);
 		return node;
 	}
 
@@ -634,7 +635,7 @@ dt_build_tree_gpu(const float *features,
 					majority = i;
 			}
 			node->leaf_value = (double) majority;
-			NDB_SAFE_PFREE_AND_NULL(class_counts);
+			NDB_FREE(class_counts);
 		}
 		else
 		{
@@ -644,8 +645,8 @@ dt_build_tree_gpu(const float *features,
 				sum += labels[indices[i]];
 			node->leaf_value = (n_samples > 0) ? (sum / (double) n_samples) : 0.0;
 		}
-		NDB_SAFE_PFREE_AND_NULL(left_indices);
-		NDB_SAFE_PFREE_AND_NULL(right_indices);
+		NDB_FREE(left_indices);
+		NDB_FREE(right_indices);
 		return node;
 	}
 
@@ -659,9 +660,9 @@ dt_build_tree_gpu(const float *features,
 								   class_count, errstr);
 	if (node->left == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(left_indices);
-		NDB_SAFE_PFREE_AND_NULL(right_indices);
-		NDB_SAFE_PFREE_AND_NULL(node);
+		NDB_FREE(left_indices);
+		NDB_FREE(right_indices);
+		NDB_FREE(node);
 		return NULL;
 	}
 
@@ -671,14 +672,14 @@ dt_build_tree_gpu(const float *features,
 	if (node->right == NULL)
 	{
 		dt_free_tree(node->left);
-		NDB_SAFE_PFREE_AND_NULL(left_indices);
-		NDB_SAFE_PFREE_AND_NULL(right_indices);
-		NDB_SAFE_PFREE_AND_NULL(node);
+		NDB_FREE(left_indices);
+		NDB_FREE(right_indices);
+		NDB_FREE(node);
 		return NULL;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(left_indices);
-	NDB_SAFE_PFREE_AND_NULL(right_indices);
+	NDB_FREE(left_indices);
+	NDB_FREE(right_indices);
 	return node;
 }
 
@@ -868,7 +869,7 @@ ndb_cuda_dt_train(const float *features,
 	{
 		if (errstr && *errstr == NULL)
 			*errstr = pstrdup("CUDA DT train: failed to build tree");
-		NDB_SAFE_PFREE_AND_NULL(indices);
+		NDB_FREE(indices);
 		return -1;
 	}
 
@@ -879,7 +880,7 @@ ndb_cuda_dt_train(const float *features,
 		if (errstr)
 			*errstr = pstrdup("CUDA DT train: failed to allocate model");
 		dt_free_tree(root);
-		NDB_SAFE_PFREE_AND_NULL(indices);
+		NDB_FREE(indices);
 		return -1;
 	}
 
@@ -896,13 +897,13 @@ ndb_cuda_dt_train(const float *features,
 		if (errstr && *errstr == NULL)
 			*errstr = pstrdup("CUDA DT train: model packing failed");
 		dt_free_tree(root);
-		NDB_SAFE_PFREE_AND_NULL(model);
-		NDB_SAFE_PFREE_AND_NULL(indices);
+		NDB_FREE(model);
+		NDB_FREE(indices);
 		return -1;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(indices);
-	NDB_SAFE_PFREE_AND_NULL(model); /* Note: root is now owned by packed model */
+	NDB_FREE(indices);
+	NDB_FREE(model); /* Note: root is now owned by packed model */
 
 	rc = 0;
 	return rc;
@@ -1150,7 +1151,7 @@ ndb_cuda_dt_evaluate_batch(const bytea * model_data,
 
 	if (rc != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(predictions);
+		NDB_FREE(predictions);
 		return -1;
 	}
 
@@ -1202,7 +1203,7 @@ ndb_cuda_dt_evaluate_batch(const bytea * model_data,
 	else
 		*f1_out = 0.0;
 
-	NDB_SAFE_PFREE_AND_NULL(predictions);
+	NDB_FREE(predictions);
 
 	return 0;
 }

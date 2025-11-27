@@ -1,15 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_backend_rocm.c
- *     AMD ROCm/HIP GPU backend implementation - Complete, production-ready
+ *    Backend implementation.
  *
- * This provides a complete ROCm backend that implements the GPUBackendInterface.
- * All operations are fully implemented with no stubs.
+ * This module provides a complete backend implementation of the backend
+ * interface with all operations fully implemented.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *     src/gpu/gpu_backend_rocm.c
+ *    src/gpu/rocm/gpu_backend_rocm.c
  *
  *-------------------------------------------------------------------------
  */
@@ -30,6 +30,7 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_rocm_launchers.h"
 #include "neurondb_rocm_hf.h"
 
@@ -751,8 +752,8 @@ rocm_backend_dbscan_impl(const float *vectors,
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(visited);
-	NDB_SAFE_PFREE_AND_NULL(neighbors);
+	NDB_FREE(visited);
+	NDB_FREE(neighbors);
 
 	return true;
 }
@@ -955,7 +956,7 @@ ndb_rocm_launch_kmeans_assign(const float *vectors,
 			assignments[i] = (int)assign32[i];
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(assign32);
+	NDB_FREE(assign32);
 
 	return rc == 0 ? 0 : -1;
 }
@@ -994,8 +995,8 @@ ndb_rocm_launch_kmeans_update(const float *vectors,
 		k,
 		dim);
 
-	NDB_SAFE_PFREE_AND_NULL(assign32);
-	NDB_SAFE_PFREE_AND_NULL(counts);
+	NDB_FREE(assign32);
+	NDB_FREE(counts);
 
 	return rc == 0 ? 0 : -1;
 }

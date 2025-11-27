@@ -28,7 +28,10 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_constants.h"
 
 /* Forward declarations */
 static char *vector_to_sql_literal(Vector *v);
@@ -119,6 +122,7 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 	if (SRF_IS_FIRSTCALL())
 	{
 		MemoryContext oldcontext;
+		NDB_DECLARE(NdbSpiSession *, session);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 
@@ -140,11 +144,15 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 		 */
 		PushActiveSnapshot(GetTransactionSnapshot());
 
-		if (SPI_connect() != SPI_OK_CONNECT)
+		session = ndb_spi_session_begin(funcctx->multi_call_memory_ctx, false);
+		if (session == NULL)
+		{
+			PopActiveSnapshot();
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("SPI_connect failed in "
+					 errmsg("failed to begin SPI session in "
 							"consistent_knn_search")));
+		}
 
 		/*
 		 * Use index-backed search: this must reference the correct index
@@ -162,11 +170,10 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 				 vector_str,
 				 k);
 
-		ret = ndb_spi_execute_safe(sql, true, k);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(session, sql, true, k);
 		if (ret != SPI_OK_SELECT)
 		{
-			SPI_finish();
+			ndb_spi_session_end(&session);
 			PopActiveSnapshot();
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
@@ -176,8 +183,9 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 
 		funcctx->max_calls = SPI_processed;
 
-		/* Save results for per-call access */
-		funcctx->user_fctx = SPI_tuptable;
+		/* Save session and results for per-call access */
+		/* Store session pointer in user_fctx - we'll free it in SRF_RETURN_DONE */
+		funcctx->user_fctx = session;
 
 		/*
 		 * Set up tuple descriptor for results (id BIGINT, dist DOUBLE
@@ -206,10 +214,17 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 
 	if (call_cntr < max_calls)
 	{
-		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
+		NdbSpiSession *session = (NdbSpiSession *) funcctx->user_fctx;
+		SPITupleTable *tuptable;
 		HeapTuple	spi_tuple;
 		bool		isnull;
 
+		if (session == NULL || SPI_tuptable == NULL)
+		{
+			SRF_RETURN_DONE(funcctx);
+		}
+
+		tuptable = SPI_tuptable;
 		spi_tuple = tuptable->vals[call_cntr];
 
 		/* Extract "id" (attribute 1), "dist" (attribute 2) */
@@ -226,12 +241,13 @@ consistent_knn_search(PG_FUNCTION_ARGS)
 	}
 	else
 	{
-		SPITupleTable *tuptable = (SPITupleTable *) funcctx->user_fctx;
+		NdbSpiSession *session = (NdbSpiSession *) funcctx->user_fctx;
 
-		if (tuptable)
-			SPI_freetuptable(tuptable);
+		if (session != NULL)
+		{
+			ndb_spi_session_end(&session);
+		}
 
-		SPI_finish();
 		PopActiveSnapshot();
 
 		SRF_RETURN_DONE(funcctx);
@@ -265,9 +281,9 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 	char	   *index_table;
 	StringInfoData sql;
 	int			ret;
-	SPIPlanPtr	plan;
 	Oid			argtypes[4];
 	Datum		values[4];
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	elog(DEBUG1,
 		 "Building deterministic HNSW index: %s.%s (seed=%u)",
@@ -278,9 +294,10 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 	/* Compute deterministic index table name */
 	index_table = get_index_table(table, col, seed);
 
-	/* Start a SPI context */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed: %d", ret);
+	/* Start a SPI session */
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		elog(ERROR, "Failed to begin SPI session in build_hnsw_index");
 
 	/* Create index table if it does not exist */
 	initStringInfo(&sql);
@@ -291,24 +308,27 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 					 "vector");
 	//Replace "vector" with the actual type if needed
 
-		ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret != SPI_OK_UTILITY)
+	{
+		NDB_FREE(sql.data);
+		NDB_FREE(index_table);
+		ndb_spi_session_end(&session);
 		elog(ERROR,
 			 "Failed to create index table '%s': %s",
 			 index_table,
 			 sql.data);
+	}
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 
 	/* Remove all rows in case we rebuild */
 	appendStringInfo(&sql, "TRUNCATE %s", index_table);
-	ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ndb_spi_execute(session, sql.data, false, 0);
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 
 	/*
@@ -325,14 +345,18 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 					 table,
 					 seed);
 
-	ret = ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, false, 0);
 	if (ret != SPI_OK_INSERT)
+	{
+		NDB_FREE(sql.data);
+		NDB_FREE(index_table);
+		ndb_spi_session_end(&session);
 		elog(ERROR, "Failed to bulk insert vectors: %s", sql.data);
+	}
 
 	/* Store/Update metadata (example: in a metadata table) */
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "CREATE TABLE IF NOT EXISTS neurondb_hnsw_metadata ("
@@ -341,11 +365,10 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 					 "  index_table text, "
 					 "  build_seed int8, "
 					 "  build_time timestamptz default clock_timestamp())");
-	ndb_spi_execute_safe(sql.data, false, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ndb_spi_execute(session, sql.data, false, 0);
 
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 
 	appendStringInfo(&sql,
@@ -367,20 +390,20 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 	values[2] = CStringGetTextDatum(index_table);
 	values[3] = Int64GetDatum((int64) seed);
 
-	plan = SPI_prepare(sql.data, 4, argtypes);
-	if (plan == NULL)
-		elog(ERROR, "Failed to prepare metadata update");
-
-	if ((ret = SPI_execute_plan(plan, values, NULL, false, 0))
-		!= SPI_OK_INSERT
-		&& ret != SPI_OK_UPDATE)
+	ret = ndb_spi_execute_with_args(session, sql.data, 4, argtypes, values, NULL, false, 0);
+	if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE)
+	{
+		NDB_FREE(sql.data);
+		NDB_FREE(index_table);
+		ndb_spi_session_end(&session);
 		elog(ERROR, "Metadata insert/update failed (%d)", ret);
+	}
 
-	SPI_freeplan(plan);
+	NDB_FREE(sql.data);
 
 	/* Done, cleanup */
-	NDB_SAFE_PFREE_AND_NULL(index_table);
-	SPI_finish();
+	NDB_FREE(index_table);
+	ndb_spi_session_end(&session);
 }
 
 /*
@@ -390,11 +413,13 @@ build_hnsw_index(const char *table, const char *col, uint32 seed)
 static char *
 get_index_table(const char *table, const char *col, uint32 seed)
 {
-	char	   *buf = palloc(strlen(table) + strlen(col) + 32);
+	NDB_DECLARE(char *, buf);
+	int			len = strlen(table) + strlen(col) + 32;
 
+	NBP_ALLOC(buf, char, len);
 	snprintf(buf,
-			 strlen(table) + strlen(col) + 32,
-			 "__hnsw_%s_%s_%08x",
+			 len,
+			 NDB_INDEX_NAME_FMT_HNSW,
 			 table,
 			 col,
 			 seed);
@@ -424,11 +449,11 @@ vector_to_sql_literal(Vector *v)
 {
 	char	   *out;
 	int			n;
-	char	   *quoted;
+	NDB_DECLARE(char *, quoted);
 
 	out = vector_out_internal(v);
 	n = (int) strlen(out) + 4;
-	quoted = palloc(n);
+	NBP_ALLOC(quoted, char, n);
 	snprintf(quoted, n, "'%s'", out);
 	return quoted;
 }

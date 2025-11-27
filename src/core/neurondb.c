@@ -7,10 +7,10 @@
  * including type I/O functions, vector construction, normalization,
  * arithmetic operations, and array conversions.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/neurondb.c
+ *	  src/core/neurondb.c
  *
  *-------------------------------------------------------------------------
  */
@@ -29,17 +29,11 @@
 #include <ctype.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 PG_MODULE_MAGIC;
 
-/* ------------------------
- *	GUC Variables
- * ------------------------
- */
-
-int			neurondb_hnsw_ef_search;
-int			neurondb_ivf_probes;
-int			neurondb_ef_construction;
+/* GUC variables are now defined in neurondb_guc.c */
 
 extern void neurondb_worker_fini(void);
 
@@ -158,7 +152,7 @@ vector_in_internal(char *str, int *out_dim, bool check)
 
 	result = new_vector(dim);
 	memcpy(result->data, data, sizeof(float4) * dim);
-	NDB_SAFE_PFREE_AND_NULL(data);
+	NDB_FREE(data);
 
 	if (out_dim)
 		*out_dim = dim;
@@ -670,7 +664,7 @@ vector_to_array(PG_FUNCTION_ARGS)
 	result = construct_array(
 							 elems, vec->dim, FLOAT4OID, sizeof(float4), true, 'i');
 
-	NDB_SAFE_PFREE_AND_NULL(elems);
+	NDB_FREE(elems);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

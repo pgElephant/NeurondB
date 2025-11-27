@@ -35,6 +35,7 @@
 #include "neurondb_cuda_rf.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Forward declarations for kernel launchers */
 extern int	launch_rf_predict_batch_kernel_hip(const NdbCudaRfNode * d_nodes,
@@ -300,7 +301,7 @@ ndb_rocm_rf_predict(const bytea * model_data,
 	{
 		if (errstr)
 			*errstr = pstrdup("ROCm RF inference failed");
-		NDB_SAFE_PFREE_AND_NULL(votes);
+		NDB_FREE(votes);
 		return -1;
 	}
 
@@ -319,7 +320,7 @@ ndb_rocm_rf_predict(const bytea * model_data,
 		best_class = model_hdr->majority_class;
 
 	*class_out = best_class;
-	NDB_SAFE_PFREE_AND_NULL(votes);
+	NDB_FREE(votes);
 	return 0;
 }
 
@@ -334,11 +335,377 @@ ndb_rocm_rf_train(const float *features,
 				  Jsonb * *metrics,
 				  char **errstr)
 {
-	/* ROCm RF training - fallback to CPU for now */
-	/* TODO: Implement full GPU training */
+	const int	default_n_trees = 32;
+	int			n_trees = default_n_trees;
+	int		   *label_ints = NULL;
+	int		   *class_counts = NULL;
+	int		   *best_left_counts = NULL;
+	int		   *best_right_counts = NULL;
+	int		   *tmp_left_counts = NULL;
+	int		   *tmp_right_counts = NULL;
+	bytea	   *payload = NULL;
+	Jsonb	   *metrics_json = NULL;
+	float	   *d_features = NULL;
+	int		   *d_labels = NULL;
+	hipError_t status = hipSuccess;
+	double		gini_accumulator = 0.0;
+	size_t		feature_bytes;
+	size_t		label_bytes;
+	size_t		class_bytes;
+	pg_prng_state rng;
+	bool		seeded = false;
+	int			i;
+	int			j;
+	int			rc = -1;
+
 	if (errstr)
-		*errstr = pstrdup("ROCm RF training not yet implemented, use CPU");
-	return -1;
+		*errstr = NULL;
+	if (model_data == NULL || labels == NULL || n_samples <= 0
+		|| feature_dim <= 0 || class_count <= 0)
+	{
+		if (errstr)
+			*errstr = pstrdup("invalid input parameters for ROCm RF train");
+		return -1;
+	}
+
+	/* Parse hyperparameters if provided */
+	if (hyperparams != NULL)
+	{
+		/* Extract n_trees from JSONB if present */
+		/* For now, use default */
+		(void) hyperparams;
+	}
+
+	if (n_trees <= 0)
+		n_trees = default_n_trees;
+	if (class_count > 4096)
+	{
+		if (errstr)
+			*errstr = pstrdup("ROCm RF training: class_count exceeds maximum of 4096");
+		return -1;
+	}
+
+	/* Allocate host memory */
+	{
+		size_t		label_size = sizeof(int) * (size_t) n_samples;
+		size_t		class_size = sizeof(int) * (size_t) class_count;
+
+		if (label_size > MaxAllocSize || class_size > MaxAllocSize)
+		{
+			if (errstr)
+				*errstr = pstrdup("ROCm RF train: allocation size exceeds MaxAllocSize");
+			return -1;
+		}
+
+		label_ints = (int *) palloc(label_size);
+		class_counts = (int *) palloc0(class_size);
+		tmp_left_counts = (int *) palloc(class_size);
+		tmp_right_counts = (int *) palloc(class_size);
+		best_left_counts = (int *) palloc(class_size);
+		best_right_counts = (int *) palloc(class_size);
+		if (label_ints == NULL || class_counts == NULL ||
+			tmp_left_counts == NULL || tmp_right_counts == NULL ||
+			best_left_counts == NULL || best_right_counts == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("ROCm RF train: palloc failed");
+			goto cleanup;
+		}
+	}
+
+	/* Convert labels to integers */
+	for (i = 0; i < n_samples; i++)
+	{
+		double		val = labels[i];
+
+		label_ints[i] = (int) rint(val);
+		if (label_ints[i] < 0 || label_ints[i] >= class_count)
+			label_ints[i] = 0;
+	}
+
+	/* Compute class distribution */
+	for (i = 0; i < n_samples; i++)
+		class_counts[label_ints[i]]++;
+
+	/* Allocate GPU memory */
+	feature_bytes = sizeof(float) * (size_t) n_samples * (size_t) feature_dim;
+	label_bytes = sizeof(int) * (size_t) n_samples;
+	class_bytes = sizeof(int) * (size_t) class_count;
+
+	status = hipMalloc((void **) &d_features, feature_bytes);
+	if (status != hipSuccess)
+		goto gpu_fail;
+	status = hipMalloc((void **) &d_labels, label_bytes);
+	if (status != hipSuccess)
+		goto gpu_fail;
+
+	/* Copy data to GPU */
+	status = hipMemcpy(d_features, features, feature_bytes, hipMemcpyHostToDevice);
+	if (status != hipSuccess)
+		goto gpu_fail;
+	status = hipMemcpy(d_labels, label_ints, label_bytes, hipMemcpyHostToDevice);
+	if (status != hipSuccess)
+		goto gpu_fail;
+
+	/* Initialize RNG */
+	if (!seeded)
+	{
+		if (!pg_prng_strong_seed(&rng))
+			pg_prng_seed(&rng, (uint64) n_samples ^ (uint64) feature_dim);
+		seeded = true;
+	}
+
+	/* Find majority class */
+	int			majority_class = 0;
+	int			best_count = class_counts[0];
+	double		majority_fraction;
+
+	for (i = 1; i < class_count; i++)
+	{
+		if (class_counts[i] > best_count)
+		{
+			best_count = class_counts[i];
+			majority_class = i;
+		}
+	}
+	majority_fraction = (n_samples > 0)
+		? ((double) best_count / (double) n_samples)
+		: 0.0;
+
+	/* Allocate model payload */
+	{
+		int			total_nodes = n_trees * 3;
+		size_t		header_bytes = sizeof(NdbCudaRfModelHeader)
+			+ sizeof(NdbCudaRfTreeHeader) * n_trees;
+		size_t		payload_bytes = header_bytes + sizeof(NdbCudaRfNode) * total_nodes;
+		char	   *base;
+		NdbCudaRfModelHeader model_hdr;
+		NdbCudaRfTreeHeader *tree_hdrs;
+		NdbCudaRfNode *nodes;
+
+		if (payload_bytes > MaxAllocSize || VARHDRSZ + payload_bytes > MaxAllocSize)
+		{
+			if (errstr)
+				*errstr = pstrdup("ROCm RF train: payload size exceeds MaxAllocSize");
+			goto gpu_fail;
+		}
+
+		payload = (bytea *) palloc(VARHDRSZ + payload_bytes);
+		if (payload == NULL)
+		{
+			if (errstr)
+				*errstr = pstrdup("ROCm RF train: palloc failed for payload");
+			goto gpu_fail;
+		}
+		SET_VARSIZE(payload, VARHDRSZ + payload_bytes);
+		base = VARDATA(payload);
+
+		model_hdr.tree_count = n_trees;
+		model_hdr.feature_dim = feature_dim;
+		model_hdr.class_count = class_count;
+		model_hdr.sample_count = n_samples;
+		model_hdr.majority_class = majority_class;
+		model_hdr.majority_fraction = majority_fraction;
+
+		memcpy(base, &model_hdr, sizeof(model_hdr));
+		tree_hdrs = (NdbCudaRfTreeHeader *) (base + sizeof(model_hdr));
+		nodes = (NdbCudaRfNode *) (base + header_bytes);
+
+		/* Build trees */
+		for (i = 0; i < n_trees; i++)
+		{
+			double		best_gini = DBL_MAX;
+			float		best_threshold = 0.0f;
+			int			best_feature = -1;
+			int			left_majority = majority_class;
+			int			right_majority = majority_class;
+			int			left_total = 0;
+			int			right_total = 0;
+			int			node_offset = i * 3;
+			double		noise = pg_prng_double(&rng) - 0.5;
+
+			memset(best_left_counts, 0, class_bytes);
+			memset(best_right_counts, 0, class_bytes);
+
+			/* Find best split (CPU computation for now, can be moved to GPU) */
+			for (j = 0; j < feature_dim; j++)
+			{
+				double		sum = 0.0;
+				double		sumsq = 0.0;
+				double		variance;
+				float		threshold;
+				int			k;
+
+				/* Compute feature statistics */
+				for (k = 0; k < n_samples; k++)
+				{
+					float		val = features[k * feature_dim + j];
+
+					sum += val;
+					sumsq += val * val;
+				}
+
+				if (sum == 0.0 && sumsq == 0.0)
+					continue;
+
+				threshold = (float) (sum / (double) n_samples);
+				variance = (sumsq / (double) n_samples) - (threshold * threshold);
+				if (variance < 0.0)
+					variance = 0.0;
+				if (variance > 0.0)
+					threshold += (float) (noise * sqrt(variance) * 0.25);
+
+				/* Compute split counts */
+				memset(tmp_left_counts, 0, class_bytes);
+				memset(tmp_right_counts, 0, class_bytes);
+				for (k = 0; k < n_samples; k++)
+				{
+					float		val = features[k * feature_dim + j];
+					int			label = label_ints[k];
+
+					if (val <= threshold)
+						tmp_left_counts[label]++;
+					else
+						tmp_right_counts[label]++;
+				}
+
+				/* Compute Gini impurity using shared function */
+				{
+					double		gini;
+					int			left_tot;
+					int			right_tot;
+
+					gini = rf_split_gini(tmp_left_counts,
+										 tmp_right_counts,
+										 class_count,
+										 &left_tot,
+										 &right_tot,
+										 NULL,
+										 NULL);
+
+					if (left_tot == 0 || right_tot == 0)
+						continue;
+
+					if (gini < best_gini && gini >= 0.0)
+					{
+						best_gini = gini;
+						best_feature = j;
+						best_threshold = threshold;
+						memcpy(best_left_counts, tmp_left_counts, class_bytes);
+						memcpy(best_right_counts, tmp_right_counts, class_bytes);
+					}
+				}
+			}
+
+			/* Create tree structure */
+			if (best_feature < 0)
+			{
+				tree_hdrs[i].node_count = 1;
+				tree_hdrs[i].nodes_start = node_offset;
+				tree_hdrs[i].root_index = 0;
+				tree_hdrs[i].max_feature_index = -1;
+				nodes[node_offset].feature_idx = -1;
+				nodes[node_offset].threshold = 0.0f;
+				nodes[node_offset].left_child = -1;
+				nodes[node_offset].right_child = -1;
+				nodes[node_offset].value = (float) majority_class;
+				continue;
+			}
+
+			/* Find majority classes for left and right */
+			left_total = 0;
+			right_total = 0;
+			for (j = 0; j < class_count; j++)
+			{
+				if (best_left_counts[j] > left_total)
+				{
+					left_total = best_left_counts[j];
+					left_majority = j;
+				}
+				if (best_right_counts[j] > right_total)
+				{
+					right_total = best_right_counts[j];
+					right_majority = j;
+				}
+			}
+
+			tree_hdrs[i].node_count = 3;
+			tree_hdrs[i].nodes_start = node_offset;
+			tree_hdrs[i].root_index = 0;
+			tree_hdrs[i].max_feature_index = best_feature;
+
+			nodes[node_offset].feature_idx = best_feature;
+			nodes[node_offset].threshold = best_threshold;
+			nodes[node_offset].left_child = 1;
+			nodes[node_offset].right_child = 2;
+			nodes[node_offset].value = (float) majority_class;
+
+			nodes[node_offset + 1].feature_idx = -1;
+			nodes[node_offset + 1].threshold = 0.0f;
+			nodes[node_offset + 1].left_child = -1;
+			nodes[node_offset + 1].right_child = -1;
+			nodes[node_offset + 1].value = (float) left_majority;
+
+			nodes[node_offset + 2].feature_idx = -1;
+			nodes[node_offset + 2].threshold = 0.0f;
+			nodes[node_offset + 2].left_child = -1;
+			nodes[node_offset + 2].right_child = -1;
+			nodes[node_offset + 2].value = (float) right_majority;
+
+			if (best_gini > 0.0 && best_gini < DBL_MAX / 4.0)
+				gini_accumulator += best_gini;
+		}
+	}
+
+	/* Build metrics */
+	{
+		RFMetricsSpec spec;
+
+		memset(&spec, 0, sizeof(spec));
+		spec.storage = "gpu";
+		spec.algorithm = "random_forest";
+		spec.tree_count = n_trees;
+		spec.majority_class = majority_class;
+		spec.majority_fraction = majority_fraction;
+		spec.gini = (n_trees > 0) ? (gini_accumulator / (double) n_trees) : 0.0;
+		spec.oob_accuracy = 0.0; /* OOB not computed in simplified version */
+		metrics_json = rf_build_metrics_json(&spec);
+	}
+
+	*model_data = payload;
+	if (metrics != NULL)
+		*metrics = metrics_json;
+
+	rc = 0;
+
+gpu_fail:
+	if (d_features != NULL)
+		hipFree(d_features);
+	if (d_labels != NULL)
+		hipFree(d_labels);
+
+cleanup:
+	if (rc != 0)
+	{
+		if (payload != NULL)
+			NDB_FREE(payload);
+		if (metrics_json != NULL)
+			NDB_FREE(metrics_json);
+	}
+	if (label_ints != NULL)
+		NDB_FREE(label_ints);
+	if (class_counts != NULL)
+		NDB_FREE(class_counts);
+	if (tmp_left_counts != NULL)
+		NDB_FREE(tmp_left_counts);
+	if (tmp_right_counts != NULL)
+		NDB_FREE(tmp_right_counts);
+	if (best_left_counts != NULL)
+		NDB_FREE(best_left_counts);
+	if (best_right_counts != NULL)
+		NDB_FREE(best_right_counts);
+
+	return rc;
 }
 
 #endif							/* NDB_GPU_HIP */

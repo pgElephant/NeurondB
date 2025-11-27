@@ -9,7 +9,7 @@
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/vector_advanced.c
+ *	  src/vector/vector_advanced.c
  *
  *-------------------------------------------------------------------------
  */
@@ -24,6 +24,8 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_macros.h"
 
 /*
  * vector_cross_product
@@ -123,7 +125,8 @@ vector_percentile(PG_FUNCTION_ARGS)
 				 errmsg("percentile must be between 0 and 1")));
 
 	/* Copy and sort */
-	sorted = (float4 *) palloc(sizeof(float4) * vec->dim);
+	sorted = NULL;
+	NDB_ALLOC(sorted, float4, vec->dim);
 	if (sorted == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
@@ -152,7 +155,7 @@ vector_percentile(PG_FUNCTION_ARGS)
 	if (idx >= vec->dim)
 		idx = vec->dim - 1;
 	result = sorted[idx];
-	NDB_SAFE_PFREE_AND_NULL(sorted);
+	NDB_FREE(sorted);
 
 	PG_RETURN_FLOAT4(result);
 }
@@ -238,8 +241,10 @@ vector_quantile(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid quantiles array data")));
 
-	elems = (Datum *) palloc(sizeof(Datum) * n_quantiles);
-	nulls = (bool *) palloc(sizeof(bool) * n_quantiles);
+	elems = NULL;
+	nulls = NULL;
+	NDB_ALLOC(elems, Datum, n_quantiles);
+	NDB_ALLOC(nulls, bool, n_quantiles);
 	if (elems == NULL || nulls == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
@@ -262,8 +267,8 @@ vector_quantile(PG_FUNCTION_ARGS)
 	}
 
 	result = construct_array(elems, n_quantiles, FLOAT4OID, sizeof(float4), true, 'i');
-	NDB_SAFE_PFREE_AND_NULL(elems);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
+	NDB_FREE(elems);
+	NDB_FREE(nulls);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

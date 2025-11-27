@@ -1,37 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_recall_metrics.c
- *    Recall@K and other search quality metrics
+ *    Search quality evaluation metrics.
  *
- * This module implements retrieval evaluation metrics for assessing search
- * quality in vector similarity search, RAG systems, and recommendation engines.
+ * This module implements retrieval evaluation metrics including Recall@K,
+ * Precision@K, F1@K, MRR, and NDCG for assessing search quality.
  *
- * Metrics Implemented:
- *
- * 1. Recall@K: Fraction of relevant items found in top K results
- *    - Most common metric for retrieval evaluation
- *    - Formula: |retrieved ∩ relevant| / |relevant|
- *
- * 2. Precision@K: Fraction of retrieved items that are relevant
- *    - Formula: |retrieved ∩ relevant| / K
- *
- * 3. F1@K: Harmonic mean of Precision@K and Recall@K
- *    - Formula: 2 * (P * R) / (P + R)
- *
- * 4. Mean Reciprocal Rank (MRR): Average of reciprocal ranks of first relevant item
- *    - Formula: average(1 / rank_of_first_relevant)
- *
- * 5. NDCG@K: Normalized Discounted Cumulative Gain
- *    - Accounts for position and relevance scores
- *    - Formula: DCG@K / IDCG@K
- *
- * Use Cases:
- *   - A/B testing of search improvements
- *   - Monitoring search quality over time
- *   - Comparing different embedding models
- *   - RAG system evaluation
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_recall_metrics.c
@@ -46,6 +21,8 @@
 #include "catalog/pg_type.h"
 
 #include "neurondb.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 #include <math.h>
 

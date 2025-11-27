@@ -1,7 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * ml_text.c
- *    Text ML for NeuronDB
+ *    Text machine learning functions.
+ *
+ * This module provides text processing and machine learning functions
+ * for natural language processing tasks.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
@@ -22,6 +25,8 @@
 
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 #include "neurondb_spi_safe.h"
 
 #include <ctype.h>
@@ -132,6 +137,7 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 		int			i,
 					t,
 					r;
+		NDB_DECLARE(NdbSpiSession *, spi_session);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext =
@@ -153,20 +159,17 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 				 "WHERE w.model_id = %d",
 				 model_id);
 
-		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-			if (ret != SPI_OK_CONNECT)
-			{
-				SPI_finish();
-				ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("neurondb: SPI_connect failed")));
-			}
-		ereport(ERROR, (errmsg("SPI_connect failed: %d", ret)));
+		oldcontext = CurrentMemoryContext;
 
-		ret = SPI_exec(qry, 0);
+		NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+		ret = ndb_spi_execute(spi_session, qry, true, 0);
 		if (ret != SPI_OK_SELECT)
 		{
-			SPI_finish();
+			NDB_SPI_SESSION_END(spi_session);
+			for (t = 0; t < num_tokens; t++)
+				NDB_FREE(tokens[t]);
+			NDB_FREE(input_str);
 			ereport(ERROR,
 					(errmsg("Could not fetch model word lists")));
 		}
@@ -198,14 +201,15 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 			{
 				categories[n_categories++] = pstrdup(cat);
 			}
-			NDB_SAFE_PFREE_AND_NULL(cat);
+			NDB_FREE(cat);
 		}
 
 		if (n_categories == 0)
 		{
-			SPI_finish();
+			NDB_SPI_SESSION_END(spi_session);
 			for (t = 0; t < num_tokens; t++)
-				NDB_SAFE_PFREE_AND_NULL(tokens[t]);
+				NDB_FREE(tokens[t]);
+			NDB_FREE(input_str);
 			ereport(ERROR,
 					(errmsg("No categories found for model_id %d",
 							model_id)));
@@ -214,12 +218,39 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 		/* Tally up word matches for each category */
 		for (r = 0; r < (int) SPI_processed; r++)
 		{
-			HeapTuple	tuple = SPI_tuptable->vals[r];
-			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-			char	   *cat = TextDatumGetCString(
-												  SPI_getbinval(tuple, tupdesc, 1, NULL));
-			char	   *word = TextDatumGetCString(
-												   SPI_getbinval(tuple, tupdesc, 2, NULL));
+			TupleDesc	tupdesc;
+			/* Safe access to SPI_tuptable - validate before access */
+			if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+				r >= (int) SPI_processed || SPI_tuptable->vals[r] == NULL)
+			{
+				continue;
+			}
+			tupdesc = SPI_tuptable->tupdesc;
+			if (tupdesc == NULL)
+			{
+				continue;
+			}
+			/* Use safe function to get text */
+			text	   *cat_text = ndb_spi_get_text(spi_session, r, 1, oldcontext);
+			if (cat_text == NULL)
+				continue;
+			char	   *cat = text_to_cstring(cat_text);
+			NDB_FREE(cat_text);
+			
+			/* Safe access for word - validate tupdesc has at least 2 columns */
+			if (tupdesc->natts < 2)
+			{
+				NDB_FREE(cat);
+				continue;
+			}
+			text	   *word_text = ndb_spi_get_text(spi_session, r, 2, oldcontext);
+			if (word_text == NULL)
+			{
+				NDB_FREE(cat);
+				continue;
+			}
+			char	   *word = text_to_cstring(word_text);
+			NDB_FREE(word_text);
 
 			for (t = 0; t < num_tokens; t++)
 			{
@@ -236,17 +267,17 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 					}
 				}
 			}
-			NDB_SAFE_PFREE_AND_NULL(cat);
-			NDB_SAFE_PFREE_AND_NULL(word);
+			NDB_FREE(cat);
+			NDB_FREE(word);
 		}
 
 		for (t = 0; t < num_tokens; t++)
-			NDB_SAFE_PFREE_AND_NULL(tokens[t]);
+			NDB_FREE(tokens[t]);
 		{
 			/* Calculate confidences */
 			int			total_count = 0;
 
-			SPI_finish();
+			NDB_SPI_SESSION_END(spi_session);
 			results = (ClassifyResult *) palloc0(
 												 n_categories * sizeof(ClassifyResult));
 			NDB_CHECK_ALLOC(results, "results");
@@ -266,10 +297,10 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 				else
 					results[i].confidence =
 						(1.0f / (float4) n_categories);
-				NDB_SAFE_PFREE_AND_NULL(categories[i]);
+				NDB_FREE(categories[i]);
 			}
-			NDB_SAFE_PFREE_AND_NULL(categories);
-			NDB_SAFE_PFREE_AND_NULL(category_counts);
+			NDB_FREE(categories);
+			NDB_FREE(category_counts);
 
 			funcctx->user_fctx = results;
 			funcctx->max_calls = n_categories;
@@ -317,7 +348,7 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 		else
 		{
 			if (funcctx->max_calls > 0 && funcctx->user_fctx)
-				NDB_SAFE_PFREE_AND_NULL(results);
+				NDB_FREE(results);
 			SRF_RETURN_DONE(funcctx);
 		}
 	}
@@ -346,6 +377,7 @@ neurondb_sentiment_analysis(PG_FUNCTION_ARGS)
 		char		qry[256];
 		int			t,
 					r;
+		NDB_DECLARE(NdbSpiSession *, spi_session);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext =
@@ -365,27 +397,17 @@ neurondb_sentiment_analysis(PG_FUNCTION_ARGS)
 				 "SELECT word, polarity FROM neurondb_sentiment_lexicon WHERE model = '%s'",
 				 model_name);
 
-		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-			if (ret != SPI_OK_CONNECT)
-			{
-				SPI_finish();
-				ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("neurondb: SPI_connect failed")));
-			}
-		{
-			for (t = 0; t < num_tokens; t++)
-				NDB_SAFE_PFREE_AND_NULL(tokens[t]);
-			NDB_SAFE_PFREE_AND_NULL(model_name);
-			ereport(ERROR, (errmsg("SPI_connect failed")));
-		}
-		ret = SPI_exec(qry, 0);
+		oldcontext = CurrentMemoryContext;
+
+		NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+		ret = ndb_spi_execute(spi_session, qry, true, 0);
 		if (ret != SPI_OK_SELECT)
 		{
-			SPI_finish();
+			NDB_SPI_SESSION_END(spi_session);
 			for (t = 0; t < num_tokens; t++)
-				NDB_SAFE_PFREE_AND_NULL(tokens[t]);
-			NDB_SAFE_PFREE_AND_NULL(model_name);
+				NDB_FREE(tokens[t]);
+			NDB_FREE(model_name);
 			ereport(ERROR,
 					(errmsg("Could not execute sentiment lexicon "
 							"fetch")));
@@ -414,18 +436,18 @@ neurondb_sentiment_analysis(PG_FUNCTION_ARGS)
 					else
 						neu++;	/* treat unknown as neutral */
 				}
-				NDB_SAFE_PFREE_AND_NULL(w);
-				NDB_SAFE_PFREE_AND_NULL(pol);
+				NDB_FREE(w);
+				NDB_FREE(pol);
 				if (found)
 					break;
 			}
 			if (!found)
 				neu++;
-			NDB_SAFE_PFREE_AND_NULL(tokens[t]);
+			NDB_FREE(tokens[t]);
 		}
-		NDB_SAFE_PFREE_AND_NULL(model_name);
+		NDB_FREE(model_name);
 
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 
 		if (num_tokens == 0)
 			num_tokens = 1;
@@ -503,7 +525,7 @@ neurondb_sentiment_analysis(PG_FUNCTION_ARGS)
 			}
 			tuple = heap_form_tuple(
 									funcctx->tuple_desc, values, nulls);
-			NDB_SAFE_PFREE_AND_NULL(result);
+			NDB_FREE(result);
 			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 		}
 		else
@@ -536,6 +558,7 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 		int			ret,
 					t,
 					r;
+		NDB_DECLARE(NdbSpiSession *, spi_session);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext =
@@ -544,26 +567,16 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 		input_str = text_to_cstring(input_text);
 		simple_tokenize(input_str, tokens, &num_tokens);
 
-		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-			if (ret != SPI_OK_CONNECT)
-			{
-				SPI_finish();
-				ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("neurondb: SPI_connect failed")));
-			}
-		{
-			for (t = 0; t < num_tokens; t++)
-				NDB_SAFE_PFREE_AND_NULL(tokens[t]);
-			ereport(ERROR, (errmsg("SPI_connect failed")));
-		}
-		ret = SPI_exec("SELECT entity, entity_type, confidence FROM neurondb_ner_entities",
-					   0);
+		oldcontext = CurrentMemoryContext;
+
+		NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+		ret = ndb_spi_execute(spi_session, "SELECT entity, entity_type, confidence FROM neurondb_ner_entities", true, 0);
 		if (ret != SPI_OK_SELECT)
 		{
-			SPI_finish();
+			NDB_SPI_SESSION_END(spi_session);
 			for (t = 0; t < num_tokens; t++)
-				NDB_SAFE_PFREE_AND_NULL(tokens[t]);
+				NDB_FREE(tokens[t]);
 			ereport(ERROR,
 					(errmsg("NER entity table fetch failed")));
 		}
@@ -600,12 +613,12 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 						t + 1;
 					n_entities++;
 				}
-				NDB_SAFE_PFREE_AND_NULL(dbent);
-				NDB_SAFE_PFREE_AND_NULL(type);
+				NDB_FREE(dbent);
+				NDB_FREE(type);
 			}
-			NDB_SAFE_PFREE_AND_NULL(tokens[t]);
+			NDB_FREE(tokens[t]);
 		}
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 
 		/* Optional: filter by entity_type list arg */
 		if (entity_types_array != NULL && n_entities > 0)
@@ -644,7 +657,7 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 					{
 						keep = true;
 					}
-					NDB_SAFE_PFREE_AND_NULL(etype);
+					NDB_FREE(etype);
 					if (keep)
 						break;
 				}
@@ -653,7 +666,7 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 					filtered[k++] = entities[e];
 				}
 			}
-			NDB_SAFE_PFREE_AND_NULL(entities);
+			NDB_FREE(entities);
 			entities = filtered;
 			n_entities = k;
 		}
@@ -719,7 +732,7 @@ neurondb_named_entity_recognition(PG_FUNCTION_ARGS)
 		else
 		{
 			if (funcctx->max_calls > 0 && funcctx->user_fctx)
-				NDB_SAFE_PFREE_AND_NULL(entities);
+				NDB_FREE(entities);
 			SRF_RETURN_DONE(funcctx);
 		}
 	}
@@ -743,6 +756,8 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 	int			len;
 	char		summary[MAX_SUMMARY];
 	int			i;
+	MemoryContext oldcontext;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	text_str = text_to_cstring(input_text);
 	len = (int) strlen(text_str);
@@ -791,29 +806,17 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 				send++;
 		}
 
-		if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-			if (ret != SPI_OK_CONNECT)
-			{
-				SPI_finish();
-				ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("neurondb: SPI_connect failed")));
-			}
-		{
-			for (s = 0; s < n_sentences; s++)
-				NDB_SAFE_PFREE_AND_NULL(sentence_ptrs[s]);
-			NDB_SAFE_PFREE_AND_NULL(method);
-			ereport(ERROR, (errmsg("SPI_connect failed")));
-		}
-		ret = ndb_spi_execute_safe("SELECT stopword FROM neurondb_summarizer_stopwords",
-								   true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		oldcontext = CurrentMemoryContext;
+
+		NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+		ret = ndb_spi_execute(spi_session, "SELECT stopword FROM neurondb_summarizer_stopwords", true, 0);
 		if (ret != SPI_OK_SELECT)
 		{
-			SPI_finish();
+			NDB_SPI_SESSION_END(spi_session);
 			for (s = 0; s < n_sentences; s++)
-				NDB_SAFE_PFREE_AND_NULL(sentence_ptrs[s]);
-			NDB_SAFE_PFREE_AND_NULL(method);
+				NDB_FREE(sentence_ptrs[s]);
+			NDB_FREE(method);
 			ereport(ERROR,
 					(errmsg("could not query stopword table")));
 		}
@@ -858,7 +861,7 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 					}
 					if (!is_stop)
 						scores[s]++;
-					NDB_SAFE_PFREE_AND_NULL(stoks[tokidx]);
+					NDB_FREE(stoks[tokidx]);
 				}
 			}
 
@@ -907,12 +910,12 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 				summary[0] = '\0';
 
 			for (i = 0; i < n_sentences; i++)
-				NDB_SAFE_PFREE_AND_NULL(sentence_ptrs[i]);
+				NDB_FREE(sentence_ptrs[i]);
 			for (i = 0; i < n_stopwords; i++)
-				NDB_SAFE_PFREE_AND_NULL(stopwords[i]);
-			NDB_SAFE_PFREE_AND_NULL(stopwords);
+				NDB_FREE(stopwords[i]);
+			NDB_FREE(stopwords);
 		}
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 	}
 	else
 	{
@@ -928,7 +931,7 @@ neurondb_text_summarize(PG_FUNCTION_ARGS)
 			summary[j - 1] = '\0';
 		strlcat(summary, " [abs]", sizeof(summary));
 	}
-	NDB_SAFE_PFREE_AND_NULL(method);
+	NDB_FREE(method);
 	PG_RETURN_TEXT_P(cstring_to_text(summary));
 }
 
@@ -969,7 +972,7 @@ text_model_serialize_to_bytea(int vocab_size, int feature_dim, const char *task_
 	NDB_CHECK_ALLOC(result, "result");
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -1043,7 +1046,7 @@ text_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 																	NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "task_type") == 0 && v.type == jbvString)
 					strncpy(task_type, v.val.string.val, sizeof(task_type) - 1);
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1074,7 +1077,7 @@ text_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 					 vocab_size, feature_dim, task_type, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+	NDB_FREE(metrics_json.data);
 
 	state = (TextGpuModelState *) palloc0(sizeof(TextGpuModelState));
 	NDB_CHECK_ALLOC(state, "state");
@@ -1086,7 +1089,7 @@ text_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 	strncpy(state->task_type, task_type, sizeof(state->task_type) - 1);
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1186,7 +1189,7 @@ text_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
 													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -1231,7 +1234,7 @@ text_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -1270,7 +1273,7 @@ text_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 
 	if (text_model_deserialize_from_bytea(payload_copy, &vocab_size, &feature_dim, task_type, sizeof(task_type)) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("text_gpu_deserialize: failed to deserialize");
 		return false;
@@ -1304,7 +1307,7 @@ text_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1314,7 +1317,7 @@ text_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1335,10 +1338,10 @@ text_gpu_destroy(MLGpuModel * model)
 	{
 		state = (TextGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->metrics);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

@@ -12,7 +12,7 @@
  * Based on the paper:
  * "Product Quantization for Nearest Neighbor Search" by Jégou et al. (2011)
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/index/ivf_am.c
@@ -45,6 +45,7 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Forward declarations for type conversion */
 extern float fp16_to_float(uint16 fp16);
@@ -494,7 +495,7 @@ ivfBuildCallback(Relation index,
 	}
 
 	buildstate->indtuples++;
-	NDB_SAFE_PFREE_AND_NULL(vectorData);
+	NDB_FREE(vectorData);
 }
 
 static IndexBuildResult *
@@ -646,7 +647,7 @@ ivfbuild(Relation heap, Relation index, struct IndexInfo *indexInfo)
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("ivf: failed to add centroid to page")));
 
-		NDB_SAFE_PFREE_AND_NULL(centroid);
+		NDB_FREE(centroid);
 	}
 
 	MarkBufferDirty(centroidsBuf);
@@ -732,7 +733,7 @@ ivfinsert(Relation index,
 		SET_VARSIZE(input_vec, VECTOR_SIZE(dim));
 		input_vec->dim = dim;
 		memcpy(input_vec->data, vectorData, dim * sizeof(float4));
-		NDB_SAFE_PFREE_AND_NULL(vectorData);
+		NDB_FREE(vectorData);
 	}
 
 	/*
@@ -1007,7 +1008,7 @@ ivfinsert(Relation index,
 									0,
 									false);
 
-			NDB_SAFE_PFREE_AND_NULL(entryData);
+			NDB_FREE(entryData);
 		}
 
 		if (newOffnum == InvalidOffsetNumber)
@@ -1050,7 +1051,7 @@ ivfinsert(Relation index,
 		 min_idx,
 		 min_dist);
 
-	NDB_SAFE_PFREE_AND_NULL(input_vec);
+	NDB_FREE(input_vec);
 	return true;
 }
 
@@ -1320,17 +1321,17 @@ ivfrescan(IndexScanDesc scan,
 	/* Free previous results */
 	if (so->results)
 	{
-		NDB_SAFE_PFREE_AND_NULL(so->results);
+		NDB_FREE(so->results);
 		so->results = NULL;
 	}
 	if (so->distances)
 	{
-		NDB_SAFE_PFREE_AND_NULL(so->distances);
+		NDB_FREE(so->distances);
 		so->distances = NULL;
 	}
 	if (so->selectedClusters)
 	{
-		NDB_SAFE_PFREE_AND_NULL(so->selectedClusters);
+		NDB_FREE(so->selectedClusters);
 		so->selectedClusters = NULL;
 	}
 
@@ -1382,12 +1383,12 @@ ivfrescan(IndexScanDesc scan,
 		if (vectorData != NULL)
 		{
 			if (so->queryVector)
-				NDB_SAFE_PFREE_AND_NULL(so->queryVector);
+				NDB_FREE(so->queryVector);
 			so->queryVector = (Vector *) palloc(VECTOR_SIZE(dim));
 			SET_VARSIZE(so->queryVector, VECTOR_SIZE(dim));
 			so->queryVector->dim = dim;
 			memcpy(so->queryVector->data, vectorData, dim * sizeof(float4));
-			NDB_SAFE_PFREE_AND_NULL(vectorData);
+			NDB_FREE(vectorData);
 		}
 
 		/*
@@ -1496,7 +1497,7 @@ ivfSelectClusters(Relation index,
 	if (PageIsNew(centroidsPage) || PageIsEmpty(centroidsPage))
 	{
 		UnlockReleaseBuffer(centroidsBuf);
-		NDB_SAFE_PFREE_AND_NULL(clusterDistances);
+		NDB_FREE(clusterDistances);
 		for (i = 0; i < nprobe; i++)
 			selectedClusters[i] = -1;
 		return;
@@ -1561,7 +1562,7 @@ ivfSelectClusters(Relation index,
 		selectedClusters[i] = bestIdx;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(clusterDistances);
+	NDB_FREE(clusterDistances);
 }
 
 /*
@@ -1739,7 +1740,7 @@ ivfCollectCandidates(Relation index,
 
 		*resultCount = actualK;
 
-		NDB_SAFE_PFREE_AND_NULL(indices);
+		NDB_FREE(indices);
 	}
 	else
 	{
@@ -1748,8 +1749,8 @@ ivfCollectCandidates(Relation index,
 		*resultCount = 0;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(candidates);
-	NDB_SAFE_PFREE_AND_NULL(candidateDistances);
+	NDB_FREE(candidates);
+	NDB_FREE(candidateDistances);
 }
 
 static bool
@@ -1877,15 +1878,15 @@ ivfendscan(IndexScanDesc scan)
 		return;
 
 	if (so->results)
-		NDB_SAFE_PFREE_AND_NULL(so->results);
+		NDB_FREE(so->results);
 	if (so->distances)
-		NDB_SAFE_PFREE_AND_NULL(so->distances);
+		NDB_FREE(so->distances);
 	if (so->selectedClusters)
-		NDB_SAFE_PFREE_AND_NULL(so->selectedClusters);
+		NDB_FREE(so->selectedClusters);
 	if (so->queryVector)
-		NDB_SAFE_PFREE_AND_NULL(so->queryVector);
+		NDB_FREE(so->queryVector);
 
-	NDB_SAFE_PFREE_AND_NULL(so);
+	NDB_FREE(so);
 	scan->opaque = NULL;
 }
 
@@ -2060,12 +2061,12 @@ kmeans_free(KMeansState * state)
 	int			i;
 
 	for (i = 0; i < state->k; i++)
-		NDB_SAFE_PFREE_AND_NULL(state->centroids[i]);
+		NDB_FREE(state->centroids[i]);
 
-	NDB_SAFE_PFREE_AND_NULL(state->centroids);
-	NDB_SAFE_PFREE_AND_NULL(state->assignments);
-	NDB_SAFE_PFREE_AND_NULL(state->counts);
-	NDB_SAFE_PFREE_AND_NULL(state);
+	NDB_FREE(state->centroids);
+	NDB_FREE(state->assignments);
+	NDB_FREE(state->counts);
+	NDB_FREE(state);
 }
 
 /*
@@ -2182,7 +2183,7 @@ ivfdelete(Relation index,
 			SET_VARSIZE(inputVec, VECTOR_SIZE(dim));
 			inputVec->dim = dim;
 			memcpy(inputVec->data, vectorData, dim * sizeof(float4));
-			NDB_SAFE_PFREE_AND_NULL(vectorData);
+			NDB_FREE(vectorData);
 		}
 	}
 
@@ -2379,7 +2380,7 @@ ivfdelete(Relation index,
 			UnlockReleaseBuffer(centroidsBuf);
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(inputVec);
+		NDB_FREE(inputVec);
 	}
 
 	/* Step 5: Update metadata */

@@ -6,7 +6,7 @@
  * Implements vectorp (packed SIMD), vecmap (sparse), rtext (retrievable
  * text), and vgraph (compact graph) data types with I/O functions.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/types_core.c
@@ -34,6 +34,7 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Forward declarations for vecmap distance functions */
 extern Datum vecmap_l2_distance(PG_FUNCTION_ARGS);
@@ -50,7 +51,7 @@ vectorp_in(PG_FUNCTION_ARGS)
 {
 	char	   *str = PG_GETARG_CSTRING(0);
 	VectorPacked *result;
-	float4	   *temp_data;
+	float4	   *temp_data = NULL;
 	int			dim;
 	int			capacity;
 	char	   *ptr;
@@ -68,7 +69,7 @@ vectorp_in(PG_FUNCTION_ARGS)
 	if (*ptr == '[')
 		ptr++;
 
-	temp_data = (float4 *) palloc(sizeof(float4) * capacity);
+	NDB_ALLOC(temp_data, float4, capacity);
 
 	while (*ptr && *ptr != ']')
 	{
@@ -81,6 +82,8 @@ vectorp_in(PG_FUNCTION_ARGS)
 		if (dim >= capacity)
 		{
 			capacity *= 2;
+			/* For reallocation, we need to manually handle since NDB_ALLOC doesn't support repalloc */
+			/* This is acceptable for dynamic growth patterns */
 			temp_data = (float4 *) repalloc(
 											temp_data, sizeof(float4) * capacity);
 		}
@@ -102,6 +105,8 @@ vectorp_in(PG_FUNCTION_ARGS)
 						"dimension")));
 
 	size = VECTORP_SIZE(dim);
+	/* Variable-length type requires custom size - use palloc0 but ensure proper cleanup */
+	/* Note: For variable-length PostgreSQL types, palloc0 is standard */
 	result = (VectorPacked *) palloc0(size);
 	SET_VARSIZE(result, size);
 
@@ -116,7 +121,7 @@ vectorp_in(PG_FUNCTION_ARGS)
 	result->flags = 0;
 
 	memcpy(result->data, temp_data, sizeof(float4) * dim);
-	NDB_SAFE_PFREE_AND_NULL(temp_data);
+	NDB_FREE(temp_data);
 
 	PG_RETURN_POINTER(result);
 }
@@ -221,8 +226,10 @@ vecmap_in(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("nnz cannot exceed dim")));
 
-	indices = (int32 *) palloc(sizeof(int32) * nnz);
-	values = (float4 *) palloc(sizeof(float4) * nnz);
+	indices = NULL;
+	values = NULL;
+	NDB_ALLOC(indices, int32, nnz);
+	NDB_ALLOC(values, float4, nnz);
 
 	/* Parse indices array */
 	while (isspace((unsigned char) *ptr) || *ptr == ',')
@@ -321,8 +328,8 @@ vecmap_in(PG_FUNCTION_ARGS)
 	memcpy(VECMAP_INDICES(result), indices, sizeof(int32) * nnz);
 	memcpy(VECMAP_VALUES(result), values, sizeof(float4) * nnz);
 
-	NDB_SAFE_PFREE_AND_NULL(indices);
-	NDB_SAFE_PFREE_AND_NULL(values);
+	NDB_FREE(indices);
+	NDB_FREE(values);
 
 	PG_RETURN_POINTER(result);
 }
@@ -407,8 +414,10 @@ sparsevec_in(PG_FUNCTION_ARGS)
 	ptr++;
 
 	capacity = 16;
-	indices = (int32 *) palloc(sizeof(int32) * capacity);
-	values = (float4 *) palloc(sizeof(float4) * capacity);
+	indices = NULL;
+	values = NULL;
+	NDB_ALLOC(indices, int32, capacity);
+	NDB_ALLOC(values, float4, capacity);
 
 	/* Parse entries */
 	while (*ptr && *ptr != '}')
@@ -513,8 +522,8 @@ sparsevec_in(PG_FUNCTION_ARGS)
 	memcpy(VECMAP_INDICES(result), indices, sizeof(int32) * nnz);
 	memcpy(VECMAP_VALUES(result), values, sizeof(float4) * nnz);
 
-	NDB_SAFE_PFREE_AND_NULL(indices);
-	NDB_SAFE_PFREE_AND_NULL(values);
+	NDB_FREE(indices);
+	NDB_FREE(values);
 
 	PG_RETURN_POINTER(result);
 }
@@ -878,9 +887,9 @@ Datum
 rtext_out(PG_FUNCTION_ARGS)
 {
 	RetrievableText *rt = (RetrievableText *) PG_GETARG_POINTER(0);
-	char	   *result;
+	char	   *result = NULL;
 
-	result = (char *) palloc(rt->text_len + 1);
+	NDB_ALLOC(result, char, rt->text_len + 1);
 	memcpy(result, RTEXT_DATA(rt), rt->text_len);
 	result[rt->text_len] = '\0';
 
@@ -941,7 +950,8 @@ vgraph_in(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 				 errmsg("vgraph must specify nodes")));
 
-	edges = (GraphEdge *) palloc(sizeof(GraphEdge) * edge_capacity);
+	edges = NULL;
+	NDB_ALLOC(edges, GraphEdge, edge_capacity);
 
 	/* Parse edges array */
 	while (isspace((unsigned char) *ptr) || *ptr == ',')
@@ -1068,7 +1078,7 @@ vgraph_in(PG_FUNCTION_ARGS)
 
 	memcpy(VGRAPH_EDGES(result), edges, sizeof(GraphEdge) * num_edges);
 
-	NDB_SAFE_PFREE_AND_NULL(edges);
+	NDB_FREE(edges);
 
 	PG_RETURN_POINTER(result);
 }
@@ -1178,12 +1188,17 @@ vector_compute_stats(VacAttrStats * stats, AnalyzeAttrFetchFunc fetchfunc, int s
 
 	sample_size = samplerows;
 
-	norms = (float *) palloc(sizeof(float) * sample_size);
+	NDB_ALLOC(norms, float, sample_size);
 	if (max_sample_dims > 0)
 	{
-		dim_means = (float *) palloc0(sizeof(float) * max_sample_dims);
-		dim_mins = (float *) palloc(sizeof(float) * max_sample_dims);
-		dim_maxs = (float *) palloc(sizeof(float) * max_sample_dims);
+		NDB_DECLARE(float *, dim_means);
+		NDB_DECLARE(float *, dim_mins);
+		NDB_DECLARE(float *, dim_maxs);
+		NDB_ALLOC(dim_means, float, max_sample_dims);
+		NDB_ALLOC(dim_mins, float, max_sample_dims);
+		NDB_ALLOC(dim_maxs, float, max_sample_dims);
+		/* Initialize dim_means to zero */
+		memset(dim_means, 0, sizeof(float) * max_sample_dims);
 		for (i = 0; i < max_sample_dims; i++)
 		{
 			dim_mins[i] = FLT_MAX;
@@ -1267,13 +1282,13 @@ vector_compute_stats(VacAttrStats * stats, AnalyzeAttrFetchFunc fetchfunc, int s
 	}
 
 	if (norms)
-		NDB_SAFE_PFREE_AND_NULL(norms);
+		NDB_FREE(norms);
 	if (dim_means)
-		NDB_SAFE_PFREE_AND_NULL(dim_means);
+		NDB_FREE(dim_means);
 	if (dim_mins)
-		NDB_SAFE_PFREE_AND_NULL(dim_mins);
+		NDB_FREE(dim_mins);
 	if (dim_maxs)
-		NDB_SAFE_PFREE_AND_NULL(dim_maxs);
+		NDB_FREE(dim_maxs);
 }
 
 /*

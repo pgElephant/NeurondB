@@ -1,11 +1,16 @@
-/*
- * gpu_metal.c
- *     Metal backend C wrapper for NeurondB
+/*-------------------------------------------------------------------------
  *
- * This file provides PostgreSQL integration for Metal GPU operations.
- * The actual Objective-C implementation is in gpu_metal_impl.m
+ * gpu_metal.c
+ *    Backend C wrapper.
+ *
+ * This module provides PostgreSQL integration for backend operations.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/metal/gpu_metal.c
+ *
+ *-------------------------------------------------------------------------
  */
 
 #include "postgres.h"

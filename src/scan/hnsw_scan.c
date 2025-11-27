@@ -9,7 +9,7 @@
  * - Result set pruning with ef_search
  * - Distance computation caching
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/scan/hnsw_scan.c
@@ -31,6 +31,7 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* HNSW node structure (from hnsw_am.c) */
 #define HNSW_MAX_LEVEL 16
@@ -181,10 +182,10 @@ hnswInitSearchState(const float4 * query, int dim, int efSearch, int k)
 static void
 hnswFreeSearchState(HnswSearchState * state)
 {
-	NDB_SAFE_PFREE_AND_NULL(state->candidates);
-	NDB_SAFE_PFREE_AND_NULL(state->visited);
-	NDB_SAFE_PFREE_AND_NULL(state->results);
-	NDB_SAFE_PFREE_AND_NULL(state);
+	NDB_FREE(state->candidates);
+	NDB_FREE(state->visited);
+	NDB_FREE(state->results);
+	NDB_FREE(state);
 }
 
 /*

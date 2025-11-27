@@ -5,7 +5,7 @@
  * Provides delta encoding and compression for vector updates in WAL
  * to reduce replication bandwidth and storage overhead.
  *
- * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  */
 
 #include "postgres.h"
@@ -13,6 +13,8 @@
 #include "fmgr.h"
 #include "utils/builtins.h"
 #include "lib/stringinfo.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 /*
  * vector_wal_compress: Compress a vector using delta encoding

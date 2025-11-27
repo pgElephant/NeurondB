@@ -26,9 +26,10 @@
 #include "neurondb_llm.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 /*
- * Submits a new LLM job to the neurondb.neurondb_llm_jobs table.
+ * Submits a new LLM job to the neurondb.llm_jobs table.
  * Returns the id of the new job.
  * Job type is a string (non-empty), payload is a valid JSON string (non-NULL).
  */
@@ -39,7 +40,7 @@ ndb_llm_job_enqueue(const char *job_type, const char *payload)
 	StringInfoData query;
 	Oid			argtypes[2] = {TEXTOID, JSONBOID};
 	Datum		values[2];
-	int			spi_rc;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	/* Validate inputs */
 	if (!job_type || strlen(job_type) == 0)
@@ -47,12 +48,10 @@ ndb_llm_job_enqueue(const char *job_type, const char *payload)
 	if (!payload || strlen(payload) == 0)
 		ereport(ERROR,
 				(errmsg("Payload JSON must not be NULL or empty")));
-
-	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
-				(errmsg("Failed to connect SPI for llm job enqueue, "
-						"rc=%d",
-						spi_rc)));
+				(errmsg("Failed to begin SPI session for llm job enqueue")));
 
 	initStringInfo(&query);
 
@@ -61,7 +60,7 @@ ndb_llm_job_enqueue(const char *job_type, const char *payload)
 	 * SQL function takes text input.
 	 */
 	appendStringInfo(&query,
-					 "INSERT INTO neurondb.neurondb_llm_jobs (operation, "
+					 "INSERT INTO neurondb.llm_jobs (operation, "
 					 "input_text, status, model_name, created_at) "
 					 "VALUES ($1, $2, 'queued', 'default', now()) "
 					 "RETURNING job_id");
@@ -83,7 +82,7 @@ ndb_llm_job_enqueue(const char *job_type, const char *payload)
 		values[1] = jsonb_val;
 	}
 
-	if (SPI_execute_with_args(
+	if (ndb_spi_execute_with_args(session,
 							  query.data, 2, argtypes, values, NULL, false, 1)
 		== SPI_OK_INSERT_RETURNING
 		&& SPI_processed == 1)
@@ -95,17 +94,24 @@ ndb_llm_job_enqueue(const char *job_type, const char *payload)
 											 1,
 											 &isnull));
 		if (isnull)
+		{
+			NDB_FREE(query.data);
+			ndb_spi_session_end(&session);
 			ereport(ERROR,
 					(errmsg("Job ID returned as NULL after "
 							"insert")));
+		}
 	}
 	else
 	{
+		NDB_FREE(query.data);
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 				(errmsg("Failed to insert llm job: %s", query.data)));
 	}
 
-	SPI_finish();
+	NDB_FREE(query.data);
+	ndb_spi_session_end(&session);
 	return job_id;
 }
 
@@ -120,19 +126,17 @@ ndb_llm_job_acquire(int *job_id, char **job_type, char **payload)
 {
 	bool		found = false;
 	StringInfoData query;
-	int			spi_rc;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	/* Must be called within an active transaction */
 	if (!IsTransactionState())
 		ereport(ERROR,
 				(errmsg("ndb_llm_job_acquire must be called within a "
 						"transaction")));
-
-	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
-				(errmsg("Failed to connect SPI for llm job acquire, "
-						"rc=%d",
-						spi_rc)));
+				(errmsg("Failed to begin SPI session for llm job acquire")));
 
 	/*
 	 * Claim a pending job atomically using UPDATE ... FROM+subquery FOR
@@ -142,10 +146,10 @@ ndb_llm_job_acquire(int *job_id, char **job_type, char **payload)
 	 */
 	initStringInfo(&query);
 	appendStringInfoString(&query,
-						   "UPDATE neurondb.neurondb_llm_jobs "
+						   "UPDATE neurondb.llm_jobs "
 						   "SET status = 'processing', started_at = now() "
 						   "WHERE job_id = ("
-						   "SELECT job_id FROM neurondb.neurondb_llm_jobs "
+						   "SELECT job_id FROM neurondb.llm_jobs "
 						   "WHERE status = 'queued' "
 						   "ORDER BY created_at ASC "
 						   "FOR UPDATE SKIP LOCKED "
@@ -153,10 +157,9 @@ ndb_llm_job_acquire(int *job_id, char **job_type, char **payload)
 						   ") "
 						   "RETURNING job_id, operation, input_text");
 
-	if (ndb_spi_execute_safe(query.data, false, 1) == SPI_OK_UPDATE_RETURNING
+	if (ndb_spi_execute(session, query.data, false, 1) == SPI_OK_UPDATE_RETURNING
 		&& SPI_processed > 0)
 	{
-		NDB_CHECK_SPI_TUPTABLE();
 		{
 			bool		isnull0 = true;
 			bool		isnull1 = true;
@@ -181,7 +184,8 @@ ndb_llm_job_acquire(int *job_id, char **job_type, char **payload)
 		}
 	}
 
-	SPI_finish();
+	NDB_FREE(query.data);
+	ndb_spi_session_end(&session);
 	return found;
 }
 
@@ -201,8 +205,8 @@ ndb_llm_job_update(int job_id,
 	StringInfoData query;
 	Oid			argtypes[4] = {INT8OID, TEXTOID, TEXTOID, TEXTOID};
 	Datum		values[4];
-	int			spi_rc;
 	bool		ok = false;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	if (job_id <= 0)
 		ereport(ERROR,
@@ -211,16 +215,14 @@ ndb_llm_job_update(int job_id,
 		ereport(ERROR,
 				(errmsg("Status for job update cannot be NULL or "
 						"empty")));
-
-	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
-				(errmsg("Failed to connect SPI for llm job update, "
-						"rc=%d",
-						spi_rc)));
+				(errmsg("Failed to begin SPI session for llm job update")));
 
 	initStringInfo(&query);
 	appendStringInfoString(&query,
-						   "UPDATE neurondb.neurondb_llm_jobs "
+						   "UPDATE neurondb.llm_jobs "
 						   "SET status = $2, result = $3, error = $4, finished_at = now() "
 						   "WHERE id = $1");
 
@@ -243,7 +245,7 @@ ndb_llm_job_update(int job_id,
 		if (!error || strlen(error) == 0)
 			nulls[3] = 'n';
 
-		if (SPI_execute_with_args(
+		if (ndb_spi_execute_with_args(session,
 								  query.data, 4, argtypes, values, nulls, false, 0)
 			== SPI_OK_UPDATE)
 		{
@@ -251,7 +253,8 @@ ndb_llm_job_update(int job_id,
 				ok = true;
 		}
 	}
-	SPI_finish();
+	NDB_FREE(query.data);
+	ndb_spi_session_end(&session);
 	return ok;
 }
 
@@ -264,31 +267,30 @@ ndb_llm_job_prune(int max_age_days)
 {
 	int			deleted = 0;
 	StringInfoData query;
-	int			ret;
 	int			days;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	days = (max_age_days > 0) ? max_age_days : 7;
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
-				(errmsg("Failed to connect SPI for llm job prune, "
-						"rc=%d",
-						ret)));
+				(errmsg("Failed to begin SPI session for llm job prune")));
 
 	initStringInfo(&query);
 	appendStringInfo(&query,
-					 "DELETE FROM neurondb.neurondb_llm_jobs "
+					 "DELETE FROM neurondb.llm_jobs "
 					 "WHERE (status = 'done' OR status = 'failed') "
 					 "AND completed_at IS NOT NULL "
 					 "AND completed_at < now() - interval '%d days'",
 					 days);
 
-	if (ndb_spi_execute_safe(query.data, false, 0) == SPI_OK_DELETE)
+	if (ndb_spi_execute(session, query.data, false, 0) == SPI_OK_DELETE)
 	{
-		NDB_CHECK_SPI_TUPTABLE();
 		deleted = SPI_processed;
 	}
 
-	SPI_finish();
+	NDB_FREE(query.data);
+	ndb_spi_session_end(&session);
 	return deleted;
 }
 
@@ -303,26 +305,24 @@ ndb_llm_job_count_status(const char *status)
 	StringInfoData query;
 	Oid			argtypes[1] = {TEXTOID};
 	Datum		values[1];
-	int			spi_rc;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	if (!status || strlen(status) == 0)
 		ereport(ERROR,
 				(errmsg("Job status cannot be NULL or empty for "
 						"count")));
-
-	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
-				(errmsg("Failed to connect SPI for llm job count, "
-						"rc=%d",
-						spi_rc)));
+				(errmsg("Failed to begin SPI session for llm job count")));
 
 	initStringInfo(&query);
 	appendStringInfoString(&query,
-						   "SELECT count(*) FROM neurondb.neurondb_llm_jobs WHERE status "
+						   "SELECT count(*) FROM neurondb.llm_jobs WHERE status "
 						   "= $1");
 	values[0] = CStringGetTextDatum(status);
 
-	if (SPI_execute_with_args(
+	if (ndb_spi_execute_with_args(session,
 							  query.data, 1, argtypes, values, NULL, false, 1)
 		== SPI_OK_SELECT
 		&& SPI_processed == 1)
@@ -336,7 +336,8 @@ ndb_llm_job_count_status(const char *status)
 		if (isnull)
 			count = 0;
 	}
-	SPI_finish();
+	NDB_FREE(query.data);
+	ndb_spi_session_end(&session);
 	return count;
 }
 
@@ -352,20 +353,19 @@ ndb_llm_job_retry_failed(int max_retries)
 	StringInfoData query;
 	Oid			argtypes[1] = {INT4OID};
 	Datum		values[1];
-	int			spi_rc;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	if (max_retries < 1)
 		ereport(ERROR, (errmsg("max_retries must be >= 1")));
-
-	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
-				(errmsg("Failed to connect SPI for llm job "
-						"retry_failed, rc=%d",
-						spi_rc)));
+				(errmsg("Failed to begin SPI session for llm job "
+						"retry_failed")));
 
 	initStringInfo(&query);
 	appendStringInfoString(&query,
-						   "UPDATE neurondb.neurondb_llm_jobs "
+						   "UPDATE neurondb.llm_jobs "
 						   "SET status = 'queued', retry_count = COALESCE(retry_count, 0) "
 						   "+ 1, "
 						   "error = NULL, result = NULL, started_at = NULL, finished_at = "
@@ -375,12 +375,13 @@ ndb_llm_job_retry_failed(int max_retries)
 
 	values[0] = Int32GetDatum(max_retries);
 
-	if (SPI_execute_with_args(
+	if (ndb_spi_execute_with_args(session,
 							  query.data, 1, argtypes, values, NULL, false, 0)
 		== SPI_OK_UPDATE)
 		retried = SPI_processed;
 
-	SPI_finish();
+	NDB_FREE(query.data);
+	ndb_spi_session_end(&session);
 	return retried;
 }
 
@@ -393,25 +394,25 @@ void
 ndb_llm_job_clear(void)
 {
 	StringInfoData query;
-	int			spi_rc;
 
-	if ((spi_rc = SPI_connect()) != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
-				(errmsg("Failed to connect SPI for llm job clear, "
-						"rc=%d",
-						spi_rc)));
+				(errmsg("Failed to begin SPI session for llm job clear")));
 
 	initStringInfo(&query);
 	appendStringInfoString(&query,
-						   "TRUNCATE TABLE neurondb.neurondb_llm_jobs RESTART IDENTITY "
+						   "TRUNCATE TABLE neurondb.llm_jobs RESTART IDENTITY "
 						   "CASCADE");
 
-	if (ndb_spi_execute_safe(query.data, false, 0) != SPI_OK_UTILITY)
+	if (ndb_spi_execute(session, query.data, false, 0) != SPI_OK_UTILITY)
 	{
-		NDB_CHECK_SPI_TUPTABLE();
-		SPI_finish();
+		NDB_FREE(query.data);
+		ndb_spi_session_end(&session);
 		ereport(ERROR, (errmsg("Failed to truncate llm jobs table")));
 	}
 
-	SPI_finish();
+	NDB_FREE(query.data);
+	ndb_spi_session_end(&session);
 }

@@ -6,7 +6,7 @@
  * This file implements user-friendly syntax for NeuronDB operations
  * including model management, index creation, and configuration display.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/usability.c
@@ -19,6 +19,8 @@
 #include "fmgr.h"
 #include "utils/builtins.h"
 #include "executor/spi.h"
+#include "neurondb_spi.h"
+#include "neurondb_macros.h"
 
 /*
  * CREATE MODEL wrapper
@@ -45,15 +47,17 @@ create_model(PG_FUNCTION_ARGS)
 		 type_str);
 
 	/* Store model metadata in system catalog */
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed in "
+				 errmsg("neurondb: failed to begin SPI session in "
 						"create_model")));
 
 	/* INSERT INTO neurondb_models (name, type, config) VALUES (...) */
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_BOOL(true);
 }
@@ -77,15 +81,17 @@ drop_model(PG_FUNCTION_ARGS)
 	(void) name_str;
 
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session2);
+	session2 = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session2 == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed in "
+				 errmsg("neurondb: failed to begin SPI session in "
 						"drop_model")));
 
 	/* DELETE FROM neurondb_models WHERE name = ... */
 
-	SPI_finish();
+	ndb_spi_session_end(&session2);
 
 	PG_RETURN_BOOL(true);
 }
@@ -137,9 +143,9 @@ explain_vector_query(PG_FUNCTION_ARGS)
 	query_str = text_to_cstring(query);
 	(void) query_str;
 
-	elog(INFO, "neurondb: query plan: ANN index scan expected");
-	elog(INFO, "neurondb: estimated recall: 0.95");
-	elog(INFO, "neurondb: cache hits expected: high");
+	elog(DEBUG1, "neurondb: query plan: ANN index scan expected");
+	elog(DEBUG1, "neurondb: estimated recall: 0.95");
+	elog(DEBUG1, "neurondb: cache hits expected: high");
 
 	PG_RETURN_TEXT_P(cstring_to_text("Vector query plan generated"));
 }

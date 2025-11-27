@@ -1,15 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * ml_timeseries.c
- *    Time Series Analysis and Forecasting for NeuronDB
+ *    Time series analysis and forecasting.
  *
- * Implements ARIMA, exponential smoothing, and trend analysis.
- * Supports univariate and multivariate time series.
+ * This module implements ARIMA, exponential smoothing, and trend analysis
+ * for univariate and multivariate time series.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_timeseries.c
  *
- * Copyright (c) 2024-2025, pgElephant, Inc.
  *-------------------------------------------------------------------------
  */
 
@@ -26,6 +27,9 @@
 #include "neurondb_pgcompat.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 #include <math.h>
 #include <string.h>
@@ -131,7 +135,7 @@ compute_differences(const float *data, int n, int order, int *out_n)
 		new_diff = (float *) palloc(sizeof(float) * new_n);
 		for (i = 0; i < new_n; i++)
 			new_diff[i] = diff[i + 1] - diff[i];
-		NDB_SAFE_PFREE_AND_NULL(diff);
+		NDB_FREE(diff);
 		diff = new_diff;
 		curr_n = new_n;
 	}
@@ -285,9 +289,9 @@ fit_arima(const float *data, int n, int p, int d, int q)
 					a[i] = sum / L[i][i];
 				}
 				for (i = 0; i < p; i++)
-					NDB_SAFE_PFREE_AND_NULL(L[i]);
-				NDB_SAFE_PFREE_AND_NULL(L);
-				NDB_SAFE_PFREE_AND_NULL(y);
+					NDB_FREE(L[i]);
+				NDB_FREE(L);
+				NDB_FREE(y);
 			}
 		}
 		model->ar_coeffs = (float *) palloc(sizeof(float) * p);
@@ -295,11 +299,11 @@ fit_arima(const float *data, int n, int p, int d, int q)
 			model->ar_coeffs[i] = a[i];
 
 		for (i = 0; i < p; i++)
-			NDB_SAFE_PFREE_AND_NULL(R[i]);
-		NDB_SAFE_PFREE_AND_NULL(R);
-		NDB_SAFE_PFREE_AND_NULL(a);
-		NDB_SAFE_PFREE_AND_NULL(right);
-		NDB_SAFE_PFREE_AND_NULL(autocorr);
+			NDB_FREE(R[i]);
+		NDB_FREE(R);
+		NDB_FREE(a);
+		NDB_FREE(right);
+		NDB_FREE(autocorr);
 	}
 	else
 		model->ar_coeffs = NULL;
@@ -337,7 +341,7 @@ fit_arima(const float *data, int n, int p, int d, int q)
 			model->residuals[i] = diff_data[i] - model->intercept;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(diff_data);
+	NDB_FREE(diff_data);
 
 	return model;
 }
@@ -397,7 +401,7 @@ arima_forecast(const TimeSeriesModel * model,
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(history);
+	NDB_FREE(history);
 }
 
 PG_FUNCTION_INFO_V1(train_arima);
@@ -423,6 +427,8 @@ train_arima(PG_FUNCTION_ARGS)
 	TupleDesc	tupdesc;
 	float	   *values = NULL;
 	TimeSeriesModel *model = NULL;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	if (p < 0 || p > MAX_ARIMA_ORDER_P)
 		ereport(ERROR,
@@ -440,22 +446,32 @@ train_arima(PG_FUNCTION_ARGS)
 				 errmsg("q must be between 0 and %d",
 						MAX_ARIMA_ORDER_Q)));
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+	oldcontext = CurrentMemoryContext;
 
-	initStringInfo(&sql);
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 					 "SELECT %s FROM %s ORDER BY %s",
 					 quote_identifier(value_col_str),
 					 quote_identifier(table_name_str),
 					 quote_identifier(time_col_str));
 
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
+	{
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
+		if (table_name_str)
+			NDB_FREE(table_name_str);
+		if (time_col_str)
+			NDB_FREE(time_col_str);
+		if (value_col_str)
+			NDB_FREE(value_col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("failed to execute time series query")));
+	}
 
 	tuptable = SPI_tuptable;
 	tupdesc = tuptable->tupdesc;
@@ -463,13 +479,14 @@ train_arima(PG_FUNCTION_ARGS)
 
 	if (n_samples < MIN_ARIMA_OBSERVATIONS)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (time_col_str)
-			NDB_SAFE_PFREE_AND_NULL(time_col_str);
+			NDB_FREE(time_col_str);
 		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
+			NDB_FREE(value_col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("at least %d observations are required for ARIMA",
@@ -487,14 +504,15 @@ train_arima(PG_FUNCTION_ARGS)
 		if (isnull)
 		{
 			if (values)
-				NDB_SAFE_PFREE_AND_NULL(values);
-			SPI_finish();
+				NDB_FREE(values);
+			ndb_spi_stringinfo_free(spi_session, &sql);
+			NDB_SPI_SESSION_END(spi_session);
 			if (table_name_str)
-				NDB_SAFE_PFREE_AND_NULL(table_name_str);
+				NDB_FREE(table_name_str);
 			if (time_col_str)
-				NDB_SAFE_PFREE_AND_NULL(time_col_str);
+				NDB_FREE(time_col_str);
 			if (value_col_str)
-				NDB_SAFE_PFREE_AND_NULL(value_col_str);
+				NDB_FREE(value_col_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("time series cannot contain "
@@ -507,15 +525,16 @@ train_arima(PG_FUNCTION_ARGS)
 
 	if (!model)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		if (values)
-			NDB_SAFE_PFREE_AND_NULL(values);
+			NDB_FREE(values);
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (time_col_str)
-			NDB_SAFE_PFREE_AND_NULL(time_col_str);
+			NDB_FREE(time_col_str);
 		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
+			NDB_FREE(value_col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("ARIMA model fitting failed")));
@@ -556,80 +575,87 @@ train_arima(PG_FUNCTION_ARGS)
 
 		/* Insert model */
 		appendStringInfo(&insert_sql,
-						 "INSERT INTO neurondb.neurondb_arima_models (p, d, q, intercept, ar_coeffs, ma_coeffs) "
+						 "INSERT INTO neurondb.arima_models (p, d, q, intercept, ar_coeffs, ma_coeffs) "
 						 "VALUES (%d, %d, %d, %.10f, %s, %s) RETURNING model_id",
 						 p, d, q, (double) model->intercept,
 						 ar_array ? DatumGetCString(DirectFunctionCall1(array_out, PointerGetDatum(ar_array))) : "NULL",
 						 ma_array ? DatumGetCString(DirectFunctionCall1(array_out, PointerGetDatum(ma_array))) : "NULL");
 
-		ret2 = ndb_spi_execute_safe(insert_sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret2 = ndb_spi_execute(spi_session, insert_sql.data, true, 1);
 		if (ret2 != SPI_OK_INSERT || SPI_processed != 1)
 		{
-			SPI_finish();
+			ndb_spi_stringinfo_free(spi_session, &sql);
+			NDB_SPI_SESSION_END(spi_session);
 			if (values)
-				NDB_SAFE_PFREE_AND_NULL(values);
+				NDB_FREE(values);
 			if (table_name_str)
-				NDB_SAFE_PFREE_AND_NULL(table_name_str);
+				NDB_FREE(table_name_str);
 			if (time_col_str)
-				NDB_SAFE_PFREE_AND_NULL(time_col_str);
+				NDB_FREE(time_col_str);
 			if (value_col_str)
-				NDB_SAFE_PFREE_AND_NULL(value_col_str);
+				NDB_FREE(value_col_str);
 			if (model->ar_coeffs)
-				NDB_SAFE_PFREE_AND_NULL(model->ar_coeffs);
+				NDB_FREE(model->ar_coeffs);
 			if (model->ma_coeffs)
-				NDB_SAFE_PFREE_AND_NULL(model->ma_coeffs);
+				NDB_FREE(model->ma_coeffs);
 			if (model->residuals)
-				NDB_SAFE_PFREE_AND_NULL(model->residuals);
-			NDB_SAFE_PFREE_AND_NULL(model);
+				NDB_FREE(model->residuals);
+			NDB_FREE(model);
 			if (ar_datums)
-				NDB_SAFE_PFREE_AND_NULL(ar_datums);
+				NDB_FREE(ar_datums);
 			if (ma_datums)
-				NDB_SAFE_PFREE_AND_NULL(ma_datums);
-			NDB_SAFE_PFREE_AND_NULL(insert_sql.data);
+				NDB_FREE(ma_datums);
+			NDB_FREE(insert_sql.data);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("failed to save ARIMA model")));
 		}
 
-		model_id = DatumGetInt32(SPI_getbinval(
-											   SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, NULL));
+		/* Get model_id using safe function */
+		int32		model_id_val = 0;
+		if (!ndb_spi_get_int32(spi_session, 0, 1, &model_id_val))
+		{
+			NDB_SPI_SESSION_END(spi_session);
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("failed to get model_id from result")));
+		}
+		model_id = model_id_val;
 
 		/* Save history */
 		for (i = 0; i < n_samples; i++)
 		{
-			NDB_SAFE_PFREE_AND_NULL(insert_sql.data);
+			NDB_FREE(insert_sql.data);
 			initStringInfo(&insert_sql);
 			appendStringInfo(&insert_sql,
-							 "INSERT INTO neurondb.neurondb_arima_history (model_id, observed) VALUES (%d, %.10f)",
+							 "INSERT INTO neurondb.arima_history (model_id, observed) VALUES (%d, %.10f)",
 							 model_id, (double) values[i]);
-			ndb_spi_execute_safe(insert_sql.data, true, 0);
-			NDB_CHECK_SPI_TUPTABLE();
+			ndb_spi_execute(spi_session, insert_sql.data, true, 0);
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(insert_sql.data);
+		NDB_FREE(insert_sql.data);
 		if (ar_datums)
-			NDB_SAFE_PFREE_AND_NULL(ar_datums);
+			NDB_FREE(ar_datums);
 		if (ma_datums)
-			NDB_SAFE_PFREE_AND_NULL(ma_datums);
-
-		SPI_finish();
+			NDB_FREE(ma_datums);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 
 		if (values)
-			NDB_SAFE_PFREE_AND_NULL(values);
+			NDB_FREE(values);
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (time_col_str)
-			NDB_SAFE_PFREE_AND_NULL(time_col_str);
+			NDB_FREE(time_col_str);
 		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
+			NDB_FREE(value_col_str);
 		if (model->ar_coeffs)
-			NDB_SAFE_PFREE_AND_NULL(model->ar_coeffs);
+			NDB_FREE(model->ar_coeffs);
 		if (model->ma_coeffs)
-			NDB_SAFE_PFREE_AND_NULL(model->ma_coeffs);
+			NDB_FREE(model->ma_coeffs);
 		if (model->residuals)
-			NDB_SAFE_PFREE_AND_NULL(model->residuals);
-		NDB_SAFE_PFREE_AND_NULL(model);
+			NDB_FREE(model->residuals);
+		NDB_FREE(model);
 
 		PG_RETURN_INT32(model_id);
 	}
@@ -663,6 +689,8 @@ forecast_arima(PG_FUNCTION_ARGS)
 	float	   *forecast = NULL;
 	Datum	   *outdatums = NULL;
 	ArrayType  *arr = NULL;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	if (n_ahead < 1 || n_ahead > MAX_FORECAST_AHEAD)
 		ereport(ERROR,
@@ -670,19 +698,20 @@ forecast_arima(PG_FUNCTION_ARGS)
 				 errmsg("n_ahead must be between 1 and %d",
 						MAX_FORECAST_AHEAD)));
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+	oldcontext = CurrentMemoryContext;
 
-	initStringInfo(&sql);
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
-					 "SELECT p, d, q, intercept, ar_coeffs, ma_coeffs FROM neurondb.neurondb_arima_models WHERE model_id = %d",
+					 "SELECT p, d, q, intercept, ar_coeffs, ma_coeffs FROM neurondb.arima_models WHERE model_id = %d",
 					 model_id);
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 1);
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("model_id %d not found in neurondb_arima_models",
@@ -693,16 +722,55 @@ forecast_arima(PG_FUNCTION_ARGS)
 		TupleDesc	modeldesc;
 		bool		isnull;
 
+		/* Safe access for complex types - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			SPI_processed == 0 || SPI_tuptable->vals[0] == NULL || SPI_tuptable->tupdesc == NULL)
+		{
+			NDB_SPI_SESSION_END(spi_session);
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("ARIMA model result is invalid")));
+		}
 		modeltuple = SPI_tuptable->vals[0];
 		modeldesc = SPI_tuptable->tupdesc;
-		p = DatumGetInt32(
-						  SPI_getbinval(modeltuple, modeldesc, 1, &isnull));
-		d = DatumGetInt32(
-						  SPI_getbinval(modeltuple, modeldesc, 2, &isnull));
-		q = DatumGetInt32(
-						  SPI_getbinval(modeltuple, modeldesc, 3, &isnull));
-		intercept = DatumGetFloat8(
-								   SPI_getbinval(modeltuple, modeldesc, 4, &isnull));
+		
+		/* Get int32 values using safe function */
+		int32		p_val = 0, d_val = 0, q_val = 0;
+		bool		p_isnull = false, d_isnull = false, q_isnull = false;
+		
+		if (!ndb_spi_get_int32(spi_session, 0, 1, &p_val))
+			p_isnull = true;
+		else
+			p = p_val;
+		if (!ndb_spi_get_int32(spi_session, 0, 2, &d_val))
+			d_isnull = true;
+		else
+			d = d_val;
+		if (!ndb_spi_get_int32(spi_session, 0, 3, &q_val))
+			q_isnull = true;
+		else
+			q = q_val;
+		
+		isnull = (p_isnull || d_isnull || q_isnull);
+		
+		/* For float8, need to use SPI_getbinval with safe access */
+		{
+			Datum		intercept_datum;
+			bool		intercept_isnull;
+			
+			if (modeldesc->natts >= 4)
+			{
+				intercept_datum = SPI_getbinval(modeltuple, modeldesc, 4, &intercept_isnull);
+				if (!intercept_isnull)
+					intercept = DatumGetFloat8(intercept_datum);
+				else
+					intercept = 0.0;
+			}
+			else
+			{
+				intercept = 0.0;
+			}
+		}
 		ar_coeffs_arr = DatumGetArrayTypeP(
 										   SPI_getbinval(modeltuple, modeldesc, 5, &isnull));
 		ma_coeffs_arr = DatumGetArrayTypeP(
@@ -757,18 +825,18 @@ forecast_arima(PG_FUNCTION_ARGS)
 
 	resetStringInfo(&sql);
 	appendStringInfo(&sql,
-					 "SELECT observed FROM neurondb.neurondb_arima_history WHERE model_id = %d ORDER BY observed_id DESC LIMIT 1",
+					 "SELECT observed FROM neurondb.arima_history WHERE model_id = %d ORDER BY observed_id DESC LIMIT 1",
 					 model_id);
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 1);
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
 		if (ar_coeffs)
-			NDB_SAFE_PFREE_AND_NULL(ar_coeffs);
+			NDB_FREE(ar_coeffs);
 		if (ma_coeffs)
-			NDB_SAFE_PFREE_AND_NULL(ma_coeffs);
-		SPI_finish();
+			NDB_FREE(ma_coeffs);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("recent observed values for model_id %d not found",
@@ -826,17 +894,18 @@ forecast_arima(PG_FUNCTION_ARGS)
 						  TYPALIGN_DOUBLE);
 
 	if (ar_coeffs)
-		NDB_SAFE_PFREE_AND_NULL(ar_coeffs);
+		NDB_FREE(ar_coeffs);
 	if (ma_coeffs)
-		NDB_SAFE_PFREE_AND_NULL(ma_coeffs);
+		NDB_FREE(ma_coeffs);
 	if (last_values)
-		NDB_SAFE_PFREE_AND_NULL(last_values);
+		NDB_FREE(last_values);
 	if (forecast)
-		NDB_SAFE_PFREE_AND_NULL(forecast);
+		NDB_FREE(forecast);
 	if (outdatums)
-		NDB_SAFE_PFREE_AND_NULL(outdatums);
+		NDB_FREE(outdatums);
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_ARRAYTYPE_P(arr);
 }
@@ -878,6 +947,7 @@ evaluate_arima_by_model_id(PG_FUNCTION_ARGS)
 	float		actual_value = 0.0f;
 	float		forecast_value = 0.0f;
 	float		error = 0.0f;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	/* Validate arguments */
 	if (PG_NARGS() != 5)
@@ -920,38 +990,35 @@ evaluate_arima_by_model_id(PG_FUNCTION_ARGS)
 	oldcontext = CurrentMemoryContext;
 
 	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		if (ret != SPI_OK_CONNECT)
-		{
-			SPI_finish();
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("neurondb: SPI_connect failed")));
-		}
-	ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-			 errmsg("neurondb: evaluate_arima_by_model_id: SPI_connect failed")));
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Build query to get time series data ordered by time */
-	initStringInfo(&query);
+	ndb_spi_stringinfo_init(spi_session, &query);
 	appendStringInfo(&query,
 					 "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL ORDER BY %s",
 					 time_str, value_str, tbl_str, time_str, value_str, time_str);
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
+	{
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(time_str);
+		NDB_FREE(value_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: evaluate_arima_by_model_id: query failed")));
+	}
 
 	n_points = SPI_processed;
 	if (n_points < MIN_ARIMA_OBSERVATIONS + forecast_horizon)
 	{
-		SPI_finish();
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(time_str);
-		NDB_SAFE_PFREE_AND_NULL(value_str);
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(time_str);
+		NDB_FREE(value_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_arima_by_model_id: need at least %d observations for evaluation with horizon %d, got %d",
@@ -992,13 +1059,14 @@ evaluate_arima_by_model_id(PG_FUNCTION_ARGS)
 		valid_predictions++;
 	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_SPI_SESSION_END(spi_session);
 
 	if (valid_predictions == 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(time_str);
-		NDB_SAFE_PFREE_AND_NULL(value_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(time_str);
+		NDB_FREE(value_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_arima_by_model_id: no valid predictions could be made")));
@@ -1015,13 +1083,13 @@ evaluate_arima_by_model_id(PG_FUNCTION_ARGS)
 					 "{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"n_predictions\":%d,\"forecast_horizon\":%d}",
 					 mse, mae, rmse, valid_predictions, forecast_horizon);
 
-	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+	NDB_FREE(jsonbuf.data);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(time_str);
-	NDB_SAFE_PFREE_AND_NULL(value_str);
+	NDB_FREE(tbl_str);
+	NDB_FREE(time_str);
+	NDB_FREE(value_str);
 
 	PG_RETURN_JSONB_P(result);
 }
@@ -1055,27 +1123,29 @@ detect_anomalies(PG_FUNCTION_ARGS)
 				sum = 0.0f,
 				sum_sq = 0.0f;
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
 
-	initStringInfo(&sql);
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 					 "SELECT %s FROM %s ORDER BY %s",
 					 quote_identifier(value_col_str),
 					 quote_identifier(table_name_str),
 					 quote_identifier(time_col_str));
 
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (time_col_str)
-			NDB_SAFE_PFREE_AND_NULL(time_col_str);
+			NDB_FREE(time_col_str);
 		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
+			NDB_FREE(value_col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("failed to execute anomaly detection "
@@ -1088,13 +1158,14 @@ detect_anomalies(PG_FUNCTION_ARGS)
 
 	if (n_samples < 2)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (time_col_str)
-			NDB_SAFE_PFREE_AND_NULL(time_col_str);
+			NDB_FREE(time_col_str);
 		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
+			NDB_FREE(value_col_str);
 		PG_RETURN_INT32(0);
 	}
 
@@ -1134,20 +1205,21 @@ detect_anomalies(PG_FUNCTION_ARGS)
 			n_anomalies++;
 	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 
 	if (values)
-		NDB_SAFE_PFREE_AND_NULL(values);
+		NDB_FREE(values);
 	if (ma_values)
-		NDB_SAFE_PFREE_AND_NULL(ma_values);
+		NDB_FREE(ma_values);
 	if (smoothed)
-		NDB_SAFE_PFREE_AND_NULL(smoothed);
+		NDB_FREE(smoothed);
 	if (table_name_str)
-		NDB_SAFE_PFREE_AND_NULL(table_name_str);
+		NDB_FREE(table_name_str);
 	if (time_col_str)
-		NDB_SAFE_PFREE_AND_NULL(time_col_str);
+		NDB_FREE(time_col_str);
 	if (value_col_str)
-		NDB_SAFE_PFREE_AND_NULL(value_col_str);
+		NDB_FREE(value_col_str);
 
 	PG_RETURN_INT32(n_anomalies);
 }
@@ -1187,13 +1259,15 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 	TupleDesc	tupdesc_out;
 	Datum		result_values[3];
 	bool		result_nulls[3] = {false, false, false};
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	if (period < MIN_SEASONAL_PERIOD || period > MAX_SEASONAL_PERIOD)
 	{
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
+			NDB_FREE(value_col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("period must be between %d and %d",
@@ -1201,30 +1275,25 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 						MAX_SEASONAL_PERIOD)));
 	}
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
-		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
-		elog(ERROR, "SPI_connect failed");
-	}
+	oldcontext = CurrentMemoryContext;
 
-	initStringInfo(&sql);
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	appendStringInfo(&sql,
 					 "SELECT %s FROM %s ORDER BY 1",
 					 quote_identifier(value_col_str),
 					 quote_identifier(table_name_str));
 
-	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
+			NDB_FREE(value_col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("failed to execute seasonal "
@@ -1237,11 +1306,12 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 
 	if (n < 2)
 	{
-		SPI_finish();
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
+			NDB_FREE(value_col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("at least 2 values required for "
@@ -1343,28 +1413,29 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 		!= TYPEFUNC_COMPOSITE)
 	{
 		if (trend)
-			NDB_SAFE_PFREE_AND_NULL(trend);
+			NDB_FREE(trend);
 		if (seasonal)
-			NDB_SAFE_PFREE_AND_NULL(seasonal);
+			NDB_FREE(seasonal);
 		if (residual)
-			NDB_SAFE_PFREE_AND_NULL(residual);
+			NDB_FREE(residual);
 		if (seasonal_pattern)
-			NDB_SAFE_PFREE_AND_NULL(seasonal_pattern);
+			NDB_FREE(seasonal_pattern);
 		if (seasonal_counts)
-			NDB_SAFE_PFREE_AND_NULL(seasonal_counts);
+			NDB_FREE(seasonal_counts);
 		if (values)
-			NDB_SAFE_PFREE_AND_NULL(values);
+			NDB_FREE(values);
 		if (trend_datums)
-			NDB_SAFE_PFREE_AND_NULL(trend_datums);
+			NDB_FREE(trend_datums);
 		if (seasonal_datums)
-			NDB_SAFE_PFREE_AND_NULL(seasonal_datums);
+			NDB_FREE(seasonal_datums);
 		if (residual_datums)
-			NDB_SAFE_PFREE_AND_NULL(residual_datums);
+			NDB_FREE(residual_datums);
 		if (table_name_str)
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
+			NDB_FREE(table_name_str);
 		if (value_col_str)
-			NDB_SAFE_PFREE_AND_NULL(value_col_str);
-		SPI_finish();
+			NDB_FREE(value_col_str);
+		ndb_spi_stringinfo_free(spi_session, &sql);
+		NDB_SPI_SESSION_END(spi_session);
 		elog(ERROR,
 			 "return type must be composite (trend float8[], "
 			 "seasonal float8[], residual float8[])");
@@ -1378,29 +1449,30 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 		heap_form_tuple(tupdesc_out, result_values, result_nulls);
 
 	if (trend)
-		NDB_SAFE_PFREE_AND_NULL(trend);
+		NDB_FREE(trend);
 	if (seasonal)
-		NDB_SAFE_PFREE_AND_NULL(seasonal);
+		NDB_FREE(seasonal);
 	if (residual)
-		NDB_SAFE_PFREE_AND_NULL(residual);
+		NDB_FREE(residual);
 	if (seasonal_pattern)
-		NDB_SAFE_PFREE_AND_NULL(seasonal_pattern);
+		NDB_FREE(seasonal_pattern);
 	if (seasonal_counts)
-		NDB_SAFE_PFREE_AND_NULL(seasonal_counts);
+		NDB_FREE(seasonal_counts);
 	if (values)
-		NDB_SAFE_PFREE_AND_NULL(values);
+		NDB_FREE(values);
 	if (trend_datums)
-		NDB_SAFE_PFREE_AND_NULL(trend_datums);
+		NDB_FREE(trend_datums);
 	if (seasonal_datums)
-		NDB_SAFE_PFREE_AND_NULL(seasonal_datums);
+		NDB_FREE(seasonal_datums);
 	if (residual_datums)
-		NDB_SAFE_PFREE_AND_NULL(residual_datums);
+		NDB_FREE(residual_datums);
 	if (table_name_str)
-		NDB_SAFE_PFREE_AND_NULL(table_name_str);
+		NDB_FREE(table_name_str);
 	if (value_col_str)
-		NDB_SAFE_PFREE_AND_NULL(value_col_str);
+		NDB_FREE(value_col_str);
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &sql);
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_DATUM(HeapTupleGetDatum(result_tuple));
 }
@@ -1412,6 +1484,7 @@ seasonal_decompose(PG_FUNCTION_ARGS)
 #include "neurondb_gpu_model.h"
 #include "ml_gpu_registry.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 typedef struct TimeSeriesGpuModelState
 {
@@ -1456,7 +1529,7 @@ timeseries_model_serialize_to_bytea(const float *ar_coeffs, int p, const float *
 	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -1564,7 +1637,7 @@ timeseries_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **err
 														  NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "model_type") == 0 && v.type == jbvString)
 					strncpy(model_type, v.val.string.val, sizeof(model_type) - 1);
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1617,8 +1690,8 @@ timeseries_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **err
 					 "{\"storage\":\"cpu\",\"p\":%d,\"d\":%d,\"q\":%d,\"intercept\":%.6f,\"model_type\":\"%s\",\"n_samples\":%d}",
 					 p, d, q, intercept, model_type, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+												 CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
 	state = (TimeSeriesGpuModelState *) palloc0(sizeof(TimeSeriesGpuModelState));
 	state->model_blob = model_data;
@@ -1634,7 +1707,7 @@ timeseries_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **err
 	strncpy(state->model_type, model_type, sizeof(state->model_type) - 1);
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1747,8 +1820,8 @@ timeseries_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
 					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+													  CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -1792,7 +1865,7 @@ timeseries_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -1836,7 +1909,7 @@ timeseries_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	if (timeseries_model_deserialize_from_bytea(payload_copy,
 												&ar_coeffs, &p, &ma_coeffs, &q, &d, &intercept, &n_obs, model_type, sizeof(model_type)) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("timeseries_gpu_deserialize: failed to deserialize");
 		return false;
@@ -1873,7 +1946,7 @@ timeseries_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1883,7 +1956,7 @@ timeseries_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1904,14 +1977,14 @@ timeseries_gpu_destroy(MLGpuModel * model)
 	{
 		state = (TimeSeriesGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
+			NDB_FREE(state->metrics);
 		if (state->ar_coeffs != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->ar_coeffs);
+			NDB_FREE(state->ar_coeffs);
 		if (state->ma_coeffs != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->ma_coeffs);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->ma_coeffs);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

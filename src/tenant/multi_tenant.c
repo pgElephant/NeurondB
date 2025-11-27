@@ -6,7 +6,7 @@
  * Detailed, production-grade implementation: crash-proof, fully validated,
  * robust resource handling, using PostgreSQL C coding standards.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/multi_tenant.c
@@ -33,7 +33,10 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 /* --- Utility: Text pointer to safe C string (guaranteed free, crash-proof) --- */
 static char *
@@ -195,13 +198,15 @@ create_policy(PG_FUNCTION_ARGS)
 						"(1-8192)")));
 
 
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		elog(ERROR, "failed to begin SPI session in create_policy");
+
 	PG_TRY();
 	{
 		int			ret;
 		char		query[9000];
-
-		if (SPI_connect() != SPI_OK_CONNECT)
-			elog(ERROR, "SPI_connect failed in create_policy");
 
 		/*
 		 * Simulate robust insertion: all fields properly quoted &
@@ -215,20 +220,22 @@ create_policy(PG_FUNCTION_ARGS)
 				 name_str,
 				 rule_str);
 
-		ret = ndb_spi_execute_safe(query, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(session, query, false, 0);
 		if (ret != SPI_OK_INSERT || SPI_processed != 1)
+		{
+			ndb_spi_session_end(&session);
 			elog(ERROR,
 				 "Failed to INSERT policy into "
 				 "neurondb_policies");
+		}
 
 		success = true;
 
-		SPI_finish();
+		ndb_spi_session_end(&session);
 	}
 	PG_CATCH();
 	{
-		SPI_finish();
+		ndb_spi_session_end(&session);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
@@ -331,40 +338,51 @@ audit_log_query(PG_FUNCTION_ARGS)
 		 strlen(query_str),
 		 vector_hash);
 
+	char	   *hmac_hex = NULL;
+	char	   *hmac_key = NULL;
+	StringInfoData hmac_data;
+	NDB_DECLARE(NdbSpiSession *, session);
+
+	/* Get HMAC key from GUC or use default */
+	{
+		const char *guc_value = GetConfigOption("neurondb.audit_hmac_key", false, false);
+
+		if (guc_value && strlen(guc_value) > 0)
+		{
+			hmac_key = pstrdup(guc_value);
+		}
+		else
+		{
+			/* Use default key based on database OID for consistency */
+			Oid			db_oid = MyDatabaseId;
+
+			hmac_key = psprintf("neurondb_audit_%u", db_oid);
+		}
+	}
+
+	/* Build data string for HMAC: user_id + query + vector_hash */
+	initStringInfo(&hmac_data);
+	appendStringInfo(&hmac_data, "%s|%s|%u", user_str, query_str, vector_hash);
+
+	/* Compute HMAC-SHA256 */
+	hmac_hex = compute_hmac_sha256(hmac_key, hmac_data.data);
+
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+	{
+		if (hmac_hex)
+			NDB_FREE(hmac_hex);
+		if (hmac_data.data)
+			NDB_FREE(hmac_data.data);
+		if (hmac_key && strstr(hmac_key, "neurondb_audit_") == hmac_key)
+			NDB_FREE(hmac_key);
+		elog(ERROR, "failed to begin SPI session in audit_log_query");
+	}
+
 	PG_TRY();
 	{
 		char		cmd[10240];
 		int			ret;
-		char	   *hmac_hex = NULL;
-		char	   *hmac_key = NULL;
-		StringInfoData hmac_data;
-
-		/* Get HMAC key from GUC or use default */
-		{
-			const char *guc_value = GetConfigOption("neurondb.audit_hmac_key", false, false);
-
-			if (guc_value && strlen(guc_value) > 0)
-			{
-				hmac_key = pstrdup(guc_value);
-			}
-			else
-			{
-				/* Use default key based on database OID for consistency */
-				Oid			db_oid = MyDatabaseId;
-
-				hmac_key = psprintf("neurondb_audit_%u", db_oid);
-			}
-		}
-
-		/* Build data string for HMAC: user_id + query + vector_hash */
-		initStringInfo(&hmac_data);
-		appendStringInfo(&hmac_data, "%s|%s|%u", user_str, query_str, vector_hash);
-
-		/* Compute HMAC-SHA256 */
-		hmac_hex = compute_hmac_sha256(hmac_key, hmac_data.data);
-
-		if (SPI_connect() != SPI_OK_CONNECT)
-			elog(ERROR, "SPI_connect failed in audit_log_query");
 
 		/*
 		 * All parameters safely quoted--replace with parameterized SPI in
@@ -380,25 +398,33 @@ audit_log_query(PG_FUNCTION_ARGS)
 				 vector_hash,
 				 hmac_hex ? hmac_hex : "");
 
-		/* Cleanup */
-		if (hmac_hex)
-			NDB_SAFE_PFREE_AND_NULL(hmac_hex);
-		if (hmac_data.data)
-			NDB_SAFE_PFREE_AND_NULL(hmac_data.data);
-		if (hmac_key && strstr(hmac_key, "neurondb_audit_") == hmac_key)
-			NDB_SAFE_PFREE_AND_NULL(hmac_key);
-
-		ret = ndb_spi_execute_safe(cmd, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(session, cmd, false, 0);
 		if (ret != SPI_OK_INSERT || SPI_processed != 1)
+		{
+			ndb_spi_session_end(&session);
 			elog(ERROR, "Failed to INSERT into neurondb_audit_log");
+		}
 
 		success = true;
-		SPI_finish();
+		ndb_spi_session_end(&session);
+
+		/* Cleanup */
+		if (hmac_hex)
+			NDB_FREE(hmac_hex);
+		if (hmac_data.data)
+			NDB_FREE(hmac_data.data);
+		if (hmac_key && strstr(hmac_key, "neurondb_audit_") == hmac_key)
+			NDB_FREE(hmac_key);
 	}
 	PG_CATCH();
 	{
-		SPI_finish();
+		ndb_spi_session_end(&session);
+		if (hmac_hex)
+			NDB_FREE(hmac_hex);
+		if (hmac_data.data)
+			NDB_FREE(hmac_data.data);
+		if (hmac_key && strstr(hmac_key, "neurondb_audit_") == hmac_key)
+			NDB_FREE(hmac_key);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();

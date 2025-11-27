@@ -1,14 +1,18 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_backend_cuda.c
- *     NVIDIA CUDA backend implementation for NeurondB.
+ *    Backend implementation.
  *
- * This module bridges the generic GPU backend interface with CUDA runtime
- * primitives and the host launch wrappers defined in the CUDA compilation
- * units. It focuses on essential lifecycle and memory helpers plus a subset
- * of launchers for distances, clustering, and quantization.
+ * This module bridges the generic backend interface with runtime primitives
+ * and launch wrappers for distances, clustering, and quantization.
  *
- *-------------------------------------------------------------------------*/
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/cuda/gpu_backend_cuda.c
+ *
+ *-------------------------------------------------------------------------
+ */
 
 #include "postgres.h"
 
@@ -44,6 +48,7 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 #else
 
@@ -698,8 +703,8 @@ ndb_cuda_launch_kmeans_update(const float *vectors,
 	rc = gpu_kmeans_update(
 						   vectors, assign32, centroids, counts, num_vectors, k, dim);
 
-	NDB_SAFE_PFREE_AND_NULL(assign32);
-	NDB_SAFE_PFREE_AND_NULL(counts);
+	NDB_FREE(assign32);
+	NDB_FREE(counts);
 
 	return rc == 0 ? 0 : -1;
 }

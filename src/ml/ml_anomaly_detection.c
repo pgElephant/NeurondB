@@ -1,25 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_anomaly_detection.c
- *    Isolation Forest, LOF, and One-Class SVM for anomaly detection
+ *    Anomaly detection algorithms.
  *
- * Implements three advanced anomaly detection algorithms:
+ * This module implements Isolation Forest, LOF, and One-Class SVM for
+ * detecting anomalies in data.
  *
- * 1. Isolation Forest: Tree-based method that isolates anomalies
- *    - Fast, O(n log n) complexity
- *    - Works well with high-dimensional data
- *    - No distribution assumptions
- *
- * 2. Local Outlier Factor (LOF): Density-based method
- *    - Identifies local density deviations
- *    - Good for clusters with varying densities
- *    - Parameter: k (number of neighbors)
- *
- * 3. One-Class SVM: Support Vector Machine for novelty detection
- *    - Learns a decision boundary around normal data
- *    - Parameter: nu (upper bound on fraction of outliers)
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_anomaly_detection.c
@@ -45,6 +32,7 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Isolation Tree node structure */
 typedef struct IsolationNode
@@ -151,8 +139,8 @@ build_isolation_tree(float **data, int *indices, int n_points, int dim,
 	node->right = build_isolation_tree(data, right_indices, right_count, dim,
 									   current_depth + 1, max_depth);
 
-	NDB_SAFE_PFREE_AND_NULL(left_indices);
-	NDB_SAFE_PFREE_AND_NULL(right_indices);
+	NDB_FREE(left_indices);
+	NDB_FREE(right_indices);
 
 	return node;
 }
@@ -196,7 +184,7 @@ free_isolation_tree(IsolationNode * node)
 		return;
 	free_isolation_tree(node->left);
 	free_isolation_tree(node->right);
-	NDB_SAFE_PFREE_AND_NULL(node);
+	NDB_FREE(node);
 }
 
 /*
@@ -318,7 +306,7 @@ detect_anomalies_isolation_forest(PG_FUNCTION_ARGS)
 			threshold_idx = nvec - 1;
 		threshold = sorted_scores[threshold_idx];
 
-		NDB_SAFE_PFREE_AND_NULL(sorted_scores);
+		NDB_FREE(sorted_scores);
 	}
 
 	/* Mark anomalies */
@@ -338,17 +326,17 @@ detect_anomalies_isolation_forest(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	for (t = 0; t < n_trees; t++)
 		free_isolation_tree(forest->trees[t]);
-	NDB_SAFE_PFREE_AND_NULL(forest->trees);
-	NDB_SAFE_PFREE_AND_NULL(forest);
+	NDB_FREE(forest->trees);
+	NDB_FREE(forest);
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-	NDB_SAFE_PFREE_AND_NULL(vectors);
-	NDB_SAFE_PFREE_AND_NULL(indices);
-	NDB_SAFE_PFREE_AND_NULL(anomaly_scores);
-	NDB_SAFE_PFREE_AND_NULL(anomalies);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(vec_col_str);
+		NDB_FREE(vectors[i]);
+	NDB_FREE(vectors);
+	NDB_FREE(indices);
+	NDB_FREE(anomaly_scores);
+	NDB_FREE(anomalies);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(vec_col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -397,7 +385,7 @@ k_distance(const float *point, float **data, int nvec, int dim, int k)
 
 	qsort(distances, nvec, sizeof(double), double_compare);
 	dist = distances[k];
-	NDB_SAFE_PFREE_AND_NULL(distances);
+	NDB_FREE(distances);
 	return dist;
 }
 
@@ -491,8 +479,8 @@ local_reachability_density(const float *point, float **data, int nvec,
 
 	lrd = (sum_reach_dist > 0.0) ? (double) k / sum_reach_dist : 0.0;
 
-	NDB_SAFE_PFREE_AND_NULL(distances);
-	NDB_SAFE_PFREE_AND_NULL(neighbors);
+	NDB_FREE(distances);
+	NDB_FREE(neighbors);
 
 	return lrd;
 }
@@ -641,8 +629,8 @@ detect_anomalies_lof(PG_FUNCTION_ARGS)
 					sum_lrd_ratio += lrd_point / lrd_neighbor;
 			}
 
-			NDB_SAFE_PFREE_AND_NULL(distances);
-			NDB_SAFE_PFREE_AND_NULL(neighbors);
+			NDB_FREE(distances);
+			NDB_FREE(neighbors);
 		}
 
 		lof_scores[i] = sum_lrd_ratio / (double) k;
@@ -664,13 +652,13 @@ detect_anomalies_lof(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-	NDB_SAFE_PFREE_AND_NULL(vectors);
-	NDB_SAFE_PFREE_AND_NULL(lof_scores);
-	NDB_SAFE_PFREE_AND_NULL(anomalies);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(vec_col_str);
+		NDB_FREE(vectors[i]);
+	NDB_FREE(vectors);
+	NDB_FREE(lof_scores);
+	NDB_FREE(anomalies);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(vec_col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -785,7 +773,7 @@ detect_anomalies_ocsvm(PG_FUNCTION_ARGS)
 		for (i = 0; i < nvec; i++)
 			anomalies[i] = (scores[i] < sorted_scores[threshold_idx]);
 
-		NDB_SAFE_PFREE_AND_NULL(sorted_scores);
+		NDB_FREE(sorted_scores);
 	}
 
 	/* Build result array */
@@ -799,13 +787,13 @@ detect_anomalies_ocsvm(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-	NDB_SAFE_PFREE_AND_NULL(vectors);
-	NDB_SAFE_PFREE_AND_NULL(scores);
-	NDB_SAFE_PFREE_AND_NULL(anomalies);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(vec_col_str);
+		NDB_FREE(vectors[i]);
+	NDB_FREE(vectors);
+	NDB_FREE(scores);
+	NDB_FREE(anomalies);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(vec_col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

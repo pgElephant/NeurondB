@@ -1,32 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_outlier_detection.c
- *    Z-score and robust outlier detection for drift monitoring
+ *    Outlier detection for drift monitoring.
  *
- * This module implements multiple outlier detection methods for monitoring
- * embedding drift and data quality:
+ * This module implements Z-score, robust Z-score, and IQR methods for
+ * detecting outliers in embedding data.
  *
- * 1. Z-score Method: Statistical outliers based on standard deviations
- *    - Fast, O(n*d) complexity
- *    - Assumes roughly Gaussian distribution
- *    - Threshold: typically 2.5-3.0 standard deviations
- *
- * 2. Modified Z-score (Robust): Uses median and MAD instead of mean/std
- *    - More robust to extreme outliers
- *    - Better for non-Gaussian distributions
- *    - Formula: M_i = 0.6745 * (x_i - median) / MAD
- *
- * 3. IQR Method: Interquartile range for distribution-free detection
- *    - Non-parametric, no distribution assumptions
- *    - Outliers: < Q1 - 1.5*IQR or > Q3 + 1.5*IQR
- *
- * Use Cases:
- *   - Embedding drift detection
- *   - Data quality monitoring
- *   - Anomaly flagging in vector search
- *   - Model health checks
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_outlier_detection.c
@@ -48,6 +28,7 @@
 #include <stdlib.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * Compute Euclidean distance from a vector to the mean
@@ -290,8 +271,8 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 			 num_outliers,
 			 100.0 * num_outliers / nvec);
 
-		NDB_SAFE_PFREE_AND_NULL(sorted_distances);
-		NDB_SAFE_PFREE_AND_NULL(abs_deviations);
+		NDB_FREE(sorted_distances);
+		NDB_FREE(abs_deviations);
 	}
 	else if (strcmp(method, "iqr") == 0)
 	{
@@ -335,7 +316,7 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 			 num_outliers,
 			 100.0 * num_outliers / nvec);
 
-		NDB_SAFE_PFREE_AND_NULL(sorted_distances);
+		NDB_FREE(sorted_distances);
 	}
 	else
 	{
@@ -359,15 +340,15 @@ detect_outliers_zscore(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-	NDB_SAFE_PFREE_AND_NULL(vectors);
-	NDB_SAFE_PFREE_AND_NULL(mean);
-	NDB_SAFE_PFREE_AND_NULL(distances);
-	NDB_SAFE_PFREE_AND_NULL(outliers);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(vec_col_str);
-	NDB_SAFE_PFREE_AND_NULL(method);
+		NDB_FREE(vectors[i]);
+	NDB_FREE(vectors);
+	NDB_FREE(mean);
+	NDB_FREE(distances);
+	NDB_FREE(outliers);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(vec_col_str);
+	NDB_FREE(method);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -505,8 +486,8 @@ compute_outlier_scores(PG_FUNCTION_ARGS)
 			scores[i] =
 				0.6745 * fabs(distances[i] - median_dist) / mad;
 
-		NDB_SAFE_PFREE_AND_NULL(sorted_distances);
-		NDB_SAFE_PFREE_AND_NULL(abs_deviations);
+		NDB_FREE(sorted_distances);
+		NDB_FREE(abs_deviations);
 	}
 	else
 	{
@@ -529,15 +510,15 @@ compute_outlier_scores(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-	NDB_SAFE_PFREE_AND_NULL(vectors);
-	NDB_SAFE_PFREE_AND_NULL(mean);
-	NDB_SAFE_PFREE_AND_NULL(distances);
-	NDB_SAFE_PFREE_AND_NULL(scores);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(vec_col_str);
-	NDB_SAFE_PFREE_AND_NULL(method);
+		NDB_FREE(vectors[i]);
+	NDB_FREE(vectors);
+	NDB_FREE(mean);
+	NDB_FREE(distances);
+	NDB_FREE(scores);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(vec_col_str);
+	NDB_FREE(method);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

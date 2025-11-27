@@ -1,30 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_minibatch_kmeans.c
- *    Mini-batch K-Means clustering for large-scale datasets
+ *    Mini-batch K-means clustering.
  *
- * Mini-batch K-means is a variant of the standard K-means algorithm that uses
- * small random batches of data for each iteration instead of the full dataset.
- * This provides significant speedups (10-100x) on large datasets while maintaining
- * clustering quality comparable to standard K-means.
+ * This module implements mini-batch K-means for efficient clustering of
+ * large-scale datasets using small random batches per iteration.
  *
- * Algorithm:
- *   1. Initialize centroids using K-means++ or random selection
- *   2. For each iteration:
- *      a. Sample a random mini-batch of b points
- *      b. Assign each point in batch to nearest centroid
- *      c. Update centroids using per-centroid learning rate
- *   3. Repeat until convergence or max iterations
- *
- * Key parameters:
- *   - batch_size: Number of samples per mini-batch (typically 100-1000)
- *   - max_iter: Maximum number of iterations (typically 100-300)
- *   - The learning rate decreases as 1/(1 + iteration) for stability
- *
- * Reference:
- *   Sculley, D. (2010). "Web-scale k-means clustering." WWW 2010.
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_minibatch_kmeans.c
@@ -45,7 +27,9 @@
 #include "neurondb_simd.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #include "ml_gpu_registry.h"
 #include "ml_catalog.h"
 #include "neurondb_gpu_model.h"
@@ -172,8 +156,8 @@ minibatch_kmeans_pp_init(float **data,
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(dist);
-	NDB_SAFE_PFREE_AND_NULL(selected);
+	NDB_FREE(dist);
+	NDB_FREE(selected);
 }
 
 /*
@@ -352,7 +336,7 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 			}
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(batch_assignments);
+		NDB_FREE(batch_assignments);
 
 		if ((iter + 1) % 10 == 0)
 			elog(DEBUG1,
@@ -399,17 +383,17 @@ cluster_minibatch_kmeans(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-	NDB_SAFE_PFREE_AND_NULL(data);
+		NDB_FREE(data[i]);
+	NDB_FREE(data);
 	for (c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centroids[c]);
-	NDB_SAFE_PFREE_AND_NULL(centroids);
-	NDB_SAFE_PFREE_AND_NULL(centroid_counts);
-	NDB_SAFE_PFREE_AND_NULL(batch_indices);
-	NDB_SAFE_PFREE_AND_NULL(assignments);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(centroids[c]);
+	NDB_FREE(centroids);
+	NDB_FREE(centroid_counts);
+	NDB_FREE(batch_indices);
+	NDB_FREE(assignments);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -507,8 +491,8 @@ predict_minibatch_kmeans(PG_FUNCTION_ARGS)
 					if (centers != NULL)
 					{
 						for (c = 0; c < num_clusters; c++)
-							NDB_SAFE_PFREE_AND_NULL(centers[c]);
-						NDB_SAFE_PFREE_AND_NULL(centers);
+							NDB_FREE(centers[c]);
+						NDB_FREE(centers);
 					}
 				}
 				else
@@ -521,9 +505,9 @@ predict_minibatch_kmeans(PG_FUNCTION_ARGS)
 				cluster_id = 0;
 			}
 			if (model_payload)
-				NDB_SAFE_PFREE_AND_NULL(model_payload);
+				NDB_FREE(model_payload);
 			if (model_parameters)
-				NDB_SAFE_PFREE_AND_NULL(model_parameters);
+				NDB_FREE(model_parameters);
 		}
 		else
 		{
@@ -531,7 +515,7 @@ predict_minibatch_kmeans(PG_FUNCTION_ARGS)
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(features);
+	NDB_FREE(features);
 
 	PG_RETURN_INT32(cluster_id);
 }
@@ -587,33 +571,36 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	oldcontext = CurrentMemoryContext;
 
 	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-	{
-		SPI_finish();
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_minibatch_kmeans_by_model_id: SPI_connect failed")));
-	}
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext_spi = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);
 
 	/* Build query */
-	initStringInfo(&query);
+	ndb_spi_stringinfo_init(spi_session, &query);
 	appendStringInfo(&query,
 					 "SELECT %s FROM %s WHERE %s IS NOT NULL",
 					 feat_str, tbl_str, feat_str);
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
+	{
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: evaluate_minibatch_kmeans_by_model_id: query failed")));
+	}
 
 	n_points = SPI_processed;
 	if (n_points < 2)
 	{
-		SPI_finish();
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(feat_str);
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_minibatch_kmeans_by_model_id: need at least 2 points, got %d",
@@ -626,7 +613,6 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 		Jsonb	   *parameters = NULL;
 		Jsonb	   *metrics = NULL;
 		const char *buf;
-		float	  **centers = NULL;
 		int			i,
 					c,
 					d;
@@ -656,10 +642,13 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 				if (n_clusters > 0 && n_clusters <= 10000 && d > 0 && d <= 100000)
 				{
 					/* Allocate centroids */
-					centers = (float **) palloc(sizeof(float *) * n_clusters);
+					NDB_DECLARE(float **, centers);
+					NDB_ALLOC(centers, float *, n_clusters);
 					for (c = 0; c < n_clusters; c++)
 					{
-						centers[c] = (float *) palloc(sizeof(float) * d);
+						NDB_DECLARE(float *, center_row);
+						NDB_ALLOC(center_row, float, d);
+						centers[c] = center_row;
 						for (i = 0; i < d; i++)
 						{
 							memcpy(&centers[c][i], buf + offset, sizeof(float));
@@ -673,7 +662,17 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 					 */
 					for (i = 0; i < n_points; i++)
 					{
+						/* Safe access to SPI_tuptable - validate before access */
+						if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+							i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+						{
+							continue;
+						}
 						HeapTuple	tuple = SPI_tuptable->vals[i];
+						if (tupdesc == NULL)
+						{
+							continue;
+						}
 						Datum		vec_datum;
 						bool		vec_null;
 						Vector	   *vec;
@@ -710,8 +709,8 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 
 					/* Free centroids */
 					for (c = 0; c < n_clusters; c++)
-						NDB_SAFE_PFREE_AND_NULL(centers[c]);
-					NDB_SAFE_PFREE_AND_NULL(centers);
+						NDB_FREE(centers[c]);
+					NDB_FREE(centers);
 				}
 				else
 				{
@@ -738,7 +737,7 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 						{
 							n_iterations = 100; /* Default */
 						}
-						NDB_SAFE_PFREE_AND_NULL(metrics_str);
+						NDB_FREE(metrics_str);
 					}
 					else
 					{
@@ -753,11 +752,11 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 				inertia = total_inertia;
 
 				if (model_payload != NULL)
-					NDB_SAFE_PFREE_AND_NULL(model_payload);
+					NDB_FREE(model_payload);
 				if (parameters != NULL)
-					NDB_SAFE_PFREE_AND_NULL(parameters);
+					NDB_FREE(parameters);
 				if (metrics != NULL)
-					NDB_SAFE_PFREE_AND_NULL(metrics);
+					NDB_FREE(metrics);
 			}
 			else
 			{
@@ -774,7 +773,8 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 		}
 	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_SPI_SESSION_END(spi_session);
 
 	/* Build result JSON */
 	MemoryContextSwitchTo(oldcontext);
@@ -783,12 +783,12 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 					 "{\"inertia\":%.6f,\"n_clusters\":%d,\"n_points\":%d,\"n_iterations\":%d}",
 					 inertia, n_clusters, n_points, n_iterations);
 
-	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+	NDB_FREE(jsonbuf.data);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(feat_str);
+	NDB_FREE(tbl_str);
+	NDB_FREE(feat_str);
 
 	PG_RETURN_JSONB_P(result);
 }
@@ -820,7 +820,7 @@ kmeans_model_serialize_to_bytea(float **centers, int num_clusters, int dim)
 	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -924,7 +924,7 @@ minibatch_kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char
 				else if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
 					max_iters = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																  NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -961,8 +961,8 @@ minibatch_kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char
 	if (nvec < num_clusters)
 	{
 		for (i = 0; i < nvec; i++)
-			NDB_SAFE_PFREE_AND_NULL(data[i]);
-		NDB_SAFE_PFREE_AND_NULL(data);
+			NDB_FREE(data[i]);
+		NDB_FREE(data);
 		if (errstr != NULL)
 			*errstr = pstrdup("minibatch_kmeans_gpu_train: not enough samples");
 		return false;
@@ -1025,7 +1025,7 @@ minibatch_kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char
 			}
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(batch_assignments);
+		NDB_FREE(batch_assignments);
 	}
 
 	/* Serialize model (reuse k-means format) */
@@ -1037,8 +1037,8 @@ minibatch_kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char
 					 "{\"storage\":\"cpu\",\"k\":%d,\"dim\":%d,\"batch_size\":%d,\"max_iters\":%d,\"n_samples\":%d}",
 					 num_clusters, dim, batch_size, max_iters, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+												 CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
 	state = (MiniBatchKMeansGpuModelState *) palloc0(sizeof(MiniBatchKMeansGpuModelState));
 	state->model_blob = model_data;
@@ -1049,7 +1049,7 @@ minibatch_kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char
 	state->batch_size = batch_size;
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1057,13 +1057,13 @@ minibatch_kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char
 
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
+		NDB_FREE(data[i]);
 	for (c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centroids[c]);
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(centroids);
-	NDB_SAFE_PFREE_AND_NULL(centroid_counts);
-	NDB_SAFE_PFREE_AND_NULL(batch_indices);
+		NDB_FREE(centroids[c]);
+	NDB_FREE(data);
+	NDB_FREE(centroids);
+	NDB_FREE(centroid_counts);
+	NDB_FREE(batch_indices);
 
 	return true;
 }
@@ -1132,8 +1132,8 @@ minibatch_kmeans_gpu_predict(const MLGpuModel * model, const float *input, int i
 	if (input_dim != dim)
 	{
 		for (c = 0; c < num_clusters; c++)
-			NDB_SAFE_PFREE_AND_NULL(centers[c]);
-		NDB_SAFE_PFREE_AND_NULL(centers);
+			NDB_FREE(centers[c]);
+		NDB_FREE(centers);
 		if (errstr != NULL)
 			*errstr = pstrdup("minibatch_kmeans_gpu_predict: dimension mismatch");
 		return false;
@@ -1153,8 +1153,8 @@ minibatch_kmeans_gpu_predict(const MLGpuModel * model, const float *input, int i
 	output[0] = (float) best_cluster;
 
 	for (c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(centers);
+		NDB_FREE(centers[c]);
+	NDB_FREE(centers);
 
 	return true;
 }
@@ -1200,8 +1200,8 @@ minibatch_kmeans_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * sp
 					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+													  CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -1255,7 +1255,7 @@ minibatch_kmeans_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -1304,15 +1304,15 @@ minibatch_kmeans_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	if (kmeans_model_deserialize_from_bytea(payload_copy,
 											&centers, &num_clusters, &dim) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("minibatch_kmeans_gpu_deserialize: failed to deserialize");
 		return false;
 	}
 
 	for (int c = 0; c < num_clusters; c++)
-		NDB_SAFE_PFREE_AND_NULL(centers[c]);
-	NDB_SAFE_PFREE_AND_NULL(centers);
+		NDB_FREE(centers[c]);
+	NDB_FREE(centers);
 
 	state = (MiniBatchKMeansGpuModelState *) palloc0(sizeof(MiniBatchKMeansGpuModelState));
 	state->model_blob = payload_copy;
@@ -1343,7 +1343,7 @@ minibatch_kmeans_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				else if (strcmp(key, "batch_size") == 0 && v.type == jbvNumeric)
 					state->batch_size = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		  NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1353,7 +1353,7 @@ minibatch_kmeans_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1384,10 +1384,10 @@ minibatch_kmeans_gpu_destroy(MLGpuModel * model)
 	{
 		state = (MiniBatchKMeansGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->metrics);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

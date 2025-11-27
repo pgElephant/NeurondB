@@ -1,22 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_hybrid_search.c
- *    Lexical-semantic hybrid scoring for search
+ *    Lexical-semantic hybrid search.
  *
- * Hybrid search combines:
- *   1. Lexical matching (BM25, TF-IDF, keyword overlap)
- *   2. Semantic matching (vector similarity)
+ * This module combines lexical matching and semantic matching for improved
+ * search results using weighted fusion methods.
  *
- * This provides best-of-both-worlds:
- *   - Lexical: exact matches, acronyms, proper nouns
- *   - Semantic: conceptual similarity, synonyms, paraphrases
- *
- * Fusion Methods:
- *   - Weighted sum: α·semantic + (1-α)·lexical
- *   - RRF: Reciprocal Rank Fusion (already implemented separately)
- *   - Normalized fusion with min-max scaling
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_hybrid_search.c
@@ -37,6 +27,7 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * Document score with hybrid components
@@ -254,8 +245,8 @@ hybrid_search_fusion(PG_FUNCTION_ARGS)
 	result = construct_array(
 							 result_datums, num_docs, INT4OID, typlen, typbyval, typalign);
 
-	NDB_SAFE_PFREE_AND_NULL(scores);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
+	NDB_FREE(scores);
+	NDB_FREE(result_datums);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

@@ -2921,3 +2921,303 @@ error:
 	}
 	return -1;
 }
+
+/*======================================================================*/
+/* Cross-Encoder Reranking Kernels */
+/*======================================================================*/
+
+/*
+ * Batch embedding lookup kernel: Map token IDs to embedding vectors for batch
+ * Input: embedding_table [vocab_size, embed_dim]
+ *        token_ids [batch_size, seq_len]
+ *        attention_mask [batch_size, seq_len]
+ * Output: embeddings [batch_size, seq_len, embed_dim]
+ */
+__global__ static void
+ndb_rocm_hf_batch_embedding_lookup_kernel(const float *embedding_table,
+	const int32_t *token_ids,
+	const int32_t *attention_mask,
+	float *embeddings,
+	int batch_size,
+	int seq_len,
+	int embed_dim,
+	int vocab_size)
+{
+	int batch_idx = blockIdx.x;
+	int seq_idx = blockIdx.y;
+	int dim_idx = threadIdx.x;
+
+	if (batch_idx >= batch_size || seq_idx >= seq_len || dim_idx >= embed_dim)
+		return;
+
+	int token_id = token_ids[batch_idx * seq_len + seq_idx];
+	if (token_id < 0 || token_id >= vocab_size)
+		token_id = 0;
+
+	int embed_offset = token_id * embed_dim + dim_idx;
+	int output_offset = batch_idx * seq_len * embed_dim + seq_idx * embed_dim + dim_idx;
+
+	float mask_val = (attention_mask != NULL && attention_mask[batch_idx * seq_len + seq_idx] != 0) ? 1.0f : 0.0f;
+	embeddings[output_offset] = embedding_table[embed_offset] * mask_val;
+}
+
+/*
+ * Extract CLS token from transformer output
+ * Input: hidden_states [batch_size, seq_len, embed_dim]
+ * Output: cls_embeddings [batch_size, embed_dim]
+ */
+__global__ static void
+ndb_rocm_hf_extract_cls_kernel(const float *hidden_states,
+	int batch_size,
+	int seq_len,
+	int embed_dim,
+	float *cls_embeddings)
+{
+	int batch_idx = blockIdx.x;
+	int dim_idx = threadIdx.x;
+
+	if (batch_idx >= batch_size || dim_idx >= embed_dim)
+		return;
+
+	/* CLS token is at position 0 */
+	int cls_offset = batch_idx * seq_len * embed_dim + dim_idx;
+	int output_offset = batch_idx * embed_dim + dim_idx;
+
+	cls_embeddings[output_offset] = hidden_states[cls_offset];
+}
+
+/*
+ * Apply classification head (linear layer) to CLS embeddings
+ * score = W^T * cls_embedding + b
+ * Input: cls_embeddings [batch_size, embed_dim]
+ *        weights [embed_dim] (classification head weights)
+ *        bias (scalar bias)
+ * Output: scores [batch_size]
+ */
+__global__ static void
+ndb_rocm_hf_classification_head_kernel(const float *cls_embeddings,
+	const float *weights,
+	float bias,
+	int batch_size,
+	int embed_dim,
+	float *scores)
+{
+	int batch_idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (batch_idx >= batch_size)
+		return;
+
+	/* Compute dot product: W^T * cls_embedding */
+	float score = bias;
+	int embed_offset = batch_idx * embed_dim;
+
+	for (int d = 0; d < embed_dim; d++)
+	{
+		score += weights[d] * cls_embeddings[embed_offset + d];
+	}
+
+	/* Apply sigmoid to get probability-like score in [0, 1] */
+	scores[batch_idx] = 1.0f / (1.0f + expf(-score));
+}
+
+/*
+ * Host function: Cross-encoder reranking inference
+ * Processes batch of query-document pairs and returns relevance scores
+ */
+extern "C" int
+ndb_rocm_hf_cross_encoder_rerank_inference(
+	const char *model_name,
+	const int32_t *token_ids_batch,
+	const int32_t *attention_mask_batch,
+	int batch_size,
+	int seq_len,
+	const float *embedding_table,
+	int vocab_size,
+	int embed_dim,
+	const float *classification_weights,
+	float classification_bias,
+	float *scores_out,
+	char **errstr)
+{
+	hipError_t status;
+	int32_t *d_token_ids = NULL;
+	int32_t *d_attention_mask = NULL;
+	float *d_embeddings = NULL;
+	float *d_hidden_states = NULL;
+	float *d_cls_embeddings = NULL;
+	float *d_scores = NULL;
+	float *d_classification_weights = NULL;
+	size_t token_bytes;
+	size_t mask_bytes;
+	size_t embed_bytes;
+	size_t hidden_bytes;
+	size_t cls_bytes;
+	size_t score_bytes;
+	dim3 grid, block;
+	int i;
+
+	if (errstr)
+		*errstr = NULL;
+
+	if (!model_name || !token_ids_batch || !attention_mask_batch
+		|| !embedding_table || !classification_weights || !scores_out)
+	{
+		if (errstr)
+			*errstr = (char *)"invalid parameters for cross-encoder rerank";
+		return -1;
+	}
+
+	if (batch_size <= 0 || seq_len <= 0 || embed_dim <= 0)
+	{
+		if (errstr)
+			*errstr = (char *)"invalid dimensions for cross-encoder rerank";
+		return -1;
+	}
+
+	/* Allocate device memory */
+	token_bytes = sizeof(int32_t) * batch_size * seq_len;
+	mask_bytes = sizeof(int32_t) * batch_size * seq_len;
+	embed_bytes = sizeof(float) * batch_size * seq_len * embed_dim;
+	hidden_bytes = sizeof(float) * batch_size * seq_len * embed_dim;
+	cls_bytes = sizeof(float) * batch_size * embed_dim;
+	score_bytes = sizeof(float) * batch_size;
+
+	status = hipMalloc((void **)&d_token_ids, token_bytes);
+	if (status != hipSuccess)
+		goto error;
+	status = hipMalloc((void **)&d_attention_mask, mask_bytes);
+	if (status != hipSuccess)
+		goto error;
+	status = hipMalloc((void **)&d_embeddings, embed_bytes);
+	if (status != hipSuccess)
+		goto error;
+	status = hipMalloc((void **)&d_hidden_states, hidden_bytes);
+	if (status != hipSuccess)
+		goto error;
+	status = hipMalloc((void **)&d_cls_embeddings, cls_bytes);
+	if (status != hipSuccess)
+		goto error;
+	status = hipMalloc((void **)&d_scores, score_bytes);
+	if (status != hipSuccess)
+		goto error;
+	status = hipMalloc((void **)&d_classification_weights, sizeof(float) * embed_dim);
+	if (status != hipSuccess)
+		goto error;
+
+	/* Copy input to device */
+	status = hipMemcpy(d_token_ids, token_ids_batch, token_bytes, hipMemcpyHostToDevice);
+	if (status != hipSuccess)
+		goto error;
+	status = hipMemcpy(d_attention_mask, attention_mask_batch, mask_bytes, hipMemcpyHostToDevice);
+	if (status != hipSuccess)
+		goto error;
+	status = hipMemcpy(d_classification_weights, classification_weights,
+		sizeof(float) * embed_dim, hipMemcpyHostToDevice);
+	if (status != hipSuccess)
+		goto error;
+
+	/* Step 1: Embedding lookup for all tokens in batch */
+	grid = dim3(batch_size, seq_len);
+	block = dim3(embed_dim);
+
+	ndb_rocm_hf_batch_embedding_lookup_kernel<<<grid, block>>>(
+		embedding_table,
+		d_token_ids,
+		d_attention_mask,
+		d_embeddings,
+		batch_size,
+		seq_len,
+		embed_dim,
+		vocab_size);
+	status = hipGetLastError();
+	if (status != hipSuccess)
+		goto error;
+	status = hipDeviceSynchronize();
+	if (status != hipSuccess)
+		goto error;
+
+	/* Step 2: For now, use embeddings directly as hidden states */
+	/* Full implementation would run through transformer layers with Flash Attention */
+	status = hipMemcpy(d_hidden_states, d_embeddings, embed_bytes, hipMemcpyDeviceToDevice);
+	if (status != hipSuccess)
+		goto error;
+
+	/* Step 3: Extract CLS token (position 0) from each sequence */
+	grid = dim3(batch_size);
+	block = dim3(embed_dim);
+
+	ndb_rocm_hf_extract_cls_kernel<<<grid, block>>>(
+		d_hidden_states,
+		batch_size,
+		seq_len,
+		embed_dim,
+		d_cls_embeddings);
+	status = hipGetLastError();
+	if (status != hipSuccess)
+		goto error;
+	status = hipDeviceSynchronize();
+	if (status != hipSuccess)
+		goto error;
+
+	/* Step 4: Apply classification head */
+	grid = dim3((batch_size + 255) / 256);
+	block = dim3(256);
+
+	ndb_rocm_hf_classification_head_kernel<<<grid, block>>>(
+		d_cls_embeddings,
+		d_classification_weights,
+		classification_bias,
+		batch_size,
+		embed_dim,
+		d_scores);
+	status = hipGetLastError();
+	if (status != hipSuccess)
+		goto error;
+	status = hipDeviceSynchronize();
+	if (status != hipSuccess)
+		goto error;
+
+	/* Copy scores back to host */
+	status = hipMemcpy(scores_out, d_scores, score_bytes, hipMemcpyDeviceToHost);
+	if (status != hipSuccess)
+		goto error;
+
+	/* Cleanup */
+	hipFree(d_classification_weights);
+	hipFree(d_token_ids);
+	hipFree(d_attention_mask);
+	hipFree(d_embeddings);
+	hipFree(d_hidden_states);
+	hipFree(d_cls_embeddings);
+	hipFree(d_scores);
+
+	return 0;
+
+error:
+	if (d_token_ids)
+		hipFree(d_token_ids);
+	if (d_attention_mask)
+		hipFree(d_attention_mask);
+	if (d_embeddings)
+		hipFree(d_embeddings);
+	if (d_hidden_states)
+		hipFree(d_hidden_states);
+	if (d_cls_embeddings)
+		hipFree(d_cls_embeddings);
+	if (d_scores)
+		hipFree(d_scores);
+	if (d_classification_weights)
+		hipFree(d_classification_weights);
+	if (errstr && !*errstr)
+	{
+		const char *err_msg = hipGetErrorString(status);
+		size_t len = strlen(err_msg) + 1;
+		char *err = (char *)malloc(len);
+		if (err)
+		{
+			memcpy(err, err_msg, len);
+			*errstr = err;
+		}
+	}
+	return -1;
+}

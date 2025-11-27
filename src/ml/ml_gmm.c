@@ -1,31 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_gmm.c
- *    Gaussian Mixture Model (EM-lite) for soft clustering
+ *    Gaussian mixture model for soft clustering.
  *
- * GMM models data as a mixture of K multivariate Gaussian distributions.
- * Unlike K-means (hard clustering), GMM provides:
- *   - Probabilistic cluster assignments
- *   - Cluster shape and orientation (via covariance)
- *   - Uncertainty quantification
+ * This module implements GMM using expectation-maximization for probabilistic
+ * cluster assignments and density estimation.
  *
- * Algorithm: Expectation-Maximization (EM)
- *   1. E-step: Compute responsibilities (posterior probabilities)
- *   2. M-step: Update means, covariances, mixing coefficients
- *   3. Repeat until convergence
- *
- * Simplified Implementation:
- *   - Diagonal covariance matrices (faster, less parameters)
- *   - Regularization to prevent singular matrices
- *   - K-means++ initialization
- *
- * Use Cases:
- *   - Soft clustering with confidence scores
- *   - Anomaly detection (low likelihood points)
- *   - Density estimation
- *   - Topic modeling foundations
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_gmm.c
@@ -42,6 +23,9 @@
 #include "neurondb.h"
 #include "neurondb_ml.h"
 #include "neurondb_validation.h"
+#include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 #include "ml_catalog.h"
 #include "lib/stringinfo.h"
 #include "utils/jsonb.h"
@@ -266,7 +250,7 @@ cluster_gmm(PG_FUNCTION_ARGS)
 						(model.variances[k][d] / N_k[k]) + GMM_EPSILON;
 			}
 
-			NDB_SAFE_PFREE_AND_NULL(N_k);
+			NDB_FREE(N_k);
 		}
 
 		if ((iter + 1) % 10 == 0)
@@ -300,23 +284,23 @@ cluster_gmm(PG_FUNCTION_ARGS)
 
 	for (i = 0; i < nvec; i++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-		NDB_SAFE_PFREE_AND_NULL(responsibilities[i]);
+		NDB_FREE(data[i]);
+		NDB_FREE(responsibilities[i]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(responsibilities);
+	NDB_FREE(data);
+	NDB_FREE(responsibilities);
 
 	for (k = 0; k < num_components; k++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(model.means[k]);
-		NDB_SAFE_PFREE_AND_NULL(model.variances[k]);
+		NDB_FREE(model.means[k]);
+		NDB_FREE(model.variances[k]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(model.means);
-	NDB_SAFE_PFREE_AND_NULL(model.variances);
-	NDB_SAFE_PFREE_AND_NULL(model.mixing_coeffs);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+	NDB_FREE(model.means);
+	NDB_FREE(model.variances);
+	NDB_FREE(model.mixing_coeffs);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -325,7 +309,7 @@ cluster_gmm(PG_FUNCTION_ARGS)
  * Serialize GMMModel to bytea for storage
  */
 static bytea *
-gmm_model_serialize_to_bytea(const GMMModel * model)
+gmm_model_serialize_to_bytea(const GMMModel * model, uint8 training_backend)
 {
 	StringInfoData buf;
 	int			i,
@@ -333,7 +317,19 @@ gmm_model_serialize_to_bytea(const GMMModel * model)
 	int			total_size;
 	bytea	   *result;
 
+	/* Validate training_backend */
+	if (training_backend > 1)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: gmm_model_serialize_to_bytea: invalid training_backend %d (must be 0 or 1)",
+						training_backend)));
+	}
+
 	initStringInfo(&buf);
+
+	/* Write training_backend first (0=CPU, 1=GPU) */
+	appendBinaryStringInfo(&buf, (char *) &training_backend, sizeof(uint8));
 
 	appendBinaryStringInfo(&buf, (char *) &model->k, sizeof(int));
 	appendBinaryStringInfo(&buf, (char *) &model->dim, sizeof(int));
@@ -353,7 +349,7 @@ gmm_model_serialize_to_bytea(const GMMModel * model)
 	result = (bytea *) palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -362,13 +358,14 @@ gmm_model_serialize_to_bytea(const GMMModel * model)
  * Deserialize GMMModel from bytea
  */
 static GMMModel *
-gmm_model_deserialize_from_bytea(const bytea * data)
+gmm_model_deserialize_from_bytea(const bytea * data, uint8 *training_backend_out)
 {
 	GMMModel   *model;
 	const char *buf;
 	int			offset = 0;
 	int			i,
 				j;
+	uint8		training_backend = 0;
 
 	if (data == NULL || VARSIZE(data) < VARHDRSZ + sizeof(int) * 2)
 		ereport(ERROR,
@@ -376,6 +373,13 @@ gmm_model_deserialize_from_bytea(const bytea * data)
 				 errmsg("neurondb: invalid GMM model data: too small")));
 
 	buf = VARDATA(data);
+	offset = 0;
+
+	/* Read training_backend first */
+	training_backend = (uint8) buf[offset];
+	offset += sizeof(uint8);
+	if (training_backend_out != NULL)
+		*training_backend_out = training_backend;
 
 	model = (GMMModel *) palloc0(sizeof(GMMModel));
 
@@ -479,8 +483,8 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 
 	if (nvec < num_components)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("Not enough vectors (%d) for %d components", nvec, num_components)));
@@ -581,17 +585,17 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 				for (d = 0; d < dim; d++)
 					model.variances[k][d] = (model.variances[k][d] / N_k[k]) + GMM_EPSILON;
 			}
-			NDB_SAFE_PFREE_AND_NULL(N_k);
+			NDB_FREE(N_k);
 		}
 	}
 
-	model_data = gmm_model_serialize_to_bytea(&model);
+	model_data = gmm_model_serialize_to_bytea(&model, 0);
 
 	initStringInfo(&metrics_json);
-	appendStringInfo(&metrics_json, "{\"storage\": \"cpu\", \"k\": %d, \"dim\": %d, \"max_iters\": %d}",
+	appendStringInfo(&metrics_json, "{\"training_backend\":0, \"k\": %d, \"dim\": %d, \"max_iters\": %d}",
 					 model.k, model.dim, max_iters);
-	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
 	memset(&spec, 0, sizeof(MLCatalogModelSpec));
 	spec.project_name = NULL;
@@ -608,21 +612,21 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(data[i]);
-		NDB_SAFE_PFREE_AND_NULL(responsibilities[i]);
+		NDB_FREE(data[i]);
+		NDB_FREE(responsibilities[i]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(data);
-	NDB_SAFE_PFREE_AND_NULL(responsibilities);
+	NDB_FREE(data);
+	NDB_FREE(responsibilities);
 	for (k = 0; k < num_components; k++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(model.means[k]);
-		NDB_SAFE_PFREE_AND_NULL(model.variances[k]);
+		NDB_FREE(model.means[k]);
+		NDB_FREE(model.variances[k]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(model.means);
-	NDB_SAFE_PFREE_AND_NULL(model.variances);
-	NDB_SAFE_PFREE_AND_NULL(model.mixing_coeffs);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+	NDB_FREE(model.means);
+	NDB_FREE(model.variances);
+	NDB_FREE(model.mixing_coeffs);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	PG_RETURN_INT32(model_id);
 }
@@ -662,7 +666,7 @@ predict_gmm_model_id(PG_FUNCTION_ARGS)
 	if (model_data == NULL)
 	{
 		if (metrics)
-			NDB_SAFE_PFREE_AND_NULL(metrics);
+			NDB_FREE(metrics);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("GMM model %d has no model data", model_id)));
@@ -679,24 +683,24 @@ predict_gmm_model_id(PG_FUNCTION_ARGS)
 	}
 
 	/* Deserialize model */
-	model = gmm_model_deserialize_from_bytea(model_data);
+	model = gmm_model_deserialize_from_bytea(model_data, NULL);
 
 	if (features->dim != model->dim)
 	{
 		/* Cleanup */
 		for (i = 0; i < model->k; i++)
 		{
-			NDB_SAFE_PFREE_AND_NULL(model->means[i]);
-			NDB_SAFE_PFREE_AND_NULL(model->variances[i]);
+			NDB_FREE(model->means[i]);
+			NDB_FREE(model->variances[i]);
 		}
-		NDB_SAFE_PFREE_AND_NULL(model->means);
-		NDB_SAFE_PFREE_AND_NULL(model->variances);
-		NDB_SAFE_PFREE_AND_NULL(model->mixing_coeffs);
-		NDB_SAFE_PFREE_AND_NULL(model);
+		NDB_FREE(model->means);
+		NDB_FREE(model->variances);
+		NDB_FREE(model->mixing_coeffs);
+		NDB_FREE(model);
 		if (model_data)
-			NDB_SAFE_PFREE_AND_NULL(model_data);
+			NDB_FREE(model_data);
 		if (metrics)
-			NDB_SAFE_PFREE_AND_NULL(metrics);
+			NDB_FREE(metrics);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("Feature dimension mismatch: expected %d, got %d",
@@ -718,20 +722,20 @@ predict_gmm_model_id(PG_FUNCTION_ARGS)
 	}
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(probabilities);
+	NDB_FREE(probabilities);
 	for (i = 0; i < model->k; i++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(model->means[i]);
-		NDB_SAFE_PFREE_AND_NULL(model->variances[i]);
+		NDB_FREE(model->means[i]);
+		NDB_FREE(model->variances[i]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(model->means);
-	NDB_SAFE_PFREE_AND_NULL(model->variances);
-	NDB_SAFE_PFREE_AND_NULL(model->mixing_coeffs);
-	NDB_SAFE_PFREE_AND_NULL(model);
+	NDB_FREE(model->means);
+	NDB_FREE(model->variances);
+	NDB_FREE(model->mixing_coeffs);
+	NDB_FREE(model);
 	if (model_data)
-		NDB_SAFE_PFREE_AND_NULL(model_data);
+		NDB_FREE(model_data);
 	if (metrics)
-		NDB_SAFE_PFREE_AND_NULL(metrics);
+		NDB_FREE(metrics);
 
 	PG_RETURN_INT32(predicted_cluster);
 }
@@ -791,7 +795,6 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	text	   *vector_col;
 	char	   *tbl_str;
 	char	   *col_str;
-	int			ret;
 	int			nvec = 0;
 	int			i,
 				j,
@@ -810,6 +813,7 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	Jsonb	   *result_jsonb = NULL;
 	bytea	   *model_payload = NULL;
 	Jsonb	   *model_metrics = NULL;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
@@ -834,8 +838,8 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	/* Load model from catalog */
 	if (!ml_catalog_fetch_model_payload(model_id, &model_payload, NULL, &model_metrics))
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_gmm_by_model_id: model %d not found", model_id)));
@@ -843,74 +847,56 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 
 	if (model_payload == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		if (model_metrics)
-			NDB_SAFE_PFREE_AND_NULL(model_metrics);
+			NDB_FREE(model_metrics);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_gmm_by_model_id: model %d has no model_data", model_id)));
 	}
 
 	/* Deserialize model */
-	model = gmm_model_deserialize_from_bytea(model_payload);
+	model = gmm_model_deserialize_from_bytea(model_payload, NULL);
 	if (model == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		if (model_payload)
-			NDB_SAFE_PFREE_AND_NULL(model_payload);
+			NDB_FREE(model_payload);
 		if (model_metrics)
-			NDB_SAFE_PFREE_AND_NULL(model_metrics);
+			NDB_FREE(model_metrics);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_gmm_by_model_id: failed to deserialize model")));
 	}
 
 	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-	{
-		for (c = 0; c < model->k; c++)
-		{
-			NDB_SAFE_PFREE_AND_NULL(model->means[c]);
-			NDB_SAFE_PFREE_AND_NULL(model->variances[c]);
-		}
-		NDB_SAFE_PFREE_AND_NULL(model->means);
-		NDB_SAFE_PFREE_AND_NULL(model->variances);
-		NDB_SAFE_PFREE_AND_NULL(model->mixing_coeffs);
-		NDB_SAFE_PFREE_AND_NULL(model);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
-		if (model_payload)
-			NDB_SAFE_PFREE_AND_NULL(model_payload);
-		if (model_metrics)
-			NDB_SAFE_PFREE_AND_NULL(model_metrics);
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_gmm_by_model_id: SPI_connect failed")));
-	}
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Fetch test data */
 	data = neurondb_fetch_vectors_from_table(tbl_str, col_str, &nvec, &dim);
 
 	if (!data || nvec < 1)
 	{
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 		for (c = 0; c < model->k; c++)
 		{
-			NDB_SAFE_PFREE_AND_NULL(model->means[c]);
-			NDB_SAFE_PFREE_AND_NULL(model->variances[c]);
+			NDB_FREE(model->means[c]);
+			NDB_FREE(model->variances[c]);
 		}
-		NDB_SAFE_PFREE_AND_NULL(model->means);
-		NDB_SAFE_PFREE_AND_NULL(model->variances);
-		NDB_SAFE_PFREE_AND_NULL(model->mixing_coeffs);
-		NDB_SAFE_PFREE_AND_NULL(model);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(model->means);
+		NDB_FREE(model->variances);
+		NDB_FREE(model->mixing_coeffs);
+		NDB_FREE(model);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		if (model_payload)
-			NDB_SAFE_PFREE_AND_NULL(model_payload);
+			NDB_FREE(model_payload);
 		if (model_metrics)
-			NDB_SAFE_PFREE_AND_NULL(model_metrics);
+			NDB_FREE(model_metrics);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_gmm_by_model_id: no valid data found")));
@@ -918,25 +904,25 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 
 	if (dim != model->dim)
 	{
-		SPI_finish();
+		NDB_SPI_SESSION_END(spi_session);
 		for (i = 0; i < nvec; i++)
-			NDB_SAFE_PFREE_AND_NULL(data[i]);
-		NDB_SAFE_PFREE_AND_NULL(data);
+			NDB_FREE(data[i]);
+		NDB_FREE(data);
 		for (c = 0; c < model->k; c++)
 		{
-			NDB_SAFE_PFREE_AND_NULL(model->means[c]);
-			NDB_SAFE_PFREE_AND_NULL(model->variances[c]);
+			NDB_FREE(model->means[c]);
+			NDB_FREE(model->variances[c]);
 		}
-		NDB_SAFE_PFREE_AND_NULL(model->means);
-		NDB_SAFE_PFREE_AND_NULL(model->variances);
-		NDB_SAFE_PFREE_AND_NULL(model->mixing_coeffs);
-		NDB_SAFE_PFREE_AND_NULL(model);
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
+		NDB_FREE(model->means);
+		NDB_FREE(model->variances);
+		NDB_FREE(model->mixing_coeffs);
+		NDB_FREE(model);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		if (model_payload)
-			NDB_SAFE_PFREE_AND_NULL(model_payload);
+			NDB_FREE(model_payload);
 		if (model_metrics)
-			NDB_SAFE_PFREE_AND_NULL(model_metrics);
+			NDB_FREE(model_metrics);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_gmm_by_model_id: dimension mismatch: model dim=%d, data dim=%d",
@@ -1076,30 +1062,30 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	if (data)
 	{
 		for (i = 0; i < nvec; i++)
-			NDB_SAFE_PFREE_AND_NULL(data[i]);
-		NDB_SAFE_PFREE_AND_NULL(data);
+			NDB_FREE(data[i]);
+		NDB_FREE(data);
 	}
 	if (assignments)
-		NDB_SAFE_PFREE_AND_NULL(assignments);
+		NDB_FREE(assignments);
 	if (cluster_sizes)
-		NDB_SAFE_PFREE_AND_NULL(cluster_sizes);
+		NDB_FREE(cluster_sizes);
 	if (a_scores)
-		NDB_SAFE_PFREE_AND_NULL(a_scores);
+		NDB_FREE(a_scores);
 	if (b_scores)
-		NDB_SAFE_PFREE_AND_NULL(b_scores);
+		NDB_FREE(b_scores);
 	for (c = 0; c < model->k; c++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(model->means[c]);
-		NDB_SAFE_PFREE_AND_NULL(model->variances[c]);
+		NDB_FREE(model->means[c]);
+		NDB_FREE(model->variances[c]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(model->means);
-	NDB_SAFE_PFREE_AND_NULL(model->variances);
-	NDB_SAFE_PFREE_AND_NULL(model->mixing_coeffs);
-	NDB_SAFE_PFREE_AND_NULL(model);
+	NDB_FREE(model->means);
+	NDB_FREE(model->variances);
+	NDB_FREE(model->mixing_coeffs);
+	NDB_FREE(model);
 	if (model_payload)
-		NDB_SAFE_PFREE_AND_NULL(model_payload);
+		NDB_FREE(model_payload);
 	if (model_metrics)
-		NDB_SAFE_PFREE_AND_NULL(model_metrics);
+		NDB_FREE(model_metrics);
 
 	/* Build jsonb result in SPI context */
 	initStringInfo(&jsonbuf);
@@ -1112,21 +1098,21 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	PG_TRY();					/* renamed local variables to avoid shadowing */
 	{
 		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-														  CStringGetDatum(jsonbuf.data)));
+														  CStringGetTextDatum(jsonbuf.data)));
 
 		if (result_jsonb == NULL)
 		{
 			elog(WARNING, "neurondb: evaluate_gmm_by_model_id: jsonb_in returned NULL");
 			/* Create a minimal valid JSONB object */
 			result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-															  CStringGetDatum("{}")));
+															  CStringGetTextDatum("{}")));
 		}
 	}
 	PG_CATCH();
 	{
 		elog(WARNING, "neurondb: evaluate_gmm_by_model_id: error creating JSONB, using empty object");
 		if (jsonbuf.data)
-			NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+			NDB_FREE(jsonbuf.data);
 		FlushErrorState();
 		/* Create a minimal valid JSONB object in a safe way */
 		/* Suppress shadow warnings from nested PG_TRY blocks */
@@ -1135,7 +1121,7 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		PG_TRY();
 		{
 			result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-															  CStringGetDatum("{}")));
+															  CStringGetTextDatum("{}")));
 		}
 		PG_CATCH();
 		{
@@ -1149,7 +1135,7 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	PG_END_TRY();
 
 	if (jsonbuf.data)
-		NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+		NDB_FREE(jsonbuf.data);
 
 	/*
 	 * Validate and copy result_jsonb to caller's context before SPI_finish().
@@ -1161,20 +1147,20 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 		elog(WARNING, "neurondb: evaluate_gmm_by_model_id: result_jsonb is NULL, creating empty object");
 		/* Create empty JSONB as fallback */
 		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-														  CStringGetDatum("{}")));
+														  CStringGetTextDatum("{}")));
 	}
 
 	/* This ensures the JSONB remains valid after the SPI context is deleted */
 	MemoryContextSwitchTo(oldcontext);
 	result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result_jsonb));
 
-	/* Now safe to finish SPI (this switches back to oldcontext automatically) */
-	SPI_finish();
+	/* Now safe to finish SPI session (this switches back to oldcontext automatically) */
+	NDB_SPI_SESSION_END(spi_session);
 
 	/* Free strings allocated before SPI_connect (in oldcontext) */
 	/* Note: tbl_str and col_str were allocated in oldcontext, not SPI context */
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(col_str);
+	NDB_FREE(tbl_str);
+	NDB_FREE(col_str);
 
 	/* Return result (already in oldcontext) */
 	PG_RETURN_JSONB_P(result_jsonb);
@@ -1188,6 +1174,7 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 #ifdef NDB_GPU_CUDA
 #include "neurondb_gpu_model.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* GPU Model State */
 typedef struct GmmGpuModelState
@@ -1205,10 +1192,10 @@ gmm_gpu_release_state(GmmGpuModelState * state)
 	if (state == NULL)
 		return;
 	if (state->model_blob != NULL)
-		NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+		NDB_FREE(state->model_blob);
 	if (state->metrics != NULL)
-		NDB_SAFE_PFREE_AND_NULL(state->metrics);
-	NDB_SAFE_PFREE_AND_NULL(state);
+		NDB_FREE(state->metrics);
+	NDB_FREE(state);
 }
 
 static bool
@@ -1298,9 +1285,9 @@ gmm_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 	if (rc != 0 || payload == NULL)
 	{
 		if (payload != NULL)
-			NDB_SAFE_PFREE_AND_NULL(payload);
+			NDB_FREE(payload);
 		if (metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(metrics);
+			NDB_FREE(metrics);
 		return false;
 	}
 
@@ -1414,8 +1401,8 @@ gmm_gpu_evaluate(const MLGpuModel * model,
 						 state->n_components);
 
 		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetDatum(buf.data)));
-		NDB_SAFE_PFREE_AND_NULL(buf.data);
+														  jsonb_in, CStringGetTextDatum(buf.data)));
+		NDB_FREE(buf.data);
 	}
 
 	if (out != NULL)
@@ -1454,7 +1441,7 @@ gmm_gpu_serialize(const MLGpuModel * model,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 	{

@@ -1,16 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_catboost.c
- *    CatBoost Integration for NeuronDB
+ *    CatBoost gradient boosting integration.
  *
- *    Provides full integration of the Yandex CatBoost gradient boosting library.
- *    Supports categorical features and can use GPU acceleration if enabled.
- *    Requires CatBoost C library (libcatboostmodel.so) and headers.
+ * This module provides CatBoost gradient boosting for classification and
+ * regression with support for categorical features.
  *
- *    Copyright (c) 2024-2025, pgElephant, Inc.
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
- *    IDENTIFICATION
- *        src/ml/ml_catboost.c
+ * IDENTIFICATION
+ *    src/ml/ml_catboost.c
  *
  *-------------------------------------------------------------------------
  */
@@ -284,21 +283,21 @@ train_catboost_classifier(PG_FUNCTION_ARGS)
 
 
     per_query_ctx = AllocSetContextCreate(CurrentMemoryContext,
-                                          elog(DEBUG1,
-                                          	"catboost_spi_ctx",
+                                          "catboost_spi_ctx",
                                           ALLOCSET_DEFAULT_SIZES);
     oldctx = MemoryContextSwitchTo(per_query_ctx);
 
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: could not connect to SPI")));
+    NDB_DECLARE(NdbSpiSession *, spi_session);
+    MemoryContext oldcontext = CurrentMemoryContext;
 
-    ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+    NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+    ret = ndb_spi_execute(spi_session, sql.data, true, 0);
     if (ret != SPI_OK_SELECT)
     {
-        SPI_finish();
+        NDB_SPI_SESSION_END(spi_session);
+        MemoryContextSwitchTo(oldctx);
+        MemoryContextDelete(per_query_ctx);
         ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("neurondb: could not execute SQL for training set")));
@@ -307,7 +306,8 @@ train_catboost_classifier(PG_FUNCTION_ARGS)
     /* Get feature and label indexes */
     {
         TupleDesc   tupdesc = SPI_tuptable->tupdesc;
-        int        *feature_idxs = (int *) palloc0(sizeof(int) * n_features);
+        NDB_DECLARE(int *, feature_idxs);
+        NDB_ALLOC(feature_idxs, int, n_features);
         int         label_idx;
 
         for (i = 0; i < n_features; i++)
@@ -359,7 +359,7 @@ train_catboost_classifier(PG_FUNCTION_ARGS)
         }
     }
 
-    SPI_finish();
+    NDB_SPI_SESSION_END(spi_session);
     MemoryContextSwitchTo(oldctx);
     MemoryContextDelete(per_query_ctx);
 
@@ -436,21 +436,21 @@ train_catboost_regressor(PG_FUNCTION_ARGS)
     appendStringInfo(&sql, ",%s FROM %s", target_col, table_name);
 
     per_query_ctx = AllocSetContextCreate(CurrentMemoryContext,
-                                          elog(DEBUG1,
-                                          	"catboost_spi_ctx",
+                                          "catboost_spi_ctx",
                                           ALLOCSET_DEFAULT_SIZES);
     oldctx = MemoryContextSwitchTo(per_query_ctx);
 
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR,
-			(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("neurondb: could not connect to SPI")));
+    NDB_DECLARE(NdbSpiSession *, spi_session);
+    MemoryContext oldcontext = CurrentMemoryContext;
 
-    ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+    NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+    ret = ndb_spi_execute(spi_session, sql.data, true, 0);
     if (ret != SPI_OK_SELECT)
     {
-        SPI_finish();
+        NDB_SPI_SESSION_END(spi_session);
+        MemoryContextSwitchTo(oldctx);
+        MemoryContextDelete(per_query_ctx);
         ereport(ERROR,
 			(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("neurondb: could not execute SQL for training set")));
@@ -506,7 +506,7 @@ train_catboost_regressor(PG_FUNCTION_ARGS)
         }
     }
 
-    SPI_finish();
+    NDB_SPI_SESSION_END(spi_session);
     MemoryContextSwitchTo(oldctx);
     MemoryContextDelete(per_query_ctx);
 
@@ -589,7 +589,7 @@ predict_catboost(PG_FUNCTION_ARGS)
                                                            n_features,
                                                            &result,
                                                            1));
-        NDB_SAFE_PFREE_AND_NULL(input_features);
+        NDB_FREE(input_features);
     }
     else
     {
@@ -621,7 +621,7 @@ predict_catboost(PG_FUNCTION_ARGS)
 
         check_catboost_error(CatBoostModelCalcerPredict(model_handle,
                                                        features, n_features, &result, 1));
-        NDB_SAFE_PFREE_AND_NULL(features);
+        NDB_FREE(features);
     }
 
     CatBoostFreeModelCalcer(model_handle);
@@ -697,31 +697,37 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
     oldcontext = CurrentMemoryContext;
 
     /* Connect to SPI */
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-        ereport(ERROR,
-            (errcode(ERRCODE_INTERNAL_ERROR),
-                errmsg("neurondb: evaluate_catboost_by_model_id: SPI_connect failed")));
+    NDB_DECLARE(NdbSpiSession *, spi_session);
+
+    NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
     /* Build query */
-    initStringInfo(&query);
+    ndb_spi_stringinfo_init(spi_session, &query);
     appendStringInfo(&query,
         "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
         feat_str, targ_str, tbl_str, feat_str, targ_str);
 
-    ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+    ret = ndb_spi_execute(spi_session, query.data, true, 0);
     if (ret != SPI_OK_SELECT)
+    {
+        ndb_spi_stringinfo_free(spi_session, &query);
+        NDB_SPI_SESSION_END(spi_session);
+        NDB_FREE(tbl_str);
+        NDB_FREE(feat_str);
+        NDB_FREE(targ_str);
         ereport(ERROR,
             (errcode(ERRCODE_INTERNAL_ERROR),
                 errmsg("neurondb: evaluate_catboost_by_model_id: query failed")));
+    }
 
     nvec = SPI_processed;
     if (nvec < 2)
     {
-        SPI_finish();
-        NDB_SAFE_PFREE_AND_NULL(tbl_str);
-        NDB_SAFE_PFREE_AND_NULL(feat_str);
-        NDB_SAFE_PFREE_AND_NULL(targ_str);
+        ndb_spi_stringinfo_free(spi_session, &query);
+        NDB_SPI_SESSION_END(spi_session);
+        NDB_FREE(tbl_str);
+        NDB_FREE(feat_str);
+        NDB_FREE(targ_str);
         ereport(ERROR,
             (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                 errmsg("neurondb: evaluate_catboost_by_model_id: need at least 2 samples, got %d",
@@ -731,11 +737,26 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
     /* First pass: compute mean of y */
     for (i = 0; i < nvec; i++)
     {
+        /* Safe access to SPI_tuptable - validate before access */
+        if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+            i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+        {
+            continue;
+        }
         HeapTuple tuple = SPI_tuptable->vals[i];
         TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        if (tupdesc == NULL)
+        {
+            continue;
+        }
         Datum targ_datum;
         bool targ_null;
 
+        /* Safe access for target - validate tupdesc has at least 2 columns */
+        if (tupdesc->natts < 2)
+        {
+            continue;
+        }
         targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
         if (!targ_null)
             y_mean += DatumGetFloat8(targ_datum);
@@ -783,10 +804,11 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
             arr = DatumGetArrayTypeP(feat_datum);
             if (ARR_NDIM(arr) != 1)
             {
-                SPI_finish();
-                NDB_SAFE_PFREE_AND_NULL(tbl_str);
-                NDB_SAFE_PFREE_AND_NULL(feat_str);
-                NDB_SAFE_PFREE_AND_NULL(targ_str);
+                ndb_spi_stringinfo_free(spi_session, &query);
+                NDB_SPI_SESSION_END(spi_session);
+                NDB_FREE(tbl_str);
+                NDB_FREE(feat_str);
+                NDB_FREE(targ_str);
                 ereport(ERROR,
                     (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                         errmsg("catboost: features array must be 1-D")));
@@ -827,8 +849,8 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
                                                        Int32GetDatum(model_id),
                                                        features_datum));
 
-            NDB_SAFE_PFREE_AND_NULL(elems);
-            NDB_SAFE_PFREE_AND_NULL(feature_array);
+            NDB_FREE(elems);
+            NDB_FREE(feature_array);
         }
 
         /* Compute errors */
@@ -839,7 +861,8 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
         ss_tot += (y_true - y_mean) * (y_true - y_mean);
     }
 
-    SPI_finish();
+    ndb_spi_stringinfo_free(spi_session, &query);
+    NDB_SPI_SESSION_END(spi_session);
 
     mse /= nvec;
     mae /= nvec;
@@ -858,13 +881,13 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
         "{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"r_squared\":%.6f,\"n_samples\":%d}",
         mse, mae, rmse, r_squared, nvec);
 
-    result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-    NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+    result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+    NDB_FREE(jsonbuf.data);
 
     /* Cleanup */
-    NDB_SAFE_PFREE_AND_NULL(tbl_str);
-    NDB_SAFE_PFREE_AND_NULL(feat_str);
-    NDB_SAFE_PFREE_AND_NULL(targ_str);
+    NDB_FREE(tbl_str);
+    NDB_FREE(feat_str);
+    NDB_FREE(targ_str);
 
     PG_RETURN_JSONB_P(result);
 #else
@@ -884,6 +907,8 @@ evaluate_catboost_by_model_id(PG_FUNCTION_ARGS)
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 typedef struct CatBoostGpuModelState
 {
@@ -918,7 +943,7 @@ catboost_model_serialize_to_bytea(int iterations, int depth, float learning_rate
 	result = (bytea *)palloc(total_size);
 	SET_VARSIZE(result, total_size);
 	memcpy(VARDATA(result), buf.data, buf.len);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+	NDB_FREE(buf.data);
 
 	return result;
 }
@@ -1000,7 +1025,7 @@ catboost_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 						NumericGetDatum(v.val.numeric)));
 				else if (strcmp(key, "loss_function") == 0 && v.type == jbvString)
 					strncpy(loss_function, v.val.string.val, sizeof(loss_function) - 1);
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1033,8 +1058,8 @@ catboost_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 		"{\"storage\":\"cpu\",\"iterations\":%d,\"depth\":%d,\"learning_rate\":%.6f,\"n_features\":%d,\"loss_function\":\"%s\",\"n_samples\":%d}",
 		iterations, depth, learning_rate, dim, loss_function, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+		CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
 	state = (CatBoostGpuModelState *)palloc0(sizeof(CatBoostGpuModelState));
 	state->model_blob = model_data;
@@ -1047,7 +1072,7 @@ catboost_gpu_train(MLGpuModel *model, const MLGpuTrainSpec *spec, char **errstr)
 	strncpy(state->loss_function, loss_function, sizeof(state->loss_function) - 1);
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1138,8 +1163,8 @@ catboost_gpu_evaluate(const MLGpuModel *model, const MLGpuEvalSpec *spec,
 		state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+		CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -1183,7 +1208,7 @@ catboost_gpu_serialize(const MLGpuModel *model, bytea **payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *)PG_DETOAST_DATUM_COPY(
@@ -1223,7 +1248,7 @@ catboost_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 
 	if (catboost_model_deserialize_from_bytea(payload_copy, &iterations, &depth, &learning_rate, &n_features, loss_function, sizeof(loss_function)) != 0)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("catboost_gpu_deserialize: failed to deserialize");
 		return false;
@@ -1255,7 +1280,7 @@ catboost_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 						NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	} else
@@ -1264,7 +1289,7 @@ catboost_gpu_deserialize(MLGpuModel *model, const bytea *payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -1285,10 +1310,10 @@ catboost_gpu_destroy(MLGpuModel *model)
 	{
 		state = (CatBoostGpuModelState *)model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->metrics);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

@@ -1,13 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_mmr.c
- *    Maximal Marginal Relevance (MMR) for diverse reranking
+ *    Maximal marginal relevance for diverse reranking.
  *
- * MMR balances relevance and diversity in search results by iteratively
- * selecting documents that are relevant to the query while being
- * dissimilar to already-selected results.
+ * This module implements MMR to balance relevance and diversity in search
+ * results by iteratively selecting relevant but dissimilar documents.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_mmr.c
@@ -28,6 +27,7 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * Compute cosine similarity between two vectors
@@ -216,11 +216,11 @@ mmr_rerank(PG_FUNCTION_ARGS)
 							 typalign);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(candidates);
-	NDB_SAFE_PFREE_AND_NULL(query_scores);
-	NDB_SAFE_PFREE_AND_NULL(selected);
-	NDB_SAFE_PFREE_AND_NULL(result_indices);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
+	NDB_FREE(candidates);
+	NDB_FREE(query_scores);
+	NDB_FREE(selected);
+	NDB_FREE(result_indices);
+	NDB_FREE(result_datums);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -365,12 +365,12 @@ mmr_rerank_with_scores(PG_FUNCTION_ARGS)
 							 'i');
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(candidates);
-	NDB_SAFE_PFREE_AND_NULL(query_scores);
-	NDB_SAFE_PFREE_AND_NULL(selected);
-	NDB_SAFE_PFREE_AND_NULL(result_indices);
-	NDB_SAFE_PFREE_AND_NULL(result_scores);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
+	NDB_FREE(candidates);
+	NDB_FREE(query_scores);
+	NDB_FREE(selected);
+	NDB_FREE(result_indices);
+	NDB_FREE(result_scores);
+	NDB_FREE(result_datums);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

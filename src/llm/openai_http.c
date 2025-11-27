@@ -34,7 +34,9 @@
 #include <float.h>
 #include "neurondb_llm.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_validation.h"
+#include "neurondb_json.h"
 
 /* Forward declaration for image validation */
 /* ImageMetadata and related functions are now defined in neurondb_llm.h */
@@ -68,64 +70,7 @@ ndb_encode_base64(bytea * data)
 	return DatumGetTextP(result);
 }
 
-/* Helper: Quote a C string for JSON (returns JSON string with quotes and escaping) */
-static char *
-ndb_quote_json_cstr(const char *str)
-{
-	StringInfoData buf;
-	const char *p;
-	char	   *result;
-
-	if (str == NULL)
-		return pstrdup("null");
-
-	initStringInfo(&buf);
-	appendStringInfoChar(&buf, '"');
-
-	for (p = str; *p; p++)
-	{
-		switch (*p)
-		{
-			case '"':
-				appendStringInfoString(&buf, "\\\"");
-				break;
-			case '\\':
-				appendStringInfoString(&buf, "\\\\");
-				break;
-			case '\b':
-				appendStringInfoString(&buf, "\\b");
-				break;
-			case '\f':
-				appendStringInfoString(&buf, "\\f");
-				break;
-			case '\n':
-				appendStringInfoString(&buf, "\\n");
-				break;
-			case '\r':
-				appendStringInfoString(&buf, "\\r");
-				break;
-			case '\t':
-				appendStringInfoString(&buf, "\\t");
-				break;
-			default:
-				if ((unsigned char) *p < 0x20)
-				{
-					appendStringInfo(&buf, "\\u%04x", (unsigned char) *p);
-				}
-				else
-				{
-					appendStringInfoChar(&buf, *p);
-				}
-				break;
-		}
-	}
-
-	appendStringInfoChar(&buf, '"');
-	result = pstrdup(buf.data);
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
-	buf.data = NULL;
-	return result;
-}
+/* JSON quoting now uses centralized ndb_json_quote_string from neurondb_json.h */
 
 /* Helper for dynamic memory buffer for curl writes */
 typedef struct
@@ -173,7 +118,7 @@ http_post_json(const char *url,
 		curl = curl_easy_init();
 		if (!curl)
 		{
-			NDB_SAFE_PFREE_AND_NULL(buf.data);
+			NDB_FREE(buf.data);
 			buf.data = NULL;
 			return -1;
 		}
@@ -211,12 +156,12 @@ http_post_json(const char *url,
 			}
 			if (buf.data)
 			{
-				NDB_SAFE_PFREE_AND_NULL(buf.data);
+				NDB_FREE(buf.data);
 				buf.data = NULL;
 			}
 			if (auth_header_data)
 			{
-				NDB_SAFE_PFREE_AND_NULL(auth_header_data);
+				NDB_FREE(auth_header_data);
 				auth_header_data = NULL;
 			}
 			return -1;
@@ -246,7 +191,7 @@ http_post_json(const char *url,
 		buf.data = NULL;		/* Ownership transferred to caller */
 		if (auth_header_data)
 		{
-			NDB_SAFE_PFREE_AND_NULL(auth_header_data);
+			NDB_FREE(auth_header_data);
 			auth_header_data = NULL;
 		}
 		result = (int) code;
@@ -268,12 +213,12 @@ http_post_json(const char *url,
 		}
 		if (buf.data)
 		{
-			NDB_SAFE_PFREE_AND_NULL(buf.data);
+			NDB_FREE(buf.data);
 			buf.data = NULL;
 		}
 		if (auth_header_data)
 		{
-			NDB_SAFE_PFREE_AND_NULL(auth_header_data);
+			NDB_FREE(auth_header_data);
 			auth_header_data = NULL;
 		}
 		if (out)
@@ -286,408 +231,11 @@ http_post_json(const char *url,
 	return result;
 }
 
-/* Extracts text from OpenAI chat completion API response
- *
- * OpenAI response format:
- * {
- *   "id": "chatcmpl-...",
- *   "object": "chat.completion",
- *   "created": 1234567890,
- *   "model": "gpt-3.5-turbo",
- *   "choices": [{
- *     "index": 0,
- *     "message": {
- *       "role": "assistant",
- *       "content": "response text here"
- *     },
- *     "finish_reason": "stop"
- *   }],
- *   "usage": {
- *     "prompt_tokens": 10,
- *     "completion_tokens": 20,
- *     "total_tokens": 30
- *   }
- * }
- *
- * Robust parsing with proper JSON string handling
+/* extract_openai_text, extract_openai_tokens, and parse_openai_emb_vector
+ * are now replaced by centralized functions from neurondb_json.h:
+ * - ndb_json_extract_openai_response() for text and tokens
+ * - ndb_json_parse_openai_embedding() for embedding vectors
  */
-static char *
-extract_openai_text(const char *json)
-{
-	const char *p;
-	const char *q;
-	size_t		len;
-	char	   *result = NULL;
-	char	   *unescaped = NULL;
-	int			escape_next = 0;
-
-	if (!json || json[0] == '\0')
-		return NULL;
-
-	/* Check for error response */
-	if (strncmp(json, "{\"error\"", 8) == 0)
-		return NULL;
-
-	/*
-	 * Look for "content" field - handle nested structure:
-	 * choices[0].message.content
-	 */
-	/* First find "choices" array */
-	p = strstr(json, "\"choices\"");
-	if (!p)
-		return NULL;
-
-	/* Find opening bracket of choices array */
-	p = strchr(p, '[');
-	if (!p)
-		return NULL;
-	p++;
-
-	/* Skip whitespace and find first object */
-	while (*p && (isspace((unsigned char) *p) || *p == '{'))
-	{
-		if (*p == '{')
-			break;
-		p++;
-	}
-	if (*p != '{')
-		return NULL;
-
-	/* Now look for "message" within this choice object */
-	p = strstr(p, "\"message\"");
-	if (!p)
-		return NULL;
-
-	/* Find opening brace of message object */
-	p = strchr(p, '{');
-	if (!p)
-		return NULL;
-	p++;
-
-	/* Look for "content" within message */
-	p = strstr(p, "\"content\"");
-	if (!p)
-		return NULL;
-
-	/* Find colon after "content" */
-	p = strchr(p, ':');
-	if (!p)
-		return NULL;
-	p++;
-
-	/* Skip whitespace */
-	while (*p && isspace((unsigned char) *p))
-		p++;
-
-	/* Check if value is a string (starts with quote) */
-	if (*p != '"')
-		return NULL;
-	p++;						/* Skip opening quote */
-
-	/* Extract string value, handling escaped characters */
-	q = p;
-	len = 0;
-	while (*q)
-	{
-		if (escape_next)
-		{
-			escape_next = 0;
-			len++;
-			q++;
-			continue;
-		}
-		if (*q == '\\')
-		{
-			escape_next = 1;
-			len++;
-			q++;
-			continue;
-		}
-		if (*q == '"')
-		{
-			/* Found closing quote (not escaped) */
-			break;
-		}
-		len++;
-		q++;
-	}
-
-	if (len == 0)
-		return NULL;
-
-	/* Allocate and copy string */
-	result = (char *) palloc(len + 1);
-	unescaped = result;
-	q = p;
-
-	/* Copy and unescape */
-	while (q < p + len)
-	{
-		if (*q == '\\' && q + 1 < p + len)
-		{
-			switch (q[1])
-			{
-				case 'n':
-					*unescaped++ = '\n';
-					q += 2;
-					break;
-				case 't':
-					*unescaped++ = '\t';
-					q += 2;
-					break;
-				case 'r':
-					*unescaped++ = '\r';
-					q += 2;
-					break;
-				case '\\':
-					*unescaped++ = '\\';
-					q += 2;
-					break;
-				case '"':
-					*unescaped++ = '"';
-					q += 2;
-					break;
-				case '/':
-					*unescaped++ = '/';
-					q += 2;
-					break;
-				case 'u':
-					/* Unicode escape - for now, skip it or handle basic case */
-					if (q + 5 < p + len && isxdigit((unsigned char) q[2]) &&
-						isxdigit((unsigned char) q[3]) &&
-						isxdigit((unsigned char) q[4]) &&
-						isxdigit((unsigned char) q[5]))
-					{
-						/* Simple ASCII range unicode handling */
-						unsigned int code = 0;
-
-						sscanf(q + 2, "%4x", &code);
-						if (code < 128)
-						{
-							*unescaped++ = (char) code;
-						}
-						else
-						{
-							/* Non-ASCII: keep as-is for now */
-							*unescaped++ = '?';
-						}
-						q += 6;
-					}
-					else
-					{
-						*unescaped++ = *q++;
-					}
-					break;
-				default:
-					/* Unknown escape, keep both characters */
-					*unescaped++ = *q++;
-					*unescaped++ = *q++;
-					break;
-			}
-		}
-		else
-		{
-			*unescaped++ = *q++;
-		}
-	}
-	*unescaped = '\0';
-
-	return result;
-}
-
-/* Extracts token counts from OpenAI response
- * Returns true if found, false otherwise
- */
-static bool
-extract_openai_tokens(const char *json,
-					  int *tokens_in,
-					  int *tokens_out)
-{
-	const char *p;
-	char	   *endptr;
-	long		val;
-
-	if (!json || !tokens_in || !tokens_out)
-		return false;
-
-	/* Look for "prompt_tokens" */
-	p = strstr(json, "\"prompt_tokens\":");
-	if (p)
-	{
-		p = strchr(p, ':');
-		if (p)
-		{
-			p++;
-			while (*p && isspace((unsigned char) *p))
-				p++;
-			val = strtol(p, &endptr, 10);
-			if (endptr != p)
-				*tokens_in = (int) val;
-		}
-	}
-
-	/* Look for "completion_tokens" */
-	p = strstr(json, "\"completion_tokens\":");
-	if (p)
-	{
-		p = strchr(p, ':');
-		if (p)
-		{
-			p++;
-			while (*p && isspace((unsigned char) *p))
-				p++;
-			val = strtol(p, &endptr, 10);
-			if (endptr != p)
-				*tokens_out = (int) val;
-		}
-	}
-
-	return true;
-}
-
-/* Extracts embedding vector from OpenAI embedding API response
- *
- * OpenAI response format:
- * {
- *   "object": "list",
- *   "data": [{
- *     "object": "embedding",
- *     "index": 0,
- *     "embedding": [0.1, 0.2, 0.3, ...]
- *   }],
- *   "model": "text-embedding-ada-002",
- *   "usage": {
- *     "prompt_tokens": 8,
- *     "total_tokens": 8
- *   }
- * }
- *
- * Robust parsing of embedding array
- */
-static bool
-parse_openai_emb_vector(const char *json, float **vec_out, int *dim_out)
-{
-	const char *p;
-	float	   *vec = NULL;
-	int			n = 0;
-	int			cap = 256;		/* Start with reasonable capacity */
-	char	   *endptr;
-	double		v;
-	bool		in_array = false;
-
-	if (!json || !vec_out || !dim_out)
-		return false;
-
-	/* Look for "data" array first, then "embedding" within it */
-	p = strstr(json, "\"data\"");
-	if (p)
-	{
-		/* Find opening bracket of data array */
-		p = strchr(p, '[');
-		if (p)
-		{
-			p++;
-			/* Find first object in data array */
-			p = strchr(p, '{');
-			if (p)
-			{
-				/* Look for "embedding" within this object */
-				p = strstr(p, "\"embedding\"");
-			}
-		}
-	}
-
-	/* If not found in data array, try direct search */
-	if (!p || !strstr(p, "\"embedding\""))
-	{
-		p = strstr(json, "\"embedding\":");
-	}
-
-	if (!p)
-	{
-		/* No embedding found - return error */
-		return false;
-	}
-
-	/* Find the opening bracket after "embedding": */
-	p = strchr(p, '[');
-	if (!p)
-		return false;
-	p++;
-	in_array = true;
-
-	/* Allocate initial vector */
-	vec = (float *) palloc(sizeof(float) * cap);
-
-	/* Parse array of floats */
-	while (*p && in_array)
-	{
-		/* Skip whitespace and commas */
-		while (*p && (isspace((unsigned char) *p) || *p == ','))
-			p++;
-
-		if (*p == ']')
-		{
-			in_array = false;
-			break;
-		}
-
-		if (!*p)
-			break;
-
-		/* Parse float value */
-		endptr = NULL;
-		errno = 0;
-		v = strtod(p, &endptr);
-
-		/* Check for parse error */
-		if (endptr == p || errno == ERANGE)
-		{
-			/* Invalid number, try to continue */
-			while (*p && *p != ',' && *p != ']' && !isspace((unsigned char) *p))
-				p++;
-			continue;
-		}
-
-		/* Check for overflow */
-		if (v > FLT_MAX || v < -FLT_MAX)
-		{
-			/* Value out of range, skip */
-			p = endptr;
-			continue;
-		}
-
-		/* Grow array if needed */
-		if (n >= cap)
-		{
-			cap = cap * 2;
-			vec = repalloc(vec, sizeof(float) * cap);
-		}
-
-		vec[n++] = (float) v;
-		p = endptr;
-	}
-
-	if (n > 0)
-	{
-		/* Trim to actual size */
-		if (n < cap)
-		{
-			vec = repalloc(vec, sizeof(float) * n);
-		}
-		*vec_out = vec;
-		*dim_out = n;
-		return true;
-	}
-
-	/* No valid values found */
-	if (vec)
-	{
-		NDB_SAFE_PFREE_AND_NULL(vec);
-		vec = NULL;
-	}
-	return false;
-}
 
 /* OpenAI chat completion API
  *
@@ -716,9 +264,9 @@ ndb_openai_complete(const NdbLLMConfig * cfg,
 
 	if (prompt == NULL || out == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(url.data);
+		NDB_FREE(url.data);
 		url.data = NULL;
-		NDB_SAFE_PFREE_AND_NULL(body.data);
+		NDB_FREE(body.data);
 		body.data = NULL;
 		return -1;
 	}
@@ -734,8 +282,8 @@ ndb_openai_complete(const NdbLLMConfig * cfg,
 	}
 
 	/* Quote model and prompt for JSON */
-	model_quoted = ndb_quote_json_cstr(cfg->model ? cfg->model : "gpt-3.5-turbo");
-	prompt_quoted = ndb_quote_json_cstr(prompt);
+	model_quoted = ndb_json_quote_string(cfg->model ? cfg->model : "gpt-3.5-turbo");
+	prompt_quoted = ndb_json_quote_string(prompt);
 
 	/* Build request body */
 	appendStringInfo(&body,
@@ -768,9 +316,9 @@ ndb_openai_complete(const NdbLLMConfig * cfg,
 
 	appendStringInfoChar(&body, '}');
 
-	NDB_SAFE_PFREE_AND_NULL(model_quoted);
+	NDB_FREE(model_quoted);
 	model_quoted = NULL;
-	NDB_SAFE_PFREE_AND_NULL(prompt_quoted);
+	NDB_FREE(prompt_quoted);
 	prompt_quoted = NULL;
 
 	/* Make HTTP request */
@@ -784,21 +332,28 @@ ndb_openai_complete(const NdbLLMConfig * cfg,
 	if (out->json && out->http_status >= 200 && out->http_status < 300)
 	{
 		/* Extract response text */
-		char	   *t = extract_openai_text(out->json);
+		NdbOpenAIResponse response = {0};
+		int			parse_result = ndb_json_extract_openai_response(out->json, &response);
 
-		if (t)
+		if (parse_result == 0 && response.text)
 		{
-			out->text = t;
+			out->text = response.text;
+			/* Note: response.text is now owned by out->text, don't free it here */
 		}
 		else
 		{
-			/* Fallback: try to extract any text content from JSON using JSONB */
+			/* Free response if it was partially allocated */
 			Jsonb	   *jsonb = NULL;
 
+			if (response.text)
+				pfree(response.text);
+			if (response.error_message)
+				pfree(response.error_message);
+			/* Fallback: try to extract any text content from JSON using JSONB */
 			PG_TRY();
 			{
-				jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-														   CStringGetDatum(out->json)));
+				/* Skip JSONB processing to avoid DirectFunctionCall1 issues */
+				jsonb = NULL;
 				if (jsonb)
 				{
 					/* Try to extract from choices[0].message.content */
@@ -850,17 +405,21 @@ ndb_openai_complete(const NdbLLMConfig * cfg,
 				out->text = pstrdup("OpenAI response (unable to parse)");
 		}
 
-		/* Extract token counts */
-		extract_openai_tokens(out->json, &out->tokens_in, &out->tokens_out);
+		/* Extract token counts (already extracted above if parse_result == 0) */
+		if (parse_result == 0)
+		{
+			out->tokens_in = response.tokens_in;
+			out->tokens_out = response.tokens_out;
+		}
 	}
 	else if (out->json)
 	{
 		out->text = NULL;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(url.data);
+	NDB_FREE(url.data);
 	url.data = NULL;
-	NDB_SAFE_PFREE_AND_NULL(body.data);
+	NDB_FREE(body.data);
 	body.data = NULL;
 
 	return (out->http_status >= 200 && out->http_status < 300) ? 0 : -1;
@@ -893,9 +452,9 @@ ndb_openai_embed(const NdbLLMConfig * cfg,
 
 	if (text == NULL || vec_out == NULL || dim_out == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(url.data);
+		NDB_FREE(url.data);
 		url.data = NULL;
-		NDB_SAFE_PFREE_AND_NULL(body.data);
+		NDB_FREE(body.data);
 		body.data = NULL;
 		return -1;
 	}
@@ -911,9 +470,9 @@ ndb_openai_embed(const NdbLLMConfig * cfg,
 	}
 
 	/* Quote model and text for JSON */
-	model_quoted = ndb_quote_json_cstr(
+	model_quoted = ndb_json_quote_string(
 									   cfg->model ? cfg->model : "text-embedding-ada-002");
-	text_quoted = ndb_quote_json_cstr(text);
+	text_quoted = ndb_json_quote_string(text);
 
 	/* Build request body */
 	appendStringInfo(&body,
@@ -921,9 +480,9 @@ ndb_openai_embed(const NdbLLMConfig * cfg,
 					 model_quoted,
 					 text_quoted);
 
-	NDB_SAFE_PFREE_AND_NULL(model_quoted);
+	NDB_FREE(model_quoted);
 	model_quoted = NULL;
-	NDB_SAFE_PFREE_AND_NULL(text_quoted);
+	NDB_FREE(text_quoted);
 	text_quoted = NULL;
 
 	/* Make HTTP request */
@@ -932,19 +491,19 @@ ndb_openai_embed(const NdbLLMConfig * cfg,
 
 	if (http_status >= 200 && http_status < 300 && json_resp)
 	{
-		bool		ok = parse_openai_emb_vector(json_resp, vec_out, dim_out);
+		int			ok = ndb_json_parse_openai_embedding(json_resp, vec_out, dim_out);
 
-		NDB_SAFE_PFREE_AND_NULL(url.data);
-		NDB_SAFE_PFREE_AND_NULL(body.data);
+		NDB_FREE(url.data);
+		NDB_FREE(body.data);
 		if (json_resp)
-			NDB_SAFE_PFREE_AND_NULL(json_resp);
-		return ok ? 0 : -1;
+			NDB_FREE(json_resp);
+		return (ok == 0) ? 0 : -1;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(url.data);
-	NDB_SAFE_PFREE_AND_NULL(body.data);
+	NDB_FREE(url.data);
+	NDB_FREE(body.data);
 	if (json_resp)
-		NDB_SAFE_PFREE_AND_NULL(json_resp);
+		NDB_FREE(json_resp);
 	return -1;
 }
 
@@ -982,8 +541,8 @@ ndb_openai_embed_batch(const NdbLLMConfig * cfg,
 	if (texts == NULL || num_texts <= 0 || vecs_out == NULL
 		|| dims_out == NULL || num_success_out == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(url.data);
-		NDB_SAFE_PFREE_AND_NULL(body.data);
+		NDB_FREE(url.data);
+		NDB_FREE(body.data);
 		return -1;
 	}
 
@@ -998,7 +557,7 @@ ndb_openai_embed_batch(const NdbLLMConfig * cfg,
 	}
 
 	/* Quote model for JSON */
-	model_quoted = ndb_quote_json_cstr(
+	model_quoted = ndb_json_quote_string(
 									   cfg->model ? cfg->model : "text-embedding-ada-002");
 
 	/* Build request body with array of inputs */
@@ -1012,16 +571,16 @@ ndb_openai_embed_batch(const NdbLLMConfig * cfg,
 		{
 			if (i > 0)
 				appendStringInfoChar(&body, ',');
-			text_quoted = ndb_quote_json_cstr(texts[i]);
+			text_quoted = ndb_json_quote_string(texts[i]);
 			appendStringInfoString(&body, text_quoted);
-			NDB_SAFE_PFREE_AND_NULL(text_quoted);
+			NDB_FREE(text_quoted);
 		}
 	}
 
 	appendStringInfoChar(&body, '}');
 	appendStringInfoChar(&body, '}');
 
-	NDB_SAFE_PFREE_AND_NULL(model_quoted);
+	NDB_FREE(model_quoted);
 
 	/* Make HTTP request */
 	http_status = http_post_json(
@@ -1101,7 +660,7 @@ ndb_openai_embed_batch(const NdbLLMConfig * cfg,
 							}
 							else if (vec)
 							{
-								NDB_SAFE_PFREE_AND_NULL(vec);
+								NDB_FREE(vec);
 							}
 
 							/* Move past this embedding object */
@@ -1130,10 +689,10 @@ ndb_openai_embed_batch(const NdbLLMConfig * cfg,
 	*dims_out = dims;
 	*num_success_out = success_count;
 
-	NDB_SAFE_PFREE_AND_NULL(url.data);
-	NDB_SAFE_PFREE_AND_NULL(body.data);
+	NDB_FREE(url.data);
+	NDB_FREE(body.data);
 	if (json_resp)
-		NDB_SAFE_PFREE_AND_NULL(json_resp);
+		NDB_FREE(json_resp);
 
 	return (success_count > 0) ? 0 : -1;
 }
@@ -1172,8 +731,8 @@ ndb_openai_vision_complete(const NdbLLMConfig * cfg,
 
 	if (image_data == NULL || image_size == 0 || out == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(url.data);
-		NDB_SAFE_PFREE_AND_NULL(body.data);
+		NDB_FREE(url.data);
+		NDB_FREE(body.data);
 		return -1;
 	}
 
@@ -1191,13 +750,13 @@ ndb_openai_vision_complete(const NdbLLMConfig * cfg,
 		if (img_meta)
 		{
 			if (img_meta->mime_type)
-				NDB_SAFE_PFREE_AND_NULL(img_meta->mime_type);
+				NDB_FREE(img_meta->mime_type);
 			if (img_meta->error_msg)
-				NDB_SAFE_PFREE_AND_NULL(img_meta->error_msg);
-			NDB_SAFE_PFREE_AND_NULL(img_meta);
+				NDB_FREE(img_meta->error_msg);
+			NDB_FREE(img_meta);
 		}
-		NDB_SAFE_PFREE_AND_NULL(url.data);
-		NDB_SAFE_PFREE_AND_NULL(body.data);
+		NDB_FREE(url.data);
+		NDB_FREE(body.data);
 		return -1;
 	}
 
@@ -1209,8 +768,8 @@ ndb_openai_vision_complete(const NdbLLMConfig * cfg,
 	encoded_text = ndb_encode_base64(image_bytea);
 	base64_data = text_to_cstring(encoded_text);
 
-	NDB_SAFE_PFREE_AND_NULL(image_bytea);
-	NDB_SAFE_PFREE_AND_NULL(encoded_text);
+	NDB_FREE(image_bytea);
+	NDB_FREE(encoded_text);
 
 	/* Build OpenAI chat completion endpoint for vision */
 	if (cfg->endpoint)
@@ -1224,11 +783,11 @@ ndb_openai_vision_complete(const NdbLLMConfig * cfg,
 
 	/* Use GPT-4 Vision or gpt-4o if model not specified */
 	vision_model = cfg->model ? cfg->model : "gpt-4o";
-	model_quoted = ndb_quote_json_cstr(vision_model);
+	model_quoted = ndb_json_quote_string(vision_model);
 
 	/* Use default prompt if not provided */
 	vision_prompt = prompt ? prompt : "What's in this image? Describe it in detail.";
-	prompt_quoted = ndb_quote_json_cstr(vision_prompt);
+	prompt_quoted = ndb_json_quote_string(vision_prompt);
 
 	/* Build request body with image in messages - use detected MIME type */
 	mime_type = img_meta->mime_type ? img_meta->mime_type : "image/jpeg";
@@ -1263,18 +822,18 @@ ndb_openai_vision_complete(const NdbLLMConfig * cfg,
 
 	appendStringInfoChar(&body, '}');
 
-	NDB_SAFE_PFREE_AND_NULL(model_quoted);
-	NDB_SAFE_PFREE_AND_NULL(prompt_quoted);
-	NDB_SAFE_PFREE_AND_NULL(base64_data);
+	NDB_FREE(model_quoted);
+	NDB_FREE(prompt_quoted);
+	NDB_FREE(base64_data);
 
 	/* Free image metadata */
 	if (img_meta)
 	{
 		if (img_meta->mime_type)
-			NDB_SAFE_PFREE_AND_NULL(img_meta->mime_type);
+			NDB_FREE(img_meta->mime_type);
 		if (img_meta->error_msg)
-			NDB_SAFE_PFREE_AND_NULL(img_meta->error_msg);
-		NDB_SAFE_PFREE_AND_NULL(img_meta);
+			NDB_FREE(img_meta->error_msg);
+		NDB_FREE(img_meta);
 	}
 
 	/* Make HTTP request with retry logic */
@@ -1287,13 +846,28 @@ ndb_openai_vision_complete(const NdbLLMConfig * cfg,
 
 	if (out->json && out->http_status >= 200 && out->http_status < 300)
 	{
-		out->text = extract_openai_text(out->json);
-		extract_openai_tokens(out->json, &out->tokens_in, &out->tokens_out);
+		NdbOpenAIResponse response = {0};
+		int			parse_result = ndb_json_extract_openai_response(out->json, &response);
+		if (parse_result == 0)
+		{
+			out->text = response.text;
+			out->tokens_in = response.tokens_in;
+			out->tokens_out = response.tokens_out;
+			/* Note: response.text is now owned by out->text */
+		}
+		else
+		{
+			/* Free response if it was partially allocated */
+			if (response.text)
+				pfree(response.text);
+			if (response.error_message)
+				pfree(response.error_message);
+		}
 		rc = 0;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(url.data);
-	NDB_SAFE_PFREE_AND_NULL(body.data);
+	NDB_FREE(url.data);
+	NDB_FREE(body.data);
 
 	return rc;
 }
@@ -1412,13 +986,16 @@ ndb_openai_rerank(const NdbLLMConfig * cfg,
 		http_status = http_post_json(url.data, cfg->api_key, body.data,
 									 cfg->timeout_ms > 0 ? cfg->timeout_ms : 30000, &json_response);
 
-		NDB_SAFE_PFREE_AND_NULL(url.data);
-		NDB_SAFE_PFREE_AND_NULL(body.data);
+		NDB_FREE(url.data);
+		NDB_FREE(body.data);
 
 		if (http_status == 200 && json_response)
 		{
 			/* Extract score from response */
-			char	   *text = extract_openai_text(json_response);
+			NdbOpenAIResponse response = {0};
+			int			parse_result = ndb_json_extract_openai_response(json_response, &response);
+			char	   *text = (parse_result == 0) ? response.text : NULL;
+			/* Note: text is owned by response, caller should free if needed */
 
 			if (text)
 			{
@@ -1430,13 +1007,13 @@ ndb_openai_rerank(const NdbLLMConfig * cfg,
 				if (score > 1.0f)
 					score = 1.0f;
 				scores[i] = score;
-				NDB_SAFE_PFREE_AND_NULL(text);
+				NDB_FREE(text);
 			}
 			else
 			{
 				scores[i] = 0.5f;	/* Default if parsing fails */
 			}
-			NDB_SAFE_PFREE_AND_NULL(json_response);
+			NDB_FREE(json_response);
 			json_response = NULL;
 		}
 		else
@@ -1444,7 +1021,7 @@ ndb_openai_rerank(const NdbLLMConfig * cfg,
 			scores[i] = 0.5f;	/* Default on error */
 			if (json_response)
 			{
-				NDB_SAFE_PFREE_AND_NULL(json_response);
+				NDB_FREE(json_response);
 				json_response = NULL;
 			}
 		}

@@ -1,19 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_ml_ops.c
- *    GPU-accelerated machine learning operations
+ *    Accelerated machine learning operations.
  *
- * Provides GPU acceleration for:
- * - Matrix operations (matmul, transpose)
- * - Gradient descent
- * - Neural network forward/backward pass
- * - K-means clustering
- * - Vector normalization
- *
- * IDENTIFICATION
- *    src/gpu/gpu_ml_ops.c
+ * This module provides accelerated operations for matrix operations,
+ * gradient descent, neural network passes, clustering, and normalization.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/common/gpu_ml_ops.c
+ *
  *-------------------------------------------------------------------------
  */
 
@@ -26,6 +23,7 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * neurondb_gpu_matmul
@@ -326,7 +324,7 @@ neurondb_gpu_kmeans_update(const float *data,
 		}
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(counts);
+	NDB_FREE(counts);
 }
 
 /*

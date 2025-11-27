@@ -9,7 +9,7 @@
  * It exposes detailed database metrics via an HTTP endpoint, which can
  * be scraped by Prometheus to provide real-time cluster observability.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *        src/metrics/prometheus.c
@@ -43,6 +43,8 @@
 #include <errno.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_macros.h"
 
 /* HTTP server configuration (GUC-backed settings) */
 static int	prometheus_port = 9187;
@@ -489,7 +491,7 @@ send_metrics(int socket)
 		ssize_t __w = write(socket, metrics.data, metrics.len);
 		(void) __w;
 	}
-	NDB_SAFE_PFREE_AND_NULL(metrics.data);
+	NDB_FREE(metrics.data);
 }
 
 /*

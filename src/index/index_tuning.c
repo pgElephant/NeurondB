@@ -9,10 +9,10 @@
  * - Cost-based index selection
  * - Query pattern analysis for tuning
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/index_tuning.c
+ *	  src/index/index_tuning.c
  *
  *-------------------------------------------------------------------------
  */
@@ -34,7 +34,10 @@
 #include <stdlib.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_constants.h"
 
 /*
  * Automatically optimize HNSW parameters based on dataset characteristics
@@ -57,14 +60,16 @@ index_tune_hnsw(PG_FUNCTION_ARGS)
 	int			recommended_ef_construction = 64;
 	StringInfoData json_buf;
 	Jsonb	   *result_jsonb;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	tbl_name = text_to_cstring(table_name);
 	col_name = text_to_cstring(column_name);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("index_tune_hnsw: SPI_connect failed")));
+				 errmsg("index_tune_hnsw: failed to begin SPI session")));
 
 	/* Get table row count */
 	initStringInfo(&sql);
@@ -72,8 +77,7 @@ index_tune_hnsw(PG_FUNCTION_ARGS)
 					 "SELECT COUNT(*) FROM %s",
 					 quote_identifier(tbl_name));
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		bool		isnull;
@@ -88,7 +92,7 @@ index_tune_hnsw(PG_FUNCTION_ARGS)
 
 	/* Get vector dimension */
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "SELECT vector_dims(%s) FROM %s LIMIT 1",
@@ -190,12 +194,13 @@ index_tune_hnsw(PG_FUNCTION_ARGS)
 					 memory_budget_mb);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(tbl_name);
-	NDB_SAFE_PFREE_AND_NULL(col_name);
-	SPI_finish();
+	NDB_FREE(json_buf.data);
+	NDB_FREE(tbl_name);
+	NDB_FREE(col_name);
+	NDB_FREE(sql.data);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -218,14 +223,16 @@ index_tune_ivf(PG_FUNCTION_ARGS)
 	int			recommended_lists = 100;
 	StringInfoData json_buf;
 	Jsonb	   *result_jsonb;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	tbl_name = text_to_cstring(table_name);
 	col_name = text_to_cstring(column_name);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("index_tune_ivf: SPI_connect failed")));
+				 errmsg("index_tune_ivf: failed to begin SPI session")));
 
 	/* Get table row count */
 	initStringInfo(&sql);
@@ -233,8 +240,7 @@ index_tune_ivf(PG_FUNCTION_ARGS)
 					 "SELECT COUNT(*) FROM %s",
 					 quote_identifier(tbl_name));
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		bool		isnull;
@@ -249,15 +255,14 @@ index_tune_ivf(PG_FUNCTION_ARGS)
 
 	/* Get vector dimension */
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "SELECT vector_dims(%s) FROM %s LIMIT 1",
 					 quote_identifier(col_name),
 					 quote_identifier(tbl_name));
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		bool		isnull;
@@ -298,12 +303,13 @@ index_tune_ivf(PG_FUNCTION_ARGS)
 					 vector_dim);
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(tbl_name);
-	NDB_SAFE_PFREE_AND_NULL(col_name);
-	SPI_finish();
+	NDB_FREE(json_buf.data);
+	NDB_FREE(tbl_name);
+	NDB_FREE(col_name);
+	NDB_FREE(sql.data);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -329,14 +335,16 @@ index_recommend_type(PG_FUNCTION_ARGS)
 	Jsonb	   *result_jsonb;
 	Jsonb	   *hnsw_params;
 	Jsonb	   *ivf_params;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	tbl_name = text_to_cstring(table_name);
 	col_name = text_to_cstring(column_name);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("index_recommend_type: SPI_connect failed")));
+				 errmsg("index_recommend_type: failed to begin SPI session")));
 
 	/* Get table row count */
 	initStringInfo(&sql);
@@ -344,8 +352,7 @@ index_recommend_type(PG_FUNCTION_ARGS)
 					 "SELECT COUNT(*) FROM %s",
 					 quote_identifier(tbl_name));
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		bool		isnull;
@@ -360,7 +367,7 @@ index_recommend_type(PG_FUNCTION_ARGS)
 
 	/* Estimate update frequency (check for recent updates) */
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "SELECT COUNT(*) FROM %s WHERE "
@@ -369,8 +376,7 @@ index_recommend_type(PG_FUNCTION_ARGS)
 					 quote_identifier(tbl_name),
 					 (long long) (row_count / 10)); /* Check last 10% */
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		bool		isnull;
@@ -437,12 +443,13 @@ index_recommend_type(PG_FUNCTION_ARGS)
 					 JsonbToCString(NULL, &ivf_params->root, VARSIZE(ivf_params)));
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(tbl_name);
-	NDB_SAFE_PFREE_AND_NULL(col_name);
-	SPI_finish();
+	NDB_FREE(json_buf.data);
+	NDB_FREE(tbl_name);
+	NDB_FREE(col_name);
+	NDB_FREE(sql.data);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_POINTER(result_jsonb);
 }
@@ -465,13 +472,15 @@ index_tune_query_params(PG_FUNCTION_ARGS)
 	char	   *index_type = "hnsw";
 	StringInfoData json_buf;
 	Jsonb	   *result_jsonb;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	idx_name = text_to_cstring(index_name);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("index_tune_query_params: SPI_connect failed")));
+				 errmsg("index_tune_query_params: failed to begin SPI session")));
 
 	/* Determine index type */
 	initStringInfo(&sql);
@@ -481,8 +490,7 @@ index_tune_query_params(PG_FUNCTION_ARGS)
 					 "WHERE c.relname = %s",
 					 quote_literal_cstr(idx_name));
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		bool		isnull;
@@ -499,23 +507,24 @@ index_tune_query_params(PG_FUNCTION_ARGS)
 				index_type = "hnsw";
 			else if (strcmp(amname, "ivfflat") == 0)
 				index_type = "ivf";
-			NDB_SAFE_PFREE_AND_NULL(amname);
+			NDB_FREE(amname);
 		}
 	}
 
 	/* Get query performance metrics */
 	/* Use safe free/reinit to handle potential memory context changes */
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	NDB_FREE(sql.data);
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "SELECT AVG(latency_ms) as avg_latency, "
 					 "       AVG(recall_at_k) as avg_recall "
-					 "FROM neurondb.neurondb_query_metrics "
+					 "FROM %s.%s "
 					 "WHERE query_timestamp > now() - interval '1 hour' "
-					 "  AND recall_at_k IS NOT NULL");
+					 "  AND recall_at_k IS NOT NULL",
+					 quote_identifier(NDB_SCHEMA_NAME),
+					 quote_identifier(NDB_TABLE_QUERY_METRICS));
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(session, sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		bool		isnull1,
@@ -593,11 +602,12 @@ index_tune_query_params(PG_FUNCTION_ARGS)
 	}
 
 	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-													  jsonb_in, CStringGetDatum(json_buf.data)));
+													  jsonb_in, CStringGetTextDatum(json_buf.data)));
 
-	NDB_SAFE_PFREE_AND_NULL(json_buf.data);
-	NDB_SAFE_PFREE_AND_NULL(idx_name);
-	SPI_finish();
+	NDB_FREE(json_buf.data);
+	NDB_FREE(idx_name);
+	NDB_FREE(sql.data);
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_POINTER(result_jsonb);
 }

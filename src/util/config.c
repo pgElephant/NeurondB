@@ -9,7 +9,7 @@
  * Settings cover index/search/memory/replication. All are surfaced as
  * system catalog views for inspection.
  *
- * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  */
 
 #include "postgres.h"
@@ -20,6 +20,7 @@
 #include "utils/memutils.h"
 #include "utils/elog.h"
 #include "lib/stringinfo.h"
+#include "neurondb_constants.h"
 
 #include <limits.h>
 #include <math.h>
@@ -59,63 +60,63 @@ static const NeuronDBConfigOpt neuron_config_catalog[] = {
 		"HNSW construction parameter",
 		"200",
 		NEURON_GUC_INT,
-		"neurondb_ef_construction",
+		NDB_GUC_EF_CONSTRUCTION,
 	NULL},
 	{"ef_search",
 		"Search",
 		"HNSW search parameter",
 		"100",
 		NEURON_GUC_INT,
-		"neurondb_ef_search",
+		NDB_GUC_EF_SEARCH,
 	NULL},
 	{"max_connections",
 		"Performance",
 		"Maximum concurrent connections",
 		"1000",
 		NEURON_GUC_INT,
-		"neurondb_max_connections",
+		NDB_GUC_MAX_CONNECTIONS,
 	NULL},
 	{"buffer_size",
 		"Memory",
 		"ANN buffer cache size",
 		"128MB",
 		NEURON_GUC_STRING,
-		"neurondb_buffer_size",
+		NDB_GUC_BUFFER_SIZE,
 	NULL},
 	{"wal_compression",
 		"Replication",
 		"Enable WAL compression for vectors",
 		"on",
 		NEURON_GUC_ENUM,
-		"neurondb_wal_compression",
+		NDB_GUC_WAL_COMPRESSION,
 	wal_compression_enums},
 	{"index_parallelism",
 		"Performance",
 		"Degree of index build parallelism",
 		"1",
 		NEURON_GUC_INT,
-		"neurondb_index_parallelism",
+		NDB_GUC_INDEX_PARALLELISM,
 	NULL},
 	{"vector_dim_limit",
 		"Index",
 		"Maximum allowed index vector dimension",
 		"4096",
 		NEURON_GUC_INT,
-		"neurondb_vector_dim_limit",
+		NDB_GUC_VECTOR_DIM_LIMIT,
 	NULL},
 	{"hybrid_threshold",
 		"Search",
 		"Threshold for hybrid (ANN+keyword) search",
 		"0.6",
 		NEURON_GUC_FLOAT,
-		"neurondb_hybrid_threshold",
+		NDB_GUC_HYBRID_THRESHOLD,
 	NULL},
 	{"use_gpu",
 		"Performance",
 		"Enable GPU for vector search",
 		"off",
 		NEURON_GUC_BOOL,
-		"neurondb_use_gpu",
+		NDB_GUC_USE_GPU,
 	NULL},
 	{NULL, NULL, NULL, NULL, 0, NULL, NULL} /* List terminator */
 };

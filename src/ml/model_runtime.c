@@ -1,13 +1,17 @@
-/*
+/*-------------------------------------------------------------------------
+ *
  * model_runtime.c
- *     Model Runtime Integration for NeuronDB
+ *    Model runtime integration.
  *
- * Provides HTTP-based model inference (with retry logic and circuit breaker),
- * simulated LLM integration with cost tracking, expiring cache mechanism,
- * and distributed tracing/auditing. Implements tight PostgreSQL integration
- * using the Server Programming Interface (SPI).
+ * This module provides HTTP-based model inference with retry logic, caching,
+ * and distributed tracing for PostgreSQL integration.
  *
- * Copyright (c) 2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/ml/model_runtime.c
+ *
+ *-------------------------------------------------------------------------
  */
 
 #include "postgres.h"
@@ -26,6 +30,8 @@
 #include <stdio.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 /* PG_MODULE_MAGIC already defined in neurondb.c */
 
@@ -205,7 +211,7 @@ mdl_http(PG_FUNCTION_ARGS)
 			appendStringInfo(&result_json,
 							 "{\"status\":\"success\",\"data\":\"%s\"}",
 							 response.data);
-			NDB_SAFE_PFREE_AND_NULL(response.data);
+			NDB_FREE(response.data);
 			response = result_json;
 		}
 		else if (response.len == 0)
@@ -239,6 +245,8 @@ mdl_llm(PG_FUNCTION_ARGS)
 	int32		tokens_out;
 	int32		estimated_cost_microcents;
 	StringInfoData result;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	elog(DEBUG1,
 		 "neurondb: LLM call: model=%s; max_tokens=%d; temperature=%.2f",
@@ -294,7 +302,9 @@ mdl_llm(PG_FUNCTION_ARGS)
 					 estimated_cost_microcents / 100.0);
 
 	/* Audit/metering: store in neurondb_llm_usage */
-	if (SPI_connect() == SPI_OK_CONNECT)
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 	{
 		Datum		values[4];
 		Oid			argtypes[4] = {TEXTOID, INT4OID, INT4OID, INT4OID};
@@ -305,7 +315,7 @@ mdl_llm(PG_FUNCTION_ARGS)
 		values[2] = Int32GetDatum(tokens_out);
 		values[3] = Int32GetDatum(estimated_cost_microcents);
 
-		ret = SPI_execute_with_args(
+		ret = ndb_spi_execute_with_args(spi_session,
 									"INSERT INTO neurondb_llm_usage (model, tokens_in, "
 									"tokens_out, cost_microcents) VALUES ($1, $2, $3, $4)",
 									4,
@@ -320,8 +330,8 @@ mdl_llm(PG_FUNCTION_ARGS)
 				 "neurondb: mdl_http: failed to insert LLM usage record: SPI return code %d",
 				 ret);
 		}
-		SPI_finish();
 	}
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_TEXT_P(cstring_to_text_with_len(result.data, result.len));
 }
@@ -347,13 +357,17 @@ mdl_cache(PG_FUNCTION_ARGS)
 	struct timeval tv;
 	time_t		expires_at;
 	bool		success = false;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	elog(DEBUG1,
 		 "neurondb: Insert/Update cache: key='%s' ttl=%d",
 		 key_str,
 		 ttl_seconds);
 
-	if (SPI_connect() == SPI_OK_CONNECT)
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 	{
 		int			ret;
 
@@ -364,7 +378,7 @@ mdl_cache(PG_FUNCTION_ARGS)
 		values[1] = CStringGetTextDatum(value_str);
 		values[2] = Int64GetDatum((int64) expires_at);
 
-		ret = SPI_execute_with_args(
+		ret = ndb_spi_execute_with_args(spi_session,
 									"INSERT INTO neurondb_cache (cache_key, cache_value, "
 									"expires_at, created_at) "
 									"VALUES ($1, $2, TO_TIMESTAMP($3), now()) "
@@ -389,12 +403,8 @@ mdl_cache(PG_FUNCTION_ARGS)
 		{
 			success = true;
 		}
-		SPI_finish();
 	}
-	else
-	{
-		success = false;
-	}
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_BOOL(success);
 }
@@ -419,6 +429,8 @@ mdl_trace(PG_FUNCTION_ARGS)
 
 	Datum		values[3];
 	Oid			argtypes[3] = {TEXTOID, TEXTOID, TEXTOID};
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext;
 
 	elog(DEBUG1,
 		 "neurondb: mdl_trace: id='%s', event='%s', meta='%s'",
@@ -426,7 +438,9 @@ mdl_trace(PG_FUNCTION_ARGS)
 		 event_str,
 		 meta_str);
 
-	if (SPI_connect() == SPI_OK_CONNECT)
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 	{
 		int			ret;
 
@@ -434,7 +448,7 @@ mdl_trace(PG_FUNCTION_ARGS)
 		values[1] = CStringGetTextDatum(event_str);
 		values[2] = CStringGetTextDatum(meta_str);
 
-		ret = SPI_execute_with_args(
+		ret = ndb_spi_execute_with_args(spi_session,
 									"INSERT INTO neurondb_traces (trace_id, event, "
 									"metadata, created_at) VALUES ($1, $2, $3, now())",
 									3,
@@ -450,11 +464,8 @@ mdl_trace(PG_FUNCTION_ARGS)
 				 "neurondb: mdl_trace: failed to insert trace record: SPI return code %d",
 				 ret);
 		}
-		SPI_finish();
 	}
-	else
-	{
-	}
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_VOID();
 }

@@ -7,7 +7,7 @@
  * rate limits and quotas, and processes embedding generation, rerank
  * batches, cache refresh, and external HTTP calls.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *      src/worker/worker_queue.c
@@ -18,6 +18,8 @@
 #include "postgres.h"
 #include "neurondb_compat.h"
 #include "fmgr.h"
+#include <stdlib.h>
+#include <string.h>
 #include "miscadmin.h"
 #include "postmaster/bgworker.h"
 #include "storage/ipc.h"
@@ -40,19 +42,34 @@
 #include "neurondb_bgworkers.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_guc.h"
 
 #ifndef NEURANQ_MAX_TENANTS
 #define NEURANQ_MAX_TENANTS 32
 #endif
 
-/* GUC variables -- safe defaults, error-proof, and validated by GUC constraints. */
-static int neuranq_naptime = 1000; /* milliseconds */
-static int neuranq_queue_depth = 10000; /* max queue size */
-static int neuranq_batch_size = 100; /* jobs per cycle */
-static int neuranq_timeout = 30000; /* job timeout ms */
-static int neuranq_max_retries = 3;
-static bool neuranq_enabled = true;
+/* GUC variables are now centralized in neurondb_guc.c */
+/* Use GetConfigOption() to retrieve GUC values */
+
+/* Helper to get int GUC value */
+static int
+get_guc_int(const char *name, int default_val)
+{
+	const char *val = GetConfigOption(name, true, false);
+	return val ? atoi(val) : default_val;
+}
+
+/* Helper to get bool GUC value */
+static bool
+get_guc_bool(const char *name, bool default_val)
+{
+	const char *val = GetConfigOption(name, true, false);
+	if (!val)
+		return default_val;
+	return (strcmp(val, "on") == 0 || strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
+}
 
 /* Shared memory structure for robust queue statistics */
 typedef struct NeuranqSharedState
@@ -115,88 +132,7 @@ neuranq_sighup(SIGNAL_ARGS)
 	errno = save_errno;
 }
 
-/*
- * Initialize GUC variables, fully validated by their constraint parameters.
- */
-void
-neuranq_init_guc(void)
-{
-	DefineCustomIntVariable("neurondb.neuranq_naptime",
-		"Duration between job processing cycles (ms)",
-		NULL,
-		&neuranq_naptime,
-		1000,
-		100,
-		60000,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomIntVariable("neurondb.neuranq_queue_depth",
-		"Maximum job queue size",
-		NULL,
-		&neuranq_queue_depth,
-		10000,
-		100,
-		1000000,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomIntVariable("neurondb.neuranq_batch_size",
-		"Jobs to process per cycle",
-		NULL,
-		&neuranq_batch_size,
-		100,
-		1,
-		10000,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomIntVariable("neurondb.neuranq_timeout",
-		"Job execution timeout (ms)",
-		NULL,
-		&neuranq_timeout,
-		30000,
-		1000,
-		300000,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomIntVariable("neurondb.neuranq_max_retries",
-		"Maximum retry attempts per job",
-		NULL,
-		&neuranq_max_retries,
-		3,
-		0,
-		10,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
-
-	DefineCustomBoolVariable("neurondb.neuranq_enabled",
-		"Enable queue worker",
-		NULL,
-		&neuranq_enabled,
-		true,
-		PGC_SIGHUP,
-		0,
-		NULL,
-		NULL,
-		NULL);
-}
+/* GUC initialization is now centralized in neurondb_guc.c */
 
 /*
  * Estimate shared memory size, always returns a valid alignment
@@ -310,11 +246,11 @@ neuranq_main(Datum main_arg)
 		}
 
 		/* Check if enabled */
-		if (!neuranq_enabled)
+		if (!get_guc_bool("neurondb.neuranq_enabled", true))
 		{
 			rc = WaitLatch(MyLatch,
 				WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-				neuranq_naptime,
+				get_guc_int("neurondb.neuranq_naptime", 1000),
 				0);
 			ResetLatch(MyLatch);
 			if (rc & WL_POSTMASTER_DEATH)
@@ -361,7 +297,7 @@ neuranq_main(Datum main_arg)
 		/* Wait for next cycle */
 		rc = WaitLatch(MyLatch,
 			WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-			neuranq_naptime,
+			get_guc_int("neurondb.neuranq_naptime", 1000),
 			0);
 		ResetLatch(MyLatch);
 
@@ -384,28 +320,28 @@ static void
 process_job_batch(void)
 {
 	int ret;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	/* Start transaction - required for SPI */
 	StartTransactionCommand();
 	PushActiveSnapshot(GetTransactionSnapshot());
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
+		elog(ERROR, "neurondb: failed to begin SPI session in neuranq");
 
 	PG_TRY();
 	{
 		/* Check if table exists first */
-		if (SPI_connect() != SPI_OK_CONNECT)
-			elog(ERROR, "neurondb: SPI_connect failed in neuranq");
-
-		ret = ndb_spi_execute_safe(
+		ret = ndb_spi_execute(session,
 			"SELECT 1 FROM pg_tables WHERE schemaname = 'neurondb' "
 			"AND tablename = 'neurondb_job_queue'",
 			true,
 			0);
-		NDB_CHECK_SPI_TUPTABLE();
 
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 		{
 			/* Table doesn't exist yet - extension not created */
-			SPI_finish();
+			ndb_spi_session_end(&session);
 			PopActiveSnapshot();
 			CommitTransactionCommand();
 			elog(DEBUG1,
@@ -415,9 +351,9 @@ process_job_batch(void)
 		}
 
 		/* Fetch pending jobs */
-		ret = ndb_spi_execute_safe("SELECT job_id, job_type, payload::text, "
+		ret = ndb_spi_execute(session, "SELECT job_id, job_type, payload::text, "
 				  "tenant_id, retry_count "
-				  "FROM neurondb.neurondb_job_queue "
+				  "FROM neurondb.job_queue "
 				  "WHERE status = 'pending' "
 				  "  AND retry_count < max_retries "
 				  "  AND (backoff_until IS NULL OR "
@@ -427,7 +363,6 @@ process_job_batch(void)
 				  "FOR UPDATE SKIP LOCKED",
 			false,
 			0);
-		NDB_CHECK_SPI_TUPTABLE();
 
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
@@ -475,9 +410,9 @@ process_job_batch(void)
 			if (success)
 			{
 				/* Update job status to completed */
-				int update_ret = SPI_execute_with_args(
+				int update_ret = ndb_spi_execute_with_args(session,
 					"UPDATE "
-					"neurondb.neurondb_job_queue "
+					"neurondb.job_queue "
 					"SET status = 'completed', "
 					"completed_at = now() WHERE "
 					"job_id = $1",
@@ -502,9 +437,9 @@ process_job_batch(void)
 				/* Update retry count and backoff */
 				int64 backoff_ms = get_next_backoff_ms(
 					retry_count);
-				int update_ret = SPI_execute_with_args(
+				int update_ret = ndb_spi_execute_with_args(session,
 					"UPDATE "
-					"neurondb.neurondb_job_queue "
+					"neurondb.job_queue "
 					"SET retry_count = retry_count "
 					"+ 1, "
 					"    backoff_until = now() + "
@@ -546,12 +481,13 @@ process_job_batch(void)
 			}
 		}
 
-		SPI_finish();
+		ndb_spi_session_end(&session);
 		PopActiveSnapshot();
 		CommitTransactionCommand();
 	}
 	PG_CATCH();
 	{
+		ndb_spi_session_end(&session);
 		elog(DEBUG1,
 			"neurondb: exception in process_job_batch - "
 			"recovering");

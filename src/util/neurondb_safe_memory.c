@@ -1,14 +1,11 @@
 /*-------------------------------------------------------------------------
  *
  * neurondb_safe_memory.c
- *    Safe memory management utilities for NeuronDB crash prevention
+ *    Memory context validation utilities for NeuronDB crash prevention
  *
- * Provides centralized safe pfree wrapper and memory context tracking
- * to prevent crashes from:
- * - Freeing NULL pointers
- * - Freeing already freed pointers
- * - Freeing memory from wrong context
- * - Memory context validation issues
+ * Provides memory context validation and management functions.
+ * Note: Safe pointer freeing functionality has been moved to neurondb_macros.h
+ * (use NDB_FREE() instead of ndb_safe_pfree()).
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
@@ -22,95 +19,15 @@
 #include "fmgr.h"
 #include "utils/memutils.h"
 #include "utils/elog.h"
-#include "access/htup_details.h"
-#include "executor/spi.h"
-
-#include <stdarg.h>
 
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
 
-static bool
-ndb_safe_pfree_and_null_impl(void *ptr)
-{
-	if (ptr == NULL)
-		return false;
-
-#ifdef USE_ASSERT_CHECKING
-
-	/*
-	 * In debug builds, log suspicious pointer patterns (e.g., pointers that
-	 * look like they might be invalid)
-	 */
-	if ((uintptr_t) ptr < 0x1000)
-	{
-		elog(DEBUG1,
-			 "neurondb: suspicious pointer pattern in ndb_safe_pfree: %p",
-			 ptr);
-	}
-
-	/*
-	 * In debug builds, validate current memory context is valid before
-	 * freeing. This helps catch cases where we're trying to free in an
-	 * invalid context. Note: pfree() itself will validate the pointer's
-	 * context, but this gives us an early warning if CurrentMemoryContext is
-	 * invalid.
-	 */
-	if (!MemoryContextIsValid(CurrentMemoryContext))
-	{
-		elog(WARNING,
-			 "neurondb: attempting to free pointer %p while CurrentMemoryContext %p is invalid",
-			 ptr, CurrentMemoryContext);
-	}
-#endif
-
-	/* Actually free the pointer - was calling itself recursively before! */
-	/* pfree() will validate the pointer's context internally */
-	pfree(ptr);
-	return true;
-}
-
-/*
- * ndb_safe_pfree - Safely free a pointer, checking for NULL
- * Returns true if pointer was freed, false otherwise
+/*-------------------------------------------------------------------------
+ * Note: Safe pointer freeing functionality has been moved to neurondb_macros.h
+ * Use NDB_FREE(ptr) instead of ndb_safe_pfree(ptr)
+ *-------------------------------------------------------------------------
  */
-bool
-ndb_safe_pfree(void *ptr)
-{
-	return ndb_safe_pfree_and_null_impl(ptr);
-}
-
-/*
- * ndb_safe_pfree_multi - Safely free multiple pointers
- *
- * Useful for cleanup in error paths where multiple allocations
- * may or may not have succeeded.
- *
- * Returns number of pointers actually freed
- */
-int
-ndb_safe_pfree_multi(int count,...)
-{
-	va_list		ap;
-	int			i;
-	int			freed = 0;
-	void	   *ptr;
-
-	if (count <= 0)
-		return 0;
-
-	va_start(ap, count);
-
-	for (i = 0; i < count; i++)
-	{
-		ptr = va_arg(ap, void *);
-		if (ndb_safe_pfree_and_null_impl(ptr))
-			freed++;
-	}
-
-	va_end(ap);
-	return freed;
-}
 
 /*-------------------------------------------------------------------------
  * Memory context validation
@@ -263,111 +180,7 @@ ndb_untrack_allocation(void *ptr)
 #endif							/* NDB_DEBUG_MEMORY */
 
 /*-------------------------------------------------------------------------
- * Array cleanup helpers
+ * Note: Array cleanup and error cleanup helpers have been removed.
+ * Use NDB_FREE() from neurondb_macros.h in loops for array cleanup.
  *-------------------------------------------------------------------------
  */
-
-/*
- * ndb_safe_pfree_array - Safely free an array of pointers
- *
- * Frees each non-NULL pointer in the array, then frees the array itself
- *
- * Usage:
- *   float **arrays = palloc(sizeof(float *) * count);
- *   ... populate arrays ...
- *   ndb_safe_pfree_array((void **)arrays, count);
- */
-void
-ndb_safe_pfree_array(void **array, int count)
-{
-	int			i;
-
-	if (array == NULL)
-		return;
-
-	if (count > 0)
-	{
-		for (i = 0; i < count; i++)
-		{
-			if (array[i] != NULL)
-				ndb_safe_pfree_and_null_impl(array[i]);
-		}
-	}
-
-	ndb_safe_pfree_and_null_impl(array);
-}
-
-/*
- * ndb_safe_pfree_string_array - Safely free an array of strings
- *
- * Frees each string, then the array itself
- */
-void
-ndb_safe_pfree_string_array(char **array, int count)
-{
-	int			i;
-
-	if (array == NULL)
-		return;
-
-	if (count > 0)
-	{
-		for (i = 0; i < count; i++)
-		{
-			if (array[i] != NULL)
-				ndb_safe_pfree_and_null_impl(array[i]);
-		}
-	}
-
-	ndb_safe_pfree_and_null_impl(array);
-}
-
-/*-------------------------------------------------------------------------
- * Cleanup pattern helpers
- *-------------------------------------------------------------------------
- */
-
-/*
- * ndb_cleanup_on_error - Standardized cleanup on error
- *
- * Cleans up multiple resources in error path:
- * - Frees pointers if non-NULL
- * - Cleans up SPI if connected
- * - Switches to old context and deletes call context
- *
- * This matches the pattern used in ml_unified_api.c
- */
-void
-ndb_cleanup_on_error(MemoryContext oldcontext,
-					 MemoryContext callcontext,
-					 bool finish_spi,
-					 int n_ptrs,
-					 ...)
-{
-	va_list		ap;
-	int			i;
-	void	   *ptr;
-
-	/* Free all provided pointers */
-	if (n_ptrs > 0)
-	{
-		va_start(ap, n_ptrs);
-		for (i = 0; i < n_ptrs; i++)
-		{
-			ptr = va_arg(ap, void *);
-			ndb_safe_pfree_and_null_impl(ptr);
-		}
-		va_end(ap);
-	}
-
-	/* Clean up SPI if needed */
-	if (finish_spi)
-		SPI_finish();
-
-	/* Ensure we're in old context before deleting call context */
-	if (oldcontext != NULL)
-		ndb_ensure_memory_context(oldcontext);
-
-	if (callcontext != NULL && callcontext != oldcontext)
-		ndb_safe_context_cleanup(callcontext, oldcontext);
-}

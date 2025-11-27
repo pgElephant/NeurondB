@@ -6,7 +6,7 @@
  * This module handles registration of all NeurondB background workers
  * via shared_preload_libraries mechanism.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/bgworker_init.c
@@ -33,11 +33,7 @@
 #include "neurondb_config.h"
 #include "neurondb_automl.h"
 #include "neurondb_index.h"
-
-/* Core GUC variables (defined in neurondb.c) */
-extern int	neurondb_hnsw_ef_search;
-extern int	neurondb_ivf_probes;
-extern int	neurondb_ef_construction;
+#include "neurondb_guc.h"
 
 /* Reloption kinds for HNSW and IVF indexes */
 int			relopt_kind_hnsw;
@@ -45,25 +41,20 @@ int			relopt_kind_ivf;
 
 /* Forward declarations from background worker modules */
 extern void neuranq_main(Datum main_arg);
-extern void neuranq_init_guc(void);
 extern Size neuranq_shmem_size(void);
 extern void neuranq_shmem_init(void);
 
 extern void neuranmon_main(Datum main_arg);
-extern void neuranmon_init_guc(void);
 extern Size neuranmon_shmem_size(void);
 extern void neuranmon_shmem_init(void);
 
 extern void neurandefrag_main(Datum main_arg);
-extern void neurandefrag_init_guc(void);
 extern Size neurandefrag_shmem_size(void);
 extern void neurandefrag_shmem_init(void);
 
 /* GPU module declarations */
-extern void neurondb_gpu_init_guc(void);
 extern void neurondb_gpu_init(void);
 extern void neurondb_gpu_register_models(void);
-extern void neurondb_llm_init_guc(void);
 extern Size neurondb_llm_shmem_size(void);
 extern void neurondb_llm_shmem_init(void);
 extern void neuranllm_main(Datum main_arg);
@@ -114,82 +105,18 @@ _PG_init(void)
 	elog(LOG, "neurondb: registered reloption kinds (HNSW=%d, IVF=%d)",
 		 relopt_kind_hnsw, relopt_kind_ivf);
 
-	/* Initialize core GUC variables */
-	DefineCustomIntVariable("neurondb.hnsw_ef_search",
-							"Sets the ef_search parameter for HNSW index scans",
-							"Higher values improve recall but increase search time. Default is 64.",
-							&neurondb_hnsw_ef_search,
-							64, /* default */
-							1,	/* min */
-							10000,	/* max */
-							PGC_USERSET,
-							0,
-							NULL,
-							NULL,
-							NULL);
+	/* Initialize all GUC variables (centralized) */
+	neurondb_init_all_gucs();
 
-	DefineCustomIntVariable("neurondb.ivf_probes",
-							"Sets the number of probes for IVF index scans",
-							"Higher values improve recall but increase search time. Default is 10.",
-							&neurondb_ivf_probes,
-							10, /* default */
-							1,	/* min */
-							1000,	/* max */
-							PGC_USERSET,
-							0,
-							NULL,
-							NULL,
-							NULL);
-
-	DefineCustomIntVariable("neurondb.ef_construction",
-							"Sets the ef_construction parameter for HNSW index builds",
-							"Higher values improve index quality but increase build time. Default is 200.",
-							&neurondb_ef_construction,
-							200,	/* default */
-							4,	/* min */
-							2000,	/* max */
-							PGC_USERSET,
-							0,
-							NULL,
-							NULL,
-							NULL);
-
-	/* Initialize GUC variables for all workers */
-	neuranq_init_guc();
-	neuranmon_init_guc();
-	neurandefrag_init_guc();
-
-	/* Initialize GPU and LLM GUC variables */
-	neurondb_gpu_init_guc();
-	neurondb_llm_init_guc();
-
-	/* Initialize AutoML GUC variables */
-	neurondb_automl_define_gucs();
-
-	/* Initialize ONNX Runtime for HuggingFace models */
-	neurondb_onnx_define_gucs();
+	/* Initialize ONNX Runtime (after GUCs are set up) */
 	neurondb_onnx_init();
 
 	/* Register custom scan providers */
 	register_hybrid_scan_provider();
 
-	/* Install shared memory request hook or request directly (older PG) */
-#if PG_VERSION_NUM >= 150000
+	/* Install shared memory request hook */
 	prev_shmem_request_hook = shmem_request_hook;
 	shmem_request_hook = neurondb_shmem_request;
-#else
-	/* Request shared memory and LWLocks directly for older versions */
-	RequestAddinShmemSpace(neuranq_shmem_size() + neuranmon_shmem_size()
-						   + neurandefrag_shmem_size() + neurondb_llm_shmem_size()
-						   + entrypoint_cache_shmem_size()
-						   + 8192); /* prometheus metrics */
-	RequestNamedLWLockTranche("neurondb_queue", 1);
-	RequestNamedLWLockTranche("neurondb_tuner", 1);
-	RequestNamedLWLockTranche("neurondb_defrag", 1);
-	RequestNamedLWLockTranche("neurondb_llm", 1);
-	RequestNamedLWLockTranche("neurondb_prometheus", 1);
-	RequestNamedLWLockTranche("neurondb_entrypoint_cache", 1);
-#endif
 
 	/* Install shared memory startup hook */
 	prev_shmem_startup_hook = shmem_startup_hook;

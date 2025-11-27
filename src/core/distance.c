@@ -8,10 +8,10 @@
  * Chebyshev, and Minkowski distances. All functions use Kahan
  * summation for numerical stability where appropriate.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/distance.c
+ *	  src/core/distance.c
  *
  *-------------------------------------------------------------------------
  */

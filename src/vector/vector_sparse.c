@@ -8,10 +8,10 @@
  * iterate over non-zero entries, providing O(nnz) complexity instead
  * of O(dim) for dense vectors.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/vector_sparse.c
+ *	  src/vector/vector_sparse.c
  *
  *-------------------------------------------------------------------------
  */
@@ -25,6 +25,7 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Helper: Check dimensions match */
 static inline void
@@ -371,8 +372,10 @@ vecmap_add(PG_FUNCTION_ARGS)
 
 	/* Maximum possible nnz is sum of both (if no overlap) */
 	max_nnz = a->nnz + b->nnz;
-	result_indices = (int32 *) palloc(sizeof(int32) * max_nnz);
-	result_values = (float4 *) palloc(sizeof(float4) * max_nnz);
+	result_indices = NULL;
+	result_values = NULL;
+	NDB_ALLOC(result_indices, int32, max_nnz);
+	NDB_ALLOC(result_values, float4, max_nnz);
 
 	/* Merge-like addition */
 	i = 0;
@@ -430,9 +433,11 @@ vecmap_add(PG_FUNCTION_ARGS)
 
 	result_nnz = k;
 
-	/* Allocate result */
+	/* Allocate result - variable-length type requires custom size */
 	size = sizeof(VectorMap) + sizeof(int32) * result_nnz +
 		sizeof(float4) * result_nnz;
+	/* Variable-length type requires custom size - use palloc0 but ensure proper cleanup */
+	/* Note: For variable-length PostgreSQL types, palloc0 is standard */
 	result = (VectorMap *) palloc0(size);
 	SET_VARSIZE(result, size);
 
@@ -442,8 +447,8 @@ vecmap_add(PG_FUNCTION_ARGS)
 	memcpy(VECMAP_INDICES(result), result_indices, sizeof(int32) * result_nnz);
 	memcpy(VECMAP_VALUES(result), result_values, sizeof(float4) * result_nnz);
 
-	NDB_SAFE_PFREE_AND_NULL(result_indices);
-	NDB_SAFE_PFREE_AND_NULL(result_values);
+	NDB_FREE(result_indices);
+	NDB_FREE(result_values);
 
 	PG_RETURN_POINTER(result);
 }
@@ -479,8 +484,10 @@ vecmap_sub(PG_FUNCTION_ARGS)
 	b_values = VECMAP_VALUES(b);
 
 	max_nnz = a->nnz + b->nnz;
-	result_indices = (int32 *) palloc(sizeof(int32) * max_nnz);
-	result_values = (float4 *) palloc(sizeof(float4) * max_nnz);
+	result_indices = NULL;
+	result_values = NULL;
+	NDB_ALLOC(result_indices, int32, max_nnz);
+	NDB_ALLOC(result_values, float4, max_nnz);
 
 	/* Merge-like subtraction */
 	i = 0;
@@ -549,8 +556,8 @@ vecmap_sub(PG_FUNCTION_ARGS)
 	memcpy(VECMAP_INDICES(result), result_indices, sizeof(int32) * result_nnz);
 	memcpy(VECMAP_VALUES(result), result_values, sizeof(float4) * result_nnz);
 
-	NDB_SAFE_PFREE_AND_NULL(result_indices);
-	NDB_SAFE_PFREE_AND_NULL(result_values);
+	NDB_FREE(result_indices);
+	NDB_FREE(result_values);
 
 	PG_RETURN_POINTER(result);
 }

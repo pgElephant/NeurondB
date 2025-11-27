@@ -8,7 +8,7 @@
  * planner extension API, logical replication plugin, FDW for vectors,
  * and SQL-based unit test framework.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/developer_hooks.c
@@ -25,6 +25,7 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * Planner Extension API: Register custom distance or reranker operators
@@ -107,9 +108,9 @@ create_vector_fdw(PG_FUNCTION_ARGS)
 	/* Map remote vector store operations to PostgreSQL */
 	/* Support: FAISS, Milvus, Weaviate, Pinecone */
 
-	NDB_SAFE_PFREE_AND_NULL(name_str);
-	NDB_SAFE_PFREE_AND_NULL(type_str);
-	NDB_SAFE_PFREE_AND_NULL(conn_str);
+	NDB_FREE(name_str);
+	NDB_FREE(type_str);
+	NDB_FREE(conn_str);
 
 	PG_RETURN_BOOL(true);
 }

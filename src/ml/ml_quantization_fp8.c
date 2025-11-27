@@ -1,11 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * ml_quantization_fp8.c
- *    FP8 quantization: INT4 and FP8 (E4M3/E5M2)
+ *    FP8 quantization implementation.
  *
- * Implements INT4 (4-bit) and FP8 (8-bit floating point) quantization
- * with GPU acceleration support. FP8 formats: E4M3 (4 exp, 3 mantissa)
- * and E5M2 (5 exp, 2 mantissa) as per NVIDIA H100 standard.
+ * This module implements INT4 and FP8 quantization formats for efficient
+ * vector storage and computation.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
@@ -27,6 +26,7 @@
 #include <stdint.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Forward declaration */
 extern VectorI4 * quantize_vector_int4(Vector *v);
@@ -347,6 +347,6 @@ auto_quantize(PG_FUNCTION_ARGS)
 		result = (Datum) 0;		/* Not reached */
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(compression_str);
+	NDB_FREE(compression_str);
 	PG_RETURN_DATUM(result);
 }

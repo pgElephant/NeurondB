@@ -1,31 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_rerank_ensemble.c
- *    Ensemble reranking by combining multiple scoring systems
+ *    Ensemble reranking methods.
  *
- * Ensemble methods combine multiple ranking models to improve robustness
- * and accuracy. Common use case: combine semantic search, BM25, and
- * cross-encoder scores for optimal relevance.
+ * This module combines multiple ranking models using weighted sum, rank-based
+ * fusion, and Borda count methods for improved search relevance.
  *
- * Methods Implemented:
- *
- * 1. Weighted Sum: linear combination of normalized scores
- *    score = w1*s1 + w2*s2 + ... + wn*sn
- *
- * 2. Min-Max Normalization: scale each system's scores to [0,1]
- *
- * 3. Rank-based Fusion: convert scores to ranks, then combine
- *    (similar to RRF but with explicit weights)
- *
- * 4. Borda Count: positional voting system
- *
- * Use Cases:
- *   - Combining semantic + lexical search
- *   - Multi-model reranking
- *   - Hybrid RAG systems
- *   - A/B testing different models
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_rerank_ensemble.c
@@ -46,6 +27,7 @@
 #include <float.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /*
  * Document score structure
@@ -281,11 +263,11 @@ rerank_ensemble_weighted(PG_FUNCTION_ARGS)
 							 result_datums, num_docs, INT4OID, typlen, typbyval, typalign);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(normalized_scores);
-	NDB_SAFE_PFREE_AND_NULL(doc_scores);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
+	NDB_FREE(normalized_scores);
+	NDB_FREE(doc_scores);
+	NDB_FREE(result_datums);
 	if (weights_array == NULL)
-		NDB_SAFE_PFREE_AND_NULL(weights);
+		NDB_FREE(weights);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -428,9 +410,9 @@ rerank_ensemble_borda(PG_FUNCTION_ARGS)
 							 typbyval,
 							 typalign);
 
-	NDB_SAFE_PFREE_AND_NULL(doc_id_map);
-	NDB_SAFE_PFREE_AND_NULL(doc_scores);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
+	NDB_FREE(doc_id_map);
+	NDB_FREE(doc_scores);
+	NDB_FREE(result_datums);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

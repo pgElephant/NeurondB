@@ -1,7 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_gpu_support.c
- *	  Helpers for consistent GPU usage across NeurondB ML routines.
+ *    Helpers for consistent usage across ML routines.
+ *
+ * This module provides helper functions for consistent resource management
+ * in ML operations.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/common/ml_gpu_support.c
  *
  *-------------------------------------------------------------------------
  */

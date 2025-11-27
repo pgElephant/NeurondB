@@ -12,9 +12,10 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include "neurondb_llm.h"
+#include "neurondb_json.h"
 
 /* Function prototypes to fix implicit declaration errors */
-static char *ndb_quote_json_cstr(const char *str);
+/* ndb_json_quote_string is now replaced by ndb_json_quote_string from neurondb_json.h */
 static text * ndb_encode_base64(bytea * data);
 int			http_post_json(const char *url, const char *api_key, const char *body, int timeout_ms, char **resp_out);
 
@@ -59,7 +60,7 @@ ndb_hf_vision_complete(const NdbLLMConfig * cfg,
 		pfree(encoded_text);
 	}
 
-	quoted_prompt = ndb_quote_json_cstr(prompt);
+	quoted_prompt = ndb_json_quote_string(prompt);
 
 	/* Build URL for HuggingFace vision completion API */
 	if (cfg->endpoint && (strstr(cfg->endpoint, "router.huggingface.co") != NULL ||
@@ -139,64 +140,6 @@ ndb_hf_vision_complete(const NdbLLMConfig * cfg,
 	out->tokens_in = 0;
 	out->tokens_out = 0;
 	return ok ? 0 : -1;
-}
-
-/* Helper: Quote a C string for JSON (returns JSON string with quotes and escaping) */
-static char *
-ndb_quote_json_cstr(const char *str)
-{
-	StringInfoData buf;
-	const char *p;
-	char	   *result;
-
-	if (str == NULL)
-		return pstrdup("null");
-
-	initStringInfo(&buf);
-	appendStringInfoChar(&buf, '"');
-
-	for (p = str; *p; p++)
-	{
-		switch (*p)
-		{
-			case '"':
-				appendStringInfoString(&buf, "\\\"");
-				break;
-			case '\\':
-				appendStringInfoString(&buf, "\\\\");
-				break;
-			case '\b':
-				appendStringInfoString(&buf, "\\b");
-				break;
-			case '\f':
-				appendStringInfoString(&buf, "\\f");
-				break;
-			case '\n':
-				appendStringInfoString(&buf, "\\n");
-				break;
-			case '\r':
-				appendStringInfoString(&buf, "\\r");
-				break;
-			case '\t':
-				appendStringInfoString(&buf, "\\t");
-				break;
-			default:
-				if ((unsigned char) *p < 0x20)
-				{
-					appendStringInfo(&buf, "\\u%04x", (unsigned char) *p);
-				}
-				else
-				{
-					appendStringInfoChar(&buf, *p);
-				}
-				break;
-		}
-	}
-
-	appendStringInfoChar(&buf, '"');
-	result = pstrdup(buf.data);
-	pfree(buf.data);
-	return result;
 }
 
 /* Helper: Look up and call PostgreSQL's encode() function for base64 encoding */
@@ -362,7 +305,7 @@ ndb_hf_complete(const NdbLLMConfig * cfg,
 	appendStringInfo(&url, "%s/models/%s", cfg->endpoint, cfg->model);
 	appendStringInfo(&body,
 					 "{\"inputs\":%s,\"parameters\":%s}",
-					 ndb_quote_json_cstr(prompt),
+					 ndb_json_quote_string(prompt),
 					 params_json ? params_json : "{}");
 
 	out->http_status = http_post_json(
@@ -565,7 +508,7 @@ ndb_hf_embed(const NdbLLMConfig * cfg,
 	}
 	appendStringInfo(&body,
 					 "{\"inputs\":%s,\"truncate\":true}",
-					 ndb_quote_json_cstr(text));
+					 ndb_json_quote_string(text));
 	code = http_post_json(
 						  url.data, cfg->api_key, body.data, cfg->timeout_ms, &resp);
 	if (code < 200 || code >= 300 || !resp)
@@ -755,7 +698,7 @@ ndb_hf_embed_batch(const NdbLLMConfig * cfg,
 			appendStringInfoChar(&inputs_json, ',');
 		if (texts[i] != NULL)
 		{
-			char	   *quoted = ndb_quote_json_cstr(texts[i]);
+			char	   *quoted = ndb_json_quote_string(texts[i]);
 
 			appendStringInfoString(&inputs_json, quoted);
 			pfree(quoted);
@@ -962,7 +905,7 @@ ndb_hf_multimodal_embed(const NdbLLMConfig * cfg,
 	}
 
 	/* Quote text for JSON */
-	quoted_text = ndb_quote_json_cstr(text_input);
+	quoted_text = ndb_json_quote_string(text_input);
 
 	/* Build URL and JSON body for HuggingFace CLIP multimodal API */
 	/* Router endpoint uses new path format for embeddings */
@@ -1091,7 +1034,7 @@ ndb_hf_rerank(const NdbLLMConfig * cfg,
 		if (i > 0)
 			appendStringInfoChar(&docs_json, ',');
 		if (docs[i] != NULL)
-			appendStringInfoString(&docs_json, ndb_quote_json_cstr(docs[i]));
+			appendStringInfoString(&docs_json, ndb_json_quote_string(docs[i]));
 		else
 			appendStringInfoString(&docs_json, "null");
 	}
@@ -1105,7 +1048,7 @@ ndb_hf_rerank(const NdbLLMConfig * cfg,
 	/* Use models endpoint if above fails for reranking */
 	appendStringInfo(&body,
 					 "{\"inputs\":{\"query\":%s,\"documents\":%s}}",
-					 ndb_quote_json_cstr(query),
+					 ndb_json_quote_string(query),
 					 docs_json.data);
 
 	code = http_post_json(

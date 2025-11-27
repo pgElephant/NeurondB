@@ -9,7 +9,7 @@
  * - Time window filtering
  * - Temporal reranking
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/search/temporal_integration.c
@@ -21,10 +21,14 @@
 #include "neurondb.h"
 #include "fmgr.h"
 #include "access/htup_details.h"
+#include "access/heapam.h"
+#include "access/tableam.h"
 #include "executor/spi.h"
 #include "utils/builtins.h"
 #include "utils/timestamp.h"
+#include "utils/snapmgr.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
 #include <math.h>
@@ -163,11 +167,11 @@ temporal_in_window(TimestampTz docTime, TemporalConfig * config)
  * Takes a set of results and re-orders them by combined vector+temporal score.
  */
 static void
-pg_attribute_unused() temporal_rerank_results(ItemPointer * items,
-											  float4 * distances,
-											  TimestampTz * timestamps,
-											  int count,
-											  TemporalConfig * config)
+temporal_rerank_results(ItemPointer *items,
+						float4 *distances,
+						TimestampTz *timestamps,
+						int count,
+						TemporalConfig *config)
 {
 	float4	   *scores;
 	int			i,
@@ -254,10 +258,10 @@ pg_attribute_unused() temporal_rerank_results(ItemPointer * items,
 			timestamps[idx] = sort_items[idx].timestamp;
 		}
 
-		NDB_SAFE_PFREE_AND_NULL(sort_items);
+		NDB_FREE(sort_items);
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(scores);
+	NDB_FREE(scores);
 
 }
 
@@ -334,60 +338,117 @@ temporal_create_config(float4 decayRate, float4 recencyWeight)
  * This would be called from the HNSW search function to apply
  * temporal boosting to results.
  */
-static void
-pg_attribute_unused() temporal_integrate_hnsw_search(BlockNumber * results,
-													 float4 * distances,
-													 int resultCount,
-													 float4 decayRate,
-													 float4 recencyWeight)
+void
+temporal_integrate_hnsw_search(Relation heapRel,
+								ItemPointer *items,
+								float4 *distances,
+								int resultCount,
+								float4 decayRate,
+								float4 recencyWeight,
+								const char *timestampColumnName)
 {
 	TimestampTz *timestamps;
 	TemporalConfig *config;
+	Snapshot	snapshot;
+	TupleDesc	tupdesc;
+	int			timestamp_attnum = -1;
 	int			i;
 
-	(void) results;				/* Unused - would fetch from blocks */
-	(void) distances;			/* Used later for reranking */
-
-	if (resultCount == 0)
+	if (resultCount == 0 || items == NULL)
 		return;
 
 	/* Allocate timestamp array */
 	timestamps = (TimestampTz *) palloc(resultCount * sizeof(TimestampTz));
 	NDB_CHECK_ALLOC(timestamps, "timestamps");
 
-	/* Fetch timestamps from heap tuples */
+	/* Get snapshot and tuple descriptor */
+	snapshot = GetActiveSnapshot();
+	if (snapshot == NULL)
+		snapshot = GetTransactionSnapshot();
+	tupdesc = RelationGetDescr(heapRel);
 
-	/*
-	 * Note: This requires ItemPointers and a heap relation, which are not
-	 * available in the current function signature. For a full implementation,
-	 * this function would need: - Relation heapRel parameter - ItemPointer
-	 * *items parameter (from index nodes) - Column name or attnum for
-	 * timestamp column
-	 *
-	 * For now, use current timestamp as placeholder until function signature
-	 * is extended to provide necessary context.
-	 */
+	/* Find timestamp column */
+	if (timestampColumnName != NULL && strlen(timestampColumnName) > 0)
+	{
+		timestamp_attnum = SPI_fnumber(tupdesc, timestampColumnName);
+		if (timestamp_attnum == SPI_ERROR_NOATTRIBUTE)
+		{
+			/* Column not found - use default timestamp */
+			timestamp_attnum = -1;
+		}
+	}
+
+	/* Fetch timestamps from heap tuples */
 	for (i = 0; i < resultCount; i++)
 	{
-		/*
-		 * TODO: When ItemPointers and heap relation are available: 1. Get
-		 * ItemPointer from index node at results[i] 2. Fetch heap tuple using
-		 * heap_fetch(heapRel, snapshot, &items[i]) 3. Extract timestamp
-		 * column using heap_getattr() 4. Convert to TimestampTz
-		 */
-		timestamps[i] = GetCurrentTimestamp();	/* Placeholder - requires heap
-												 * access */
+		HeapTupleData tupleData;
+		HeapTuple	tuple = &tupleData;
+		Buffer		buffer;
+		bool		isnull;
+		Datum		datum;
+		bool		found;
+
+		if (!ItemPointerIsValid(items[i]))
+		{
+			timestamps[i] = GetCurrentTimestamp();
+			continue;
+		}
+
+		/* Fetch heap tuple */
+		ItemPointerCopy(items[i], &tupleData.t_self);
+		found = heap_fetch(heapRel, snapshot, tuple, &buffer, false);
+		if (!found || !HeapTupleIsValid(tuple))
+		{
+			/* Tuple not found or deleted - use current timestamp */
+			timestamps[i] = GetCurrentTimestamp();
+			continue;
+		}
+
+		/* Extract timestamp column */
+		if (timestamp_attnum > 0)
+		{
+			Oid			atttype;
+			datum = heap_getattr(tuple, timestamp_attnum, tupdesc, &isnull);
+			if (!isnull)
+			{
+				atttype = TupleDescAttr(tupdesc, timestamp_attnum - 1)->atttypid;
+
+				/* Convert to TimestampTz */
+				if (atttype == TIMESTAMPTZOID)
+				{
+					timestamps[i] = DatumGetTimestampTz(datum);
+				}
+				else if (atttype == TIMESTAMPOID)
+				{
+					Timestamp	ts = DatumGetTimestamp(datum);
+					timestamps[i] = DatumGetTimestampTz(DirectFunctionCall1(timestamp_timestamptz, TimestampGetDatum(ts)));
+				}
+				else
+				{
+					/* Try to convert */
+					timestamps[i] = GetCurrentTimestamp();
+				}
+			}
+			else
+			{
+				timestamps[i] = GetCurrentTimestamp();
+			}
+		}
+		else
+		{
+			/* No timestamp column specified - use current timestamp */
+			timestamps[i] = GetCurrentTimestamp();
+		}
 	}
 
 	/* Create config */
 	config = temporal_create_config(decayRate, recencyWeight);
 
-	/* Rerank */
-	/* temporal_rerank_results(...) would need ItemPointers */
+	/* Rerank results with temporal scoring */
+	temporal_rerank_results(items, distances, timestamps, resultCount, config);
 
-	NDB_SAFE_PFREE_AND_NULL(timestamps);
-	NDB_SAFE_PFREE_AND_NULL(config);
-
+	NDB_FREE(timestamps);
+	NDB_FREE(config);
 }
 
 /*

@@ -1,23 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_explainable_ai.c
- *    SHAP, LIME, and feature importance for model explainability
+ *    Model explainability algorithms.
  *
- * Implements explainable AI algorithms:
+ * This module implements SHAP, LIME, and feature importance methods for
+ * explaining model predictions.
  *
- * 1. SHAP (SHapley Additive exPlanations): Game theory-based feature importance
- *    - Shapley values for fair feature attribution
- *    - Kernel SHAP for model-agnostic explanations
- *
- * 2. LIME (Local Interpretable Model-agnostic Explanations): Local explanations
- *    - Perturbs input and observes predictions
- *    - Fits linear model to explain local behavior
- *
- * 3. Feature Importance: Permutation and tree-based importance
- *    - Permutation importance
- *    - Tree-based feature importance
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_explainable_ai.c
@@ -44,7 +33,8 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
-#include "neurondb_spi_safe.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 /*
  * Helper function to call model prediction via SPI
@@ -76,6 +66,9 @@ call_model_predict(int32 model_id, float *features, int n_features)
 
 	ret = ndb_spi_execute_safe(sql.data, true, 1);
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
+	/* Safe access for complex types - validate before access */
+	if (SPI_tuptable != NULL && SPI_tuptable->vals != NULL && 
+		SPI_processed > 0 && SPI_tuptable->vals[0] != NULL && SPI_tuptable->tupdesc != NULL)
 	{
 		bool		isnull = false;
 		Datum		result = SPI_getbinval(SPI_tuptable->vals[0],
@@ -87,8 +80,8 @@ call_model_predict(int32 model_id, float *features, int n_features)
 			prediction = DatumGetFloat8(result);
 	}
 
-	pfree(sql.data);
-	pfree(features_str.data);
+	NDB_FREE(sql.data);
+	NDB_FREE(features_str.data);
 
 	return prediction;
 }
@@ -137,13 +130,14 @@ calculate_shap_values(PG_FUNCTION_ARGS)
 	n_features = ARR_DIMS(instance)[0];
 	features = (float *) ARR_DATA_PTR(instance);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Initialize SHAP values */
-	shap_values = (double *) palloc0(sizeof(double) * n_features);
+	NDB_DECLARE(double *, shap_values);
+	NDB_ALLOC(shap_values, double, n_features);
 
 	/* Kernel SHAP: approximate Shapley values using sampling */
 	/* For each feature, estimate its contribution */
@@ -155,7 +149,8 @@ calculate_shap_values(PG_FUNCTION_ARGS)
 		for (j = 0; j < n_samples; j++)
 		{
 			/* Create perturbed instance */
-			float	   *perturbed = (float *) palloc(sizeof(float) * n_features);
+			NDB_DECLARE(float *, perturbed);
+			NDB_ALLOC(perturbed, float, n_features);
 			int			k;
 			double		pred_with,
 						pred_without;
@@ -181,7 +176,7 @@ calculate_shap_values(PG_FUNCTION_ARGS)
 			sum_contrib += pred_with - pred_without;
 			valid_samples++;
 
-			NDB_SAFE_PFREE_AND_NULL(perturbed);
+			NDB_FREE(perturbed);
 		}
 
 		if (valid_samples > 0)
@@ -189,7 +184,8 @@ calculate_shap_values(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result array */
-	result_datums = (Datum *) palloc(sizeof(Datum) * n_features);
+	NDB_DECLARE(Datum *, result_datums);
+	NDB_ALLOC(result_datums, Datum, n_features);
 	for (i = 0; i < n_features; i++)
 		result_datums[i] = Float8GetDatum(shap_values[i]);
 
@@ -201,9 +197,9 @@ calculate_shap_values(PG_FUNCTION_ARGS)
 							 'd');
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(shap_values);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	SPI_finish();
+	NDB_FREE(shap_values);
+	NDB_FREE(result_datums);
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -255,16 +251,20 @@ explain_with_lime(PG_FUNCTION_ARGS)
 	feature_dim = ARR_DIMS(instance)[0];
 	features = (float *) ARR_DATA_PTR(instance);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Allocate arrays */
-	perturbed_features = (float *) palloc(sizeof(float) * feature_dim * n_samples);
-	predictions = (double *) palloc(sizeof(double) * n_samples);
-	weights = (double *) palloc(sizeof(double) * n_samples);
-	coefficients = (double *) palloc0(sizeof(double) * feature_dim);
+	NDB_DECLARE(float *, perturbed_features);
+	NDB_DECLARE(double *, predictions);
+	NDB_DECLARE(double *, weights);
+	NDB_DECLARE(double *, coefficients);
+	NDB_ALLOC(perturbed_features, float, feature_dim * n_samples);
+	NDB_ALLOC(predictions, double, n_samples);
+	NDB_ALLOC(weights, double, n_samples);
+	NDB_ALLOC(coefficients, double, feature_dim);
 
 	/* Generate perturbed samples and get predictions */
 	for (i = 0; i < n_samples; i++)
@@ -311,7 +311,7 @@ explain_with_lime(PG_FUNCTION_ARGS)
 	}
 
 	/* Build JSONB result */
-	initStringInfo(&jsonbuf);
+	ndb_spi_stringinfo_init(spi_session, &jsonbuf);
 	appendStringInfoString(&jsonbuf, "{\"features\":[");
 	for (i = 0; i < feature_dim && i < n_features; i++)
 	{
@@ -325,15 +325,15 @@ explain_with_lime(PG_FUNCTION_ARGS)
 	appendStringInfoString(&jsonbuf, "]}");
 
 	result = DatumGetJsonbP(
-							DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
+							DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(perturbed_features);
-	NDB_SAFE_PFREE_AND_NULL(predictions);
-	NDB_SAFE_PFREE_AND_NULL(weights);
-	NDB_SAFE_PFREE_AND_NULL(coefficients);
-	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
-	SPI_finish();
+	NDB_FREE(perturbed_features);
+	NDB_FREE(predictions);
+	NDB_FREE(weights);
+	NDB_FREE(coefficients);
+	ndb_spi_stringinfo_free(spi_session, &jsonbuf);
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_POINTER(result);
 }
@@ -392,46 +392,141 @@ feature_importance(PG_FUNCTION_ARGS)
 	targ_col_str = text_to_cstring(target_column);
 	metric = text_to_cstring(metric_text);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed")));
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
 	/* Load test data */
-	initStringInfo(&query);
+	ndb_spi_stringinfo_init(spi_session, &query);
 	appendStringInfo(&query,
 					 "SELECT %s, %s FROM %s",
 					 feat_col_str,
 					 targ_col_str,
 					 tbl_str);
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 	if (ret != SPI_OK_SELECT || SPI_processed == 0)
+	{
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_col_str);
+		NDB_FREE(targ_col_str);
+		NDB_FREE(metric);
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_EXCEPTION),
 				 errmsg("Failed to load test data")));
+	}
 
 	n_samples = SPI_processed;
-	/* TODO: Determine actual feature count from model or data schema */
+	
+	/* Extract actual feature count from model metadata or data schema */
+	n_features = 10; /* Default fallback */
+	
+	/* Try to get feature count from model metadata */
+	{
+		MLCatalogModelSpec *model_spec = NULL;
+		Jsonb	   *model_metadata = NULL;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		bool		found = false;
 
-	/*
-	 * For now, use default value - should be replaced with actual model
-	 * metadata
-	 */
-	n_features = 10;
+		/* Look up model from catalog */
+		model_spec = ml_catalog_get_model(model_id, NULL);
+		if (model_spec != NULL && model_spec->metadata != NULL)
+		{
+			model_metadata = model_spec->metadata;
+			PG_TRY();
+			{
+				it = JsonbIteratorInit((JsonbContainer *) & model_metadata->root);
+				while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE && !found)
+				{
+					if (r == WJB_KEY)
+					{
+						char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
 
-	features = (float **) palloc(sizeof(float *) * n_samples);
-	targets = (double *) palloc(sizeof(double) * n_samples);
+						r = JsonbIteratorNext(&it, &v, false);
+						if ((strcmp(key, "n_features") == 0 || strcmp(key, "feature_dim") == 0
+							 || strcmp(key, "feature_count") == 0) && v.type == jbvNumeric)
+						{
+							Numeric		num = DatumGetNumeric(v.val.numeric);
+							int			val = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(num)));
+
+							if (val > 0 && val < 100000)
+							{
+								n_features = val;
+								found = true;
+							}
+						}
+						NDB_FREE(key);
+					}
+				}
+			}
+			PG_CATCH();
+			{
+				FlushErrorState();
+			}
+			PG_END_TRY();
+		}
+
+		/* If not found in metadata, try to infer from data schema */
+		if (!found && SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL)
+		{
+			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+			int			col_count = tupdesc->natts;
+			int			feature_cols = 0;
+
+			/* Count non-target columns (assuming last column is target) */
+			for (int col = 0; col < col_count - 1; col++)
+			{
+				if (!tupdesc->attrs[col].attisdropped)
+					feature_cols++;
+			}
+
+			if (feature_cols > 0)
+				n_features = feature_cols;
+		}
+
+		if (model_spec)
+			NDB_FREE(model_spec);
+	}
+
+	NDB_DECLARE(float **, features);
+	NDB_DECLARE(double *, targets);
+	NDB_ALLOC(features, float *, n_samples);
+	NDB_ALLOC(targets, double, n_samples);
 
 	for (i = 0; i < n_samples; i++)
 	{
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			continue;
+		}
 		HeapTuple	tuple = SPI_tuptable->vals[i];
-		ArrayType  *feat_array = DatumGetArrayTypeP(
-													SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, NULL));
-		double		target = DatumGetFloat8(SPI_getbinval(tuple,
-														  SPI_tuptable->tupdesc,
-														  2, NULL));
+		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		if (tupdesc == NULL)
+		{
+			continue;
+		}
+		ArrayType  *feat_array = NULL;
+		double		target = 0.0;
+		
+		/* Safe access for features - validate tupdesc has at least 1 column */
+		if (tupdesc->natts >= 1)
+		{
+			Datum		feat_datum = SPI_getbinval(tuple, tupdesc, 1, NULL);
+			feat_array = DatumGetArrayTypeP(feat_datum);
+		}
+		/* Safe access for target - validate tupdesc has at least 2 columns */
+		if (tupdesc->natts >= 2)
+		{
+			Datum		targ_datum = SPI_getbinval(tuple, tupdesc, 2, NULL);
+			target = DatumGetFloat8(targ_datum);
+		}
 
 		features[i] = (float *) ARR_DATA_PTR(feat_array);
 		targets[i] = target;
@@ -450,7 +545,8 @@ feature_importance(PG_FUNCTION_ARGS)
 	baseline_score /= n_samples;
 
 	/* Permutation importance: shuffle each feature and measure impact */
-	importance = (double *) palloc0(sizeof(double) * n_features);
+	NDB_DECLARE(double *, importance);
+	NDB_ALLOC(importance, double, n_features);
 
 	for (i = 0; i < n_features; i++)
 	{
@@ -493,7 +589,8 @@ feature_importance(PG_FUNCTION_ARGS)
 	}
 
 	/* Build result array */
-	result_datums = (Datum *) palloc(sizeof(Datum) * n_features);
+	NDB_DECLARE(Datum *, result_datums);
+	NDB_ALLOC(result_datums, Datum, n_features);
 	for (i = 0; i < n_features; i++)
 		result_datums[i] = Float8GetDatum(importance[i]);
 
@@ -505,16 +602,16 @@ feature_importance(PG_FUNCTION_ARGS)
 							 'd');
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(features);
-	NDB_SAFE_PFREE_AND_NULL(targets);
-	NDB_SAFE_PFREE_AND_NULL(importance);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(query.data);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(feat_col_str);
-	NDB_SAFE_PFREE_AND_NULL(targ_col_str);
-	NDB_SAFE_PFREE_AND_NULL(metric);
-	SPI_finish();
+	NDB_FREE(features);
+	NDB_FREE(targets);
+	NDB_FREE(importance);
+	NDB_FREE(result_datums);
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_FREE(tbl_str);
+	NDB_FREE(feat_col_str);
+	NDB_FREE(targ_col_str);
+	NDB_FREE(metric);
+	NDB_SPI_SESSION_END(spi_session);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

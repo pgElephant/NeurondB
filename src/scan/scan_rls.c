@@ -11,7 +11,7 @@
  * Ensures multi-tenant isolation by filtering results based on
  * PostgreSQL RLS policies.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/scan/scan_rls.c
@@ -39,8 +39,10 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 #include "utils/fmgroids.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -209,7 +211,7 @@ ndb_rls_end(RLSFilterState * state)
 		state->slot = NULL;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(state);
+	NDB_FREE(state);
 }
 
 /*
@@ -300,14 +302,14 @@ ndb_compile_rls_policies(List * policies, Relation rel, EState * estate)
 			/* Use SPI to parse and evaluate the qual */
 			/* For production, policies should store compiled Expr nodes */
 			/* For now, return NULL to indicate we need SPI-based evaluation */
-			NDB_SAFE_PFREE_AND_NULL(qualStr);
+			NDB_FREE(qualStr);
 			continue;			/* Skip complex parsing for now - would need
 								 * full query context */
 		}
 
 		/* Add to qual list */
 		qualList = lappend(qualList, qualExpr);
-		NDB_SAFE_PFREE_AND_NULL(qualStr);
+		NDB_FREE(qualStr);
 	}
 
 	/* Combine quals with OR (any policy can allow access) */
@@ -465,6 +467,8 @@ neurondb_create_tenant_policy(PG_FUNCTION_ARGS)
 	char	   *table_str = text_to_cstring(table_name);
 	char	   *column_str = text_to_cstring(tenant_column);
 	StringInfoData query;
+	NDB_DECLARE(NdbSpiSession *, session);
+	int			ret;
 
 	initStringInfo(&query);
 
@@ -476,36 +480,36 @@ neurondb_create_tenant_policy(PG_FUNCTION_ARGS)
 					 column_str);
 
 	/* Execute policy creation */
-	if (SPI_connect() == SPI_OK_CONNECT)
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session != NULL)
 	{
-		int			ret = ndb_spi_execute_safe(query.data, false, 0);
+		ret = ndb_spi_execute(session, query.data, false, 0);
 
-		NDB_CHECK_SPI_TUPTABLE();
 		if (ret < 0)
 		{
-			SPI_finish();
-			NDB_SAFE_PFREE_AND_NULL(query.data);
-			NDB_SAFE_PFREE_AND_NULL(table_str);
-			NDB_SAFE_PFREE_AND_NULL(column_str);
+			ndb_spi_session_end(&session);
+			NDB_FREE(query.data);
+			NDB_FREE(table_str);
+			NDB_FREE(column_str);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("Failed to create RLS policy")));
 		}
-		SPI_finish();
+		ndb_spi_session_end(&session);
 	}
 	else
 	{
-		NDB_SAFE_PFREE_AND_NULL(query.data);
-		NDB_SAFE_PFREE_AND_NULL(table_str);
-		NDB_SAFE_PFREE_AND_NULL(column_str);
+		NDB_FREE(query.data);
+		NDB_FREE(table_str);
+		NDB_FREE(column_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("SPI_connect failed")));
+				 errmsg("failed to begin SPI session")));
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(query.data);
-	NDB_SAFE_PFREE_AND_NULL(table_str);
-	NDB_SAFE_PFREE_AND_NULL(column_str);
+	NDB_FREE(query.data);
+	NDB_FREE(table_str);
+	NDB_FREE(column_str);
 
 	PG_RETURN_VOID();
 }

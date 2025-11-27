@@ -1,12 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_gpu_buffer.c
- *	  Shared GPU buffer abstraction for NeurondB ML pipelines.
+ *    Shared buffer abstraction for ML pipelines.
  *
- * The initial implementation focuses on consistent bookkeeping for host
- * buffers and graceful CPU fallback. Device allocation and transfers are
- * stubbed for now; future steps will wire these through backend-specific
- * kernels.
+ * This module provides buffer management for ML operations with consistent
+ * bookkeeping and resource management.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/common/ml_gpu_buffer.c
  *
  *-------------------------------------------------------------------------
  */
@@ -19,6 +22,7 @@
 #include "neurondb_gpu_backend.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 Size
 ml_gpu_dtype_size(MLGpuDType dtype)
@@ -208,7 +212,7 @@ ml_gpu_buffer_release(MLGpuBuffer * buf)
 		return;
 
 	if (buf->host_owner && buf->host_ptr != NULL)
-		NDB_SAFE_PFREE_AND_NULL(buf->host_ptr);
+		NDB_FREE(buf->host_ptr);
 
 	backend = ndb_gpu_get_active_backend();
 	if (buf->device_owner && buf->device_ptr != NULL && backend

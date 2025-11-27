@@ -10,7 +10,7 @@
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/vector_distance_simd.c
+ *	  src/vector/vector_distance_simd.c
  *
  *-------------------------------------------------------------------------
  */
@@ -19,6 +19,8 @@
 #include "neurondb.h"
 #include "fmgr.h"
 #include "utils/elog.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 #include <math.h>
 #include <float.h>
 

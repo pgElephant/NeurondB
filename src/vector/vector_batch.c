@@ -9,7 +9,7 @@
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/vector_batch.c
+ *	  src/vector/vector_batch.c
  *
  *-------------------------------------------------------------------------
  */
@@ -27,6 +27,7 @@
 #include <math.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Forward declarations */
 extern float4 l2_distance(Vector *a, Vector *b);
@@ -100,8 +101,10 @@ vector_l2_distance_batch(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("vector array must not be empty")));
 
-	elems = (Datum *) palloc(sizeof(Datum) * nvec);
-	nulls = (bool *) palloc(sizeof(bool) * nvec);
+	elems = NULL;
+	nulls = NULL;
+	NDB_ALLOC(elems, Datum, nvec);
+	NDB_ALLOC(nulls, bool, nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
@@ -141,8 +144,8 @@ vector_l2_distance_batch(PG_FUNCTION_ARGS)
 	}
 
 	result = construct_array(elems, nvec, FLOAT4OID, sizeof(float4), true, 'i');
-	NDB_SAFE_PFREE_AND_NULL(elems);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
+	NDB_FREE(elems);
+	NDB_FREE(nulls);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -212,8 +215,10 @@ vector_cosine_distance_batch(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("vector array must not be empty")));
 
-	elems = (Datum *) palloc(sizeof(Datum) * nvec);
-	nulls = (bool *) palloc(sizeof(bool) * nvec);
+	elems = NULL;
+	nulls = NULL;
+	NDB_ALLOC(elems, Datum, nvec);
+	NDB_ALLOC(nulls, bool, nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
@@ -253,8 +258,8 @@ vector_cosine_distance_batch(PG_FUNCTION_ARGS)
 	}
 
 	result = construct_array(elems, nvec, FLOAT4OID, sizeof(float4), true, 'i');
-	NDB_SAFE_PFREE_AND_NULL(elems);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
+	NDB_FREE(elems);
+	NDB_FREE(nulls);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -324,8 +329,10 @@ vector_inner_product_batch(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("vector array must not be empty")));
 
-	elems = (Datum *) palloc(sizeof(Datum) * nvec);
-	nulls = (bool *) palloc(sizeof(bool) * nvec);
+	elems = NULL;
+	nulls = NULL;
+	NDB_ALLOC(elems, Datum, nvec);
+	NDB_ALLOC(nulls, bool, nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
@@ -365,8 +372,8 @@ vector_inner_product_batch(PG_FUNCTION_ARGS)
 	}
 
 	result = construct_array(elems, nvec, FLOAT4OID, sizeof(float4), true, 'i');
-	NDB_SAFE_PFREE_AND_NULL(elems);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
+	NDB_FREE(elems);
+	NDB_FREE(nulls);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -428,8 +435,10 @@ vector_normalize_batch(PG_FUNCTION_ARGS)
 
 	get_typlenbyvalalign(vector_oid, &typlen, &typbyval, &typalign);
 
-	elems = (Datum *) palloc(sizeof(Datum) * nvec);
-	nulls = (bool *) palloc(sizeof(bool) * nvec);
+	elems = NULL;
+	nulls = NULL;
+	NDB_ALLOC(elems, Datum, nvec);
+	NDB_ALLOC(nulls, bool, nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
@@ -477,8 +486,8 @@ vector_normalize_batch(PG_FUNCTION_ARGS)
 		lbs[0] = 1;
 		result = construct_md_array(elems, nulls, 1, dims, lbs, vector_oid, typlen, typbyval, typalign);
 	}
-	NDB_SAFE_PFREE_AND_NULL(elems);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
+	NDB_FREE(elems);
+	NDB_FREE(nulls);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }

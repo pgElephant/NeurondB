@@ -1,20 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_drift_time.c
- *    Drift monitoring over time with temporal tracking
+ *    Temporal drift monitoring.
  *
- * Monitors how embeddings drift over time by:
- *   1. Computing centroids at different time windows
- *   2. Tracking centroid movement across time
- *   3. Detecting significant drift events
+ * This module monitors embedding drift over time by computing centroids
+ * at different time windows and tracking centroid movement.
  *
- * Use Cases:
- *   - Concept drift detection in ML systems
- *   - Data quality monitoring
- *   - Model retraining triggers
- *   - User behavior evolution tracking
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_drift_time.c
@@ -42,6 +34,8 @@
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_macros.h"
 
 /*
  * monitor_drift_timeseries
@@ -102,6 +96,8 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 	float		drift_distance = 0.0f;
 	int			n_baseline = 0;
 	int			n_current = 0;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext_spi;
 
 	/* Defensive: validate inputs */
 	table_name = PG_GETARG_TEXT_PP(0);
@@ -132,24 +128,16 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 										  "drift monitoring context",
 										  ALLOCSET_DEFAULT_SIZES);
 	elog(DEBUG1, "drift monitoring context created");
+	oldcontext_spi = CurrentMemoryContext;
+	
 	oldcontext = MemoryContextSwitchTo(drift_context);
 
 	/* Connect to SPI */
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
-		NDB_SAFE_PFREE_AND_NULL(ts_col_str);
-		NDB_SAFE_PFREE_AND_NULL(window_str);
-		MemoryContextSwitchTo(oldcontext);
-		MemoryContextDelete(drift_context);
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("monitor_drift_timeseries: SPI_connect failed")));
-	}
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);
 
 	/* Compute baseline centroid (previous window) */
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	{
 		const char *col_quoted = quote_identifier(col_str);
 		const char *tbl_quoted = quote_identifier(tbl_str);
@@ -169,34 +157,42 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 		 */
 	}
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	ret = ndb_spi_execute(spi_session, sql.data, true, 1);
+	ndb_spi_stringinfo_free(spi_session, &sql);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		bool		isnull;
 		Datum		centroid_datum;
 		Datum		cnt_datum;
-
-		centroid_datum = SPI_getbinval(SPI_tuptable->vals[0],
+		/* Note: Vector type doesn't have direct ndb_spi_get_* function, so we access SPI_tuptable directly */
+		/* Safe access for complex types - validate before access */
+		if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL && 
+			SPI_tuptable->vals != NULL && SPI_processed > 0 && SPI_tuptable->vals[0] != NULL)
+		{
+			centroid_datum = SPI_getbinval(SPI_tuptable->vals[0],
 									   SPI_tuptable->tupdesc,
 									   1,
 									   &isnull);
-		cnt_datum = SPI_getbinval(SPI_tuptable->vals[0],
-								  SPI_tuptable->tupdesc,
-								  2,
-								  &isnull);
-
-		if (!isnull)
-		{
-			baseline_centroid = DatumGetVector(centroid_datum);
-			n_baseline = DatumGetInt64(cnt_datum);
+			if (!isnull)
+			{
+				baseline_centroid = DatumGetVector(centroid_datum);
+				/* Safe access for count - validate tupdesc has at least 2 columns */
+				if (SPI_tuptable->tupdesc->natts >= 2)
+				{
+					cnt_datum = SPI_getbinval(SPI_tuptable->vals[0],
+									  SPI_tuptable->tupdesc,
+									  2,
+									  &isnull);
+					if (!isnull)
+						n_baseline = DatumGetInt64(cnt_datum);
+				}
+			}
 		}
 	}
 
 	/* Compute current centroid (current window) */
-	initStringInfo(&sql);
+	ndb_spi_stringinfo_init(spi_session, &sql);
 	{
 		const char *col_quoted = quote_identifier(col_str);
 		const char *tbl_quoted = quote_identifier(tbl_str);
@@ -215,33 +211,41 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 		 */
 	}
 
-	ret = ndb_spi_execute_safe(sql.data, true, 1);
-	NDB_CHECK_SPI_TUPTABLE();
-	NDB_SAFE_PFREE_AND_NULL(sql.data);
+	ret = ndb_spi_execute(spi_session, sql.data, true, 1);
+	ndb_spi_stringinfo_free(spi_session, &sql);
 
 	if (ret == SPI_OK_SELECT && SPI_processed > 0)
 	{
 		bool		isnull;
 		Datum		centroid_datum;
 		Datum		cnt_datum;
-
-		centroid_datum = SPI_getbinval(SPI_tuptable->vals[0],
+		/* Note: Vector type doesn't have direct ndb_spi_get_* function, so we access SPI_tuptable directly */
+		/* Safe access for complex types - validate before access */
+		if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL && 
+			SPI_tuptable->vals != NULL && SPI_processed > 0 && SPI_tuptable->vals[0] != NULL)
+		{
+			centroid_datum = SPI_getbinval(SPI_tuptable->vals[0],
 									   SPI_tuptable->tupdesc,
 									   1,
 									   &isnull);
-		cnt_datum = SPI_getbinval(SPI_tuptable->vals[0],
+			if (!isnull)
+			{
+				current_centroid = DatumGetVector(centroid_datum);
+				/* Safe access for count - validate tupdesc has at least 2 columns */
+				if (SPI_tuptable->tupdesc->natts >= 2)
+				{
+					cnt_datum = SPI_getbinval(SPI_tuptable->vals[0],
 								  SPI_tuptable->tupdesc,
 								  2,
 								  &isnull);
-
-		if (!isnull)
-		{
-			current_centroid = DatumGetVector(centroid_datum);
-			n_current = DatumGetInt64(cnt_datum);
+					if (!isnull)
+						n_current = DatumGetInt64(cnt_datum);
+				}
+			}
 		}
 	}
 
-	SPI_finish();
+	NDB_SPI_SESSION_END(spi_session);
 
 	/* Calculate drift distance if both centroids exist */
 	if (baseline_centroid != NULL && current_centroid != NULL &&
@@ -275,16 +279,16 @@ monitor_drift_timeseries(PG_FUNCTION_ARGS)
 							 "{\"drift_distance\":%.6f,\"baseline_samples\":%d,\"current_samples\":%d,\"window_size\":%s}",
 							 drift_distance, n_baseline, n_current,
 							 window_quoted_str);
-			NDB_SAFE_PFREE_AND_NULL(window_quoted_str);
+			NDB_FREE(window_quoted_str);
 		}
 
 		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-														  CStringGetDatum(result_json.data)));
+														  CStringGetTextDatum(result_json.data)));
 
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(col_str);
-		NDB_SAFE_PFREE_AND_NULL(ts_col_str);
-		NDB_SAFE_PFREE_AND_NULL(window_str);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
+		NDB_FREE(ts_col_str);
+		NDB_FREE(window_str);
 		MemoryContextDelete(drift_context);
 
 		PG_RETURN_JSONB_P(result_jsonb);

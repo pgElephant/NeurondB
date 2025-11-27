@@ -7,16 +7,18 @@
  * SUM, and centroid calculations. Uses transition and final functions
  * following PostgreSQL aggregate function conventions.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/aggregates.c
+ *	  src/types/aggregates.c
  *
  *-------------------------------------------------------------------------
  */
 
 #include "postgres.h"
 #include "neurondb.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 #include "fmgr.h"
 #include "utils/array.h"
 #include <string.h>

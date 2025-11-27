@@ -1,12 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * gpu_lr_cuda.c
- *	  CUDA backend bridge for Logistic Regression training and prediction.
+ *    Logistic regression bridge implementation.
+ *
+ * This module provides bridge functions for logistic regression training
+ * and prediction.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  src/gpu/cuda/gpu_lr_cuda.c
+ *    src/gpu/cuda/gpu_lr_cuda.c
  *
  *-------------------------------------------------------------------------
  */
@@ -29,6 +32,7 @@
 #include "neurondb_cuda_lr.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 int
 ndb_cuda_lr_pack_model(const LRModel * model,
@@ -83,7 +87,7 @@ ndb_cuda_lr_pack_model(const LRModel * model,
 		initStringInfo(&buf);
 		appendStringInfo(&buf,
 						 "{\"algorithm\":\"logistic_regression\","
-						 "\"storage\":\"gpu\","
+						 "\"training_backend\":1,"
 						 "\"n_features\":%d,"
 						 "\"n_samples\":%d,"
 						 "\"max_iters\":%d,"
@@ -102,7 +106,7 @@ ndb_cuda_lr_pack_model(const LRModel * model,
 		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
 														  jsonb_in,
 														  CStringGetDatum(buf.data)));
-		NDB_SAFE_PFREE_AND_NULL(buf.data);
+		NDB_FREE(buf.data);
 		*metrics = metrics_json;
 	}
 
@@ -413,7 +417,7 @@ ndb_cuda_lr_train(const float *features,
 	grad_weights = (double *) palloc(sizeof(double) * (size_t) feature_dim);
 	if (grad_weights == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(weights);
+		NDB_FREE(weights);
 		if (errstr)
 			*errstr = pstrdup("ndb_cuda_lr_train: palloc grad_weights failed");
 		return -1;
@@ -496,8 +500,8 @@ ndb_cuda_lr_train(const float *features,
 				 "ndb_cuda_lr_train: insufficient GPU memory: need %.2f MB, have %.2f MB",
 				 total_required / (1024.0 * 1024.0),
 				 free_mem / (1024.0 * 1024.0));
-			NDB_SAFE_PFREE_AND_NULL(weights);
-			NDB_SAFE_PFREE_AND_NULL(grad_weights);
+			NDB_FREE(weights);
+			NDB_FREE(grad_weights);
 			return -1;
 		}
 	}
@@ -578,7 +582,7 @@ ndb_cuda_lr_train(const float *features,
 					/* Defensive: Check for NaN/Inf during conversion */
 					if (!isfinite(val))
 					{
-						NDB_SAFE_PFREE_AND_NULL(h_features_col);
+						NDB_FREE(h_features_col);
 						if (errstr && *errstr == NULL)
 							*errstr = psprintf("ndb_cuda_lr_train: non-finite feature value at sample %d, feature %d: %f",
 											   block_i, feat_j, val);
@@ -593,7 +597,7 @@ ndb_cuda_lr_train(const float *features,
 
 		/* Copy column-major features to GPU */
 		status = cudaMemcpy(d_features, h_features_col, feature_bytes, cudaMemcpyHostToDevice);
-		NDB_SAFE_PFREE_AND_NULL(h_features_col);
+		NDB_FREE(h_features_col);
 		if (status != cudaSuccess)
 		{
 			elog(WARNING,
@@ -704,7 +708,7 @@ ndb_cuda_lr_train(const float *features,
 			h_weights_init[j] = (float) weights[j];
 
 		status = cudaMemcpy(d_weights, h_weights_init, weight_bytes_gpu, cudaMemcpyHostToDevice);
-		NDB_SAFE_PFREE_AND_NULL(h_weights_init);
+		NDB_FREE(h_weights_init);
 
 		if (status != cudaSuccess)
 		{
@@ -1108,8 +1112,8 @@ ndb_cuda_lr_train(const float *features,
 				status = cudaMemcpy(h_weights_fallback, d_weights, weight_bytes_gpu, cudaMemcpyDeviceToHost);
 				if (status != cudaSuccess)
 				{
-					NDB_SAFE_PFREE_AND_NULL(host_predictions);
-					NDB_SAFE_PFREE_AND_NULL(h_weights_fallback);
+					NDB_FREE(host_predictions);
+					NDB_FREE(h_weights_fallback);
 					goto gpu_fail;
 				}
 
@@ -1123,8 +1127,8 @@ ndb_cuda_lr_train(const float *features,
 									cudaMemcpyDeviceToHost);
 				if (status != cudaSuccess)
 				{
-					NDB_SAFE_PFREE_AND_NULL(host_predictions);
-					NDB_SAFE_PFREE_AND_NULL(h_weights_fallback);
+					NDB_FREE(host_predictions);
+					NDB_FREE(h_weights_fallback);
 					goto gpu_fail;
 				}
 
@@ -1136,8 +1140,8 @@ ndb_cuda_lr_train(const float *features,
 												  grad_weights,
 												  &grad_bias) != 0)
 				{
-					NDB_SAFE_PFREE_AND_NULL(host_predictions);
-					NDB_SAFE_PFREE_AND_NULL(h_weights_fallback);
+					NDB_FREE(host_predictions);
+					NDB_FREE(h_weights_fallback);
 					if ((iter % 100) == 0)
 					{
 						elog(WARNING,
@@ -1147,7 +1151,7 @@ ndb_cuda_lr_train(const float *features,
 					goto gpu_fail;
 				}
 
-				NDB_SAFE_PFREE_AND_NULL(host_predictions);
+				NDB_FREE(host_predictions);
 
 				/*
 				 * Average gradients and add L2 regularization with defensive
@@ -1233,11 +1237,11 @@ ndb_cuda_lr_train(const float *features,
 						status = cudaMemcpy(d_bias, &bias, sizeof(double), cudaMemcpyHostToDevice);
 					}
 
-					NDB_SAFE_PFREE_AND_NULL(h_weights_fallback);
+					NDB_FREE(h_weights_fallback);
 				}
 				else
 				{
-					NDB_SAFE_PFREE_AND_NULL(h_weights_fallback);
+					NDB_FREE(h_weights_fallback);
 					elog(ERROR,
 						 "ndb_cuda_lr_train: n_samples is zero in gradient computation");
 					if (errstr && *errstr == NULL)
@@ -1276,7 +1280,7 @@ ndb_cuda_lr_train(const float *features,
 				for (i = 0; i < feature_dim; i++)
 					weights[i] = (double) h_weights_final[i];
 			}
-			NDB_SAFE_PFREE_AND_NULL(h_weights_final);
+			NDB_FREE(h_weights_final);
 		}
 
 		/* Copy final bias from device */
@@ -1290,7 +1294,7 @@ ndb_cuda_lr_train(const float *features,
 	}
 
 	/* Free host buffers allocated before the loop */
-	NDB_SAFE_PFREE_AND_NULL(h_grad_weights_float);
+	NDB_FREE(h_grad_weights_float);
 
 	/* Build model payload */
 	{
@@ -1374,7 +1378,7 @@ ndb_cuda_lr_train(const float *features,
 			initStringInfo(&buf);
 			appendStringInfo(&buf,
 							 "{\"algorithm\":\"logistic_regression\","
-							 "\"storage\":\"gpu\","
+							 "\"training_backend\":1,"
 							 "\"n_features\":%d,"
 							 "\"n_samples\":%d,"
 							 "\"max_iters\":%d,"
@@ -1393,7 +1397,7 @@ ndb_cuda_lr_train(const float *features,
 			metrics_json = DatumGetJsonbP(DirectFunctionCall1(
 															  jsonb_in,
 															  CStringGetDatum(buf.data)));
-			NDB_SAFE_PFREE_AND_NULL(buf.data);
+			NDB_FREE(buf.data);
 			if (metrics_json == NULL)
 			{
 				elog(ERROR,
@@ -1405,7 +1409,7 @@ ndb_cuda_lr_train(const float *features,
 		}
 
 		if (host_preds != NULL)
-			NDB_SAFE_PFREE_AND_NULL(host_preds);
+			NDB_FREE(host_preds);
 	}
 
 	*model_data = payload;
@@ -1452,7 +1456,7 @@ ndb_cuda_lr_train(const float *features,
 				}
 				PG_END_TRY();
 
-				NDB_SAFE_PFREE_AND_NULL(buf.data);
+				NDB_FREE(buf.data);
 			}
 		}
 		*metrics = metrics_json;
@@ -1471,13 +1475,13 @@ ndb_cuda_lr_train(const float *features,
 cleanup:
 	/* Free host buffers */
 	if (h_grad_weights_float)
-		NDB_SAFE_PFREE_AND_NULL(h_grad_weights_float);
+		NDB_FREE(h_grad_weights_float);
 	if (h_errors)
-		NDB_SAFE_PFREE_AND_NULL(h_errors);
+		NDB_FREE(h_errors);
 	if (weights)
-		NDB_SAFE_PFREE_AND_NULL(weights);
+		NDB_FREE(weights);
 	if (grad_weights)
-		NDB_SAFE_PFREE_AND_NULL(grad_weights);
+		NDB_FREE(grad_weights);
 
 	/* Free device buffers */
 	if (d_features)
@@ -1836,7 +1840,7 @@ ndb_cuda_lr_evaluate(const bytea * model_data,
 			h_weights_double[i] = (double) weights[i];
 
 		cuda_err = cudaMemcpy(d_weights, h_weights_double, weight_bytes, cudaMemcpyHostToDevice);
-		NDB_SAFE_PFREE_AND_NULL(h_weights_double);
+		NDB_FREE(h_weights_double);
 
 		if (cuda_err != cudaSuccess)
 			goto cleanup;

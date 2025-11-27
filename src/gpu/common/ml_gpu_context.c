@@ -1,12 +1,15 @@
 /*-------------------------------------------------------------------------
  *
  * ml_gpu_context.c
- *	  GPU context helpers for Neurondb ML subsystems.
+ *    Context helpers for ML subsystems.
  *
- * This module offers a small wrapper around neurondb_gpu.c so that ML
- * call-sites can acquire a resource-scoped GPU context, track availability,
- * and perform deterministic cleanup regardless of whether the GPU path is
- * taken or a CPU fallback is required.
+ * This module provides resource-scoped context management for ML operations
+ * with deterministic cleanup.
+ *
+ * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/gpu/common/ml_gpu_context.c
  *
  *-------------------------------------------------------------------------
  */

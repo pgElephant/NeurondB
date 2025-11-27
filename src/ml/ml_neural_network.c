@@ -1,15 +1,16 @@
 /*-------------------------------------------------------------------------
  *
  * ml_neural_network.c
- *	  Basic Neural Network Implementation for NeuronDB
+ *    Feedforward neural network implementation.
  *
- * Implements feedforward neural networks with backpropagation.
- * Supports multiple hidden layers and various activation functions.
- *
- * IDENTIFICATION
- *	  src/ml/ml_neural_network.c
+ * This module implements feedforward neural networks with backpropagation,
+ * supporting multiple hidden layers and various activation functions.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
+ *
+ * IDENTIFICATION
+ *    src/ml/ml_neural_network.c
+ *
  *-------------------------------------------------------------------------
  */
 
@@ -27,6 +28,8 @@
 #include "neurondb.h"
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
+#include "neurondb_macros.h"
 #include "ml_catalog.h"
 #include "lib/stringinfo.h"
 #include "libpq/pqformat.h"
@@ -421,16 +424,16 @@ neural_network_free(NeuralNetwork * net)
 		NeuralLayer *layer = &net->layers[i];
 
 		for (j = 0; j < layer->n_outputs; j++)
-			NDB_SAFE_PFREE_AND_NULL(layer->weights[j]);
+			NDB_FREE(layer->weights[j]);
 
-		NDB_SAFE_PFREE_AND_NULL(layer->weights);
-		NDB_SAFE_PFREE_AND_NULL(layer->activations);
-		NDB_SAFE_PFREE_AND_NULL(layer->deltas);
+		NDB_FREE(layer->weights);
+		NDB_FREE(layer->activations);
+		NDB_FREE(layer->deltas);
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(net->layers);
-	NDB_SAFE_PFREE_AND_NULL(net->activation_func);
-	NDB_SAFE_PFREE_AND_NULL(net);
+	NDB_FREE(net->layers);
+	NDB_FREE(net->activation_func);
+	NDB_FREE(net);
 }
 
 /* Serialize neural network to bytea */
@@ -605,7 +608,7 @@ neural_network_deserialize(const bytea * data)
 	/* Validate deserialized values */
 	if (net->n_layers <= 0 || net->n_layers > 100)
 	{
-		NDB_SAFE_PFREE_AND_NULL(net);
+		NDB_FREE(net);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: neural_network_deserialize: invalid n_layers %d",
@@ -614,7 +617,7 @@ neural_network_deserialize(const bytea * data)
 
 	if (net->n_inputs <= 0 || net->n_inputs > 10000)
 	{
-		NDB_SAFE_PFREE_AND_NULL(net);
+		NDB_FREE(net);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: neural_network_deserialize: invalid n_inputs %d",
@@ -623,7 +626,7 @@ neural_network_deserialize(const bytea * data)
 
 	if (net->n_outputs <= 0 || net->n_outputs > 1000)
 	{
-		NDB_SAFE_PFREE_AND_NULL(net);
+		NDB_FREE(net);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: neural_network_deserialize: invalid n_outputs %d",
@@ -634,7 +637,7 @@ neural_network_deserialize(const bytea * data)
 	activation_len = pq_getmsgint(&buf, 4);
 	if (activation_len < 0 || activation_len > 255)
 	{
-		NDB_SAFE_PFREE_AND_NULL(net);
+		NDB_FREE(net);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: neural_network_deserialize: invalid activation_len %d",
@@ -644,7 +647,7 @@ neural_network_deserialize(const bytea * data)
 	/* Check buffer has enough data for activation string */
 	if (buf.cursor + activation_len > buf.len)
 	{
-		NDB_SAFE_PFREE_AND_NULL(net);
+		NDB_FREE(net);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: neural_network_deserialize: buffer overflow reading activation function")));
@@ -653,7 +656,7 @@ neural_network_deserialize(const bytea * data)
 	activation_buf = (char *) palloc(activation_len + 1);
 	if (activation_buf == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(net);
+		NDB_FREE(net);
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
 				 errmsg("neurondb: neural_network_deserialize: failed to allocate activation buffer")));
@@ -665,8 +668,8 @@ neural_network_deserialize(const bytea * data)
 	/* Allocate layers with overflow check */
 	if (net->n_layers > MaxAllocSize / sizeof(NeuralLayer))
 	{
-		NDB_SAFE_PFREE_AND_NULL(net->activation_func);
-		NDB_SAFE_PFREE_AND_NULL(net);
+		NDB_FREE(net->activation_func);
+		NDB_FREE(net);
 		ereport(ERROR,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("neurondb: neural_network_deserialize: n_layers %d exceeds maximum allocation size",
@@ -700,17 +703,17 @@ neural_network_deserialize(const bytea * data)
 				{
 					for (k = 0; k < prev_layer->n_outputs; k++)
 						if (prev_layer->weights[k] != NULL)
-							NDB_SAFE_PFREE_AND_NULL(prev_layer->weights[k]);
-					NDB_SAFE_PFREE_AND_NULL(prev_layer->weights);
+							NDB_FREE(prev_layer->weights[k]);
+					NDB_FREE(prev_layer->weights);
 				}
 				if (prev_layer->activations != NULL)
-					NDB_SAFE_PFREE_AND_NULL(prev_layer->activations);
+					NDB_FREE(prev_layer->activations);
 				if (prev_layer->deltas != NULL)
-					NDB_SAFE_PFREE_AND_NULL(prev_layer->deltas);
+					NDB_FREE(prev_layer->deltas);
 			}
-			NDB_SAFE_PFREE_AND_NULL(net->layers);
-			NDB_SAFE_PFREE_AND_NULL(net->activation_func);
-			NDB_SAFE_PFREE_AND_NULL(net);
+			NDB_FREE(net->layers);
+			NDB_FREE(net->activation_func);
+			NDB_FREE(net);
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("neurondb: neural_network_deserialize: invalid layer %d dimensions (%d, %d)",
@@ -737,17 +740,17 @@ neural_network_deserialize(const bytea * data)
 				{
 					for (k = 0; k < prev_layer->n_outputs; k++)
 						if (prev_layer->weights[k] != NULL)
-							NDB_SAFE_PFREE_AND_NULL(prev_layer->weights[k]);
-					NDB_SAFE_PFREE_AND_NULL(prev_layer->weights);
+							NDB_FREE(prev_layer->weights[k]);
+					NDB_FREE(prev_layer->weights);
 				}
 				if (prev_layer->activations != NULL)
-					NDB_SAFE_PFREE_AND_NULL(prev_layer->activations);
+					NDB_FREE(prev_layer->activations);
 				if (prev_layer->deltas != NULL)
-					NDB_SAFE_PFREE_AND_NULL(prev_layer->deltas);
+					NDB_FREE(prev_layer->deltas);
 			}
-			NDB_SAFE_PFREE_AND_NULL(net->layers);
-			NDB_SAFE_PFREE_AND_NULL(net->activation_func);
-			NDB_SAFE_PFREE_AND_NULL(net);
+			NDB_FREE(net->layers);
+			NDB_FREE(net->activation_func);
+			NDB_FREE(net);
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("neurondb: neural_network_deserialize: layer %d allocation size exceeds maximum",
@@ -778,17 +781,17 @@ neural_network_deserialize(const bytea * data)
 					{
 						for (k = 0; k < prev_layer->n_outputs; k++)
 							if (prev_layer->weights[k] != NULL)
-								NDB_SAFE_PFREE_AND_NULL(prev_layer->weights[k]);
-						NDB_SAFE_PFREE_AND_NULL(prev_layer->weights);
+								NDB_FREE(prev_layer->weights[k]);
+						NDB_FREE(prev_layer->weights);
 					}
 					if (prev_layer->activations != NULL)
-						NDB_SAFE_PFREE_AND_NULL(prev_layer->activations);
+						NDB_FREE(prev_layer->activations);
 					if (prev_layer->deltas != NULL)
-						NDB_SAFE_PFREE_AND_NULL(prev_layer->deltas);
+						NDB_FREE(prev_layer->deltas);
 				}
-				NDB_SAFE_PFREE_AND_NULL(net->layers);
-				NDB_SAFE_PFREE_AND_NULL(net->activation_func);
-				NDB_SAFE_PFREE_AND_NULL(net);
+				NDB_FREE(net->layers);
+				NDB_FREE(net->activation_func);
+				NDB_FREE(net);
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("neurondb: neural_network_deserialize: buffer overflow reading layer %d weights",
@@ -804,10 +807,10 @@ neural_network_deserialize(const bytea * data)
 			{
 				/* Cleanup */
 				for (k = 0; k < j; k++)
-					NDB_SAFE_PFREE_AND_NULL(layer->weights[k]);
-				NDB_SAFE_PFREE_AND_NULL(layer->weights);
-				NDB_SAFE_PFREE_AND_NULL(layer->activations);
-				NDB_SAFE_PFREE_AND_NULL(layer->deltas);
+					NDB_FREE(layer->weights[k]);
+				NDB_FREE(layer->weights);
+				NDB_FREE(layer->activations);
+				NDB_FREE(layer->deltas);
 				for (j = 0; j < i; j++)
 				{
 					NeuralLayer *prev_layer = &net->layers[j];
@@ -816,17 +819,17 @@ neural_network_deserialize(const bytea * data)
 					{
 						for (k = 0; k < prev_layer->n_outputs; k++)
 							if (prev_layer->weights[k] != NULL)
-								NDB_SAFE_PFREE_AND_NULL(prev_layer->weights[k]);
-						NDB_SAFE_PFREE_AND_NULL(prev_layer->weights);
+								NDB_FREE(prev_layer->weights[k]);
+						NDB_FREE(prev_layer->weights);
 					}
 					if (prev_layer->activations != NULL)
-						NDB_SAFE_PFREE_AND_NULL(prev_layer->activations);
+						NDB_FREE(prev_layer->activations);
 					if (prev_layer->deltas != NULL)
-						NDB_SAFE_PFREE_AND_NULL(prev_layer->deltas);
+						NDB_FREE(prev_layer->deltas);
 				}
-				NDB_SAFE_PFREE_AND_NULL(net->layers);
-				NDB_SAFE_PFREE_AND_NULL(net->activation_func);
-				NDB_SAFE_PFREE_AND_NULL(net);
+				NDB_FREE(net->layers);
+				NDB_FREE(net->activation_func);
+				NDB_FREE(net);
 				ereport(ERROR,
 						(errcode(ERRCODE_OUT_OF_MEMORY),
 						 errmsg("neurondb: neural_network_deserialize: failed to allocate weights for layer %d, output %d",
@@ -840,10 +843,10 @@ neural_network_deserialize(const bytea * data)
 				{
 					/* Cleanup */
 					for (k = 0; k <= j; k++)
-						NDB_SAFE_PFREE_AND_NULL(layer->weights[k]);
-					NDB_SAFE_PFREE_AND_NULL(layer->weights);
-					NDB_SAFE_PFREE_AND_NULL(layer->activations);
-					NDB_SAFE_PFREE_AND_NULL(layer->deltas);
+						NDB_FREE(layer->weights[k]);
+					NDB_FREE(layer->weights);
+					NDB_FREE(layer->activations);
+					NDB_FREE(layer->deltas);
 					for (j = 0; j < i; j++)
 					{
 						NeuralLayer *prev_layer = &net->layers[j];
@@ -852,17 +855,17 @@ neural_network_deserialize(const bytea * data)
 						{
 							for (k = 0; k < prev_layer->n_outputs; k++)
 								if (prev_layer->weights[k] != NULL)
-									NDB_SAFE_PFREE_AND_NULL(prev_layer->weights[k]);
-							NDB_SAFE_PFREE_AND_NULL(prev_layer->weights);
+									NDB_FREE(prev_layer->weights[k]);
+							NDB_FREE(prev_layer->weights);
 						}
 						if (prev_layer->activations != NULL)
-							NDB_SAFE_PFREE_AND_NULL(prev_layer->activations);
+							NDB_FREE(prev_layer->activations);
 						if (prev_layer->deltas != NULL)
-							NDB_SAFE_PFREE_AND_NULL(prev_layer->deltas);
+							NDB_FREE(prev_layer->deltas);
 					}
-					NDB_SAFE_PFREE_AND_NULL(net->layers);
-					NDB_SAFE_PFREE_AND_NULL(net->activation_func);
-					NDB_SAFE_PFREE_AND_NULL(net);
+					NDB_FREE(net->layers);
+					NDB_FREE(net->activation_func);
+					NDB_FREE(net);
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							 errmsg("neurondb: neural_network_deserialize: non-finite weight at layer %d, output %d, input %d",
@@ -999,12 +1002,7 @@ train_neural_network(PG_FUNCTION_ARGS)
 											ALLOCSET_DEFAULT_SIZES);
 		oldcontext = MemoryContextSwitchTo(callcontext);
 
-		if (SPI_connect() != SPI_OK_CONNECT)
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("SPI_connect failed")));
-
-		/* Load training data */
+		/* Initialize and build query in callcontext BEFORE SPI_connect */
 		initStringInfo(&sql);
 		appendStringInfo(&sql,
 						 "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
@@ -1014,28 +1012,45 @@ train_neural_network(PG_FUNCTION_ARGS)
 						 quote_identifier(feature_col_str),
 						 quote_identifier(label_col_str));
 
-		ret = ndb_spi_execute_safe(sql.data, true, 0);
-		NDB_CHECK_SPI_TUPTABLE();
-		if (ret != SPI_OK_SELECT)
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("failed to load training data")));
+		{
+			NDB_DECLARE(NdbSpiSession *, train_nn_spi_session);
 
-		tuptable = SPI_tuptable;
-		tupdesc = tuptable->tupdesc;
-		n_samples = SPI_processed;
+			NDB_SPI_SESSION_BEGIN(train_nn_spi_session, oldcontext);
 
-		if (n_samples == 0)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("no training data found")));
+			ret = ndb_spi_execute_safe(sql.data, true, 0);
+			NDB_CHECK_SPI_TUPTABLE();
+			if (ret != SPI_OK_SELECT)
+			{
+				NDB_FREE(sql.data);
+				NDB_SPI_SESSION_END(train_nn_spi_session);
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("neurondb: train_neural_network: failed to load training data"),
+						 errdetail("SPI execution returned code %d (expected %d)", ret, SPI_OK_SELECT),
+						 errhint("Verify the table exists and contains valid feature and label columns.")));
+			}
 
-		/* Determine input/output dimensions will be set from first vector */
-		n_inputs = 0;			/* Will be determined from first vector */
-		n_outputs = 1;			/* Regression - single output */
+			tuptable = SPI_tuptable;
+			tupdesc = tuptable->tupdesc;
+			n_samples = SPI_processed;
 
-		/* Determine actual feature dimension from first row */
-		if (n_samples > 0)
+			if (n_samples == 0)
+			{
+				NDB_FREE(sql.data);
+				NDB_SPI_SESSION_END(train_nn_spi_session);
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("neurondb: train_neural_network: no training data found"),
+						 errdetail("The query returned 0 rows"),
+						 errhint("Ensure the table contains valid data with non-NULL features and labels.")));
+			}
+
+			/* Determine input/output dimensions will be set from first vector */
+			n_inputs = 0;			/* Will be determined from first vector */
+			n_outputs = 1;			/* Regression - single output */
+
+			/* Determine actual feature dimension from first row */
+			if (n_samples > 0)
 		{
 			HeapTuple	first_tuple = tuptable->vals[0];
 			bool		isnull;
@@ -1077,11 +1092,11 @@ train_neural_network(PG_FUNCTION_ARGS)
 					 errmsg("neural network training: no training data found")));
 		}
 
-		/* Allocate training data arrays with correct dimensions */
-		X = (float **) palloc(n_samples * sizeof(float *));
-		y = (float *) palloc(n_samples * sizeof(float));
+			/* Allocate training data arrays with correct dimensions */
+			NDB_ALLOC(X, float *, n_samples);
+			NDB_ALLOC(y, float, n_samples);
 
-		for (i = 0; i < n_samples; i++)
+			for (i = 0; i < n_samples; i++)
 		{
 			HeapTuple	tuple = tuptable->vals[i];
 			bool		isnull;
@@ -1094,9 +1109,9 @@ train_neural_network(PG_FUNCTION_ARGS)
 			if (isnull)
 			{
 				for (j = 0; j < i; j++)
-					NDB_SAFE_PFREE_AND_NULL(X[j]);
-				NDB_SAFE_PFREE_AND_NULL(X);
-				NDB_SAFE_PFREE_AND_NULL(y);
+					NDB_FREE(X[j]);
+				NDB_FREE(X);
+				NDB_FREE(y);
 				ereport(ERROR,
 						(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 						 errmsg("neural network training: feature vector at row %d cannot be NULL",
@@ -1107,9 +1122,9 @@ train_neural_network(PG_FUNCTION_ARGS)
 			if (vec == NULL || vec->dim != n_inputs)
 			{
 				for (j = 0; j < i; j++)
-					NDB_SAFE_PFREE_AND_NULL(X[j]);
-				NDB_SAFE_PFREE_AND_NULL(X);
-				NDB_SAFE_PFREE_AND_NULL(y);
+					NDB_FREE(X[j]);
+				NDB_FREE(X);
+				NDB_FREE(y);
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("neural network training: invalid vector at row %d (expected dim %d, got %d)",
@@ -1117,15 +1132,15 @@ train_neural_network(PG_FUNCTION_ARGS)
 			}
 
 			/* Copy vector data to feature matrix */
-			X[i] = (float *) palloc(n_inputs * sizeof(float));
+			NDB_ALLOC(X[i], float, n_inputs);
 			for (j = 0; j < n_inputs; j++)
 			{
 				if (!isfinite(vec->data[j]))
 				{
 					for (j = 0; j <= i; j++)
-						NDB_SAFE_PFREE_AND_NULL(X[j]);
-					NDB_SAFE_PFREE_AND_NULL(X);
-					NDB_SAFE_PFREE_AND_NULL(y);
+						NDB_FREE(X[j]);
+					NDB_FREE(X);
+					NDB_FREE(y);
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							 errmsg("neural network training: non-finite value in feature vector at row %d, dimension %d",
@@ -1139,9 +1154,9 @@ train_neural_network(PG_FUNCTION_ARGS)
 			if (isnull)
 			{
 				for (j = 0; j <= i; j++)
-					NDB_SAFE_PFREE_AND_NULL(X[j]);
-				NDB_SAFE_PFREE_AND_NULL(X);
-				NDB_SAFE_PFREE_AND_NULL(y);
+					NDB_FREE(X[j]);
+				NDB_FREE(X);
+				NDB_FREE(y);
 				ereport(ERROR,
 						(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 						 errmsg("neural network training: label at row %d cannot be NULL",
@@ -1162,9 +1177,9 @@ train_neural_network(PG_FUNCTION_ARGS)
 				else
 				{
 					for (j = 0; j <= i; j++)
-						NDB_SAFE_PFREE_AND_NULL(X[j]);
-					NDB_SAFE_PFREE_AND_NULL(X);
-					NDB_SAFE_PFREE_AND_NULL(y);
+						NDB_FREE(X[j]);
+					NDB_FREE(X);
+					NDB_FREE(y);
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							 errmsg("neural network training: unsupported label type")));
@@ -1173,9 +1188,9 @@ train_neural_network(PG_FUNCTION_ARGS)
 				if (!isfinite(y[i]))
 				{
 					for (j = 0; j <= i; j++)
-						NDB_SAFE_PFREE_AND_NULL(X[j]);
-					NDB_SAFE_PFREE_AND_NULL(X);
-					NDB_SAFE_PFREE_AND_NULL(y);
+						NDB_FREE(X[j]);
+					NDB_FREE(X);
+					NDB_FREE(y);
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 							 errmsg("neural network training: non-finite label value at row %d",
@@ -1281,19 +1296,20 @@ train_neural_network(PG_FUNCTION_ARGS)
 			serialized = neural_network_serialize(net);
 			if (serialized == NULL)
 			{
-				SPI_finish();
+				NDB_FREE(sql.data);
+				NDB_SPI_SESSION_END(train_nn_spi_session);
 				MemoryContextSwitchTo(oldcontext);
 				MemoryContextDelete(callcontext);
 				for (i = 0; i < n_samples; i++)
-					NDB_SAFE_PFREE_AND_NULL(X[i]);
-				NDB_SAFE_PFREE_AND_NULL(X);
-				NDB_SAFE_PFREE_AND_NULL(y);
+					NDB_FREE(X[i]);
+				NDB_FREE(X);
+				NDB_FREE(y);
 				neural_network_free(net);
-				NDB_SAFE_PFREE_AND_NULL(hidden_layers);
-				NDB_SAFE_PFREE_AND_NULL(table_name_str);
-				NDB_SAFE_PFREE_AND_NULL(feature_col_str);
-				NDB_SAFE_PFREE_AND_NULL(label_col_str);
-				NDB_SAFE_PFREE_AND_NULL(activation);
+				NDB_FREE(hidden_layers);
+				NDB_FREE(table_name_str);
+				NDB_FREE(feature_col_str);
+				NDB_FREE(label_col_str);
+				NDB_FREE(activation);
 				ereport(ERROR,
 						(errcode(ERRCODE_INTERNAL_ERROR),
 						 errmsg("neurondb: train_neural_network: failed to serialize model")));
@@ -1302,19 +1318,20 @@ train_neural_network(PG_FUNCTION_ARGS)
 		PG_CATCH();
 		{
 			/* Cleanup on serialization error */
-			SPI_finish();
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(train_nn_spi_session);
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(callcontext);
 			for (i = 0; i < n_samples; i++)
-				NDB_SAFE_PFREE_AND_NULL(X[i]);
-			NDB_SAFE_PFREE_AND_NULL(X);
-			NDB_SAFE_PFREE_AND_NULL(y);
+				NDB_FREE(X[i]);
+			NDB_FREE(X);
+			NDB_FREE(y);
 			neural_network_free(net);
-			NDB_SAFE_PFREE_AND_NULL(hidden_layers);
-			NDB_SAFE_PFREE_AND_NULL(table_name_str);
-			NDB_SAFE_PFREE_AND_NULL(feature_col_str);
-			NDB_SAFE_PFREE_AND_NULL(label_col_str);
-			NDB_SAFE_PFREE_AND_NULL(activation);
+			NDB_FREE(hidden_layers);
+			NDB_FREE(table_name_str);
+			NDB_FREE(feature_col_str);
+			NDB_FREE(label_col_str);
+			NDB_FREE(activation);
 			PG_RE_THROW();
 		}
 		PG_END_TRY();
@@ -1328,24 +1345,25 @@ train_neural_network(PG_FUNCTION_ARGS)
 
 			if (est_size > MaxAllocSize)
 			{
-				SPI_finish();
+				NDB_FREE(sql.data);
+				NDB_SPI_SESSION_END(train_nn_spi_session);
 				MemoryContextSwitchTo(oldcontext);
 				MemoryContextDelete(callcontext);
 				for (i = 0; i < n_samples; i++)
-					NDB_SAFE_PFREE_AND_NULL(X[i]);
-				NDB_SAFE_PFREE_AND_NULL(X);
-				NDB_SAFE_PFREE_AND_NULL(y);
+					NDB_FREE(X[i]);
+				NDB_FREE(X);
+				NDB_FREE(y);
 				neural_network_free(net);
-				NDB_SAFE_PFREE_AND_NULL(hidden_layers);
-				NDB_SAFE_PFREE_AND_NULL(table_name_str);
-				NDB_SAFE_PFREE_AND_NULL(feature_col_str);
-				NDB_SAFE_PFREE_AND_NULL(label_col_str);
-				NDB_SAFE_PFREE_AND_NULL(activation);
+				NDB_FREE(hidden_layers);
+				NDB_FREE(table_name_str);
+				NDB_FREE(feature_col_str);
+				NDB_FREE(label_col_str);
+				NDB_FREE(activation);
 				ereport(ERROR,
 						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 						 errmsg("neurondb: train_neural_network: hidden_layers JSON allocation exceeds maximum")));
 			}
-			hidden_layers_json = (char *) palloc(est_size);
+			NDB_ALLOC(hidden_layers_json, char, est_size);
 			hidden_layers_json[0] = '[';
 			hidden_layers_json[1] = '\0';
 			for (idx = 0; idx < n_hidden; idx++)
@@ -1381,7 +1399,7 @@ train_neural_network(PG_FUNCTION_ARGS)
 						 learning_rate,
 						 epochs);
 		params_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetDatum(hyperbuf.data)));
+														  jsonb_in, CStringGetTextDatum(hyperbuf.data)));
 
 		/* Build metrics JSON */
 		initStringInfo(&metricsbuf);
@@ -1399,7 +1417,7 @@ train_neural_network(PG_FUNCTION_ARGS)
 						 n_samples,
 						 loss);
 		metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-														   jsonb_in, CStringGetDatum(metricsbuf.data)));
+														   jsonb_in, CStringGetTextDatum(metricsbuf.data)));
 
 		/* Register in catalog */
 		memset(&spec, 0, sizeof(spec));
@@ -1420,23 +1438,25 @@ train_neural_network(PG_FUNCTION_ARGS)
 			 "neurondb: neural_network: training completed, model_id=%d",
 			 model_id);
 
-		SPI_finish();
+			NDB_FREE(sql.data);
+			NDB_SPI_SESSION_END(train_nn_spi_session);
+		}
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(callcontext);
 
 		/* Cleanup */
 		for (i = 0; i < n_samples; i++)
-			NDB_SAFE_PFREE_AND_NULL(X[i]);
-		NDB_SAFE_PFREE_AND_NULL(X);
-		NDB_SAFE_PFREE_AND_NULL(y);
+			NDB_FREE(X[i]);
+		NDB_FREE(X);
+		NDB_FREE(y);
 		neural_network_free(net);
-		NDB_SAFE_PFREE_AND_NULL(hidden_layers);
-		NDB_SAFE_PFREE_AND_NULL(table_name_str);
-		NDB_SAFE_PFREE_AND_NULL(feature_col_str);
-		NDB_SAFE_PFREE_AND_NULL(label_col_str);
-		NDB_SAFE_PFREE_AND_NULL(activation);
+		NDB_FREE(hidden_layers);
+		NDB_FREE(table_name_str);
+		NDB_FREE(feature_col_str);
+		NDB_FREE(label_col_str);
+		NDB_FREE(activation);
 		if (hidden_layers_json != NULL)
-			NDB_SAFE_PFREE_AND_NULL(hidden_layers_json);
+			NDB_FREE(hidden_layers_json);
 
 		/*
 		 * Note: serialized, params_jsonb, metrics_jsonb are owned by catalog
@@ -1467,7 +1487,7 @@ predict_neural_network(PG_FUNCTION_ARGS)
 	MemoryContext oldcontext;
 	MemoryContext pred_context;
 	NeuralNetwork *net;
-	float	   *input_features;
+	float	   *input_features = NULL;
 	float		result[1];
 	int			i;
 
@@ -1573,7 +1593,7 @@ predict_neural_network(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("predict_neural_network: feature array allocation exceeds maximum size")));
 		}
-		input_features = (float *) palloc(features_size);
+		NDB_ALLOC(input_features, float, features->dim);
 		if (input_features == NULL)
 		{
 			neural_network_free(net);
@@ -1588,7 +1608,7 @@ predict_neural_network(PG_FUNCTION_ARGS)
 	{
 		if (!isfinite(features->data[i]))
 		{
-			NDB_SAFE_PFREE_AND_NULL(input_features);
+			NDB_FREE(input_features);
 			neural_network_free(net);
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(pred_context);
@@ -1609,7 +1629,7 @@ predict_neural_network(PG_FUNCTION_ARGS)
 		if (!isfinite(result[0]))
 		{
 			neural_network_free(net);
-			NDB_SAFE_PFREE_AND_NULL(input_features);
+			NDB_FREE(input_features);
 			MemoryContextSwitchTo(oldcontext);
 			MemoryContextDelete(pred_context);
 			ereport(ERROR,
@@ -1623,7 +1643,7 @@ predict_neural_network(PG_FUNCTION_ARGS)
 		if (net != NULL)
 			neural_network_free(net);
 		if (input_features != NULL)
-			NDB_SAFE_PFREE_AND_NULL(input_features);
+			NDB_FREE(input_features);
 		MemoryContextSwitchTo(oldcontext);
 		MemoryContextDelete(pred_context);
 		PG_RE_THROW();
@@ -1632,7 +1652,7 @@ predict_neural_network(PG_FUNCTION_ARGS)
 
 	/* Cleanup */
 	neural_network_free(net);
-	NDB_SAFE_PFREE_AND_NULL(input_features);
+	NDB_FREE(input_features);
 
 	MemoryContextSwitchTo(oldcontext);
 	MemoryContextDelete(pred_context);
@@ -1671,6 +1691,7 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 	StringInfoData jsonbuf;
 	Jsonb	   *result;
 	MemoryContext oldcontext;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
 
 	/* Validate arguments */
 	if (PG_NARGS() != 4)
@@ -1700,32 +1721,38 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 
 	oldcontext = CurrentMemoryContext;
 
-	/* Connect to SPI */
-	if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: evaluate_neural_network_by_model_id: SPI_connect failed")));
-
-	/* Build query */
+	/* Initialize and build query in caller's context BEFORE SPI_connect */
 	initStringInfo(&query);
 	appendStringInfo(&query,
 					 "SELECT %s, %s FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
 					 feat_str, targ_str, tbl_str, feat_str, targ_str);
 
-	ret = ndb_spi_execute_safe(query.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	/* Connect to SPI */
+	oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ret = ndb_spi_execute(spi_session, query.data, true, 0);
 	if (ret != SPI_OK_SELECT)
+	{
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
+		NDB_FREE(targ_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: evaluate_neural_network_by_model_id: query failed")));
+	}
 
 	nvec = SPI_processed;
 	if (nvec < 2)
 	{
-		SPI_finish();
-		NDB_SAFE_PFREE_AND_NULL(tbl_str);
-		NDB_SAFE_PFREE_AND_NULL(feat_str);
-		NDB_SAFE_PFREE_AND_NULL(targ_str);
+		ndb_spi_stringinfo_free(spi_session, &query);
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
+		NDB_FREE(targ_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("neurondb: evaluate_neural_network_by_model_id: need at least 2 samples, got %d",
@@ -1735,11 +1762,28 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 	/* First pass: compute mean of y */
 	for (i = 0; i < nvec; i++)
 	{
-		HeapTuple	tuple = SPI_tuptable->vals[i];
+		HeapTuple	tuple;
+
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			continue;
+		}
+		tuple = SPI_tuptable->vals[i];
 		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		if (tupdesc == NULL)
+		{
+			continue;
+		}
 		Datum		targ_datum;
 		bool		targ_null;
 
+		/* Safe access for target - validate tupdesc has at least 2 columns */
+		if (tupdesc->natts < 2)
+		{
+			continue;
+		}
 		targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
 		if (!targ_null)
 			y_mean += DatumGetFloat8(targ_datum);
@@ -1749,8 +1793,20 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 	/* Second pass: compute predictions and metrics */
 	for (i = 0; i < nvec; i++)
 	{
-		HeapTuple	tuple = SPI_tuptable->vals[i];
+		HeapTuple	tuple;
+
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			continue;
+		}
+		tuple = SPI_tuptable->vals[i];
 		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+		if (tupdesc == NULL)
+		{
+			continue;
+		}
 		Datum		feat_datum;
 		Datum		targ_datum;
 		bool		feat_null;
@@ -1761,6 +1817,11 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 		double		error;
 
 		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+		/* Safe access for target - validate tupdesc has at least 2 columns */
+		if (tupdesc->natts < 2)
+		{
+			continue;
+		}
 		targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
 
 		if (feat_null || targ_null)
@@ -1784,7 +1845,8 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 		ss_tot += (y_true - y_mean) * (y_true - y_mean);
 	}
 
-	SPI_finish();
+	ndb_spi_stringinfo_free(spi_session, &query);
+	NDB_SPI_SESSION_END(spi_session);
 
 	mse /= nvec;
 	mae /= nvec;
@@ -1807,13 +1869,13 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 					 "{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"r_squared\":%.6f,\"n_samples\":%d}",
 					 mse, mae, rmse, r_squared, nvec);
 
-	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetDatum(jsonbuf.data)));
-	NDB_SAFE_PFREE_AND_NULL(jsonbuf.data);
+	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+	NDB_FREE(jsonbuf.data);
 
 	/* Cleanup */
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(feat_str);
-	NDB_SAFE_PFREE_AND_NULL(targ_str);
+	NDB_FREE(tbl_str);
+	NDB_FREE(feat_str);
+	NDB_FREE(targ_str);
 
 	PG_RETURN_JSONB_P(result);
 }
@@ -1825,6 +1887,7 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 #include "neurondb_gpu_model.h"
 #include "ml_gpu_registry.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 typedef struct NeuralNetworkGpuModelState
 {
@@ -1895,7 +1958,7 @@ neural_network_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 					int		   *temp_layers = NULL;
 					int			capacity = 4;
 
-					temp_layers = (int *) palloc(sizeof(int) * capacity);
+					NDB_ALLOC(temp_layers, int, capacity);
 					while ((arr_r = JsonbIteratorNext(&arr_it, &arr_v, false)) != WJB_DONE)
 					{
 						if (arr_r == WJB_ELEM && arr_v.type == jbvNumeric)
@@ -1911,11 +1974,11 @@ neural_network_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 					}
 					if (count > 0)
 					{
-						hidden_layers = (int *) palloc(sizeof(int) * count);
+						NDB_ALLOC(hidden_layers, int, count);
 						memcpy(hidden_layers, temp_layers, sizeof(int) * count);
 						n_hidden = count;
 					}
-					NDB_SAFE_PFREE_AND_NULL(temp_layers);
+					NDB_FREE(temp_layers);
 				}
 				else if (strcmp(key, "activation") == 0 && v.type == jbvString)
 					strncpy(activation, v.val.string.val, sizeof(activation) - 1);
@@ -1925,7 +1988,7 @@ neural_network_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 				else if (strcmp(key, "epochs") == 0 && v.type == jbvNumeric)
 					epochs = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 															   NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -1933,7 +1996,7 @@ neural_network_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 	if (n_hidden == 0 || hidden_layers == NULL)
 	{
 		n_hidden = 1;
-		hidden_layers = (int *) palloc(sizeof(int));
+		NDB_ALLOC(hidden_layers, int, 1);
 		hidden_layers[0] = 32;
 	}
 
@@ -1957,12 +2020,12 @@ neural_network_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 	dim = spec->feature_dim;
 
 	/* Allocate training data */
-	X = (float **) palloc(sizeof(float *) * nvec);
-	y = (float *) palloc(sizeof(float) * nvec);
+	NDB_ALLOC(X, float *, nvec);
+	NDB_ALLOC(y, float, nvec);
 
 	for (i = 0; i < nvec; i++)
 	{
-		X[i] = (float *) palloc(sizeof(float) * dim);
+		NDB_ALLOC(X[i], float, dim);
 		memcpy(X[i], &spec->feature_matrix[i * dim], sizeof(float) * dim);
 		/* For regression, use first feature as target (simplified) */
 		y[i] = X[i][0];
@@ -1973,11 +2036,11 @@ neural_network_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 	if (net == NULL)
 	{
 		for (i = 0; i < nvec; i++)
-			NDB_SAFE_PFREE_AND_NULL(X[i]);
-		NDB_SAFE_PFREE_AND_NULL(X);
-		NDB_SAFE_PFREE_AND_NULL(y);
+			NDB_FREE(X[i]);
+		NDB_FREE(X);
+		NDB_FREE(y);
 		if (hidden_layers != NULL)
-			NDB_SAFE_PFREE_AND_NULL(hidden_layers);
+			NDB_FREE(hidden_layers);
 		if (errstr != NULL)
 			*errstr = pstrdup("neural_network_gpu_train: failed to initialize network");
 		return false;
@@ -2021,10 +2084,10 @@ neural_network_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 					 "{\"storage\":\"cpu\",\"n_inputs\":%d,\"n_outputs\":%d,\"n_hidden_layers\":%d,\"activation\":\"%s\",\"learning_rate\":%.6f,\"epochs\":%d,\"final_loss\":%.6f,\"n_samples\":%d}",
 					 dim, n_outputs, n_hidden, activation, learning_rate, epochs, loss, nvec);
 	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-												 CStringGetDatum(metrics_json.data)));
-	NDB_SAFE_PFREE_AND_NULL(metrics_json.data);
+												 CStringGetTextDatum(metrics_json.data)));
+	NDB_FREE(metrics_json.data);
 
-	state = (NeuralNetworkGpuModelState *) palloc0(sizeof(NeuralNetworkGpuModelState));
+	NDB_ALLOC(state, NeuralNetworkGpuModelState, 1);
 	state->model_blob = model_data;
 	state->metrics = metrics;
 	state->network = net;
@@ -2037,7 +2100,7 @@ neural_network_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 	state->n_samples = nvec;
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -2045,9 +2108,9 @@ neural_network_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char *
 
 	/* Cleanup temp data */
 	for (i = 0; i < nvec; i++)
-		NDB_SAFE_PFREE_AND_NULL(X[i]);
-	NDB_SAFE_PFREE_AND_NULL(X);
-	NDB_SAFE_PFREE_AND_NULL(y);
+		NDB_FREE(X[i]);
+	NDB_FREE(X);
+	NDB_FREE(y);
 
 	return true;
 }
@@ -2153,8 +2216,8 @@ neural_network_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec
 					 state->n_samples > 0 ? state->n_samples : 0);
 
 	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetDatum(buf.data)));
-	NDB_SAFE_PFREE_AND_NULL(buf.data);
+													  CStringGetTextDatum(buf.data)));
+	NDB_FREE(buf.data);
 
 	if (out != NULL)
 		out->payload = metrics_json;
@@ -2167,7 +2230,7 @@ neural_network_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 							 Jsonb * *metadata_out, char **errstr)
 {
 	const		NeuralNetworkGpuModelState *state;
-	bytea	   *payload_copy;
+	bytea	   *payload_copy = NULL;
 	int			payload_size;
 
 	if (errstr != NULL)
@@ -2198,7 +2261,7 @@ neural_network_gpu_serialize(const MLGpuModel * model, bytea * *payload_out,
 	if (payload_out != NULL)
 		*payload_out = payload_copy;
 	else
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 
 	if (metadata_out != NULL && state->metrics != NULL)
 		*metadata_out = (Jsonb *) PG_DETOAST_DATUM_COPY(
@@ -2211,8 +2274,8 @@ static bool
 neural_network_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 							   const Jsonb * metadata, char **errstr)
 {
-	NeuralNetworkGpuModelState *state;
-	bytea	   *payload_copy;
+	NeuralNetworkGpuModelState *state = NULL;
+	bytea	   *payload_copy = NULL;
 	int			payload_size;
 	NeuralNetwork *net = NULL;
 	JsonbIterator *it;
@@ -2235,13 +2298,13 @@ neural_network_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	net = neural_network_deserialize(payload_copy);
 	if (net == NULL)
 	{
-		NDB_SAFE_PFREE_AND_NULL(payload_copy);
+		NDB_FREE(payload_copy);
 		if (errstr != NULL)
 			*errstr = pstrdup("neural_network_gpu_deserialize: failed to deserialize");
 		return false;
 	}
 
-	state = (NeuralNetworkGpuModelState *) palloc0(sizeof(NeuralNetworkGpuModelState));
+	NDB_ALLOC(state, NeuralNetworkGpuModelState, 1);
 	state->model_blob = payload_copy;
 	state->network = net;
 	state->n_inputs = net->n_inputs;
@@ -2253,7 +2316,7 @@ neural_network_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 
 	if (net->n_layers > 1)
 	{
-		state->hidden_layer_sizes = (int *) palloc(sizeof(int) * state->n_hidden_layers);
+		NDB_ALLOC(state->hidden_layer_sizes, int, state->n_hidden_layers);
 		for (int i = 0; i < state->n_hidden_layers; i++)
 			state->hidden_layer_sizes[i] = net->layers[i].n_outputs;
 	}
@@ -2277,7 +2340,7 @@ neural_network_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 				if (strcmp(key, "n_samples") == 0 && v.type == jbvNumeric)
 					state->n_samples = DatumGetInt32(DirectFunctionCall1(numeric_int4,
 																		 NumericGetDatum(v.val.numeric)));
-				NDB_SAFE_PFREE_AND_NULL(key);
+				NDB_FREE(key);
 			}
 		}
 	}
@@ -2287,7 +2350,7 @@ neural_network_gpu_deserialize(MLGpuModel * model, const bytea * payload,
 	}
 
 	if (model->backend_state != NULL)
-		NDB_SAFE_PFREE_AND_NULL(model->backend_state);
+		NDB_FREE(model->backend_state);
 
 	model->backend_state = state;
 	model->gpu_ready = true;
@@ -2308,14 +2371,14 @@ neural_network_gpu_destroy(MLGpuModel * model)
 	{
 		state = (NeuralNetworkGpuModelState *) model->backend_state;
 		if (state->model_blob != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->model_blob);
+			NDB_FREE(state->model_blob);
 		if (state->metrics != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->metrics);
+			NDB_FREE(state->metrics);
 		if (state->network != NULL)
 			neural_network_free(state->network);
 		if (state->hidden_layer_sizes != NULL)
-			NDB_SAFE_PFREE_AND_NULL(state->hidden_layer_sizes);
-		NDB_SAFE_PFREE_AND_NULL(state);
+			NDB_FREE(state->hidden_layer_sizes);
+		NDB_FREE(state);
 		model->backend_state = NULL;
 	}
 

@@ -28,6 +28,7 @@
 #include "neurondb_cuda_lasso.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 /* Reuse linear regression evaluation kernel */
 extern cudaError_t launch_linreg_eval_kernel(const float *features,
@@ -144,7 +145,7 @@ ndb_cuda_lasso_pack_model(const LassoModel * model,
 		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
 														  jsonb_in,
 														  CStringGetDatum(buf.data)));
-		NDB_SAFE_PFREE_AND_NULL(buf.data);
+		NDB_FREE(buf.data);
 		*metrics = metrics_json;
 	}
 
@@ -209,12 +210,77 @@ ndb_cuda_lasso_train(const float *features,
 	/* Extract hyperparameters from JSON */
 	if (hyperparams)
 	{
-		char	   *hyperparams_text;
+		JsonbIterator *it;
+		JsonbValue	v;
+		int			r;
+		bool		parsed_lambda = false;
+		bool		parsed_max_iters = false;
 
-		hyperparams_text = DatumGetCString(DirectFunctionCall1(
-															   jsonb_out, JsonbPGetDatum(hyperparams)));
-		/* TODO: Parse lambda and max_iters from JSON */
-		NDB_SAFE_PFREE_AND_NULL(hyperparams_text);
+		PG_TRY();
+		{
+			it = JsonbIteratorInit((JsonbContainer *) & ((Jsonb *) hyperparams)->root);
+			while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
+			{
+				if (r == WJB_KEY)
+				{
+					char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
+					r = JsonbIteratorNext(&it, &v, false);
+					if (strcmp(key, "lambda") == 0)
+					{
+						if (v.type == jbvNumeric)
+						{
+							Numeric		num = DatumGetNumeric(v.val.numeric);
+							double		val = DatumGetFloat8(DirectFunctionCall1(numeric_float8, NumericGetDatum(num)));
+
+							if (val > 0.0 && val < 1e6)
+							{
+								lambda = val;
+								parsed_lambda = true;
+							}
+						}
+						else if (v.type == jbvString)
+						{
+							lambda = strtod(v.val.string.val, NULL);
+							if (lambda > 0.0 && lambda < 1e6)
+								parsed_lambda = true;
+						}
+					}
+					else if (strcmp(key, "max_iters") == 0)
+					{
+						if (v.type == jbvNumeric)
+						{
+							Numeric		num = DatumGetNumeric(v.val.numeric);
+							int			val = DatumGetInt32(DirectFunctionCall1(numeric_int4, NumericGetDatum(num)));
+
+							if (val > 0 && val <= 100000)
+							{
+								max_iters = val;
+								parsed_max_iters = true;
+							}
+						}
+						else if (v.type == jbvString)
+						{
+							max_iters = strtol(v.val.string.val, NULL, 10);
+							if (max_iters > 0 && max_iters <= 100000)
+								parsed_max_iters = true;
+						}
+					}
+					NDB_FREE(key);
+				}
+			}
+		}
+		PG_CATCH();
+		{
+			FlushErrorState();
+			elog(WARNING, "CUDA Lasso: Failed to parse hyperparameters JSONB");
+		}
+		PG_END_TRY();
+
+		if (!parsed_lambda)
+			elog(DEBUG2, "CUDA Lasso: lambda not found in hyperparameters, using default %.6f", lambda);
+		if (!parsed_max_iters)
+			elog(DEBUG2, "CUDA Lasso: max_iters not found in hyperparameters, using default %d", max_iters);
 	}
 
 	/* Compute mean of targets */
@@ -491,7 +557,7 @@ ndb_cuda_lasso_train(const float *features,
 		rc = ndb_cuda_lasso_pack_model(
 									   &model, &payload, &metrics_json, errstr);
 
-		NDB_SAFE_PFREE_AND_NULL(model.coefficients);
+		NDB_FREE(model.coefficients);
 	}
 
 	rc = 0;
@@ -510,11 +576,11 @@ cleanup:
 	}
 
 cleanup_host:
-	NDB_SAFE_PFREE_AND_NULL(weights);
-	NDB_SAFE_PFREE_AND_NULL(weights_old);
-	NDB_SAFE_PFREE_AND_NULL(residuals);
-	NDB_SAFE_PFREE_AND_NULL(h_rho);
-	NDB_SAFE_PFREE_AND_NULL(h_z);
+	NDB_FREE(weights);
+	NDB_FREE(weights_old);
+	NDB_FREE(residuals);
+	NDB_FREE(h_rho);
+	NDB_FREE(h_z);
 
 	if (rc == 0 && payload)
 	{
@@ -525,9 +591,9 @@ cleanup_host:
 	}
 
 	if (payload)
-		NDB_SAFE_PFREE_AND_NULL(payload);
+		NDB_FREE(payload);
 	if (metrics_json)
-		NDB_SAFE_PFREE_AND_NULL(metrics_json);
+		NDB_FREE(metrics_json);
 
 	return -1;
 }
@@ -858,7 +924,7 @@ ndb_cuda_lasso_evaluate(const bytea * model_data,
 			h_coefficients_double[i] = (double) coefficients[i];
 
 		cuda_err = cudaMemcpy(d_coefficients, h_coefficients_double, coeff_bytes, cudaMemcpyHostToDevice);
-		NDB_SAFE_PFREE_AND_NULL(h_coefficients_double);
+		NDB_FREE(h_coefficients_double);
 
 		if (cuda_err != cudaSuccess)
 		{

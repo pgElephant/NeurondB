@@ -9,10 +9,10 @@
  * statistical functions (mean, variance, stddev, min, max), vector
  * comparison, clipping, standardization, and normalization methods.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/vector_ops.c
+ *	  src/vector/vector_ops.c
  *
  *-------------------------------------------------------------------------
  */
@@ -24,6 +24,8 @@
 #include "catalog/pg_type.h"
 #include "neurondb_safe_memory.h"
 #include "neurondb_validation.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 #include <math.h>
 #include <stdint.h>
 

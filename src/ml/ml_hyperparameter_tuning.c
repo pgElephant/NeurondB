@@ -1,12 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * ml_hyperparameter_tuning.c
- *    Hyperparameter Optimization for NeuronDB
+ *    Hyperparameter optimization.
  *
- * This file implements automated hyperparameter tuning algorithms:
- * - neurondb_grid_search()         : Grid search optimization
- * - neurondb_random_search()       : Random search optimization
- * - neurondb_bayesian_optimize()   : Bayesian optimization (demo/deterministic)
+ * This module implements automated hyperparameter tuning using grid search,
+ * random search, and Bayesian optimization.
  *
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
@@ -33,6 +31,8 @@
 #include "miscadmin.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_spi.h"
 
 /* PG_MODULE_MAGIC is in neurondb.c only */
 
@@ -82,7 +82,7 @@ generate_grid_combinations(Jsonb *param_grid,
 					lappend(*param_names, pstrdup(key));
 				*value_lists = lappend(*value_lists, values);
 			}
-			NDB_SAFE_PFREE_AND_NULL(key);
+			NDB_FREE(key);
 		}
 	}
 
@@ -137,7 +137,7 @@ generate_grid_combinations(Jsonb *param_grid,
 			}
 		} while (!done);
 
-		NDB_SAFE_PFREE_AND_NULL(indices);
+		NDB_FREE(indices);
 	}
 }
 
@@ -183,15 +183,16 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 {
 	float8 mean_score = 0.0;
 	int ret;
-	bool isnull = false;
 	StringInfoData cmd;
 
-	initStringInfo(&cmd);
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext = CurrentMemoryContext;
+
+	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
+
+	ndb_spi_stringinfo_init(spi_session, &cmd);
 	appendStringInfoString(
 		&cmd, "SELECT neurondb_train_and_score($1, $2, $3)");
-
-	if (SPI_connect() != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("SPI_connect failed")));
 
 	{
 		Datum values[3];
@@ -201,7 +202,8 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 		values[1] = PointerGetDatum(param_json);
 		values[2] = Int32GetDatum(folds);
 
-		ret = SPI_execute_with_args(cmd.data,
+		ret = ndb_spi_execute_with_args(spi_session,
+			cmd.data,
 			3,
 			(Oid[]) { TEXTOID, JSONBOID, INT4OID },
 			values,
@@ -211,35 +213,48 @@ actual_crossval(const char *algo, Jsonb *param_json, int folds)
 
 		if (ret == SPI_OK_SELECT && SPI_processed == 1)
 		{
-			Datum dval;
-
-			dval = SPI_getbinval(SPI_tuptable->vals[0],
-				SPI_tuptable->tupdesc,
-				1,
-				&isnull);
-			if (!isnull)
-				mean_score = DatumGetFloat8(dval);
-			else
+			bool		isnull = false;
+			/* Note: ndb_spi_get_* doesn't have float8, so we access SPI_tuptable directly for numeric types */
+			/* Safe access for complex types - validate before access */
+			if (SPI_tuptable != NULL && SPI_tuptable->tupdesc != NULL && 
+				SPI_tuptable->vals != NULL && SPI_processed > 0 && SPI_tuptable->vals[0] != NULL)
 			{
-				SPI_finish();
-				NDB_SAFE_PFREE_AND_NULL(cmd.data);
-				ereport(ERROR,
-					(errmsg("Returned value from "
-						"neurondb_train_and_score is "
-						"null")));
+				Datum		dval = SPI_getbinval(SPI_tuptable->vals[0],
+					SPI_tuptable->tupdesc,
+					1,
+					&isnull);
+				if (!isnull)
+					mean_score = DatumGetFloat8(dval);
+				else
+				{
+					ndb_spi_stringinfo_free(spi_session, &cmd);
+					NDB_SPI_SESSION_END(spi_session);
+					if (algo != NULL)
+						pfree((void *) algo);
+					if (param_json != NULL)
+						pfree((void *) param_json);
+					ereport(ERROR,
+						(errmsg("Returned value from "
+							"neurondb_train_and_score is "
+							"null")));
+				}
 			}
 		} else
 		{
-			SPI_finish();
-			NDB_SAFE_PFREE_AND_NULL(cmd.data);
+			ndb_spi_stringinfo_free(spi_session, &cmd);
+			NDB_SPI_SESSION_END(spi_session);
+					if (algo != NULL)
+						pfree((void *) algo);
+					if (param_json != NULL)
+						pfree((void *) param_json);
 			ereport(ERROR,
 				(errmsg("Failed to obtain score from "
 					"neurondb_train_and_score")));
 		}
 	}
 
-	SPI_finish();
-	NDB_SAFE_PFREE_AND_NULL(cmd.data);
+	ndb_spi_stringinfo_free(spi_session, &cmd);
+	NDB_SPI_SESSION_END(spi_session);
 
 	return mean_score;
 }
@@ -321,7 +336,7 @@ neurondb_grid_search(PG_FUNCTION_ARGS)
 
 			list_free_deep(param_values);
 			if (jbcomb)
-				NDB_SAFE_PFREE_AND_NULL(jbcomb);
+				NDB_FREE(jbcomb);
 		}
 		list_free_deep(combinations);
 		list_free_deep(param_names);
@@ -348,7 +363,7 @@ neurondb_grid_search(PG_FUNCTION_ARGS)
 		} else
 		{
 			list_free_deep(ctx->all_results);
-			NDB_SAFE_PFREE_AND_NULL(ctx);
+			NDB_FREE(ctx);
 			SRF_RETURN_DONE(funcctx);
 		}
 	}
@@ -399,7 +414,7 @@ random_sample_parameters(Jsonb *param_distributions,
 						copyObject(picked));
 				}
 			}
-			NDB_SAFE_PFREE_AND_NULL(key);
+			NDB_FREE(key);
 		}
 	}
 }
@@ -485,7 +500,7 @@ neurondb_random_search(PG_FUNCTION_ARGS)
 				list_free_deep(names);
 				list_free_deep(vals);
 				if (jbcomb)
-					NDB_SAFE_PFREE_AND_NULL(jbcomb);
+					NDB_FREE(jbcomb);
 			}
 		}
 		ctx->results = results;
@@ -510,7 +525,7 @@ neurondb_random_search(PG_FUNCTION_ARGS)
 		} else
 		{
 			list_free_deep(ctx->results);
-			NDB_SAFE_PFREE_AND_NULL(ctx);
+			NDB_FREE(ctx);
 			SRF_RETURN_DONE(funcctx);
 		}
 	}
@@ -552,7 +567,7 @@ bayes_sample_parameters(Jsonb *param_space,
 				*values_list = lappend(
 					*values_list, copyObject(picked));
 			}
-			NDB_SAFE_PFREE_AND_NULL(key);
+			NDB_FREE(key);
 		}
 	}
 }
@@ -653,7 +668,7 @@ neurondb_bayesian_optimize(PG_FUNCTION_ARGS)
 				list_free_deep(names);
 				list_free_deep(vals);
 				if (jbcomb)
-					NDB_SAFE_PFREE_AND_NULL(jbcomb);
+					NDB_FREE(jbcomb);
 			}
 		}
 		ctx->results = results;
@@ -677,7 +692,7 @@ neurondb_bayesian_optimize(PG_FUNCTION_ARGS)
 		} else
 		{
 			list_free_deep(ctx->results);
-			NDB_SAFE_PFREE_AND_NULL(ctx);
+			NDB_FREE(ctx);
 			SRF_RETURN_DONE(funcctx);
 		}
 	}

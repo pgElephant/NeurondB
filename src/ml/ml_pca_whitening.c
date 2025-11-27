@@ -1,33 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * ml_pca_whitening.c
- *    PCA Whitening for embedding normalization
+ *    PCA whitening for embedding normalization.
  *
- * PCA Whitening (also called ZCA whitening when combined with rotation back)
- * transforms data to have identity covariance matrix. This normalization
- * technique is crucial for:
+ * This module implements PCA whitening to transform data to have identity
+ * covariance matrix, removing correlations and normalizing variance.
  *
- * 1. Removing correlations between dimensions
- * 2. Normalizing variance across all dimensions
- * 3. Improving ML model training stability
- * 4. Better distance metric reliability
- *
- * Mathematical Process:
- *   1. Center data: X' = X - mean(X)
- *   2. Compute covariance: Σ = X'ᵀX' / n
- *   3. Eigen decomposition: Σ = UΛUᵀ
- *   4. Whitening transform: W = UΛ^(-1/2)Uᵀ
- *   5. Apply: X_white = X' * W
- *
- * Result: E[X_white X_whiteᵀ] = I (identity covariance)
- *
- * Use Cases:
- *   - Pre-processing embeddings before clustering
- *   - Normalizing multi-modal embeddings
- *   - Improving distance metric isotropy
- *   - Feature decorrelation for downstream tasks
- *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/ml/ml_pca_whitening.c
@@ -44,6 +23,8 @@
 #include "neurondb.h"
 #include "neurondb_ml.h"
 #include "neurondb_validation.h"
+#include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 
 #include <math.h>
 #include <string.h>
@@ -122,7 +103,7 @@ power_iteration_whitening(double **matrix,
 		eigenvalue += eigenvector[i] * sum;
 	}
 
-	NDB_SAFE_PFREE_AND_NULL(v_new);
+	NDB_FREE(v_new);
 	return eigenvalue;
 }
 
@@ -368,26 +349,26 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 	/* Cleanup */
 	for (i = 0; i < nvec; i++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(vectors[i]);
-		NDB_SAFE_PFREE_AND_NULL(whitened_vectors[i]);
+		NDB_FREE(vectors[i]);
+		NDB_FREE(whitened_vectors[i]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(vectors);
-	NDB_SAFE_PFREE_AND_NULL(whitened_vectors);
-	NDB_SAFE_PFREE_AND_NULL(mean);
+	NDB_FREE(vectors);
+	NDB_FREE(whitened_vectors);
+	NDB_FREE(mean);
 
 	for (i = 0; i < dim; i++)
 	{
-		NDB_SAFE_PFREE_AND_NULL(covariance[i]);
-		NDB_SAFE_PFREE_AND_NULL(eigenvectors[i]);
-		NDB_SAFE_PFREE_AND_NULL(whitening_matrix[i]);
+		NDB_FREE(covariance[i]);
+		NDB_FREE(eigenvectors[i]);
+		NDB_FREE(whitening_matrix[i]);
 	}
-	NDB_SAFE_PFREE_AND_NULL(covariance);
-	NDB_SAFE_PFREE_AND_NULL(eigenvectors);
-	NDB_SAFE_PFREE_AND_NULL(eigenvalues);
-	NDB_SAFE_PFREE_AND_NULL(whitening_matrix);
-	NDB_SAFE_PFREE_AND_NULL(result_datums);
-	NDB_SAFE_PFREE_AND_NULL(tbl_str);
-	NDB_SAFE_PFREE_AND_NULL(vec_col_str);
+	NDB_FREE(covariance);
+	NDB_FREE(eigenvectors);
+	NDB_FREE(eigenvalues);
+	NDB_FREE(whitening_matrix);
+	NDB_FREE(result_datums);
+	NDB_FREE(tbl_str);
+	NDB_FREE(vec_col_str);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -396,6 +377,7 @@ whiten_embeddings(PG_FUNCTION_ARGS)
 #include "neurondb_gpu_model.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 /* Forward declaration to avoid missing-prototypes warning */
 void		neurondb_gpu_register_pca_whitening_model(void);
 void

@@ -7,7 +7,7 @@
  * HNSW rebuild with checkpoints and parallel vector executor with
  * worker pools for multi-index kNN queries.
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *	  src/system_features.c
@@ -23,7 +23,9 @@
 #include "executor/spi.h"
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 /*
  * Crash-safe HNSW Rebuild: Resume builds after crash using checkpoints
@@ -45,10 +47,12 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 		 resume ? "resuming" : "starting",
 		 idx_str);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed in "
+				 errmsg("neurondb: failed to begin SPI session in "
 						"rebuild_hnsw_safe")));
 
 	/* Check for existing checkpoint */
@@ -56,14 +60,15 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 	{
 		/* Load checkpoint: last processed vector ID, layer state */
 		/* Query actual checkpoint ID from pg_control_checkpoint() */
-		if (SPI_connect() == SPI_OK_CONNECT)
+		NDB_DECLARE(NdbSpiSession *, session2);
+		session2 = ndb_spi_session_begin(CurrentMemoryContext, false);
+		if (session2 != NULL)
 		{
-			int			ret = ndb_spi_execute_safe("SELECT checkpoint_location FROM "
+			int			ret = ndb_spi_execute(session2, "SELECT checkpoint_location FROM "
 												   "pg_control_checkpoint()",
 												   true,
 												   1);
 
-			NDB_CHECK_SPI_TUPTABLE();
 			if (ret == SPI_OK_SELECT && SPI_processed > 0)
 			{
 				bool		isnull;
@@ -83,7 +88,7 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 					checkpoint_id = 0;
 				}
 			}
-			SPI_finish();
+			ndb_spi_session_end(&session2);
 		}
 		else
 		{
@@ -99,7 +104,6 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 	/* Checkpoint contains: vector_offset, layer_stats, edge_counts */
 
 	/* Query actual statistics from pg_stat_database or neurondb stats */
-	if (SPI_connect() == SPI_OK_CONNECT)
 	{
 		StringInfoData sql;
 		int			ret;
@@ -110,8 +114,7 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 						 "FROM pg_stat_user_tables "
 						 "WHERE schemaname = 'public'");
 
-		ret = ndb_spi_execute_safe(sql.data, true, 1);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(session, sql.data, true, 1);
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
 			bool		isnull;
@@ -129,15 +132,10 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 				vectors_processed = 0;
 			}
 		}
-		NDB_SAFE_PFREE_AND_NULL(sql.data);
-		SPI_finish();
-	}
-	else
-	{
-		vectors_processed = 0;
+		NDB_FREE(sql.data);
 	}
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 
 	elog(DEBUG1,
 		 "neurondb: processed " NDB_INT64_FMT " vectors",
@@ -205,15 +203,17 @@ save_rebuild_checkpoint(PG_FUNCTION_ARGS)
 		 idx_str,
 		 NDB_INT64_CAST(vector_offset));
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session2);
+	session2 = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session2 == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed in "
+				 errmsg("neurondb: failed to begin SPI session in "
 						"save_rebuild_checkpoint")));
 
 	/* INSERT INTO neurondb_checkpoints (index_name, offset, state, timestamp) */
 
-	SPI_finish();
+	ndb_spi_session_end(&session2);
 
 	PG_RETURN_BOOL(true);
 }
@@ -238,10 +238,12 @@ load_rebuild_checkpoint(PG_FUNCTION_ARGS)
 	(void) idx_str;
 
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session3);
+	session3 = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session3 == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("neurondb: SPI_connect failed in "
+				 errmsg("neurondb: failed to begin SPI session in "
 						"load_rebuild_checkpoint")));
 
 	/*
@@ -249,7 +251,7 @@ load_rebuild_checkpoint(PG_FUNCTION_ARGS)
 	 * timestamp DESC LIMIT 1
 	 */
 
-	SPI_finish();
+	ndb_spi_session_end(&session3);
 
 	checkpoint_data = cstring_to_text("{\"offset\": 12345, \"layers\": 3}");
 

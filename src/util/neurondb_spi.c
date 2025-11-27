@@ -79,7 +79,7 @@ ndb_spi_session_begin(MemoryContext parent_context, bool assume_spi_connected)
 		/* Always connect SPI ourselves */
 		if (SPI_connect() != SPI_OK_CONNECT)
 		{
-			NDB_SAFE_PFREE_AND_NULL(session);
+			NDB_FREE(session);
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("neurondb: SPI_connect failed in ndb_spi_session_begin")));
@@ -113,7 +113,7 @@ ndb_spi_session_end(NdbSpiSession **session)
 	}
 
 	/* Free session structure */
-	NDB_SAFE_PFREE_AND_NULL(*session);
+	NDB_FREE(*session);
 }
 
 bool
@@ -328,7 +328,7 @@ ndb_spi_stringinfo_free(NdbSpiSession *session, StringInfoData *str)
 	 * pfree is context-aware through chunk headers, so we don't need to
 	 * switch contexts. Always free explicitly for consistency.
 	 */
-	NDB_SAFE_PFREE_AND_NULL(str->data);
+	NDB_FREE(str->data);
 }
 
 void

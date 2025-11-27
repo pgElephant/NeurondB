@@ -9,7 +9,7 @@
  * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
- *	  contrib/neurondb/vector_cast.c
+ *	  src/vector/vector_cast.c
  *
  *-------------------------------------------------------------------------
  */
@@ -22,6 +22,8 @@
 #include "utils/builtins.h"
 #include "catalog/pg_type.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_macros.h"
 #include "neurondb_validation.h"
 #include <math.h>
 #include <string.h>
@@ -276,8 +278,10 @@ vector_to_array_float4(PG_FUNCTION_ARGS)
 				 errmsg("invalid vector dimension: %d",
 						vec->dim)));
 
-	elems = (Datum *) palloc(sizeof(Datum) * vec->dim);
-	nulls = (bool *) palloc(sizeof(bool) * vec->dim);
+	elems = NULL;
+	nulls = NULL;
+	NDB_ALLOC(elems, Datum, vec->dim);
+	NDB_ALLOC(nulls, bool, vec->dim);
 	if (elems == NULL || nulls == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
@@ -295,8 +299,8 @@ vector_to_array_float4(PG_FUNCTION_ARGS)
 							 sizeof(float4),
 							 true,
 							 'i');
-	NDB_SAFE_PFREE_AND_NULL(elems);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
+	NDB_FREE(elems);
+	NDB_FREE(nulls);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -336,8 +340,10 @@ vector_to_array_float8(PG_FUNCTION_ARGS)
 				 errmsg("invalid vector dimension: %d",
 						vec->dim)));
 
-	elems = (Datum *) palloc(sizeof(Datum) * vec->dim);
-	nulls = (bool *) palloc(sizeof(bool) * vec->dim);
+	elems = NULL;
+	nulls = NULL;
+	NDB_ALLOC(elems, Datum, vec->dim);
+	NDB_ALLOC(nulls, bool, vec->dim);
 	if (elems == NULL || nulls == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
@@ -355,8 +361,8 @@ vector_to_array_float8(PG_FUNCTION_ARGS)
 							 sizeof(float8),
 							 true,
 							 'd');
-	NDB_SAFE_PFREE_AND_NULL(elems);
-	NDB_SAFE_PFREE_AND_NULL(nulls);
+	NDB_FREE(elems);
+	NDB_FREE(nulls);
 
 	PG_RETURN_ARRAYTYPE_P(result);
 }
@@ -452,6 +458,8 @@ vector_to_halfvec(PG_FUNCTION_ARGS)
 						v->dim)));
 
 	size = offsetof(VectorF16, data) + sizeof(uint16) * v->dim;
+	/* Variable-length type requires custom size - use palloc0 but ensure proper cleanup */
+	/* Note: For variable-length PostgreSQL types, palloc0 is standard */
 	result = (VectorF16 *) palloc0(size);
 	SET_VARSIZE(result, size);
 	result->dim = v->dim;
@@ -511,8 +519,10 @@ vector_to_sparsevec(PG_FUNCTION_ARGS)
 
 	/* Count non-zero values */
 	capacity = 16;
-	indices = (int32 *) palloc(sizeof(int32) * capacity);
-	values = (float4 *) palloc(sizeof(float4) * capacity);
+	indices = NULL;
+	values = NULL;
+	NDB_ALLOC(indices, int32, capacity);
+	NDB_ALLOC(values, float4, capacity);
 
 	for (i = 0; i < v->dim; i++)
 	{
@@ -544,8 +554,8 @@ vector_to_sparsevec(PG_FUNCTION_ARGS)
 	memcpy(VECMAP_INDICES(result), indices, sizeof(int32) * nnz);
 	memcpy(VECMAP_VALUES(result), values, sizeof(float4) * nnz);
 
-	NDB_SAFE_PFREE_AND_NULL(indices);
-	NDB_SAFE_PFREE_AND_NULL(values);
+	NDB_FREE(indices);
+	NDB_FREE(values);
 
 	PG_RETURN_POINTER(result);
 }

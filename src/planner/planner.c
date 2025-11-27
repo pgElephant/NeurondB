@@ -9,7 +9,7 @@
  *    - dynamic vector precision scaling
  *    - predictive prefetch of index entry points
  *
- * Copyright (c) 2024-2025, pgElephant, Inc. <admin@pgelephant.com>
+ * Copyright (c) 2024-2025, pgElephant, Inc.
  *
  * IDENTIFICATION
  *    src/planner/planner.c
@@ -31,7 +31,9 @@
 #include <string.h>
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
 #include "neurondb_spi_safe.h"
+#include "neurondb_spi.h"
 
 /*
  * auto_route_query:
@@ -87,7 +89,7 @@ auto_route_query(PG_FUNCTION_ARGS)
 
 	/* Free non-null query_str */
 	if (query_str)
-		NDB_SAFE_PFREE_AND_NULL(query_str);
+		NDB_FREE(query_str);
 
 	PG_RETURN_BOOL(use_ann);
 }
@@ -153,14 +155,15 @@ learn_from_query(PG_FUNCTION_ARGS)
 		 latency_ms);
 
 	/* SPI connect - recover/exit safely */
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("learn_from_query: SPI_connect "
-						"failed")));
+				 errmsg("learn_from_query: failed to begin SPI session")));
 
 	/* Always ensure the table exists. Safe for concurrency. */
-	if (ndb_spi_execute_safe("CREATE TABLE IF NOT EXISTS neurondb_query_history ("
+	if (ndb_spi_execute(session, "CREATE TABLE IF NOT EXISTS neurondb_query_history ("
 							 "  fingerprint  BIGINT PRIMARY KEY,"
 							 "  last_recall  REAL, "
 							 "  last_latency INTEGER, "
@@ -172,7 +175,7 @@ learn_from_query(PG_FUNCTION_ARGS)
 							 0)
 		!= SPI_OK_UTILITY)
 	{
-		SPI_finish();			/* clean up! */
+		ndb_spi_session_end(&session);
 		ereport(ERROR,
 				(errmsg("learn_from_query: cannot create "
 						"neurondb_query_history")));
@@ -189,15 +192,14 @@ learn_from_query(PG_FUNCTION_ARGS)
 						 "WHERE fingerprint = %llu",
 						 (unsigned long long) fingerprint);
 
-		if (ndb_spi_execute_safe(sql.data, true, 1) == SPI_OK_SELECT
+		if (ndb_spi_execute(session, sql.data, true, 1) == SPI_OK_SELECT
 			&& SPI_processed == 1)
 		{
-			NDB_CHECK_SPI_TUPTABLE();
 			found = true;
 		}
 
 		if (sql.data)
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
+			NDB_FREE(sql.data);
 	}
 
 	if (found)
@@ -225,9 +227,9 @@ learn_from_query(PG_FUNCTION_ARGS)
 
 		if (isnull1 || isnull2 || isnull3)
 		{
-			SPI_finish();
+			ndb_spi_session_end(&session);
 			if (query_str)
-				NDB_SAFE_PFREE_AND_NULL(query_str);
+				NDB_FREE(query_str);
 			ereport(ERROR,
 					(errmsg("learn_from_query: NULL detected in "
 							"stats fields")));
@@ -276,21 +278,20 @@ learn_from_query(PG_FUNCTION_ARGS)
 							 beam_size,
 							 (unsigned long long) fingerprint);
 
-			if (ndb_spi_execute_safe(usql.data, false, 0) != SPI_OK_UPDATE)
-				NDB_CHECK_SPI_TUPTABLE();
+			if (ndb_spi_execute(session, usql.data, false, 0) != SPI_OK_UPDATE)
 			{
 				if (usql.data)
-					NDB_SAFE_PFREE_AND_NULL(usql.data);
-				SPI_finish();
+					NDB_FREE(usql.data);
+				ndb_spi_session_end(&session);
 				if (query_str)
-					NDB_SAFE_PFREE_AND_NULL(query_str);
+					NDB_FREE(query_str);
 				ereport(ERROR,
 						(errmsg("learn_from_query: failed to "
 								"UPDATE "
 								"neurondb_query_history")));
 			}
 			if (usql.data)
-				NDB_SAFE_PFREE_AND_NULL(usql.data);
+				NDB_FREE(usql.data);
 		}
 	}
 	else
@@ -311,26 +312,25 @@ learn_from_query(PG_FUNCTION_ARGS)
 						 32,
 						 8);
 
-		if (ndb_spi_execute_safe(isql.data, false, 0) != SPI_OK_INSERT)
-			NDB_CHECK_SPI_TUPTABLE();
+		if (ndb_spi_execute(session, isql.data, false, 0) != SPI_OK_INSERT)
 		{
 			if (isql.data)
-				NDB_SAFE_PFREE_AND_NULL(isql.data);
-			SPI_finish();
+				NDB_FREE(isql.data);
+			ndb_spi_session_end(&session);
 			if (query_str)
-				NDB_SAFE_PFREE_AND_NULL(query_str);
+				NDB_FREE(query_str);
 			ereport(ERROR,
 					(errmsg("learn_from_query: failed to INSERT "
 							"neurondb_query_history")));
 		}
 		if (isql.data)
-			NDB_SAFE_PFREE_AND_NULL(isql.data);
+			NDB_FREE(isql.data);
 	}
 
 	if (query_str)
-		NDB_SAFE_PFREE_AND_NULL(query_str);
+		NDB_FREE(query_str);
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 
 	PG_RETURN_BOOL(true);
 }
@@ -469,7 +469,7 @@ scale_precision(PG_FUNCTION_ARGS)
 		for (k = 0; k < input->dim; k++)
 			result->data[k] = (float4) int8buf[k];
 
-		NDB_SAFE_PFREE_AND_NULL(int8buf);
+		NDB_FREE(int8buf);
 	}
 	else if (target_precision == 16)
 	{
@@ -520,12 +520,14 @@ prefetch_entry_points(PG_FUNCTION_ARGS)
 						"failed")));
 
 
-	if (SPI_connect() != SPI_OK_CONNECT)
+	NDB_DECLARE(NdbSpiSession *, session);
+	session = ndb_spi_session_begin(CurrentMemoryContext, false);
+	if (session == NULL)
 	{
 		if (idx_str)
-			NDB_SAFE_PFREE_AND_NULL(idx_str);
+			NDB_FREE(idx_str);
 		ereport(ERROR,
-				(errmsg("prefetch_entry_points: SPI_connect failed")));
+				(errmsg("prefetch_entry_points: failed to begin SPI session")));
 	}
 
 	/*
@@ -545,8 +547,7 @@ prefetch_entry_points(PG_FUNCTION_ARGS)
 						 quote_literal_cstr(idx_str));
 
 		/* Defensive: forcibly limit row count (~max 10) */
-		ret = ndb_spi_execute_safe(sql.data, true, 10);
-		NDB_CHECK_SPI_TUPTABLE();
+		ret = ndb_spi_execute(session, sql.data, true, 10);
 		if (ret == SPI_OK_SELECT && SPI_processed > 0)
 		{
 			int			q;
@@ -574,13 +575,13 @@ prefetch_entry_points(PG_FUNCTION_ARGS)
 			}
 		}
 		if (sql.data)
-			NDB_SAFE_PFREE_AND_NULL(sql.data);
+			NDB_FREE(sql.data);
 	}
 
-	SPI_finish();
+	ndb_spi_session_end(&session);
 
 	if (idx_str)
-		NDB_SAFE_PFREE_AND_NULL(idx_str);
+		NDB_FREE(idx_str);
 
 	elog(DEBUG1,
 		 "neurondb:prefetch_entry_points: prefetched_count=%d",
