@@ -34,7 +34,7 @@ export class ModelsResource extends BaseResource {
 				training_table,
 				created_at,
 				updated_at
-			FROM neurondb.neurondb_ml_models
+			FROM neurondb.ml_models
 			ORDER BY model_id DESC
 		`;
 		const result = await this.db.query(query);

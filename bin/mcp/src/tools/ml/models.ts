@@ -39,7 +39,7 @@ export class GetModelInfoTool extends BaseTool {
 		try {
 			const { model_id } = params;
 			const query = `
-				SELECT * FROM neurondb.neurondb_ml_models
+				SELECT * FROM neurondb.ml_models
 				WHERE model_id = $1
 			`;
 			const result = await this.executor.executeQueryOne(query, [model_id]);
@@ -84,7 +84,7 @@ export class ListModelsTool extends BaseTool {
 		try {
 			const { algorithm, limit = 100 } = params;
 			let query = `
-				SELECT * FROM neurondb.neurondb_ml_models
+				SELECT * FROM neurondb.ml_models
 			`;
 			const queryParams: any[] = [];
 
@@ -135,7 +135,7 @@ export class DeleteModelTool extends BaseTool {
 
 		try {
 			const { model_id } = params;
-			const query = `DELETE FROM neurondb.neurondb_ml_models WHERE model_id = $1 RETURNING model_id`;
+			const query = `DELETE FROM neurondb.ml_models WHERE model_id = $1 RETURNING model_id`;
 			const result = await this.executor.executeQueryOne(query, [model_id]);
 			if (!result) {
 				return this.error("Model not found", "NOT_FOUND", { model_id });
@@ -179,7 +179,7 @@ export class ModelMetricsTool extends BaseTool {
 		try {
 			const { model_id } = params;
 			const query = `
-				SELECT metrics FROM neurondb.neurondb_ml_models
+				SELECT metrics FROM neurondb.ml_models
 				WHERE model_id = $1
 			`;
 			const result = await this.executor.executeQueryOne(query, [model_id]);

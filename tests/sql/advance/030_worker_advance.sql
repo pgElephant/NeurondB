@@ -27,7 +27,7 @@ SELECT
 	COUNT(*) FILTER (WHERE status = 'completed') AS completed_jobs,
 	COUNT(*) FILTER (WHERE status = 'failed') AS failed_jobs,
 	COUNT(*) FILTER (WHERE status = 'processing') AS processing_jobs
-FROM neurondb.neurondb_job_queue;
+FROM neurondb.job_queue;
 
 \echo 'Test 2: Queue worker execution (multiple runs)'
 SELECT neuranq_run_once() AS run1;
@@ -41,7 +41,7 @@ SELECT
 	COUNT(*) AS job_count,
 	COUNT(*) FILTER (WHERE status = 'completed') AS completed,
 	COUNT(*) FILTER (WHERE status = 'failed') AS failed
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 GROUP BY job_type
 ORDER BY job_type;
 
@@ -56,7 +56,7 @@ SELECT
 		WHEN retry_count >= max_retries THEN 'Max retries reached'
 		ELSE 'Can retry'
 	END AS retry_status
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 WHERE status IN ('pending', 'failed')
 ORDER BY retry_count DESC
 LIMIT 10;
@@ -89,7 +89,7 @@ SELECT
 	AVG(execution_time_ms) AS avg_execution_time,
 	MIN(execution_time_ms) AS min_execution_time,
 	MAX(execution_time_ms) AS max_execution_time
-FROM neurondb.neurondb_query_metrics
+FROM neurondb.query_metrics
 WHERE created_at > NOW() - INTERVAL '1 hour';
 
 \echo 'Test 8: Tuner worker multiple samples'
@@ -126,7 +126,7 @@ SELECT
 	status,
 	COUNT(*) AS job_count,
 	AVG(EXTRACT(EPOCH FROM (completed_at - created_at))) AS avg_duration_seconds
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 GROUP BY operation, status
 ORDER BY operation, status;
 
@@ -136,7 +136,7 @@ SELECT
 	AVG(retry_count) AS avg_retries,
 	MAX(retry_count) AS max_retries,
 	COUNT(*) FILTER (WHERE retry_count > 0) AS jobs_with_retries
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 GROUP BY operation
 ORDER BY operation;
 
@@ -189,7 +189,7 @@ SELECT
 	COUNT(*) AS jobs_created,
 	COUNT(*) FILTER (WHERE status = 'completed') AS jobs_completed,
 	COUNT(*) FILTER (WHERE status = 'failed') AS jobs_failed
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 WHERE created_at > NOW() - INTERVAL '1 hour'
 GROUP BY DATE_TRUNC('minute', created_at)
 ORDER BY minute DESC

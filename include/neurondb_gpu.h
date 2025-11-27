@@ -53,20 +53,11 @@ typedef struct GPUDeviceInfo
 	bool is_available;
 } GPUDeviceInfo;
 
-/* GUC variables for configuration */
-extern bool neurondb_gpu_enabled;
-extern int neurondb_gpu_device;
-extern int neurondb_gpu_batch_size;
-extern int neurondb_gpu_streams;
-extern double neurondb_gpu_memory_pool_mb;
-extern bool neurondb_gpu_fail_open;
-extern char *neurondb_gpu_kernels;
-extern char *neurondb_gpu_backend;
-extern int neurondb_gpu_timeout_ms;
+/* GUC variables are now in neurondb_guc.h */
+#include "neurondb_guc.h"
 
 /*==================*/
 /* Initialization, shutdown, status, config */
-extern void neurondb_gpu_init_guc(void);
 extern void neurondb_gpu_init(void);
 extern void neurondb_gpu_shutdown(void);
 extern bool neurondb_gpu_is_available(void);

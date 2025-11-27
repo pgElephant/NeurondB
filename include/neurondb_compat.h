@@ -50,25 +50,4 @@
 #define NDB_UINT64_CAST(x) ((unsigned long)(x))
 #endif
 
-/*
- * Compatibility declarations for PostgreSQL 14
- * These symbols may not be exported but are referenced by the linker
- */
-#if PG_VERSION_NUM < 150000
-#include "libpq/pqsignal.h"
-#include "port.h"
-
-/* pqsignal_be may be an alias or macro for pqsignal in some contexts */
-#ifndef pqsignal_be
-/* Define pqsignal_be as an alias to pqsignal if not already defined */
-#define pqsignal_be(signo, func) pqsignal(signo, func)
-#endif
-
-/* shmem_request_hook type and variable for PG14 compatibility */
-typedef void (*shmem_request_hook_type)(void);
-/* Declare as weak symbol to avoid linker errors if not used */
-__attribute__((weak)) extern shmem_request_hook_type shmem_request_hook;
-
-#endif /* PG_VERSION_NUM < 150000 */
-
 #endif /* NEURONDB_COMPAT_H */

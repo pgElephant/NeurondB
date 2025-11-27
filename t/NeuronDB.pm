@@ -445,7 +445,7 @@ sub test_workers {
 	
 	# Test job queue functions
 	$result = $node->psql($dbname, q{
-		SELECT COUNT(*) FROM neurondb.neurondb_job_queue;
+		SELECT COUNT(*) FROM neurondb.job_queue;
 	}, tuples_only => 1);
 	
 	unless ($result->{success}) {

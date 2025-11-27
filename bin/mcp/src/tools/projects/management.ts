@@ -40,7 +40,7 @@ export class CreateMLProjectTool extends BaseTool {
 		try {
 			const { project_name, description } = params;
 			const query = `
-				INSERT INTO neurondb.neurondb_ml_projects (project_name, description, created_at)
+				INSERT INTO neurondb.ml_projects (project_name, description, created_at)
 				VALUES ($1, $2, NOW())
 				RETURNING project_id, project_name, description, created_at
 			`;
@@ -82,7 +82,7 @@ export class ListMLProjectsTool extends BaseTool {
 		try {
 			const { limit = 100 } = params;
 			const query = `
-				SELECT * FROM neurondb.neurondb_ml_projects
+				SELECT * FROM neurondb.ml_projects
 				ORDER BY created_at DESC
 				LIMIT $1
 			`;

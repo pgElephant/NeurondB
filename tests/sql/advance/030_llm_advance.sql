@@ -236,7 +236,7 @@ SELECT
 	status,
 	COUNT(*) AS job_count,
 	AVG(retry_count) AS avg_retries
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 GROUP BY operation, status
 ORDER BY operation, status;
 
@@ -248,7 +248,7 @@ SELECT
 	COUNT(*) FILTER (WHERE status = 'failed') AS failed,
 	COUNT(*) FILTER (WHERE status = 'processing') AS processing,
 	AVG(EXTRACT(EPOCH FROM (completed_at - created_at))) AS avg_duration_seconds
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE created_at > NOW() - INTERVAL '24 hours';
 
 \echo 'Test 18: Job Queue Retry Logic'
@@ -262,7 +262,7 @@ SELECT
 		WHEN retry_count >= max_retries THEN 'Max retries reached'
 		ELSE 'Can retry'
 	END AS retry_status
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE status IN ('pending', 'failed')
 ORDER BY retry_count DESC
 LIMIT 10;

@@ -77,6 +77,8 @@ typedef struct NdbCudaHfModelWeights
 	float *ffn_weights1; /* Feed-forward weights 1 */
 	float *ffn_weights2; /* Feed-forward weights 2 */
 	float *lm_head_weights; /* Language model head weights */
+	float *classification_weights; /* Classification head weights for reranking */
+	float classification_bias; /* Classification head bias */
 	size_t total_bytes;
 } NdbCudaHfModelWeights;
 
@@ -168,6 +170,21 @@ extern int ndb_cuda_hf_generate_inference(const char *model_name,
 	NdbCudaHfKVCache *kv_cache,
 	int32_t *output_token_ids,
 	int *output_seq_len,
+	char **errstr);
+
+/* Internal CUDA kernel function for cross-encoder reranking inference */
+extern int ndb_cuda_hf_cross_encoder_rerank_inference(
+	const char *model_name,
+	const int32_t *token_ids_batch,
+	const int32_t *attention_mask_batch,
+	int batch_size,
+	int seq_len,
+	const float *embedding_table,
+	int vocab_size,
+	int embed_dim,
+	const float *classification_weights,
+	float classification_bias,
+	float *scores_out,
 	char **errstr);
 
 /* Streaming generation callback */

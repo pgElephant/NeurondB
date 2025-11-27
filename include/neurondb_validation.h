@@ -26,6 +26,8 @@
 #include "utils/elog.h"
 #include "utils/memutils.h"
 #include "neurondb_safe_memory.h"
+#include "neurondb_macros.h"
+#include "neurondb_constants.h"
 
 /*-------------------------------------------------------------------------
  * NULL Parameter Validation Macros
@@ -43,7 +45,7 @@
 		if ((param) == NULL) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), \
-				 errmsg("neurondb: %s cannot be NULL", (name)))); \
+				 errmsg(NDB_ERR_MSG("%s cannot be NULL"), (name)))); \
 	} while (0)
 
 /*
@@ -57,7 +59,7 @@
 		if (PG_ARGISNULL(argnum)) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), \
-				 errmsg("neurondb: %s (argument %d) cannot be NULL", \
+				 errmsg(NDB_ERR_MSG("%s (argument %d) cannot be NULL"), \
 					(name), (argnum)))); \
 	} while (0)
 
@@ -71,7 +73,7 @@
  */
 #define NDB_CHECK_NULL_OR_ERROR(param, name, errstr) \
 	((param) == NULL ? \
-		((errstr) ? (*(errstr) = psprintf("neurondb: %s cannot be NULL", (name)), -1) : -1) : \
+		((errstr) ? (*(errstr) = psprintf(NDB_ERR_MSG("%s cannot be NULL"), (name)), -1) : -1) : \
 		0)
 
 /*-------------------------------------------------------------------------
@@ -91,7 +93,7 @@
 		if ((ptr) == NULL) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_OUT_OF_MEMORY), \
-				 errmsg("neurondb: failed to allocate memory for %s", \
+				 errmsg(NDB_ERR_MSG("failed to allocate memory for %s"), \
 					(name)))); \
 	} while (0)
 
@@ -106,7 +108,7 @@
  */
 #define NDB_CHECK_ALLOC_OR_ERROR(ptr, name, errstr) \
 	((ptr) == NULL ? \
-		((errstr) ? (*(errstr) = psprintf("neurondb: allocation failed for %s", (name)), -1) : -1) : \
+		((errstr) ? (*(errstr) = psprintf(NDB_ERR_MSG("allocation failed for %s"), (name)), -1) : -1) : \
 		0)
 
 /*
@@ -120,13 +122,13 @@
 		if ((size) > MaxAllocSize) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED), \
-				 errmsg("neurondb: allocation size for %s (%zu bytes) exceeds MaxAllocSize (%zu bytes)", \
+				 errmsg(NDB_ERR_MSG("allocation size for %s (%zu bytes) exceeds MaxAllocSize (%zu bytes)"), \
 					(name), (size_t)(size), (size_t)MaxAllocSize), \
 				 errhint("Reduce dataset size or use batch processing"))); \
 		if ((size) == 0) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE), \
-				 errmsg("neurondb: allocation size for %s cannot be zero", \
+				 errmsg(NDB_ERR_MSG("allocation size for %s cannot be zero"), \
 					(name)))); \
 	} while (0)
 
@@ -168,7 +170,7 @@
 			} \
 			ereport(ERROR, \
 				(errcode(ERRCODE_INTERNAL_ERROR), \
-				 errmsg("neurondb: SPI operation failed: %s (code %d)", \
+				 errmsg(NDB_ERR_MSG("SPI operation failed: %s (code %d)"), \
 					err_msg, (ret)), \
 				 errhint("Query: %s", (query) ? (query) : "unknown"))); \
 		} \
@@ -185,7 +187,7 @@
 		if (SPI_processed < (min_rows)) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_DATA_EXCEPTION), \
-				 errmsg("neurondb: %s returned %ld rows, expected at least %ld", \
+				 errmsg(NDB_ERR_MSG("%s returned %ld rows, expected at least %ld"), \
 					(query_name), (long)SPI_processed, (long)(min_rows)))); \
 	} while (0)
 
@@ -225,13 +227,13 @@
 			} \
 			ereport(ERROR, \
 				(errcode(ERRCODE_INTERNAL_ERROR), \
-				 errmsg("neurondb: SPI operation failed: %s (got %d, expected %d)", \
+				 errmsg(NDB_ERR_MSG("SPI operation failed: %s (got %d, expected %d)"), \
 					err_msg, (ret), (expected)))); \
 		} \
 		if ((min_rows) >= 0 && SPI_processed < (min_rows)) { \
 			ereport(ERROR, \
 				(errcode(ERRCODE_DATA_EXCEPTION), \
-				 errmsg("neurondb: SPI query returned %ld rows, expected at least %ld", \
+				 errmsg(NDB_ERR_MSG("SPI query returned %ld rows, expected at least %ld"), \
 					(long)SPI_processed, (long)(min_rows)))); \
 		} \
 	} while (0)
@@ -252,7 +254,7 @@
 		if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_INTERNAL_ERROR), \
-				 errmsg("neurondb: SPI_tuptable is NULL or invalid"))); \
+				 errmsg(NDB_ERR_MSG("SPI_tuptable is NULL or invalid")))); \
 	} while (0)
 
 /*
@@ -276,7 +278,7 @@
 			if (SPI_tuptable == NULL || SPI_tuptable->tupdesc == NULL) \
 				ereport(ERROR, \
 					(errcode(ERRCODE_INTERNAL_ERROR), \
-					 errmsg("neurondb: SPI_tuptable is NULL or invalid for result-set query"))); \
+					 errmsg(NDB_ERR_MSG("SPI_tuptable is NULL or invalid for result-set query"))); \
 		} \
 	} while (0)
 
@@ -296,7 +298,7 @@
 		if ((model) == NULL) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE), \
-				 errmsg("neurondb: model is NULL"))); \
+				 errmsg(NDB_ERR_MSG("model is NULL"))); \
 	} while (0)
 
 /*
@@ -311,7 +313,7 @@
 		if ((model)->model_data == NULL) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE), \
-				 errmsg("neurondb: model data is NULL"))); \
+				 errmsg(NDB_ERR_MSG("model data is NULL"))); \
 	} while (0)
 
 /*-------------------------------------------------------------------------
@@ -330,7 +332,7 @@
 		if ((idx) < 0 || (idx) >= (size)) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), \
-				 errmsg("neurondb: array index %d out of bounds for %s (size %d)", \
+				 errmsg(NDB_ERR_MSG("array index %d out of bounds for %s (size %d)"), \
 					(idx), (name), (size)))); \
 	} while (0)
 
@@ -345,11 +347,11 @@
 		if ((vec) == NULL) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), \
-				 errmsg("neurondb: vector is NULL"))); \
+				 errmsg(NDB_ERR_MSG("vector is NULL")))); \
 		if ((vec)->dim <= 0 || (vec)->dim > 32767) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE), \
-				 errmsg("neurondb: invalid vector dimension %d", \
+				 errmsg(NDB_ERR_MSG("invalid vector dimension %d"), \
 					(vec)->dim))); \
 	} while (0)
 
@@ -370,7 +372,7 @@
 			(size_t)(count1) * (size_t)(count2) > SIZE_MAX / (size_t)(element_size)) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED), \
-				 errmsg("neurondb: allocation size would overflow: %d * %d * %zu", \
+				 errmsg(NDB_ERR_MSG("allocation size would overflow: %d * %d * %zu"), \
 					(count1), (count2), (size_t)(element_size)))); \
 	} while (0)
 
@@ -388,17 +390,13 @@
  * Usage:
  *   NDB_SAFE_PFREE_AND_NULL(ptr);
  *
- * This macro:
- * - Calls ndb_safe_pfree(ptr) which checks for NULL internally
- * - Sets ptr = NULL to prevent double-free and use-after-free
+ * This macro is an alias for NDB_FREE from neurondb_macros.h.
+ * It checks for NULL internally and sets ptr = NULL to prevent
+ * double-free and use-after-free.
  *
  * Must be applied to ALL pfree operations per crash-proof plan.
  */
-#define NDB_SAFE_PFREE_AND_NULL(ptr) \
-	do { \
-		ndb_safe_pfree(ptr); \
-		(ptr) = NULL; \
-	} while (0)
+#define NDB_SAFE_PFREE_AND_NULL(ptr) NDB_FREE(ptr)
 
 /*-------------------------------------------------------------------------
  * SPI Context Safety Macros

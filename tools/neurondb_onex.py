@@ -36,6 +36,14 @@ class NeuronDBModelReader:
         self.data = data
         self.pos = 0
     
+    def read_uint8(self) -> int:
+        """Read 8-bit unsigned integer"""
+        if self.pos + 1 > len(self.data):
+            raise ValueError("Unexpected end of data")
+        val = struct.unpack('>B', self.data[self.pos:self.pos+1])[0]
+        self.pos += 1
+        return val
+    
     def read_int32(self) -> int:
         """Read 32-bit integer (network byte order = big-endian)"""
         if self.pos + 4 > len(self.data):
@@ -58,6 +66,10 @@ class NeuronDBModelWriter:
     
     def __init__(self):
         self.data = bytearray()
+    
+    def write_uint8(self, val: int):
+        """Write 8-bit unsigned integer"""
+        self.data.extend(struct.pack('>B', val))
     
     def write_int32(self, val: int):
         """Write 32-bit integer (network byte order = big-endian)"""
@@ -146,15 +158,19 @@ def deserialize_linear_regression_model(data: bytes) -> Dict[str, Any]:
 
 
 def deserialize_logistic_regression_model(data: bytes) -> Dict[str, Any]:
-    """Deserialize Logistic Regression model from NeuronDB binary format"""
+    """Deserialize Logistic Regression model from NeuronDB binary format (unified ONEX format)"""
     reader = NeuronDBModelReader(data)
     
-    if len(data) < 4:
+    if len(data) < 5:
         raise ValueError("Invalid data: too short")
     reader.pos = 4  # Skip varlena header
     
+    # Read training_backend byte (0=CPU, 1=GPU)
+    training_backend = reader.read_uint8()
+    
     model = {
         'algorithm': 'logistic_regression',
+        'training_backend': training_backend,  # 0=CPU, 1=GPU
         'n_features': reader.read_int32(),
         'n_samples': reader.read_int32(),
         'bias': reader.read_float64(),
@@ -221,8 +237,12 @@ def serialize_linear_regression_model(model: Dict[str, Any]) -> bytes:
 
 
 def serialize_logistic_regression_model(model: Dict[str, Any]) -> bytes:
-    """Serialize Logistic Regression model to NeuronDB binary format"""
+    """Serialize Logistic Regression model to NeuronDB binary format (unified ONEX format)"""
     writer = NeuronDBModelWriter()
+    
+    # Write training_backend byte first (0=CPU, 1=GPU)
+    training_backend = model.get('training_backend', 0)  # Default to CPU if not specified
+    writer.write_uint8(training_backend)
     
     writer.write_int32(model['n_features'])
     writer.write_int32(model['n_samples'])

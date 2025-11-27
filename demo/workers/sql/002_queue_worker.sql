@@ -19,7 +19,7 @@ SET search_path TO worker_demo, neurondb, public;
 \echo '--------------------------------------------'
 
 -- Show table structure
-\d neurondb.neurondb_job_queue
+\d neurondb.job_queue
 
 -- Check indexes
 SELECT 
@@ -41,7 +41,7 @@ ORDER BY indexname;
 \echo '--------------------------------------------'
 
 -- Insert various job types
-INSERT INTO neurondb.neurondb_job_queue (tenant_id, job_type, payload, status)
+INSERT INTO neurondb.job_queue (tenant_id, job_type, payload, status)
 VALUES 
     (1, 'embedding', '{"text": "Hello world", "model": "text-embedding-ada-002"}'::jsonb, 'pending'),
     (1, 'embedding', '{"text": "Machine learning is awesome", "model": "all-MiniLM-L6-v2"}'::jsonb, 'pending'),
@@ -68,7 +68,7 @@ SELECT
     status,
     retry_count,
     created_at
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 WHERE status = 'pending'
 ORDER BY job_id DESC
 LIMIT 10;
@@ -83,7 +83,7 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'processing') as processing,
     COUNT(*) FILTER (WHERE status = 'completed') as completed,
     COUNT(*) FILTER (WHERE status = 'failed') as failed
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 GROUP BY job_type
 ORDER BY job_type;
 
@@ -97,7 +97,7 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'processing') as processing,
     COUNT(*) FILTER (WHERE status = 'completed') as completed,
     COUNT(*) FILTER (WHERE status = 'failed') as failed
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 GROUP BY tenant_id
 ORDER BY tenant_id;
 
@@ -114,18 +114,18 @@ ORDER BY tenant_id;
 -- Manually mark one job as completed (simulating worker processing)
 WITH next_job AS (
     SELECT job_id
-    FROM neurondb.neurondb_job_queue
+    FROM neurondb.job_queue
     WHERE status = 'pending'
     ORDER BY created_at
     LIMIT 1
 )
-UPDATE neurondb.neurondb_job_queue
+UPDATE neurondb.job_queue
 SET 
     status = 'completed',
     completed_at = now(),
     result = '{"status": "success", "processed_by": "manual_test"}'::jsonb
 FROM next_job
-WHERE neurondb.neurondb_job_queue.job_id = next_job.job_id
+WHERE neurondb.job_queue.job_id = next_job.job_id
 RETURNING 
     job_id,
     job_type,
@@ -143,24 +143,24 @@ RETURNING
 \echo '--------------------------------------------'
 
 -- Insert a job with invalid payload
-INSERT INTO neurondb.neurondb_job_queue (tenant_id, job_type, payload, status)
+INSERT INTO neurondb.job_queue (tenant_id, job_type, payload, status)
 VALUES (999, 'invalid_type', '{"error": "this will fail"}'::jsonb, 'pending');
 
 -- Simulate failed job
 WITH failed_job AS (
     SELECT job_id
-    FROM neurondb.neurondb_job_queue
+    FROM neurondb.job_queue
     WHERE tenant_id = 999
     LIMIT 1
 )
-UPDATE neurondb.neurondb_job_queue
+UPDATE neurondb.job_queue
 SET 
     status = 'failed',
     retry_count = retry_count + 1,
     error_message = 'Invalid job type',
     completed_at = now()
 FROM failed_job
-WHERE neurondb.neurondb_job_queue.job_id = failed_job.job_id
+WHERE neurondb.job_queue.job_id = failed_job.job_id
 RETURNING 
     job_id,
     job_type,
@@ -188,7 +188,7 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'failed') as failed_jobs,
     AVG(retry_count)::numeric(5,2) as avg_retries,
     EXTRACT(EPOCH FROM (now() - MIN(created_at)))::numeric(10,2) as queue_age_seconds
-FROM neurondb.neurondb_job_queue;
+FROM neurondb.job_queue;
 
 -- Processing time for completed jobs
 \echo ''
@@ -199,7 +199,7 @@ SELECT
     AVG(EXTRACT(EPOCH FROM (completed_at - created_at)))::numeric(10,2) as avg_processing_seconds,
     MIN(EXTRACT(EPOCH FROM (completed_at - created_at)))::numeric(10,2) as min_processing_seconds,
     MAX(EXTRACT(EPOCH FROM (completed_at - created_at)))::numeric(10,2) as max_processing_seconds
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 WHERE status = 'completed' AND completed_at IS NOT NULL
 GROUP BY job_type
 ORDER BY job_type;
@@ -220,7 +220,7 @@ SELECT
     COUNT(*) as job_count,
     MIN(completed_at) as oldest_completion,
     MAX(completed_at) as newest_completion
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 WHERE status IN ('completed', 'failed')
 AND completed_at < now() - interval '7 days';
 
@@ -249,6 +249,6 @@ AND completed_at < now() - interval '7 days';
 \echo '  - http_call: External API calls'
 \echo ''
 \echo 'To monitor queue in production:'
-\echo '  SELECT * FROM neurondb.neurondb_job_queue WHERE status = ''pending'';'
+\echo '  SELECT * FROM neurondb.job_queue WHERE status = ''pending'';'
 \echo ''
 

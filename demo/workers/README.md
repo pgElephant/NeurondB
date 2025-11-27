@@ -36,11 +36,11 @@ neurondb.neuranq_enabled = true          -- Enable/disable worker
 **Monitoring**:
 ```sql
 -- Check queue status
-SELECT status, COUNT(*) FROM neurondb.neurondb_job_queue GROUP BY status;
+SELECT status, COUNT(*) FROM neurondb.job_queue GROUP BY status;
 
 -- Per-tenant metrics
 SELECT tenant_id, COUNT(*), AVG(EXTRACT(EPOCH FROM (completed_at - created_at)))
-FROM neurondb.neurondb_job_queue WHERE status = 'completed' GROUP BY tenant_id;
+FROM neurondb.job_queue WHERE status = 'completed' GROUP BY tenant_id;
 ```
 
 ---
@@ -83,7 +83,7 @@ neurondb.neuranmon_enabled = true
 ```sql
 -- Current performance
 SELECT ef_search, AVG(latency_ms), AVG(recall)
-FROM neurondb.neurondb_query_metrics
+FROM neurondb.query_metrics
 WHERE recorded_at > now() - interval '10 minutes'
 GROUP BY ef_search;
 
@@ -96,7 +96,7 @@ SELECT
         WHEN AVG(recall) < 0.95 THEN 'Tune UP'
         ELSE 'Optimal'
     END as recommendation
-FROM neurondb.neurondb_query_metrics
+FROM neurondb.query_metrics
 WHERE recorded_at > now() - interval '10 minutes';
 ```
 
@@ -196,7 +196,7 @@ neurondb.neuranllm_enabled = true
 ```sql
 -- LLM job status
 SELECT operation, status, COUNT(*)
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 GROUP BY operation, status
 ORDER BY operation, status;
 
@@ -204,13 +204,13 @@ ORDER BY operation, status;
 SELECT 
     operation,
     AVG(EXTRACT(EPOCH FROM (completed_at - created_at))) as avg_seconds
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE status = 'completed'
 GROUP BY operation;
 
 -- Failed jobs
 SELECT job_id, operation, error_message, retry_count
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE status = 'failed'
 ORDER BY created_at DESC
 LIMIT 10;
@@ -416,7 +416,7 @@ SELECT pg_reload_conf();
 **Queue worker failures**:
 ```sql
 SELECT job_id, job_type, error_message, retry_count
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 WHERE status = 'failed'
 ORDER BY created_at DESC
 LIMIT 20;
@@ -425,7 +425,7 @@ LIMIT 20;
 **LLM worker failures**:
 ```sql
 SELECT job_id, operation, model_name, error_message, retry_count
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE status = 'failed'
 ORDER BY created_at DESC
 LIMIT 20;

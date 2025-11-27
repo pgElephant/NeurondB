@@ -9,15 +9,8 @@
 #include "postgres.h"
 #include "fmgr.h"
 
-/* GUCs */
-extern char *neurondb_llm_provider; /* "huggingface" or "local" */
-extern char *neurondb_llm_model; /* default model id */
-extern char *neurondb_llm_endpoint; /* base URL */
-extern char *neurondb_llm_api_key; /* token (via ALTER SYSTEM/env) */
-extern int neurondb_llm_timeout_ms; /* HTTP timeout */
-extern int neurondb_llm_cache_ttl; /* cache TTL seconds */
-extern int neurondb_llm_rate_limiter_qps; /* QPS */
-extern bool neurondb_llm_fail_open; /* fail-open policy */
+/* GUC variables are now in neurondb_guc.h */
+#include "neurondb_guc.h"
 
 typedef struct NdbLLMConfig
 {

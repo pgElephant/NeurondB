@@ -49,27 +49,27 @@ subtest 'Worker Tables - Positive' => sub {
 	
 	# Insert test data
 	my $result = $node->psql('postgres', q{
-		INSERT INTO neurondb.neurondb_job_queue (job_type, payload, status, tenant_id) 
+		INSERT INTO neurondb.job_queue (job_type, payload, status, tenant_id) 
 		VALUES ('test_job', '{"test": "data"}'::jsonb, 'pending', 1);
 	});
 	ok($result->{success}, 'Can insert into job queue');
 	
 	# Query job queue
 	$result = $node->psql('postgres', q{
-		SELECT COUNT(*) FROM neurondb.neurondb_job_queue;
+		SELECT COUNT(*) FROM neurondb.job_queue;
 	}, tuples_only => 1);
 	ok($result->{success}, 'Can query job queue');
 	
 	# Insert query metrics
 	$result = $node->psql('postgres', q{
-		INSERT INTO neurondb.neurondb_query_metrics (latency_ms, recall_at_k) 
+		INSERT INTO neurondb.query_metrics (latency_ms, recall_at_k) 
 		VALUES (15.5, 0.95);
 	});
 	ok($result->{success}, 'Can insert query metrics');
 	
 	# Query metrics
 	$result = $node->psql('postgres', q{
-		SELECT COUNT(*) FROM neurondb.neurondb_query_metrics;
+		SELECT COUNT(*) FROM neurondb.query_metrics;
 	}, tuples_only => 1);
 	ok($result->{success}, 'Can query metrics');
 };
@@ -109,7 +109,7 @@ subtest 'Worker Functions - Positive' => sub {
 	
 	# Worker status queries
 	$result = $node->psql('postgres', q{
-		SELECT status, COUNT(*) FROM neurondb.neurondb_job_queue GROUP BY status;
+		SELECT status, COUNT(*) FROM neurondb.job_queue GROUP BY status;
 	});
 	ok($result->{success}, 'Can query job queue by status');
 	
@@ -130,7 +130,7 @@ subtest 'Worker Functions - Negative' => sub {
 	
 	# Invalid job type
 	my $result = $node->psql('postgres', q{
-		INSERT INTO neurondb.neurondb_job_queue (job_type, payload, status, tenant_id) 
+		INSERT INTO neurondb.job_queue (job_type, payload, status, tenant_id) 
 		VALUES (NULL, '{}'::jsonb, 'pending', 1);
 	});
 	# May or may not fail depending on constraints
@@ -138,7 +138,7 @@ subtest 'Worker Functions - Negative' => sub {
 	
 	# Invalid status
 	$result = $node->psql('postgres', q{
-		INSERT INTO neurondb.neurondb_job_queue (job_type, payload, status, tenant_id) 
+		INSERT INTO neurondb.job_queue (job_type, payload, status, tenant_id) 
 		VALUES ('test', '{}'::jsonb, 'invalid_status', 1);
 	});
 	# May or may not fail depending on constraints
@@ -146,14 +146,14 @@ subtest 'Worker Functions - Negative' => sub {
 	
 	# Invalid payload JSON
 	$result = $node->psql('postgres', q{
-		INSERT INTO neurondb.neurondb_job_queue (job_type, payload, status, tenant_id) 
+		INSERT INTO neurondb.job_queue (job_type, payload, status, tenant_id) 
 		VALUES ('test', 'invalid json', 'pending', 1);
 	});
 	ok(!$result->{success}, 'Invalid JSON payload rejected');
 	
 	# Negative tenant_id
 	$result = $node->psql('postgres', q{
-		INSERT INTO neurondb.neurondb_job_queue (job_type, payload, status, tenant_id) 
+		INSERT INTO neurondb.job_queue (job_type, payload, status, tenant_id) 
 		VALUES ('test', '{}'::jsonb, 'pending', -1);
 	});
 	# May or may not fail depending on constraints
@@ -161,7 +161,7 @@ subtest 'Worker Functions - Negative' => sub {
 	
 	# Invalid query metrics
 	$result = $node->psql('postgres', q{
-		INSERT INTO neurondb.neurondb_query_metrics (latency_ms, recall_at_k) 
+		INSERT INTO neurondb.query_metrics (latency_ms, recall_at_k) 
 		VALUES (-1, 2.0);
 	});
 	# May or may not fail depending on constraints

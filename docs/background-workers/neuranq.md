@@ -23,7 +23,7 @@ Add jobs to the queue:
 
 ```sql
 -- Add job to queue
-INSERT INTO neurondb.neurondb_job_queue (job_type, job_data)
+INSERT INTO neurondb.job_queue (job_type, job_data)
 VALUES ('embedding', '{"text": "Hello world"}'::jsonb);
 ```
 
@@ -31,10 +31,10 @@ VALUES ('embedding', '{"text": "Hello world"}'::jsonb);
 
 ```sql
 -- Check queue status
-SELECT * FROM neurondb.neurondb_job_queue WHERE status = 'pending';
+SELECT * FROM neurondb.job_queue WHERE status = 'pending';
 
 -- Queue statistics
-SELECT status, COUNT(*) FROM neurondb.neurondb_job_queue GROUP BY status;
+SELECT status, COUNT(*) FROM neurondb.job_queue GROUP BY status;
 ```
 
 ## Learn More

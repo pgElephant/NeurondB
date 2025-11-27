@@ -216,7 +216,7 @@ SELECT delete_embedding_model_config('nonexistent_model_xyz');
 -- Test handling of invalid job operations
 SELECT 
 	COUNT(*) AS invalid_operations
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE operation NOT IN ('completion', 'embedding', 'reranking');
 
 \echo 'Error Test 21: Job Queue with Corrupted Payload'
@@ -229,7 +229,7 @@ SELECT
 		WHEN payload::text = 'null' OR payload IS NULL THEN 'NULL payload'
 		ELSE 'Valid payload'
 	END AS payload_status
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE payload IS NULL OR payload::text = 'null'
 LIMIT 10;
 

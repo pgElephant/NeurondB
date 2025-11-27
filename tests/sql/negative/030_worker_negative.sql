@@ -79,7 +79,7 @@ END$$;
 -- Test handling of NULL in job queue
 SELECT 
 	COUNT(*) AS null_job_count
-FROM neurondb.neurondb_job_queue
+FROM neurondb.job_queue
 WHERE job_type IS NULL OR payload IS NULL;
 
 /*-------------------------------------------------------------------

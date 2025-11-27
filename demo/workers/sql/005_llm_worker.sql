@@ -19,7 +19,7 @@ SET search_path TO worker_demo, neurondb, public;
 \echo '--------------------------------------------'
 
 -- Show table structure
-\d neurondb.neurondb_llm_jobs
+\d neurondb.llm_jobs
 
 -- Check indexes
 SELECT 
@@ -41,7 +41,7 @@ ORDER BY indexname;
 \echo '--------------------------------------------'
 
 -- Insert completion jobs
-INSERT INTO neurondb.neurondb_llm_jobs (
+INSERT INTO neurondb.llm_jobs (
     tenant_id, operation, model_name, input_text, status
 )
 VALUES
@@ -52,7 +52,7 @@ VALUES
 \echo 'Inserted 3 completion jobs'
 
 -- Insert embedding jobs
-INSERT INTO neurondb.neurondb_llm_jobs (
+INSERT INTO neurondb.llm_jobs (
     tenant_id, operation, model_name, input_text, status
 )
 VALUES
@@ -63,7 +63,7 @@ VALUES
 \echo 'Inserted 3 embedding jobs'
 
 -- Insert reranking jobs
-INSERT INTO neurondb.neurondb_llm_jobs (
+INSERT INTO neurondb.llm_jobs (
     tenant_id, operation, model_name, input_text, status
 )
 VALUES
@@ -92,7 +92,7 @@ SELECT
     status,
     retry_count,
     created_at
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE status = 'pending'
 ORDER BY job_id DESC;
 
@@ -106,7 +106,7 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'processing') as processing,
     COUNT(*) FILTER (WHERE status = 'completed') as completed,
     COUNT(*) FILTER (WHERE status = 'failed') as failed
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 GROUP BY operation
 ORDER BY operation;
 
@@ -120,7 +120,7 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'processing') as processing,
     COUNT(*) FILTER (WHERE status = 'completed') as completed,
     COUNT(*) FILTER (WHERE status = 'failed') as failed
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 GROUP BY tenant_id
 ORDER BY tenant_id;
 
@@ -137,18 +137,18 @@ ORDER BY tenant_id;
 -- Mark one completion job as completed
 WITH next_job AS (
     SELECT job_id
-    FROM neurondb.neurondb_llm_jobs
+    FROM neurondb.llm_jobs
     WHERE status = 'pending' AND operation = 'completion'
     ORDER BY created_at
     LIMIT 1
 )
-UPDATE neurondb.neurondb_llm_jobs
+UPDATE neurondb.llm_jobs
 SET 
     status = 'completed',
     result_text = 'Vector databases store data as high-dimensional vectors...',
     completed_at = now()
 FROM next_job
-WHERE neurondb.neurondb_llm_jobs.job_id = next_job.job_id
+WHERE neurondb.llm_jobs.job_id = next_job.job_id
 RETURNING 
     job_id,
     operation,
@@ -161,18 +161,18 @@ RETURNING
 -- Mark one embedding job as completed
 WITH next_job AS (
     SELECT job_id
-    FROM neurondb.neurondb_llm_jobs
+    FROM neurondb.llm_jobs
     WHERE status = 'pending' AND operation = 'embedding'
     ORDER BY created_at
     LIMIT 1
 )
-UPDATE neurondb.neurondb_llm_jobs
+UPDATE neurondb.llm_jobs
 SET 
     status = 'completed',
     result_text = '[0.123, -0.456, 0.789, ...]',
     completed_at = now()
 FROM next_job
-WHERE neurondb.neurondb_llm_jobs.job_id = next_job.job_id
+WHERE neurondb.llm_jobs.job_id = next_job.job_id
 RETURNING 
     job_id,
     operation,
@@ -191,7 +191,7 @@ RETURNING
 \echo '--------------------------------------------'
 
 -- Insert a job that will fail (model doesn't exist)
-INSERT INTO neurondb.neurondb_llm_jobs (
+INSERT INTO neurondb.llm_jobs (
     tenant_id, operation, model_name, input_text, status
 )
 VALUES
@@ -200,18 +200,18 @@ VALUES
 -- Simulate failed job
 WITH failed_job AS (
     SELECT job_id
-    FROM neurondb.neurondb_llm_jobs
+    FROM neurondb.llm_jobs
     WHERE tenant_id = 'tenant_999'
     LIMIT 1
 )
-UPDATE neurondb.neurondb_llm_jobs
+UPDATE neurondb.llm_jobs
 SET 
     status = 'failed',
     retry_count = retry_count + 1,
     error_message = 'Model not found: non-existent-model',
     completed_at = now()
 FROM failed_job
-WHERE neurondb.neurondb_llm_jobs.job_id = failed_job.job_id
+WHERE neurondb.llm_jobs.job_id = failed_job.job_id
 RETURNING 
     job_id,
     operation,
@@ -239,7 +239,7 @@ SELECT
     COUNT(*) FILTER (WHERE status = 'completed') as completed_jobs,
     COUNT(*) FILTER (WHERE status = 'failed') as failed_jobs,
     AVG(retry_count)::numeric(5,2) as avg_retries
-FROM neurondb.neurondb_llm_jobs;
+FROM neurondb.llm_jobs;
 
 -- Processing time analysis
 \echo ''
@@ -250,7 +250,7 @@ SELECT
     AVG(EXTRACT(EPOCH FROM (completed_at - created_at)))::numeric(10,2) as avg_processing_seconds,
     MIN(EXTRACT(EPOCH FROM (completed_at - created_at)))::numeric(10,2) as min_processing_seconds,
     MAX(EXTRACT(EPOCH FROM (completed_at - created_at)))::numeric(10,2) as max_processing_seconds
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 WHERE status = 'completed' AND completed_at IS NOT NULL
 GROUP BY operation
 ORDER BY operation;
@@ -295,7 +295,7 @@ SELECT
     MAX(created_at) as last_job,
     EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at)))::numeric(10,2) as time_span_seconds,
     (COUNT(*) / NULLIF(EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))), 0))::numeric(10,4) as jobs_per_second
-FROM neurondb.neurondb_llm_jobs
+FROM neurondb.llm_jobs
 GROUP BY tenant_id, operation
 ORDER BY tenant_id, operation;
 
@@ -331,7 +331,7 @@ ORDER BY tenant_id, operation;
 \echo '  - Open Source: sentence-transformers, cross-encoder'
 \echo ''
 \echo 'To monitor LLM jobs in production:'
-\echo '  SELECT * FROM neurondb.neurondb_llm_jobs WHERE status = ''pending'';'
+\echo '  SELECT * FROM neurondb.llm_jobs WHERE status = ''pending'';'
 \echo '  SELECT * FROM neurondb.llm_job_status;'
 \echo ''
 

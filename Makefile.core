@@ -195,6 +195,7 @@ OBJS += \
 # Utilities
 OBJS += \
 	src/util/config.o \
+	src/util/neurondb_guc.o \
 	src/util/security.o \
 	src/util/hooks.o \
 	src/util/distributed.o \
@@ -205,7 +206,8 @@ OBJS += \
 	src/util/neurondb_spi_safe.o \
 	src/util/neurondb_spi.o \
 	src/util/neurondb_sql.o \
-	src/util/neurondb_simd_impl.o
+	src/util/neurondb_simd_impl.o \
+	src/util/neurondb_json.o
 
 REGRESS = \
 	00_create \
@@ -423,7 +425,7 @@ ifneq ($(wildcard neurondb--1.0.sql.in),)
 $(eval include Makefile.header)
 
 # Generate Linux SQL file
-neurondb--1.0.sql.linux: neurondb--1.0.sql.in neurondb.sql Makefile Makefile.sql-functions Makefile.header
+neurondb--1.0.sql.linux: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile.header
 	@echo "=========================================================================="
 	@echo "Generating Linux SQL file..."
 	@echo "  PostgreSQL: $(PGSQL_VERSION) (version_num: $(PGSQL_VERSION_NUM))"
@@ -449,15 +451,13 @@ neurondb--1.0.sql.linux: neurondb--1.0.sql.in neurondb.sql Makefile Makefile.sql
 	     sed '/@ML_KNN_FUNCTIONS@/d' | \
 	     sed '/@ML_ENSEMBLE_FUNCTIONS@/r neurondb--1.0.sql.ens.funcs' | \
 	     sed '/@ML_ENSEMBLE_FUNCTIONS@/d' > neurondb--1.0.sql.linux.tmp2
-	@awk 'BEGIN { while ((getline line < "neurondb.sql") > 0) buf = buf line "\n" } \
-	      { if ($$0 == "@NEURONDB_USER_API@") printf "%s", buf; else print }' \
-	      neurondb--1.0.sql.linux.tmp2 > neurondb--1.0.sql.linux
+	@cp neurondb--1.0.sql.linux.tmp2 neurondb--1.0.sql.linux
 	@rm -f neurondb--1.0.sql.linux.tmp neurondb--1.0.sql.linux.tmp2 neurondb--1.0.sql.reg.funcs neurondb--1.0.sql.clf.funcs neurondb--1.0.sql.knn.funcs neurondb--1.0.sql.ens.funcs
 	@echo "✓ Generated neurondb--1.0.sql.linux"
 	@echo "=========================================================================="
 
 # Generate macOS SQL file
-neurondb--1.0.sql.macos: neurondb--1.0.sql.in neurondb.sql Makefile Makefile.sql-functions Makefile.header
+neurondb--1.0.sql.macos: neurondb--1.0.sql.in Makefile Makefile.sql-functions Makefile.header
 	@echo "=========================================================================="
 	@echo "Generating macOS SQL file..."
 	@echo "  PostgreSQL: $(PGSQL_VERSION) (version_num: $(PGSQL_VERSION_NUM))"
@@ -483,9 +483,7 @@ neurondb--1.0.sql.macos: neurondb--1.0.sql.in neurondb.sql Makefile Makefile.sql
 	     sed '/@ML_KNN_FUNCTIONS@/d' | \
 	     sed '/@ML_ENSEMBLE_FUNCTIONS@/r neurondb--1.0.sql.ens.funcs' | \
 	     sed '/@ML_ENSEMBLE_FUNCTIONS@/d' > neurondb--1.0.sql.macos.tmp2
-	@awk 'BEGIN { while ((getline line < "neurondb.sql") > 0) buf = buf line "\n" } \
-	      { if ($$0 == "@NEURONDB_USER_API@") printf "%s", buf; else print }' \
-	      neurondb--1.0.sql.macos.tmp2 > neurondb--1.0.sql.macos
+	@cp neurondb--1.0.sql.macos.tmp2 neurondb--1.0.sql.macos
 	@rm -f neurondb--1.0.sql.macos.tmp neurondb--1.0.sql.macos.tmp2 neurondb--1.0.sql.reg.funcs neurondb--1.0.sql.clf.funcs neurondb--1.0.sql.knn.funcs neurondb--1.0.sql.ens.funcs
 	@echo "✓ Generated neurondb--1.0.sql.macos"
 	@echo "=========================================================================="

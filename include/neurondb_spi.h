@@ -42,6 +42,8 @@
 #include "executor/spi.h"
 #include "lib/stringinfo.h"
 #include "utils/memutils.h"
+#include "utils/jsonb.h"
+#include "neurondb_constants.h"
 
 /*
  * NdbSpiSession
@@ -167,7 +169,7 @@ extern bytea *ndb_spi_get_bytea(NdbSpiSession *session,
 		if ((session_var) == NULL) \
 			ereport(ERROR, \
 				(errcode(ERRCODE_INTERNAL_ERROR), \
-				 errmsg("neurondb: failed to begin SPI session"))); \
+				 errmsg(NDB_ERR_MSG("failed to begin SPI session")))); \
 	} while (0)
 
 #define NDB_SPI_SESSION_END(session_var) \

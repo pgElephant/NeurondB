@@ -258,7 +258,7 @@ BEGIN
 	);
 
 	SELECT config_json INTO config1
-	FROM neurondb.neurondb_embedding_model_config
+	FROM neurondb.embedding_model_config
 	WHERE model_name = 'update_test_model';
 
 	/* Update configuration */
@@ -268,7 +268,7 @@ BEGIN
 	);
 
 	SELECT config_json INTO config2
-	FROM neurondb.neurondb_embedding_model_config
+	FROM neurondb.embedding_model_config
 	WHERE model_name = 'update_test_model';
 
 	RAISE NOTICE 'Config updated: batch_size % -> %',

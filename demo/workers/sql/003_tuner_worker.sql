@@ -19,7 +19,7 @@ SET search_path TO worker_demo, neurondb, public;
 \echo '--------------------------------------------'
 
 -- Show table structure
-\d neurondb.neurondb_query_metrics
+\d neurondb.query_metrics
 
 \echo ''
 \echo '✓ Query metrics table verified'
@@ -32,7 +32,7 @@ SET search_path TO worker_demo, neurondb, public;
 \echo '--------------------------------------------'
 
 -- Insert metrics for ef_search = 100
-INSERT INTO neurondb.neurondb_query_metrics (
+INSERT INTO neurondb.query_metrics (
     query_id, table_oid, index_oid, ef_search, k, 
     latency_ms, recall, recorded_at
 )
@@ -49,7 +49,7 @@ SELECT
 \echo 'Inserted 50 metrics for ef_search=100'
 
 -- Insert metrics for ef_search = 150
-INSERT INTO neurondb.neurondb_query_metrics (
+INSERT INTO neurondb.query_metrics (
     query_id, table_oid, index_oid, ef_search, k, 
     latency_ms, recall, recorded_at
 )
@@ -66,7 +66,7 @@ SELECT
 \echo 'Inserted 50 metrics for ef_search=150'
 
 -- Insert metrics for ef_search = 200
-INSERT INTO neurondb.neurondb_query_metrics (
+INSERT INTO neurondb.query_metrics (
     query_id, table_oid, index_oid, ef_search, k, 
     latency_ms, recall, recorded_at
 )
@@ -102,7 +102,7 @@ SELECT
     AVG(recall)::numeric(5,4) as avg_recall,
     MIN(recall)::numeric(5,4) as min_recall,
     MAX(recall)::numeric(5,4) as max_recall
-FROM neurondb.neurondb_query_metrics
+FROM neurondb.query_metrics
 WHERE recorded_at > now() - interval '1 hour'
 GROUP BY ef_search
 ORDER BY ef_search;
@@ -124,7 +124,7 @@ WITH performance_data AS (
         AVG(latency_ms) as avg_latency,
         AVG(recall) as avg_recall,
         COUNT(*) as sample_size
-    FROM neurondb.neurondb_query_metrics
+    FROM neurondb.query_metrics
     WHERE recorded_at > now() - interval '10 minutes'
     GROUP BY ef_search
 )
@@ -165,7 +165,7 @@ SELECT
     percentile_cont(0.90) WITHIN GROUP (ORDER BY latency_ms)::numeric(10,2) as p90_latency,
     percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::numeric(10,2) as p95_latency,
     percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)::numeric(10,2) as p99_latency
-FROM neurondb.neurondb_query_metrics
+FROM neurondb.query_metrics
 WHERE recorded_at > now() - interval '1 hour'
 GROUP BY ef_search
 ORDER BY ef_search;
@@ -186,7 +186,7 @@ SELECT
     AVG(latency_ms)::numeric(10,2) as avg_latency_ms,
     AVG(recall)::numeric(5,4) as avg_recall,
     (AVG(recall) * 1000 / AVG(latency_ms))::numeric(10,4) as recall_per_ms
-FROM neurondb.neurondb_query_metrics
+FROM neurondb.query_metrics
 WHERE recorded_at > now() - interval '1 hour'
 GROUP BY ef_search
 ORDER BY ef_search;
@@ -212,7 +212,7 @@ SELECT
     COUNT(*) as queries,
     AVG(latency_ms)::numeric(10,2) as avg_latency,
     AVG(recall)::numeric(5,4) as avg_recall
-FROM neurondb.neurondb_query_metrics
+FROM neurondb.query_metrics
 WHERE recorded_at > now() - interval '15 minutes'
 GROUP BY date_trunc('minute', recorded_at), ef_search
 ORDER BY time_bucket DESC, ef_search

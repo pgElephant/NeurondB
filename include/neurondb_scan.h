@@ -35,7 +35,7 @@ extern int	ndb_rls_filter_results(Relation rel,
 								   int *filteredCount);
 
 /* Quota functions */
-extern void ndb_quota_init_guc(void);
+/* GUC initialization is now centralized in neurondb_guc.c */
 extern bool ndb_quota_check(const char *tenantId,
 							Oid indexOid,
 							int64 additionalVectors,

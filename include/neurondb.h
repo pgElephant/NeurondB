@@ -88,6 +88,17 @@ typedef struct VectorI4
 	uint8 data[FLEXIBLE_ARRAY_MEMBER]; /* Packed: 2 values per byte */
 } VectorI4;
 
+/* ========== Function Declarations ========== */
+
+/* Temporal integration */
+extern void temporal_integrate_hnsw_search(Relation heapRel,
+											ItemPointer *items,
+											float4 *distances,
+											int resultCount,
+											float4 decayRate,
+											float4 recencyWeight,
+											const char *timestampColumnName);
+
 /* ========== Macros ========== */
 
 #define DatumGetVector(x) ((Vector *)PG_DETOAST_DATUM(x))
@@ -145,9 +156,7 @@ void hnsw_build(Relation index, Relation heap);
 /* index_ivf.c - IVF index */
 void ivf_build(Relation index, Relation heap);
 
-/* GUC Variables */
-extern int neurondb_hnsw_ef_search;
-extern int neurondb_ivf_probes;
-extern int neurondb_ef_construction;
+/* GUC variables are now in neurondb_guc.h */
+#include "neurondb_guc.h"
 
 #endif /* NEURONDB_H */

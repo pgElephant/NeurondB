@@ -28,7 +28,7 @@ SELECT
 	'Config stored' AS test_name,
 	config_json->>'batch_size' AS batch_size,
 	config_json->>'normalize' AS normalize
-FROM neurondb.neurondb_embedding_model_config
+FROM neurondb.embedding_model_config
 WHERE model_name = 'test_model';
 
 -- Test 13: Function name aliases
@@ -82,7 +82,7 @@ SELECT
 SELECT
 	'Config deleted' AS test_name,
 	COUNT(*) AS remaining_configs
-FROM neurondb.neurondb_embedding_model_config
+FROM neurondb.embedding_model_config
 WHERE model_name = 'test_model';
 
 \echo ''

@@ -10,9 +10,10 @@ typedef enum AutoMLBackendType
 	AUTOML_BACKEND_GPU = 1
 } AutoMLBackendType;
 
-extern PGDLLIMPORT bool neurondb_automl_use_gpu;
+/* GUC variables are now in neurondb_guc.h */
+#include "neurondb_guc.h"
 
-extern void neurondb_automl_define_gucs(void);
+/* GUC initialization is now centralized in neurondb_guc.c */
 extern AutoMLBackendType neurondb_automl_choose_backend(const char *algorithm);
 
 #endif /* NEURONDB_AUTOML_H */

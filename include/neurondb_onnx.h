@@ -104,8 +104,7 @@ extern void neurondb_onnx_init(void);
 /* Cleanup ONNX Runtime environment */
 extern void neurondb_onnx_cleanup(void);
 
-/* Define ONNX Runtime GUC parameters (call from main _PG_init) */
-extern void neurondb_onnx_define_gucs(void);
+/* GUC initialization is now centralized in neurondb_guc.c */
 
 /* Load ONNX model from file */
 extern ONNXModelSession *neurondb_onnx_load_model(const char *model_path,
