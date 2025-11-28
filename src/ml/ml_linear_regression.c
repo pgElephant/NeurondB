@@ -43,6 +43,7 @@
 #include "neurondb_sql.h"
 #include "neurondb_constants.h"
 #include "neurondb_json.h"
+#include "utils/lsyscache.h"
 
 #ifdef NDB_GPU_CUDA
 #include "neurondb_cuda_runtime.h"
@@ -1308,34 +1309,23 @@ train_linear_regression(PG_FUNCTION_ARGS)
 										&dataset,
 										gpu_sample_limit);
 			
-			ereport(DEBUG2,
-					(errmsg("linear_regression: dataset loaded"),
-					 errdetail("n_samples=%d, feature_dim=%d, features=%p, targets=%p",
-							  dataset.n_samples,
-							  dataset.feature_dim,
-							  (void *) dataset.features,
-							  (void *) dataset.targets)));
-			
 			initStringInfo(&hyperbuf);
 			appendStringInfo(&hyperbuf, "{}");
-			gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(
-																 jsonb_in, CStringGetTextDatum(hyperbuf.data)));
+			/* Use ndb_jsonb_in_cstring like test 006 fix */
+			gpu_hyperparams = ndb_jsonb_in_cstring(hyperbuf.data);
+			if (gpu_hyperparams == NULL)
+			{
+				NDB_FREE(hyperbuf.data);
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+						 errmsg("neurondb: failed to parse hyperparams JSON")));
+			}
 			NDB_FREE(hyperbuf.data);
 			hyperbuf.data = NULL;
 
-			ereport(DEBUG2,
-					(errmsg("linear_regression: about to call ndb_gpu_try_train_model"),
-					 errdetail("dataset.features=%p, dataset.targets=%p, dataset.n_samples=%d, dataset.feature_dim=%d",
-							  (void *) dataset.features,
-							  (void *) dataset.targets,
-							  dataset.n_samples,
-							  dataset.feature_dim)));
-
-			ereport(DEBUG2, (errmsg("linear_regression: CurrentMemoryContext before ndb_gpu_try_train_model=%p", (void*)CurrentMemoryContext)));
 			{
 				PG_TRY();
 				{
-					ereport(DEBUG2, (errmsg("linear_regression: inside PG_TRY, calling ndb_gpu_try_train_model")));
 					gpu_train_result = ndb_gpu_try_train_model("linear_regression",
 																NULL,
 																NULL,
@@ -1351,18 +1341,13 @@ train_linear_regression(PG_FUNCTION_ARGS)
 																0,
 																&gpu_result,
 																&gpu_err);
-					elog(DEBUG1, "neurondb: linear_regression: ndb_gpu_try_train_model returned, gpu_train_result=%d", gpu_train_result);
-					ereport(DEBUG2, (errmsg("linear_regression: gpu_result.spec.model_data=%p", (void*)gpu_result.spec.model_data)));
 				}
 				PG_CATCH();
 				{
-					elog(DEBUG1, "neurondb: linear_regression: caught exception in PG_CATCH after ndb_gpu_try_train_model");
 					FlushErrorState();
 					gpu_train_result = false;
 				}
 				PG_END_TRY();
-				elog(DEBUG1, "neurondb: linear_regression: PG_TRY block completed, gpu_train_result=%d", gpu_train_result);
-				ereport(DEBUG2, (errmsg("linear_regression: CurrentMemoryContext after ndb_gpu_try_train_model=%p", (void*)CurrentMemoryContext)));
 			}
 			if (gpu_train_result && gpu_result.spec.model_data != NULL)
 			{
@@ -1430,8 +1415,15 @@ train_linear_regression(PG_FUNCTION_ARGS)
 									 linreg_model.n_features > 0 ? linreg_model.n_features : 0,
 									 linreg_model.n_samples > 0 ? linreg_model.n_samples : 0);
 
-					updated_metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																		 CStringGetTextDatum(metrics_buf.data)));
+					/* Use ndb_jsonb_in_cstring like test 006 fix */
+					updated_metrics = ndb_jsonb_in_cstring(metrics_buf.data);
+					if (updated_metrics == NULL)
+					{
+						NDB_FREE(metrics_buf.data);
+						ereport(ERROR,
+								(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+								 errmsg("neurondb: failed to parse metrics JSON")));
+					}
 					NDB_FREE(metrics_buf.data);
 				}
 
@@ -1772,8 +1764,15 @@ train_linear_regression(PG_FUNCTION_ARGS)
 							 model->mse,
 							 model->mae);
 
-			metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-															  jsonb_in, CStringGetTextDatum(metricsbuf.data)));
+			/* Use ndb_jsonb_in_cstring like test 006 fix */
+			metrics_json = ndb_jsonb_in_cstring(metricsbuf.data);
+			if (metrics_json == NULL)
+			{
+				NDB_FREE(metricsbuf.data);
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+						 errmsg("neurondb: failed to parse metrics JSON")));
+			}
 			NDB_FREE(metricsbuf.data);
 			metricsbuf.data = NULL;
 
@@ -2205,7 +2204,7 @@ evaluate_linear_regression_by_model_id_jsonb(int32 model_id, text * table_name, 
 	double		r_squared;
 	double		rmse;
 	int			i;
-	Jsonb	   *result;
+	Jsonb	   *result = NULL;
 	MemoryContext oldcontext;
 
 	Oid			feat_type_oid;
@@ -2220,15 +2219,12 @@ evaluate_linear_regression_by_model_id_jsonb(int32 model_id, text * table_name, 
 	NDB_DECLARE (NdbSpiSession *, eval_jsonb_spi_session);
 
 	elog(DEBUG1, "neurondb: evaluate_linear_regression_by_model_id_jsonb: function entry, model_id=%d", model_id);
-	ereport(DEBUG2, (errmsg("evaluate_linear_regression_by_model_id_jsonb: table_name=%p, feature_col=%p, label_col=%p", (void*)table_name, (void*)feature_col, (void*)label_col)));
-	ereport(DEBUG2, (errmsg("evaluate_linear_regression_by_model_id_jsonb: CurrentMemoryContext=%p", (void*)CurrentMemoryContext)));
 #ifdef NDB_GPU_CUDA
 	NDB_DECLARE (float *, h_features);
 	NDB_DECLARE (double *, h_targets);
 	int			valid_rows = 0;
 #endif
 
-	elog(DEBUG1, "neurondb: evaluate_linear_regression_by_model_id_jsonb: about to call linreg_load_model_from_catalog");
 
 	/* Load model from catalog - try CPU first, then GPU */
 	if (!linreg_load_model_from_catalog(model_id, &model))
@@ -2720,22 +2716,72 @@ evaluate_linear_regression_by_model_id_jsonb(int32 model_id, text * table_name, 
 	else
 		r_squared = 1.0 - (ss_res / ss_tot);
 
-	NDB_SPI_SESSION_END(eval_jsonb_spi_session);
-
-	/* Build result JSON */
-	MemoryContextSwitchTo(oldcontext);
-
+	/* Build result JSON string first (while still in SPI context is OK) */
 	initStringInfo(&jsonbuf);
 	appendStringInfo(&jsonbuf,
 					 "{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"r_squared\":%.6f,\"n_samples\":%d}",
 					 mse, mae, rmse, r_squared, nvec);
 
-	/* Return empty JSONB to avoid DirectFunctionCall1 issues */
-	char	   *result_buf = NULL;
-	NBP_ALLOC(result_buf, char, VARHDRSZ + sizeof(JsonbContainer));
-	result = (Jsonb *) result_buf;
-	SET_VARSIZE(result, VARHDRSZ + sizeof(JsonbContainer));
-	result->root.header = JB_CMASK; /* Empty object */
+	/* Use ndb_jsonb_in_cstring like test 006 fix */
+	PG_TRY();
+	{
+		result = ndb_jsonb_in_cstring(jsonbuf.data);
+		if (result == NULL)
+		{
+			NDB_FREE(jsonbuf.data);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("neurondb: failed to parse metrics JSON")));
+		}
+	}
+	PG_CATCH();
+	{
+		ErrorData *edata;
+		edata = CopyErrorData();
+		FlushErrorState();
+		NDB_FREE(jsonbuf.data);
+		jsonbuf.data = NULL;
+		NDB_SPI_SESSION_END(eval_jsonb_spi_session);
+		NDB_FREE(model_coefficients_ptr);
+		NDB_FREE(model);
+		NDB_FREE(gpu_payload);
+		NDB_FREE(gpu_metrics);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
+		NDB_FREE(targ_str);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_linear_regression_by_model_id_jsonb: failed to create JSONB result: %s",
+						edata ? edata->message : "unknown error")));
+	}
+	PG_END_TRY();
+
+	/* Copy JSONB to caller's context BEFORE ending SPI session (same pattern as GMM) */
+	if (result != NULL)
+	{
+		MemoryContextSwitchTo(oldcontext);
+		result = (Jsonb *) PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result));
+	}
+
+	/* Now safe to end SPI session */
+	NDB_SPI_SESSION_END(eval_jsonb_spi_session);
+
+	if (result == NULL)
+	{
+		NDB_FREE(jsonbuf.data);
+		jsonbuf.data = NULL;
+		NDB_FREE(model_coefficients_ptr);
+		NDB_FREE(model);
+		NDB_FREE(gpu_payload);
+		NDB_FREE(gpu_metrics);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
+		NDB_FREE(targ_str);
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_linear_regression_by_model_id_jsonb: JSONB result is NULL")));
+	}
+
 	NDB_FREE(jsonbuf.data);
 	jsonbuf.data = NULL;
 
@@ -2962,8 +3008,15 @@ linreg_gpu_evaluate(const MLGpuModel * model,
 						 state->feature_dim > 0 ? state->feature_dim : 0,
 						 state->n_samples > 0 ? state->n_samples : 0);
 
-		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetTextDatum(buf.data)));
+		/* Use ndb_jsonb_in_cstring like test 006 fix */
+		metrics_json = ndb_jsonb_in_cstring(buf.data);
+		if (metrics_json == NULL)
+		{
+			NDB_FREE(buf.data);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("neurondb: failed to parse metrics JSON")));
+		}
 		NDB_FREE(buf.data);
 		buf.data = NULL;
 	}
@@ -3053,8 +3106,15 @@ linreg_gpu_serialize(const MLGpuModel * model,
 						 state->feature_dim > 0 ? state->feature_dim : 0,
 						 state->n_samples > 0 ? state->n_samples : 0);
 
-		*metadata_out = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-														   CStringGetTextDatum(metrics_buf.data)));
+		/* Use ndb_jsonb_in_cstring like test 006 fix */
+		*metadata_out = ndb_jsonb_in_cstring(metrics_buf.data);
+		if (*metadata_out == NULL)
+		{
+			NDB_FREE(metrics_buf.data);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("neurondb: failed to parse metadata JSON")));
+		}
 		NDB_FREE(metrics_buf.data);
 	}
 

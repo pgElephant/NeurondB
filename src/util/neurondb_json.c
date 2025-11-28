@@ -152,12 +152,12 @@ Jsonb *
 ndb_jsonb_in(text *json_text)
 {
 	char	   *cstr;
-	Datum		cstr_datum;
 	Datum		result_datum;
 	Jsonb	   *result = NULL;
 
-	if (json_text == NULL)
+	if (json_text == NULL) {
 		return NULL;
+	}
 
 	/* Initialize OIDs if needed */
 	if (!jsonb_oids_initialized)
@@ -192,8 +192,9 @@ ndb_jsonb_in_cstring(const char *json_str)
 	text	   *json_text;
 	Jsonb	   *result = NULL;
 
-	if (json_str == NULL)
+	if (json_str == NULL) {
 		return NULL;
+	}
 
 	json_text = cstring_to_text(json_str);
 	result = ndb_jsonb_in(json_text);
@@ -798,7 +799,7 @@ ndb_json_unescape_string(const char *json_str)
 					q += 2;
 					break;
 				case 'u':
-					/* Unicode escape */
+					/* Unicode escape - full UTF-8 encoding */
 					if (q + 5 < p + len && isxdigit((unsigned char) q[2]) &&
 						isxdigit((unsigned char) q[3]) &&
 						isxdigit((unsigned char) q[4]) &&
@@ -807,16 +808,64 @@ ndb_json_unescape_string(const char *json_str)
 						unsigned int code = 0;
 
 						sscanf(q + 2, "%4x", &code);
-		if (code < 128)
-		{
-			*unescaped++ = (char) code;
-		}
-		else
-		{
-			/* TODO: full UTF-8 for \uXXXX > 0x7F; for now use '?' */
-			/* Non-ASCII: use replacement character */
-			*unescaped++ = '?';
-		}
+						if (code < 0x80)
+						{
+							/* ASCII: single byte */
+							*unescaped++ = (char) code;
+						}
+						else if (code < 0x800)
+						{
+							/* 2-byte UTF-8 */
+							*unescaped++ = (char) (0xC0 | (code >> 6));
+							*unescaped++ = (char) (0x80 | (code & 0x3F));
+						}
+						else if (code < 0xD800 || code >= 0xE000)
+						{
+							/* 3-byte UTF-8 (excluding surrogates) */
+							*unescaped++ = (char) (0xE0 | (code >> 12));
+							*unescaped++ = (char) (0x80 | ((code >> 6) & 0x3F));
+							*unescaped++ = (char) (0x80 | (code & 0x3F));
+						}
+						else
+						{
+							/* Surrogate pair - check for second part */
+							if (code >= 0xD800 && code < 0xDC00 && q + 11 < p + len &&
+								q[6] == '\\' && q[7] == 'u' &&
+								isxdigit((unsigned char) q[8]) &&
+								isxdigit((unsigned char) q[9]) &&
+								isxdigit((unsigned char) q[10]) &&
+								isxdigit((unsigned char) q[11]))
+							{
+								unsigned int code2 = 0;
+
+								sscanf(q + 8, "%4x", &code2);
+								if (code2 >= 0xDC00 && code2 < 0xE000)
+								{
+									/* Valid surrogate pair - 4-byte UTF-8 */
+									unsigned int full_code = 0x10000 + ((code - 0xD800) << 10) + (code2 - 0xDC00);
+
+									*unescaped++ = (char) (0xF0 | (full_code >> 18));
+									*unescaped++ = (char) (0x80 | ((full_code >> 12) & 0x3F));
+									*unescaped++ = (char) (0x80 | ((full_code >> 6) & 0x3F));
+									*unescaped++ = (char) (0x80 | (full_code & 0x3F));
+									q += 6;	/* Skip second \uXXXX */
+								}
+								else
+								{
+									/* Invalid surrogate pair - use replacement character */
+									*unescaped++ = 0xEF;
+									*unescaped++ = 0xBF;
+									*unescaped++ = 0xBD;
+								}
+							}
+							else
+							{
+								/* Invalid surrogate - use replacement character */
+								*unescaped++ = 0xEF;
+								*unescaped++ = 0xBF;
+								*unescaped++ = 0xBD;
+							}
+						}
 						q += 6;
 					}
 					else
@@ -868,7 +917,7 @@ ndb_json_find_key(const char *json_str, const char *key)
 		jsonb = ndb_jsonb_in_cstring(json_str);
 		if (jsonb != NULL)
 		{
-			field = ndb_jsonb_object_field(jsonb, key);
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, key);
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1125,6 +1174,7 @@ ndb_json_parse_gen_params(const char *params_json,
 	char	   *endptr = NULL;
 	float		float_val;
 	int			int_val;
+	volatile Jsonb *jsonb = NULL;
 
 	if (errstr)
 		*errstr = NULL;
@@ -1158,7 +1208,6 @@ ndb_json_parse_gen_params(const char *params_json,
 		return 0;
 
 	/* Try JSONB parsing first for robustness */
-	volatile Jsonb *jsonb = NULL;
 	PG_TRY();
 	{
 		jsonb = ndb_jsonb_in_cstring(params_json);
@@ -1171,7 +1220,7 @@ ndb_json_parse_gen_params(const char *params_json,
 			char	   *value_str;
 
 			/* temperature */
-			field = ndb_jsonb_object_field(jsonb, "temperature");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "temperature");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1188,7 +1237,7 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* top_p */
-			field = ndb_jsonb_object_field(jsonb, "top_p");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "top_p");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1205,7 +1254,7 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* top_k */
-			field = ndb_jsonb_object_field(jsonb, "top_k");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "top_k");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1222,9 +1271,9 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* max_tokens / max_length */
-			field = ndb_jsonb_object_field(jsonb, "max_tokens");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "max_tokens");
 			if (field == NULL)
-				field = ndb_jsonb_object_field(jsonb, "max_length");
+				field = ndb_jsonb_object_field((Jsonb *)jsonb, "max_length");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1241,9 +1290,9 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* min_tokens / min_length */
-			field = ndb_jsonb_object_field(jsonb, "min_tokens");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "min_tokens");
 			if (field == NULL)
-				field = ndb_jsonb_object_field(jsonb, "min_length");
+				field = ndb_jsonb_object_field((Jsonb *)jsonb, "min_length");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1260,7 +1309,7 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* repetition_penalty */
-			field = ndb_jsonb_object_field(jsonb, "repetition_penalty");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "repetition_penalty");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1277,7 +1326,7 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* do_sample */
-			field = ndb_jsonb_object_field(jsonb, "do_sample");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "do_sample");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1295,7 +1344,7 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* return_prompt */
-			field = ndb_jsonb_object_field(jsonb, "return_prompt");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "return_prompt");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1313,7 +1362,7 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* seed */
-			field = ndb_jsonb_object_field(jsonb, "seed");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "seed");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1330,9 +1379,9 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* streaming / stream */
-			field = ndb_jsonb_object_field(jsonb, "streaming");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "streaming");
 			if (field == NULL)
-				field = ndb_jsonb_object_field(jsonb, "stream");
+				field = ndb_jsonb_object_field((Jsonb *)jsonb, "stream");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -1350,7 +1399,7 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* stop_sequences - array of strings */
-			field = ndb_jsonb_object_field(jsonb, "stop_sequences");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "stop_sequences");
 			if (field != NULL)
 			{
 				NDB_DECLARE(char *, tmp);
@@ -1372,9 +1421,9 @@ ndb_json_parse_gen_params(const char *params_json,
 			}
 
 			/* logit_bias - object mapping token IDs to bias values */
-			field = ndb_jsonb_object_field(jsonb, "logit_bias");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "logit_bias");
 			if (field == NULL)
-				field = ndb_jsonb_object_field(jsonb, "bias");
+				field = ndb_jsonb_object_field((Jsonb *)jsonb, "bias");
 			if (field != NULL)
 			{
 				/* Parse logit bias object */
@@ -1454,7 +1503,12 @@ ndb_json_parse_gen_params(const char *params_json,
 	{
 		FlushErrorState();
 		/* Free jsonb if it was allocated */
-		NDB_FREE(jsonb);
+		if (jsonb != NULL)
+		{
+			Jsonb *jsonb_ptr = (Jsonb *) jsonb;
+			pfree(jsonb_ptr);
+			jsonb = NULL;
+		}
 		/* Fall back to string-based parsing */
 	}
 	PG_END_TRY();
@@ -1975,7 +2029,7 @@ ndb_json_extract_openai_response(const char *json_str,
 															q += 2;
 															break;
 														case 'u':
-															/* Unicode escape */
+															/* Unicode escape - full UTF-8 encoding */
 															if (q + 5 < p + len && isxdigit((unsigned char) q[2]) &&
 																isxdigit((unsigned char) q[3]) &&
 																isxdigit((unsigned char) q[4]) &&
@@ -1984,13 +2038,63 @@ ndb_json_extract_openai_response(const char *json_str,
 																unsigned int code = 0;
 
 																sscanf(q + 2, "%4x", &code);
-																if (code < 128)
+																if (code < 0x80)
 																{
+																	/* ASCII: single byte */
 																	*unescaped++ = (char) code;
+																}
+																else if (code < 0x800)
+																{
+																	/* 2-byte UTF-8 */
+																	*unescaped++ = (char) (0xC0 | (code >> 6));
+																	*unescaped++ = (char) (0x80 | (code & 0x3F));
+																}
+																else if (code < 0xD800 || code >= 0xE000)
+																{
+																	/* 3-byte UTF-8 (excluding surrogates) */
+																	*unescaped++ = (char) (0xE0 | (code >> 12));
+																	*unescaped++ = (char) (0x80 | ((code >> 6) & 0x3F));
+																	*unescaped++ = (char) (0x80 | (code & 0x3F));
 																}
 																else
 																{
-																	*unescaped++ = '?';
+																	/* Surrogate pair - check for second part */
+																	if (code >= 0xD800 && code < 0xDC00 && q + 11 < p + len &&
+																		q[6] == '\\' && q[7] == 'u' &&
+																		isxdigit((unsigned char) q[8]) &&
+																		isxdigit((unsigned char) q[9]) &&
+																		isxdigit((unsigned char) q[10]) &&
+																		isxdigit((unsigned char) q[11]))
+																	{
+																		unsigned int code2 = 0;
+
+																		sscanf(q + 8, "%4x", &code2);
+																		if (code2 >= 0xDC00 && code2 < 0xE000)
+																		{
+																			/* Valid surrogate pair - 4-byte UTF-8 */
+																			unsigned int full_code = 0x10000 + ((code - 0xD800) << 10) + (code2 - 0xDC00);
+
+																			*unescaped++ = (char) (0xF0 | (full_code >> 18));
+																			*unescaped++ = (char) (0x80 | ((full_code >> 12) & 0x3F));
+																			*unescaped++ = (char) (0x80 | ((full_code >> 6) & 0x3F));
+																			*unescaped++ = (char) (0x80 | (full_code & 0x3F));
+																			q += 6;	/* Skip second \uXXXX */
+																		}
+																		else
+																		{
+																			/* Invalid surrogate pair - use replacement character */
+																			*unescaped++ = 0xEF;
+																			*unescaped++ = 0xBF;
+																			*unescaped++ = 0xBD;
+																		}
+																	}
+																	else
+																	{
+																		/* Invalid surrogate - use replacement character */
+																		*unescaped++ = 0xEF;
+																		*unescaped++ = 0xBF;
+																		*unescaped++ = 0xBD;
+																	}
 																}
 																q += 6;
 															}
@@ -2107,7 +2211,7 @@ ndb_json_parse_openai_embedding(const char *json_str,
 		if (jsonb != NULL)
 		{
 			/* Extract data array */
-			data = ndb_jsonb_object_field(jsonb, "data");
+			data = ndb_jsonb_object_field((Jsonb *)jsonb, "data");
 			if (data != NULL)
 			{
 				/* Get first item from data array */
@@ -2132,15 +2236,18 @@ ndb_json_parse_openai_embedding(const char *json_str,
 							{
 								if (v.type == jbvNumeric)
 								{
+									Numeric		num;
+									float		float_val;
+
 									if ((int) n >= (int) cap)
 									{
 										cap *= 2;
 										vec = (float *) repalloc((float *) vec, sizeof(float) * (int) cap);
 									}
 
-									Numeric		num = v.val.numeric;
-									float		float_val = DatumGetFloat4(DirectFunctionCall1(numeric_float4,
-																							  NumericGetDatum(num)));
+									num = v.val.numeric;
+									float_val = DatumGetFloat4(DirectFunctionCall1(numeric_float4,
+																				   NumericGetDatum(num)));
 
 									((float *) vec)[(int) n++] = float_val;
 								}
@@ -2287,7 +2394,7 @@ ndb_json_parse_openai_embedding(const char *json_str,
 					if (n >= cap)
 					{
 						cap = cap * 2;
-						vec = repalloc(vec, sizeof(float) * cap);
+						vec = (volatile float *) repalloc((void *) vec, sizeof(float) * cap);
 					}
 
 					vec[n++] = (float) v;
@@ -2299,9 +2406,9 @@ ndb_json_parse_openai_embedding(const char *json_str,
 					/* Trim to actual size */
 					if (n < cap)
 					{
-						vec = repalloc(vec, sizeof(float) * n);
+						vec = (volatile float *) repalloc((void *) vec, sizeof(float) * n);
 					}
-					*vec_out = vec;
+					*vec_out = (float *) vec;
 					*dim_out = n;
 					return 0;
 				}
@@ -2309,7 +2416,7 @@ ndb_json_parse_openai_embedding(const char *json_str,
 				{
 					if (vec != NULL)
 					{
-						pfree(vec);
+						pfree((void *) vec);
 						vec = NULL;
 					}
 				}
@@ -2364,7 +2471,7 @@ ndb_json_parse_sparse_vector(const char *json_str,
 		if (jsonb != NULL)
 		{
 			/* Extract vocab_size */
-			field = ndb_jsonb_object_field(jsonb, "vocab_size");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "vocab_size");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -2379,7 +2486,7 @@ ndb_json_parse_sparse_vector(const char *json_str,
 			}
 
 			/* Extract model type */
-			field = ndb_jsonb_object_field(jsonb, "model");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "model");
 			if (field != NULL)
 			{
 				field_text = ndb_jsonb_out(field);
@@ -2409,7 +2516,7 @@ ndb_json_parse_sparse_vector(const char *json_str,
 			}
 
 			/* Extract tokens array */
-			field = ndb_jsonb_object_field(jsonb, "tokens");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "tokens");
 			if (field != NULL)
 			{
 				NDB_DECLARE(char *, tmp);
@@ -2434,7 +2541,7 @@ ndb_json_parse_sparse_vector(const char *json_str,
 			}
 
 			/* Extract weights array */
-			field = ndb_jsonb_object_field(jsonb, "weights");
+			field = ndb_jsonb_object_field((Jsonb *)jsonb, "weights");
 			if (field != NULL)
 			{
 				NDB_DECLARE(char *, tmp);
@@ -2543,12 +2650,12 @@ ndb_json_parse_sparse_vector(const char *json_str,
 
 					while (tok_ptr < tokens_end && *tok_ptr)
 					{
-						if (nnz >= capacity)
-						{
-							capacity *= 2;
-							token_ids = repalloc(token_ids, sizeof(int32) * capacity);
-							weights = repalloc(weights, sizeof(float4) * capacity);
-						}
+					if (nnz >= capacity)
+					{
+						capacity *= 2;
+						token_ids = (volatile int32 *) repalloc((void *) token_ids, sizeof(int32) * capacity);
+						weights = (volatile float4 *) repalloc((void *) weights, sizeof(float4) * capacity);
+					}
 
 						while (*tok_ptr == ' ' || *tok_ptr == ',')
 							tok_ptr++;
@@ -2901,6 +3008,8 @@ ndb_json_merge_objects(const char *json1, const char *json2)
 	}
 	PG_CATCH();
 	{
+		StringInfoData buf;
+
 		FlushErrorState();
 		if (jsonb1 != NULL)
 		{
@@ -2915,7 +3024,6 @@ ndb_json_merge_objects(const char *json1, const char *json2)
 			jsonb2 = NULL;
 		}
 		/* Simple string concatenation fallback */
-		StringInfoData buf;
 
 		initStringInfo(&buf);
 		appendStringInfoString(&buf, "{");
@@ -3049,6 +3157,11 @@ ndb_json_parse_array(const char *json_str, int *count)
 	/* Fallback to string-based parsing if no elements were found */
 	if (result == NULL || (int) n == 0)
 	{
+		const char *p;
+		const char *start;
+		const char *end;
+		char	   *value;
+
 		if (result != NULL)
 		{
 			{
@@ -3058,10 +3171,6 @@ ndb_json_parse_array(const char *json_str, int *count)
 			}
 			result = NULL;
 		}
-		const char *p;
-		const char *start;
-		const char *end;
-		char	   *value;
 
 		p = json_str;
 		while (*p && *p != '[')
@@ -3417,7 +3526,7 @@ ndb_json_parse_object(const char *json_str, int *count)
 
 			result = (NdbJsonParseResult *) palloc(sizeof(NdbJsonParseResult) * capacity);
 
-			it = JsonbIteratorInit(&jsonb->root);
+			it = JsonbIteratorInit(&((Jsonb *)jsonb)->root);
 			while ((type = JsonbIteratorNext(&it, &v, true)) != WJB_DONE)
 			{
 				if (type == WJB_KEY && v.type == jbvString)
@@ -3535,11 +3644,14 @@ ndb_json_parse_object(const char *json_str, int *count)
 	if (n > 0)
 	{
 		*count = n;
-		return result;
+		return (NdbJsonParseResult *) result;
 	}
 
 	if (result != NULL)
-		NDB_FREE(result);
+	{
+		NdbJsonParseResult *result_ptr = (NdbJsonParseResult *) result;
+		NDB_FREE(result_ptr);
+	}
 
 	return NULL;
 }
@@ -3548,7 +3660,7 @@ ndb_json_parse_object(const char *json_str, int *count)
  * ndb_json_parse_object_free - Free array parsed by ndb_json_parse_object
  * Caller must free the returned array using this function
  */
-static void
+void
 ndb_json_parse_object_free(NdbJsonParseResult *arr, int count)
 {
 	int			i;

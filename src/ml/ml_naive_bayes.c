@@ -34,6 +34,7 @@
 #include "neurondb_spi.h"
 #include "neurondb_safe_memory.h"
 #include "neurondb_macros.h"
+#include "neurondb_json.h"
  
 #ifdef NDB_GPU_CUDA
 #include "neurondb_cuda_runtime.h"
@@ -743,10 +744,11 @@ nb_model_serialize_to_bytea(const GaussianNBModel *model)
 	 int dim = 0;
 	 GaussianNBModel model;
 	 int valid = 0;
+	 int n_classes = 0;  /* Save before SPI ends */
+	 int n_features = 0;  /* Save before SPI ends */
 	 bytea *model_data;
 	 MLCatalogModelSpec spec;
 	 Jsonb *metrics;
-	 StringInfoData metrics_json = {0};
 	 int32 model_id;
 	 Oid feat_type_oid;
 	 bool feat_is_array;
@@ -800,6 +802,10 @@ nb_model_serialize_to_bytea(const GaussianNBModel *model)
 	 /* Use shared training helper */
 	 nb_train_from_spi_result(nvec, feat_type_oid, feat_is_array, &model, &valid, &dim);
 
+	 /* Save model dimensions before SPI ends (model arrays are in SPI context) */
+	 n_classes = model.n_classes;
+	 n_features = model.n_features;
+
 	 /* Serialize model to bytea BEFORE SPI_finish() - model arrays are in SPI context */
 	 model_data = nb_model_serialize_to_bytea(&model);
 
@@ -817,14 +823,25 @@ nb_model_serialize_to_bytea(const GaussianNBModel *model)
 	 NDB_SPI_SESSION_END(train_nb_model_spi_session);
  
 	 /* Build metrics JSONB */
-	 initStringInfo(&metrics_json);
-	 appendStringInfo(&metrics_json,
-		 "{\"storage\": \"cpu\", \"n_classes\": %d, "
-		 "\"n_features\": %d}",
-		 model.n_classes, model.n_features);
-	 metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-		 CStringGetTextDatum(metrics_json.data)));
-	 NDB_FREE(metrics_json.data);
+	 {
+		 StringInfoData metrics_json;
+		 
+		 initStringInfo(&metrics_json);
+		 appendStringInfo(&metrics_json,
+						  "{\"storage\": \"cpu\", \"n_classes\": %d, \"n_features\": %d}",
+						  n_classes, n_features);
+		 
+		 /* Use ndb_jsonb_in_cstring like test 006 fix */
+		 metrics = ndb_jsonb_in_cstring(metrics_json.data);
+		 if (metrics == NULL)
+		 {
+			 NDB_FREE(metrics_json.data);
+			 ereport(ERROR,
+					 (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					  errmsg("neurondb: failed to parse metrics JSON")));
+		 }
+		 NDB_FREE(metrics_json.data);
+	 }
  
 	 /* Store model in catalog */
 	 memset(&spec, 0, sizeof(MLCatalogModelSpec));
@@ -1280,7 +1297,6 @@ nb_evaluate_naive_bayes_internal(FunctionCallInfo fcinfo)
 	 /* Check if GPU model using metrics json */
 	 if (gpu_payload != NULL && gpu_metrics != NULL)
 	 {
-		 char *meta_txt = NULL;
 		 bool is_gpu = false;
  
 		 PG_TRY();

@@ -21,6 +21,7 @@
 #include "executor/spi.h"
 #include "utils/array.h"
 #include "utils/jsonb.h"
+#include "common/jsonapi.h"
 #include "utils/memutils.h"
 
 #include "neurondb.h"
@@ -36,6 +37,7 @@
 #include "neurondb_macros.h"
 #include "neurondb_spi.h"
 #include "neurondb_sql.h"
+#include "neurondb_json.h"
 #include "utils/elog.h"
 #ifdef NDB_GPU_CUDA
 #include "neurondb_gpu_model.h"
@@ -208,23 +210,25 @@ knn_classify(PG_FUNCTION_ARGS)
 
 		for (i = 0; i < nvec; i++)
 		{
+			HeapTuple	tuple;
+			TupleDesc	tupdesc;
+			Datum		feat_datum;
+			Datum		label_datum;
+			bool		feat_null;
+			bool		label_null;
+			Vector	   *vec;
 			/* Safe access to SPI_tuptable - validate before access */
 			if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
 				i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
 			{
 				continue;
 			}
-			HeapTuple	tuple = SPI_tuptable->vals[i];
-			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+			tuple = SPI_tuptable->vals[i];
+			tupdesc = SPI_tuptable->tupdesc;
 			if (tupdesc == NULL)
 			{
 				continue;
 			}
-			Datum		feat_datum;
-			Datum		label_datum;
-			bool		feat_null;
-			bool		label_null;
-			Vector	   *vec;
 
 			feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 			/* Safe access for label - validate tupdesc has at least 2 columns */
@@ -445,23 +449,25 @@ knn_regress(PG_FUNCTION_ARGS)
 
 		for (i = 0; i < nvec; i++)
 		{
+			HeapTuple	tuple;
+			TupleDesc	tupdesc;
+			Datum		feat_datum;
+			Datum		targ_datum;
+			bool		feat_null;
+			bool		targ_null;
+			Vector	   *vec;
 			/* Safe access to SPI_tuptable - validate before access */
 			if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
 				i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
 			{
 				continue;
 			}
-			HeapTuple	tuple = SPI_tuptable->vals[i];
-			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+			tuple = SPI_tuptable->vals[i];
+			tupdesc = SPI_tuptable->tupdesc;
 			if (tupdesc == NULL)
 			{
 				continue;
 			}
-			Datum		feat_datum;
-			Datum		targ_datum;
-			bool		feat_null;
-			bool		targ_null;
-			Vector	   *vec;
 
 			feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 			/* Safe access for target - validate tupdesc has at least 2 columns */
@@ -630,24 +636,26 @@ evaluate_knn_classifier(PG_FUNCTION_ARGS)
 	/* For each test sample, classify using KNN */
 	for (i = 0; i < ntest; i++)
 	{
-		/* Safe access to SPI_tuptable - validate before access */
-		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
-			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
-		{
-			continue;
-		}
-		HeapTuple	tuple = SPI_tuptable->vals[i];
-		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-		if (tupdesc == NULL)
-		{
-			continue;
-		}
+		HeapTuple	tuple;
+		TupleDesc	tupdesc;
 		Datum		feat_datum;
 		Datum		label_datum;
 		bool		feat_null;
 		bool		label_null;
 		int			y_true;
 		int			y_pred;
+		/* Safe access to SPI_tuptable - validate before access */
+		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+			i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+		{
+			continue;
+		}
+		tuple = SPI_tuptable->vals[i];
+		tupdesc = SPI_tuptable->tupdesc;
+		if (tupdesc == NULL)
+		{
+			continue;
+		}
 
 		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 		label_datum = SPI_getbinval(tuple, tupdesc, 2, &label_null);
@@ -1000,7 +1008,15 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json, "{\"storage\": \"cpu\", \"k\": %d, \"n_samples\": %d, \"n_features\": %d}",
 					 k_value, nvec, dim);
-	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metrics_json.data)));
+	/* Use ndb_jsonb_in_cstring like test 006 fix */
+        metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metrics_json.data)));
+	if (metrics == NULL)
+	{
+		NDB_FREE(metrics_json.data);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("neurondb: failed to parse metrics JSON")));
+	}
 	NDB_FREE(metrics_json.data);
 
 	/* Store model in catalog */
@@ -2000,18 +2016,8 @@ knn_predict_batch(int32 model_id,
 
 					for (i = 0; i < n_train; i++)
 					{
-						/* Safe access to SPI_tuptable - validate before access */
-						if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
-							i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
-						{
-							continue;
-						}
-						HeapTuple	tuple = SPI_tuptable->vals[i];
-						TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-						if (tupdesc == NULL)
-						{
-							continue;
-						}
+						HeapTuple	tuple;
+						TupleDesc	tupdesc;
 						Datum		feat_datum;
 						Datum		label_datum;
 						bool		feat_null;
@@ -2019,6 +2025,18 @@ knn_predict_batch(int32 model_id,
 						Vector	   *vec;
 						ArrayType  *arr;
 						float	   *train_row;
+						/* Safe access to SPI_tuptable - validate before access */
+						if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
+							i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
+						{
+							continue;
+						}
+						tuple = SPI_tuptable->vals[i];
+						tupdesc = SPI_tuptable->tupdesc;
+						if (tupdesc == NULL)
+						{
+							continue;
+						}
 
 						feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 						label_datum = SPI_getbinval(tuple, tupdesc, 2, &label_null);
@@ -2215,7 +2233,6 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 	MemoryContext oldcontext;
 	MemoryContext callcontext;
 	StringInfoData query;
-	StringInfoData jsonbuf;
 	Jsonb	   *result_jsonb = NULL;
 	bytea	   *gpu_payload = NULL;
 	Jsonb	   *gpu_metrics = NULL;
@@ -2694,6 +2711,7 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 				if (rc == 0)
 				{
 					/* Success - build result and return */
+					StringInfoData jsonbuf;
 					initStringInfo(&jsonbuf);
 					appendStringInfo(&jsonbuf,
 									 "{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
@@ -3014,27 +3032,97 @@ cpu_evaluation_path:
 			NDB_FREE(gpu_metrics);
 	}
 
-	/* Build jsonb result in SPI context */
-	initStringInfo(&jsonbuf);
-	appendStringInfo(&jsonbuf,
-					 "{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
-					 accuracy,
-					 precision,
-					 recall,
-					 f1_score,
-					 valid_rows > 0 ? valid_rows : nvec);
-
-	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetTextDatum(jsonbuf.data)));
-
-	NDB_FREE(jsonbuf.data);
-
-	MemoryContextSwitchTo(oldcontext);
-	result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result_jsonb));
-
-	/* Now safe to finish SPI session and free SPI-allocated memory */
+	/* End SPI session BEFORE creating JSONB to avoid context conflicts */
 	ndb_spi_stringinfo_free(spi_session, &query);
 	NDB_SPI_SESSION_END(spi_session);
+
+	/* Switch to old context and build JSONB directly using JSONB API */
+	MemoryContextSwitchTo(oldcontext);
+	{
+		JsonbParseState *state = NULL;
+		JsonbValue	jkey;
+		JsonbValue	jval;
+		JsonbValue *final_value = NULL;
+		Numeric		accuracy_num, precision_num, recall_num, f1_score_num, n_samples_num;
+		int			n_samples_val = valid_rows > 0 ? valid_rows : nvec;
+
+		/* Start object */
+		PG_TRY();
+		{
+			(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+			/* Add accuracy */
+			jkey.type = jbvString;
+			jkey.val.string.len = 9;
+			jkey.val.string.val = "accuracy";
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			accuracy_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(accuracy)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = accuracy_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add precision */
+			jkey.val.string.val = "precision";
+			jkey.val.string.len = 9;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			precision_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(precision)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = precision_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add recall */
+			jkey.val.string.val = "recall";
+			jkey.val.string.len = 6;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			recall_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(recall)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = recall_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add f1_score */
+			jkey.val.string.val = "f1_score";
+			jkey.val.string.len = 8;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			f1_score_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(f1_score)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = f1_score_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add n_samples */
+			jkey.val.string.val = "n_samples";
+			jkey.val.string.len = 9;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(n_samples_val)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = n_samples_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* End object */
+			final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+			
+			if (final_value == NULL)
+			{
+				elog(ERROR, "neurondb: evaluate_knn: pushJsonbValue(WJB_END_OBJECT) returned NULL");
+			}
+			
+			result_jsonb = JsonbValueToJsonb(final_value);
+		}
+		PG_CATCH();
+		{
+			ErrorData *edata = CopyErrorData();
+			elog(ERROR, "neurondb: evaluate_knn: JSONB construction failed: %s", edata->message);
+			FlushErrorState();
+			result_jsonb = NULL;
+		}
+		PG_END_TRY();
+	}
+
+	if (result_jsonb == NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_knn_by_model_id: JSONB result is NULL")));
+	}
 
 	/* Free strings allocated before SPI session begin (in oldcontext) */
 	NDB_FREE(tbl_str);

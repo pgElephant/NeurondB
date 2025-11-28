@@ -164,6 +164,12 @@ typedef struct NdbJsonParseResult
 extern NdbJsonParseResult *ndb_json_parse_object(const char *json_str, int *count);
 
 /*
+ * ndb_json_parse_object_free - Free array parsed by ndb_json_parse_object
+ * Caller must free the returned array using this function
+ */
+extern void ndb_json_parse_object_free(NdbJsonParseResult *arr, int count);
+
+/*
  * ndb_json_find_key - Find value for a key in JSON object
  * Returns pointer to value string or NULL if not found
  */
