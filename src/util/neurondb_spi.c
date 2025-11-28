@@ -357,6 +357,7 @@ ndb_spi_get_int32(NdbSpiSession *session,
 {
 	Datum		datum;
 	bool		isnull;
+	Oid			type_oid;
 
 	if (session == NULL || out_value == NULL)
 		return false;
@@ -379,8 +380,29 @@ ndb_spi_get_int32(NdbSpiSession *session,
 	if (isnull)
 		return false;
 
-	/* Simple scalar assignment - no context switching needed */
-	*out_value = DatumGetInt32(datum);
+	/* Get the type OID to ensure proper conversion */
+	type_oid = SPI_gettypeid(SPI_tuptable->tupdesc, col_idx);
+
+	/* Convert to int32 based on the actual type */
+	if (type_oid == INT4OID || type_oid == INT2OID || type_oid == INT8OID)
+	{
+		/* Direct conversion for integer types */
+		if (type_oid == INT4OID)
+			*out_value = DatumGetInt32(datum);
+		else if (type_oid == INT2OID)
+			*out_value = (int32) DatumGetInt16(datum);
+		else if (type_oid == INT8OID)
+			*out_value = (int32) DatumGetInt64(datum);
+	}
+	else
+	{
+		/* Type is not an integer type - this shouldn't happen for training functions */
+		/* Log warning and return false */
+		elog(WARNING,
+			 "neurondb: ndb_spi_get_int32: unexpected type OID %u (expected integer type)",
+			 type_oid);
+		return false;
+	}
 
 	return true;
 }
