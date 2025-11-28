@@ -32,6 +32,7 @@
 #include "neurondb_gpu.h"
 #include "neurondb_gpu_backend.h"
 #include "neurondb.h"
+#include "neurondb_constants.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -86,7 +87,7 @@ static inline bool
 ndb_gpu_can_run(const char *kernel_name)
 {
 	/* Check if global GPU support is enabled. */
-	if (!neurondb_gpu_enabled)
+	if (!NDB_SHOULD_TRY_GPU())
 		return false;
 	/* Check if the specified kernel is available. */
 	if (!ndb_gpu_kernel_enabled(kernel_name))

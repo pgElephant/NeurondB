@@ -29,6 +29,7 @@
 #include "neurondb_gpu.h"
 #include "neurondb_gpu_backend.h"
 #include "neurondb_gpu_model.h"
+#include "neurondb_constants.h"
 
 #ifdef NDB_GPU_CUDA
 #include "neurondb_cuda_hf.h"
@@ -57,6 +58,25 @@ extern bool neurondb_gpu_rf_predict_backend(const void *,
 #endif
 
 /* GUC variables are now defined in neurondb_guc.c */
+
+/*
+ * Convert GPU backend type enum to backend name string
+ */
+static const char *
+ndb_gpu_backend_type_to_name(int backend_type)
+{
+	switch (backend_type)
+	{
+		case NDB_GPU_BACKEND_TYPE_CUDA:
+			return "cuda";
+		case NDB_GPU_BACKEND_TYPE_ROCM:
+			return "rocm";
+		case NDB_GPU_BACKEND_TYPE_METAL:
+			return "metal";
+		default:
+			return NULL;
+	}
+}
 
 static bool gpu_ready = false;
 static bool gpu_disabled = false;
@@ -148,7 +168,7 @@ ndb_gpu_kernel_enabled(const char *kernel_name)
 int
 ndb_gpu_runtime_init(int *device_id)
 {
-	const char *requested = neurondb_gpu_backend;
+	const char *requested = NULL;
 	const		ndb_gpu_backend *backend;
 
 	/* Ignore SIGPIPE to prevent crashes when writing to broken pipes */
@@ -158,6 +178,29 @@ ndb_gpu_runtime_init(int *device_id)
 	if (device_id)
 		*device_id = 0;
 
+	/* Check compute mode - CPU mode should not reach here, but check anyway */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return -1;
+
+	/* Determine backend name from enum */
+	if (NDB_SHOULD_TRY_GPU())
+	{
+		/* Use enum-based backend type */
+		requested = ndb_gpu_backend_type_to_name(neurondb_gpu_backend_type);
+		
+		/* Default to "auto" if enum is invalid */
+		if (requested == NULL || requested[0] == '\0')
+		{
+			requested = "auto";
+		}
+	}
+	else
+	{
+		/* Should not reach here - CPU mode checked above */
+		return -1;
+	}
+
+	/* Check for explicit "cpu" request (legacy compatibility) */
 	if (requested && pg_strcasecmp(requested, "cpu") == 0)
 		return -1;
 
@@ -226,9 +269,18 @@ ndb_gpu_init_if_needed(void)
 
 	if (gpu_ready || gpu_disabled)
 		return;
-	if (!neurondb_gpu_enabled)
-		return;
 
+	/* Check compute mode - CPU mode: skip GPU init entirely */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+	{
+		gpu_disabled = true;
+		gpu_ready = false;
+		current_backend = GPU_BACKEND_NONE;
+		active_backend = NULL;
+		return;
+	}
+
+	/* GPU or AUTO mode: attempt GPU initialization */
 	rc = ndb_gpu_runtime_init(&device_id);
 	if (rc != 0)
 	{
@@ -236,16 +288,23 @@ ndb_gpu_init_if_needed(void)
 		gpu_disabled = true;
 		current_backend = GPU_BACKEND_NONE;
 		active_backend = NULL;
-		if (!neurondb_gpu_fail_open)
+		
+		/* GPU mode: error on failure */
+		if (NDB_COMPUTE_MODE_IS_GPU())
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_SYSTEM_ERROR),
-					 errmsg("neurondb: GPU initialization "
-							"failed")));
+					 errmsg("neurondb: GPU initialization failed - GPU mode requires GPU to be available"),
+					 errdetail("compute_mode is set to 'gpu' but GPU backend could not be initialized"),
+					 errhint("Check GPU hardware, drivers, and configuration. "
+							 "Set compute_mode='auto' for automatic CPU fallback.")));
 		}
-		elog(WARNING,
-			 "neurondb: GPU init failed. Using CPU "
-			 "fallback");
+		/* AUTO mode: warn and continue with CPU fallback */
+		else if (NDB_COMPUTE_MODE_IS_AUTO())
+		{
+			elog(WARNING,
+				 "neurondb: GPU init failed. Using CPU fallback (auto mode)");
+		}
 		return;
 	}
 
@@ -299,18 +358,38 @@ neurondb_gpu_shutdown(void)
 bool
 neurondb_gpu_is_available(void)
 {
-	return gpu_ready && neurondb_gpu_enabled && !gpu_disabled;
+	/* CPU mode: GPU never available */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return false;
+	
+	/* GPU mode: only return true if GPU is ready and initialized */
+	if (NDB_COMPUTE_MODE_IS_GPU())
+		return gpu_ready && !gpu_disabled;
+	
+	/* AUTO mode: return true if GPU is ready, false otherwise (allows CPU fallback) */
+	if (NDB_COMPUTE_MODE_IS_AUTO())
+		return gpu_ready && !gpu_disabled;
+	
+	/* Should not reach here - all modes handled above */
+	return false;
 }
 
 GPUBackend
 neurondb_gpu_get_backend(void)
 {
+	/* CPU mode: always return NONE */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return GPU_BACKEND_NONE;
 	return current_backend;
 }
 
 int
 neurondb_gpu_get_device_count(void)
 {
+	/* CPU mode: no GPU devices available */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return 0;
+
 	if (!active_backend || active_backend->device_count == NULL)
 		return 0;
 
@@ -326,6 +405,10 @@ neurondb_gpu_get_device_info(int device_id)
 	info = (GPUDeviceInfo *) palloc0(sizeof(GPUDeviceInfo));
 	info->device_id = device_id;
 	info->is_available = false;
+
+	/* CPU mode: return unavailable device info */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return info;
 
 	if (!active_backend || active_backend->device_info == NULL)
 		return info;
@@ -350,6 +433,10 @@ neurondb_gpu_get_device_info(int device_id)
 void
 neurondb_gpu_set_device(int device_id)
 {
+	/* CPU mode: never try to set GPU device */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return;
+
 	if (!active_backend || active_backend->set_device == NULL)
 	{
 		return;
@@ -414,6 +501,11 @@ neurondb_gpu_rf_predict(const void *rf_hdr,
 
 	if (errstr)
 		*errstr = NULL;
+	
+	/* CPU mode: never attempt GPU prediction */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		goto out;
+	
 	if (!neurondb_gpu_is_available())
 		goto out;
 	if (!ndb_gpu_kernel_enabled("rf_predict"))
@@ -449,7 +541,8 @@ PG_FUNCTION_INFO_V1(neurondb_gpu_enable);
 Datum
 neurondb_gpu_enable(PG_FUNCTION_ARGS)
 {
-	neurondb_gpu_enabled = true;
+	/* Set compute_mode to GPU */
+	neurondb_compute_mode = NDB_COMPUTE_MODE_GPU;
 	gpu_disabled = false;
 
 	/*

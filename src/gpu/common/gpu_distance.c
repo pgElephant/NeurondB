@@ -20,6 +20,7 @@
 
 #include "neurondb_gpu.h"
 #include "neurondb_gpu_backend.h"
+#include "neurondb_constants.h"
 
 #include <math.h>
 #include <string.h>
@@ -32,6 +33,10 @@ neurondb_gpu_l2_distance(const float *vec1, const float *vec2, int dim)
 {
 	const		ndb_gpu_backend *backend;
 	float		result = -1.0f;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return -1.0f;
 
 	if (!neurondb_gpu_is_available())
 		return -1.0f;
@@ -61,6 +66,10 @@ neurondb_gpu_cosine_distance(const float *vec1, const float *vec2, int dim)
 	const		ndb_gpu_backend *backend;
 	float		result = -1.0f;
 
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return -1.0f;
+
 	if (!neurondb_gpu_is_available())
 		return -1.0f;
 
@@ -89,6 +98,15 @@ neurondb_gpu_inner_product(const float *vec1, const float *vec2, int dim)
 	const		ndb_gpu_backend *backend;
 	int			i;
 	float		dot = 0.0f;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+	{
+		/* CPU fallback */
+		for (i = 0; i < dim; i++)
+			dot += vec1[i] * vec2[i];
+		return -dot;			/* Negative for maximum inner product search */
+	}
 
 	if (!neurondb_gpu_is_available())
 	{

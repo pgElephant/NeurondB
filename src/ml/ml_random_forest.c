@@ -42,6 +42,7 @@
 #include "neurondb_gpu.h"
 #include "ml_catalog.h"
 #include "neurondb_macros.h"
+#include "neurondb_constants.h"
 #include "neurondb_spi.h"
 #include "gtree.h"
 #include "ml_random_forest_internal.h"
@@ -275,7 +276,7 @@ rf_select_split(const float *features,
 
 		if (pair_count > 1)
 		{
-			bool		try_gpu = (n_classes == 2 && neurondb_gpu_enabled
+			bool		try_gpu = (n_classes == 2 && NDB_SHOULD_TRY_GPU()
 								   && neurondb_gpu_is_available()
 								   && ndb_gpu_kernel_enabled("rf_split"));
 

@@ -18,6 +18,7 @@
 #include "neurondb.h"
 #include "neurondb_llm.h"
 #include "neurondb_gpu.h"
+#include "neurondb_constants.h"
 #include "fmgr.h"
 #include "funcapi.h"
 #include "utils/builtins.h"
@@ -175,7 +176,7 @@ rerank_cross_encoder(PG_FUNCTION_ARGS)
 				   "all-MiniLM-L6-v2");
 			cfg.api_key = neurondb_llm_api_key;
 			cfg.timeout_ms = neurondb_llm_timeout_ms;
-			cfg.prefer_gpu = neurondb_gpu_enabled;
+			cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 			cfg.require_gpu = false;
 			if (cfg.provider != NULL
 				&& (pg_strcasecmp(
@@ -448,7 +449,7 @@ rerank_llm(PG_FUNCTION_ARGS)
 			: (neurondb_llm_model ? neurondb_llm_model : "gpt-3.5-turbo");
 		cfg.api_key = neurondb_llm_api_key;
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
-		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 		cfg.require_gpu = false;
 
 		call_opts.task = "complete";
@@ -810,7 +811,7 @@ rerank_colbert(PG_FUNCTION_ARGS)
 		cfg.model = model_str ? model_str : "colbert-ir/colbertv2.0";
 		cfg.api_key = neurondb_llm_api_key;
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
-		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 		cfg.require_gpu = false;
 
 		/* Get query embedding (token-level for ColBERT) */
@@ -988,7 +989,7 @@ rerank_ltr(PG_FUNCTION_ARGS)
 		cfg.model = model_str ? model_str : "sentence-transformers/all-MiniLM-L6-v2";
 		cfg.api_key = neurondb_llm_api_key;
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
-		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 		cfg.require_gpu = false;
 
 		/* Get query embedding */
@@ -1195,7 +1196,7 @@ rerank_ensemble(PG_FUNCTION_ARGS)
 			cfg.model = NULL;
 			cfg.api_key = neurondb_llm_api_key;
 			cfg.timeout_ms = neurondb_llm_timeout_ms;
-			cfg.prefer_gpu = neurondb_gpu_enabled;
+			cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 			cfg.require_gpu = false;
 
 			call_opts.task = "rerank";

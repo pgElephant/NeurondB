@@ -26,6 +26,7 @@
 #include "neurondb_validation.h"
 #include "neurondb_safe_memory.h"
 #include "neurondb_macros.h"
+#include "neurondb_constants.h"
 
 /* Forward declarations for GPU training functions */
 extern int	ndb_gpu_dt_train(const float *features,
@@ -109,6 +110,12 @@ ndb_gpu_try_train_model(const char *algorithm,
 		*errstr = NULL;
 	if (result)
 		ndb_gpu_init_train_result(result);
+
+	/* CPU mode: never attempt GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+	{
+		return false;
+	}
 
 	/* Early return if feature_matrix is NULL - data needs to be loaded first */
 	/* The caller (neurondb_train) will load data and call again, or fall back to CPU */

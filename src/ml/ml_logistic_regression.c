@@ -43,6 +43,7 @@
 #include "neurondb_sql.h"
 #include "neurondb_constants.h"
 #include "neurondb_json.h"
+#include "utils/jsonb.h"
 #include "utils/elog.h"
 #ifdef NDB_GPU_CUDA
 #include "neurondb_cuda_lr.h"
@@ -343,12 +344,12 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 			nvec = max_samples;
 		}
 
-		if (neurondb_gpu_enabled)
+		if (NDB_SHOULD_TRY_GPU())
 			ndb_gpu_init_if_needed();
 
 		elog(DEBUG1,
-			 "neurondb: logistic_regression: checking GPU - enabled=%d, available=%d, kernel_enabled=%d",
-			 neurondb_gpu_enabled ? 1 : 0,
+			 "neurondb: logistic_regression: checking GPU - compute_mode=%d, available=%d, kernel_enabled=%d",
+			 neurondb_compute_mode,
 			 neurondb_gpu_is_available() ? 1 : 0,
 			 ndb_gpu_kernel_enabled("lr_train") ? 1 : 0);
 
@@ -675,13 +676,123 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 						lr_model.weights = NULL;
 					}
 
-					/* Skip metrics to avoid JSON parsing issues */
-					updated_metrics = NULL;
+					/* Build metrics JSON using JSONB API */
+					{
+						JsonbParseState *state = NULL;
+						JsonbValue	jkey;
+						JsonbValue	jval;
+						JsonbValue *final_value = NULL;
+						Numeric		n_features_num, n_samples_num, max_iters_num, learning_rate_num, lambda_num, final_loss_num, accuracy_num;
+
+						/* Start object */
+						PG_TRY();
+						{
+							(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+							/* Add algorithm */
+							jkey.type = jbvString;
+							jkey.val.string.val = "algorithm";
+							jkey.val.string.len = strlen("algorithm");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							jval.type = jbvString;
+							jval.val.string.val = "logistic_regression";
+							jval.val.string.len = strlen("logistic_regression");
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add training_backend */
+							jkey.val.string.val = "training_backend";
+							jkey.val.string.len = strlen("training_backend");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							jval.type = jbvNumeric;
+							jval.val.numeric = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(1)));
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add n_features */
+							jkey.val.string.val = "n_features";
+							jkey.val.string.len = strlen("n_features");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							n_features_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(lr_model.n_features > 0 ? lr_model.n_features : 0)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = n_features_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add n_samples */
+							jkey.val.string.val = "n_samples";
+							jkey.val.string.len = strlen("n_samples");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(lr_model.n_samples > 0 ? lr_model.n_samples : 0)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = n_samples_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add max_iters */
+							jkey.val.string.val = "max_iters";
+							jkey.val.string.len = strlen("max_iters");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							max_iters_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(lr_model.max_iters)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = max_iters_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add learning_rate */
+							jkey.val.string.val = "learning_rate";
+							jkey.val.string.len = strlen("learning_rate");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							learning_rate_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(lr_model.learning_rate)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = learning_rate_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add lambda */
+							jkey.val.string.val = "lambda";
+							jkey.val.string.len = strlen("lambda");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							lambda_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(lr_model.lambda)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = lambda_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add final_loss */
+							jkey.val.string.val = "final_loss";
+							jkey.val.string.len = strlen("final_loss");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							final_loss_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(final_loss)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = final_loss_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add accuracy */
+							jkey.val.string.val = "accuracy";
+							jkey.val.string.len = strlen("accuracy");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							accuracy_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(accuracy)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = accuracy_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* End object */
+							final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+							
+							if (final_value == NULL)
+							{
+								elog(ERROR, "neurondb: train_logistic_regression: pushJsonbValue(WJB_END_OBJECT) returned NULL for metrics");
+							}
+							
+							updated_metrics = JsonbValueToJsonb(final_value);
+						}
+						PG_CATCH();
+						{
+							ErrorData *edata = CopyErrorData();
+							elog(ERROR, "neurondb: train_logistic_regression: metrics JSONB construction failed: %s", edata->message);
+							FlushErrorState();
+							updated_metrics = NULL;
+						}
+						PG_END_TRY();
+					}
 
 					spec = gpu_result.spec;
 					spec.model_data = unified_model_data;  /* Use unified format */
-					if (updated_metrics != NULL)
-						spec.metrics = updated_metrics;  /* Use updated metrics */
+					spec.metrics = updated_metrics;  /* Use updated metrics */
 
 					if (spec.training_table == NULL)
 						spec.training_table = tbl_str;
@@ -1915,16 +2026,17 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 									 log_loss,
 									 nvec);
 
+					/* Parse JSON string into JSONB using DirectFunctionCall1 */
 					{
-						/* Create empty JSONB to avoid DirectFunctionCall1 issues */
 						MemoryContext oldcontext = CurrentMemoryContext;
-						result_jsonb = (Jsonb *) palloc(VARHDRSZ + sizeof(uint32));
-						SET_VARSIZE(result_jsonb, VARHDRSZ + sizeof(uint32));
-						*((uint32 *) VARDATA(result_jsonb)) = JB_CMASK; /* Empty object header */
-							temp_jsonb = NULL;
-						}
+						result_jsonb = DatumGetJsonbP(
+							DirectFunctionCall1(
+								jsonb_in,
+								CStringGetTextDatum(jsonbuf.data)));
+						/* Copy to caller's context before SPI cleanup */
+						MemoryContextSwitchTo(oldcontext);
+						result_jsonb = (Jsonb *)PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result_jsonb));
 					}
-
 					NDB_FREE(jsonbuf.data);
 					jsonbuf.data = NULL;
 					NDB_FREE(h_features);
@@ -2282,10 +2394,15 @@ evaluate_logistic_regression_by_model_id(PG_FUNCTION_ARGS)
 						 "{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"log_loss\":%.6f,\"n_samples\":%d,\"tp\":%d,\"tn\":%d,\"fp\":%d,\"fn\":%d}",
 						 accuracy, precision, recall, f1_score, log_loss, total_predictions, tp, tn, fp, fn);
 
-		/* Create empty JSONB to avoid DirectFunctionCall1 issues */
-		result_jsonb = (Jsonb *) palloc(VARHDRSZ + sizeof(uint32));
-		SET_VARSIZE(result_jsonb, VARHDRSZ + sizeof(uint32));
-		*((uint32 *) VARDATA(result_jsonb)) = JB_CMASK; /* Empty object header */
+		/* Use ndb_jsonb_in_cstring which handles errors properly and returns JSONB in current context */
+		result_jsonb = ndb_jsonb_in_cstring(jsonbuf.data);
+		if (result_jsonb == NULL)
+		{
+			NDB_FREE(jsonbuf.data);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("neurondb: evaluate_logistic_regression_by_model_id: failed to parse metrics JSON")));
+		}
 		NDB_FREE(jsonbuf.data);
 		jsonbuf.data = NULL;
 
@@ -3003,10 +3120,13 @@ lr_gpu_evaluate(const MLGpuModel * model,
 						 state->feature_dim > 0 ? state->feature_dim : 0,
 						 state->n_samples > 0 ? state->n_samples : 0);
 
-		/* Create empty JSONB to avoid DirectFunctionCall1 issues */
-		metrics_json = (Jsonb *) palloc(VARHDRSZ + sizeof(uint32));
-		SET_VARSIZE(metrics_json, VARHDRSZ + sizeof(uint32));
-		*((uint32 *) VARDATA(metrics_json)) = JB_CMASK; /* Empty object header */
+		/* Parse JSON string into JSONB */
+		metrics_json = ndb_jsonb_in_cstring(buf.data);
+		if (metrics_json == NULL)
+		{
+			NDB_FREE(buf.data);
+			return false;
+		}
 		NDB_FREE(buf.data);
 		buf.data = NULL;
 	}

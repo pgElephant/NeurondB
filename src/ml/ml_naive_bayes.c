@@ -768,7 +768,8 @@ nb_model_serialize_to_bytea(const GaussianNBModel *model)
 	 label_str = text_to_cstring(label_col);
 
 	 /* Build query - cast label to float8 for type safety */
-	 initStringInfo(&query);
+	 /* Use ndb_spi_stringinfo_init to allocate in SPI context */
+	 ndb_spi_stringinfo_init(train_nb_model_spi_session, &query);
 	 appendStringInfo(&query,
 		 "SELECT %s, %s::float8 FROM %s WHERE %s IS NOT NULL AND %s IS NOT NULL",
 		 quote_identifier(feat_str),
@@ -783,9 +784,16 @@ nb_model_serialize_to_bytea(const GaussianNBModel *model)
 	ret = ndb_spi_execute_safe(query.data, true, 0);
 	NDB_CHECK_SPI_TUPTABLE();
 	 if (ret != SPI_OK_SELECT)
+	 {
+		 ndb_spi_stringinfo_free(train_nb_model_spi_session, &query);
+		 NDB_SPI_SESSION_END(train_nb_model_spi_session);
+		 NDB_FREE(tbl_str);
+		 NDB_FREE(feat_str);
+		 NDB_FREE(label_str);
 		 ereport(ERROR,
 			 (errcode(ERRCODE_INTERNAL_ERROR),
 			  errmsg("neurondb: query failed")));
+	 }
  
 	 nvec = SPI_processed;
 
@@ -809,6 +817,9 @@ nb_model_serialize_to_bytea(const GaussianNBModel *model)
 	 /* Serialize model to bytea BEFORE SPI_finish() - model arrays are in SPI context */
 	 model_data = nb_model_serialize_to_bytea(&model);
 
+	 /* Free query.data while still in SPI context, before switching */
+	 ndb_spi_stringinfo_free(train_nb_model_spi_session, &query);
+
 	 /* Copy model_data to outer context before SPI_finish() destroys SPI context */
 	 MemoryContextSwitchTo(oldcontext);
 	 {
@@ -819,7 +830,6 @@ nb_model_serialize_to_bytea(const GaussianNBModel *model)
 		 model_data = copy;
 	 }
 
-	 NDB_FREE(query.data);
 	 NDB_SPI_SESSION_END(train_nb_model_spi_session);
  
 	 /* Build metrics JSONB */
@@ -853,14 +863,28 @@ nb_model_serialize_to_bytea(const GaussianNBModel *model)
 	 spec.metrics = metrics;
 	 spec.num_samples = valid;
 	 spec.num_features = dim;
- 
+
 	 model_id = ml_catalog_register_model(&spec);
 
 	 /* Cleanup - model arrays were in SPI context and freed by SPI_finish() */
-	 /* query.data was also in SPI context and freed by SPI_finish() */
-	 NDB_FREE(tbl_str);
-	 NDB_FREE(feat_str);
-	 NDB_FREE(label_str);
+	 /* query.data was already freed before SPI session ended */
+	 /* Free strings allocated in oldcontext - ml_catalog_register_model has finished */
+	 /* and no longer needs them (it copies them internally for SQL) */
+	 if (tbl_str != NULL)
+	 {
+		 NDB_FREE(tbl_str);
+		 tbl_str = NULL;
+	 }
+	 if (feat_str != NULL)
+	 {
+		 NDB_FREE(feat_str);
+		 feat_str = NULL;
+	 }
+	 if (label_str != NULL)
+	 {
+		 NDB_FREE(label_str);
+		 label_str = NULL;
+	 }
 
 	 PG_RETURN_INT32(model_id);
 }

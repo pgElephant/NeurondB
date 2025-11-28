@@ -60,7 +60,7 @@ DEFAULT_ERROR_DIR = os.path.join(os.path.dirname(__file__), "error")
 DEFAULT_DB = "neurondb"
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 5432
-DEFAULT_MODE = "gpu"
+DEFAULT_MODE = "cpu"
 DEFAULT_NUM_ROWS = 1000
 
 # Output formatting constants for perfect alignment
@@ -142,13 +142,13 @@ def list_sql_files(category: str) -> List[str]:
 		raise ValueError("category must be one of: basic, advance, negative, all")
 
 
-def verify_gpu_usage(dbname: str, psql_path: str, mode: str, test_name: str = "", host: Optional[str] = None, port: Optional[int] = None) -> Tuple[bool, str]:
+def verify_gpu_usage(dbname: str, psql_path: str, compute_mode: str, test_name: str = "", host: Optional[str] = None, port: Optional[int] = None) -> Tuple[bool, str]:
 	"""
 	Verify that GPU-trained models actually used GPU.
 	Only checks the most recent model to avoid false positives from previous tests.
 	Returns (success, error_message).
 	"""
-	if mode != "gpu":
+	if compute_mode == "cpu":
 		return True, ""  # Skip verification for CPU mode
 	
 	env = os.environ.copy()
@@ -851,8 +851,8 @@ def print_header_info(script_name: str, version: str, dbname: str, psql_path: st
 			key_bold = f"{BOLD}{key_formatted}{RESET}"
 			print(f"\t{key_bold:<{LABEL_WIDTH + len(BOLD) + len(RESET) - 2}} {value}")
 	
-	# Print GPU Information if mode is GPU
-	if mode == "gpu":
+	# Print GPU Information if compute mode is GPU or AUTO
+	if mode in ("gpu", "auto"):
 		print("GPU Information:")
 		
 		gpu_info = get_gpu_info(dbname, psql_path, host, port)
@@ -1123,27 +1123,28 @@ def run_psql_command(dbname: str, sql_command: str, psql_path: str, verbose: boo
 	return success, out or "", err or ""
 
 
-def switch_gpu_mode(dbname: str, mode: str, psql_path: str, gpu_kernels: str = None, verbose: bool = False) -> bool:
+def switch_gpu_mode(dbname: str, compute_mode: str, psql_path: str, gpu_kernels: str = None, verbose: bool = False) -> bool:
 	"""
-	Switch GPU mode using ALTER SYSTEM and reload configuration.
-	Mode should be 'gpu' or 'cpu'.
+	Switch compute mode using ALTER SYSTEM and reload configuration.
+	Compute mode should be 'gpu', 'cpu', or 'auto'.
 	Returns True on success, False on failure.
 	"""
-	if mode not in ("gpu", "cpu"):
-		print(f"Invalid mode: {mode}. Must be 'gpu' or 'cpu'.", file=sys.stderr)
+	if compute_mode not in ("gpu", "cpu", "auto"):
+		print(f"Invalid compute mode: {compute_mode}. Must be 'gpu', 'cpu', or 'auto'.", file=sys.stderr)
 		return False
 
-	gpu_enabled = "on" if mode == "gpu" else "off"
+	# Map compute mode to enum value: cpu=0, gpu=1, auto=2
+	mode_enum = {"cpu": 0, "gpu": 1, "auto": 2}.get(compute_mode, 2)
 
-	# Set GPU enabled
-	cmd1 = f"ALTER SYSTEM SET neurondb.gpu_enabled = '{gpu_enabled}';"
+	# Set compute mode using new GUC
+	cmd1 = f"ALTER SYSTEM SET neurondb.compute_mode = {mode_enum};"
 	success1, out1, err1 = run_psql_command(dbname, cmd1, psql_path, verbose)
 	if not success1:
-		print(f"Failed to set GPU enabled: {err1}", file=sys.stderr)
+		print(f"Failed to set compute mode: {err1}", file=sys.stderr)
 		return False
 
-	# Set GPU kernels - include all ML algorithm kernels for GPU mode
-	if mode == "gpu":
+	# Set GPU kernels - include all ML algorithm kernels for GPU or auto mode
+	if compute_mode in ("gpu", "auto"):
 		# Default kernels plus all ML training/prediction kernels
 		default_kernels = "l2,cosine,ip,rf_split,rf_predict"
 		ml_kernels = "linreg_train,linreg_predict,lr_train,lr_predict,rf_train,svm_train,svm_predict,ridge_train,ridge_predict,lasso_train,lasso_predict,dt_train,dt_predict,nb_train,nb_predict"
@@ -1166,23 +1167,29 @@ def switch_gpu_mode(dbname: str, mode: str, psql_path: str, gpu_kernels: str = N
 		print(f"Failed to reload configuration: {err2}", file=sys.stderr)
 		return False
 
-	# Initialize GPU if GPU mode is enabled
-	if mode == "gpu":
+	# Initialize GPU if GPU or auto mode is enabled
+	if compute_mode in ("gpu", "auto"):
 		cmd3 = "SELECT neurondb_gpu_enable();"
 		success3, out3, err3 = run_psql_command(dbname, cmd3, psql_path, verbose)
 		if not success3:
-			print(f"Warning: Failed to enable GPU: {err3}", file=sys.stderr)
-			# Don't fail, GPU might not be available but we still want to test
+			if compute_mode == "gpu":
+				print(f"Warning: Failed to enable GPU: {err3}", file=sys.stderr)
+				# In GPU mode, this is a warning but we continue (let the mode handle errors)
+			else:
+				print(f"Warning: Failed to enable GPU (auto mode will fallback to CPU): {err3}", file=sys.stderr)
 		
 		# Force GPU initialization by querying GPU info
 		cmd4 = "SELECT * FROM neurondb_gpu_info() LIMIT 1;"
 		success4, out4, err4 = run_psql_command(dbname, cmd4, psql_path, verbose)
 		if not success4:
 			if verbose:
-				print(f"Warning: GPU info query failed (GPU may not be available): {err4}", file=sys.stderr)
+				if compute_mode == "gpu":
+					print(f"Warning: GPU info query failed (GPU may not be available): {err4}", file=sys.stderr)
+				else:
+					print(f"Info: GPU info query failed (auto mode will fallback to CPU): {err4}", file=sys.stderr)
 
 	if verbose:
-		print(f"Switched to {mode.upper()} mode successfully.")
+		print(f"Switched to {compute_mode.upper()} mode successfully.")
 	return True
 
 
@@ -1823,10 +1830,10 @@ def parse_args() -> argparse.Namespace:
 		help="Path to psql executable (default: resolve from PATH).",
 	)
 	parser.add_argument(
-		"--mode",
-		choices=["gpu", "cpu"],
+		"--compute",
+		choices=["gpu", "cpu", "auto"],
 		default=DEFAULT_MODE,
-		help=f"GPU or CPU mode (default: {DEFAULT_MODE}).",
+		help=f"Compute mode: gpu (GPU only), cpu (CPU only), or auto (try GPU, fallback to CPU) (default: {DEFAULT_MODE}).",
 	)
 	parser.add_argument(
 		"--gpu-kernels",
@@ -2626,7 +2633,7 @@ def main() -> int:
 		os.environ["PGUSER"] = args.user
 	
 	# Print header information
-	print_header_info(SCRIPT_NAME, SCRIPT_VERSION, args.db, args.psql, args.host, args.port, args.mode)
+	print_header_info(SCRIPT_NAME, SCRIPT_VERSION, args.db, args.psql, args.host, args.port, args.compute)
 	
 	# Load dataset if requested
 	if args.dataset == "higgs":
@@ -2670,14 +2677,14 @@ def main() -> int:
 		print(f"Failed to connect to PostgreSQL at {conn_info}. Aborting.", file=sys.stderr)
 		return 1
 	
-	# 2. Switch GPU/CPU mode (using ALTER SYSTEM)
+	# 2. Switch compute mode (using ALTER SYSTEM)
 	when = datetime.now()
 	mode_start = time.perf_counter()
-	mode_ok = switch_gpu_mode(args.db, args.mode, args.psql, args.gpu_kernels, args.verbose)
+	mode_ok = switch_gpu_mode(args.db, args.compute, args.psql, args.gpu_kernels, args.verbose)
 	mode_elapsed = time.perf_counter() - mode_start
-	print(format_status_line(mode_ok, when, f"Configuring postgresql for {args.mode.upper()} mode...", mode_elapsed))
+	print(format_status_line(mode_ok, when, f"Configuring postgresql for {args.compute.upper()} compute mode...", mode_elapsed))
 	if not mode_ok:
-		print(f"Failed to switch to {args.mode.upper()} mode. Aborting.", file=sys.stderr)
+		print(f"Failed to switch to {args.compute.upper()} compute mode. Aborting.", file=sys.stderr)
 		return 1
 	
 	# 3. Create test views (this also creates test_settings table)
@@ -2694,9 +2701,9 @@ def main() -> int:
 	when = datetime.now()
 	settings_start = time.perf_counter()
 	settings_sql = f"""
-	-- Store GPU mode setting
+	-- Store compute mode setting
 	INSERT INTO test_settings (setting_key, setting_value, updated_at)
-	VALUES ('gpu_mode', '{args.mode}', CURRENT_TIMESTAMP)
+	VALUES ('compute_mode', '{args.compute}', CURRENT_TIMESTAMP)
 	ON CONFLICT (setting_key) DO UPDATE SET
 		setting_value = EXCLUDED.setting_value,
 		updated_at = CURRENT_TIMESTAMP;
@@ -2803,10 +2810,10 @@ def main() -> int:
 				conn_ok, _, _ = check_postgresql_connection(args.db, args.psql, args.host, args.port)
 				if conn_ok:
 					print(f"    {GREEN_BOLD}✓ PostgreSQL restarted successfully: {restart_msg}{RESET}")
-					# Reconfigure mode after restart
-					mode_ok = switch_gpu_mode(args.db, args.mode, args.psql, args.gpu_kernels, args.verbose)
+					# Reconfigure compute mode after restart
+					mode_ok = switch_gpu_mode(args.db, args.compute, args.psql, args.gpu_kernels, args.verbose)
 					if mode_ok:
-						print(f"    {GREEN_BOLD}✓ Reconfigured for {args.mode.upper()} mode{RESET}")
+						print(f"    {GREEN_BOLD}✓ Reconfigured for {args.compute.upper()} compute mode{RESET}")
 					else:
 						print(f"    {RED_BOLD}⚠ Failed to reconfigure mode after restart{RESET}")
 				else:
@@ -2816,9 +2823,9 @@ def main() -> int:
 					conn_ok, _, _ = check_postgresql_connection(args.db, args.psql, args.host, args.port)
 					if conn_ok:
 						print(f"    {GREEN_BOLD}✓ Connection verified after additional wait{RESET}")
-						mode_ok = switch_gpu_mode(args.db, args.mode, args.psql, args.gpu_kernels, args.verbose)
+						mode_ok = switch_gpu_mode(args.db, args.compute, args.psql, args.gpu_kernels, args.verbose)
 						if mode_ok:
-							print(f"    {GREEN_BOLD}✓ Reconfigured for {args.mode.upper()} mode{RESET}")
+							print(f"    {GREEN_BOLD}✓ Reconfigured for {args.compute.upper()} compute mode{RESET}")
 					else:
 						print(f"    {RED_BOLD}✗ Connection still failing after restart{RESET}")
 			else:
@@ -2837,9 +2844,9 @@ def main() -> int:
 		# Overwrite the starting line with final result (colored: green ✓ or red ✗ or crash 💥)
 		print(format_test_line(ok, when, idx, total, name, elapsed, critical_crash))
 		
-		# Verify GPU usage for ML training tests in GPU mode (only if not crashed)
-		if ok and not critical_crash and args.mode == "gpu" and ("train" in name.lower() or "linreg" in name.lower() or "logreg" in name.lower() or "rf" in name.lower() or "svm" in name.lower() or "ridge" in name.lower() or "lasso" in name.lower() or "dt" in name.lower() or "nb" in name.lower()):
-			gpu_ok, gpu_err = verify_gpu_usage(args.db, args.psql, args.mode, name, args.host, args.port)
+		# Verify GPU usage for ML training tests in GPU or auto mode (only if not crashed)
+		if ok and not critical_crash and args.compute in ("gpu", "auto") and ("train" in name.lower() or "linreg" in name.lower() or "logreg" in name.lower() or "rf" in name.lower() or "svm" in name.lower() or "ridge" in name.lower() or "lasso" in name.lower() or "dt" in name.lower() or "nb" in name.lower()):
+			gpu_ok, gpu_err = verify_gpu_usage(args.db, args.psql, args.compute, name, args.host, args.port)
 			if not gpu_ok:
 				print(f"    {RED_BOLD}⚠ GPU Verification Failed: {gpu_err}{RESET}")
 				# Don't mark test as failed, just warn

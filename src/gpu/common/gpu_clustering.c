@@ -14,6 +14,7 @@
 #include "neurondb_config.h"
 #include "neurondb_gpu.h"
 #include "neurondb_gpu_backend.h"
+#include "neurondb_constants.h"
 
 /*
  * GPU KMeans clustering
@@ -29,6 +30,10 @@ neurondb_gpu_kmeans(const float *vectors,
 {
 	const		ndb_gpu_backend *backend;
 	int			iter;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return;
 
 	if (!neurondb_gpu_is_available())
 		return;
@@ -100,6 +105,10 @@ neurondb_gpu_dbscan(const float *vectors,
 	(void) eps;
 	(void) min_pts;
 	(void) labels;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return;
 
 	if (!neurondb_gpu_is_available())
 		return;

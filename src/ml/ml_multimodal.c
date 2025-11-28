@@ -32,6 +32,7 @@
 #include "neurondb_llm.h"
 #include "neurondb_gpu.h"
 #include "ml_catalog.h"
+#include "neurondb_constants.h"
 #include <string.h>
 #include <math.h>
 #include "neurondb_validation.h"
@@ -99,7 +100,7 @@ clip_embed(PG_FUNCTION_ARGS)
 		cfg.model = "sentence-transformers/clip-ViT-B-32";
 		cfg.api_key = neurondb_llm_api_key;
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
-		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 		cfg.require_gpu = false;
 
 		call_opts.task = "embed";
@@ -194,7 +195,7 @@ imagebind_embed(PG_FUNCTION_ARGS)
 		cfg.model = "facebook/imagebind-base";
 		cfg.api_key = neurondb_llm_api_key;
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
-		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 		cfg.require_gpu = false;
 
 		call_opts.task = "embed";

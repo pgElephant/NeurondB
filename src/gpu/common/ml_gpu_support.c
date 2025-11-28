@@ -20,6 +20,7 @@
 
 #include "utils/builtins.h"
 #include "neurondb_gpu_backend.h"
+#include "neurondb_constants.h"
 
 void
 ml_gpu_call_begin(MLGpuCallState * state,
@@ -33,7 +34,7 @@ ml_gpu_call_begin(MLGpuCallState * state,
 	state->tag = tag;
 	state->kernel_name = kernel_name;
 	state->must_have = must_have_kernel;
-	state->gpu_enabled = neurondb_gpu_enabled;
+	state->gpu_enabled = NDB_SHOULD_TRY_GPU();
 
 	state->ctx = ml_gpu_context_acquire(tag);
 	state->gpu_ready = ml_gpu_context_ready(state->ctx);
@@ -43,7 +44,7 @@ ml_gpu_call_begin(MLGpuCallState * state,
 	state->use_gpu = state->gpu_ready && state->kernel_allowed;
 
 	if (state->must_have && state->gpu_enabled && !state->use_gpu
-		&& !neurondb_gpu_fail_open)
+		&& NDB_REQUIRE_GPU())
 	{
 		if (kernel_name)
 			ereport(ERROR,

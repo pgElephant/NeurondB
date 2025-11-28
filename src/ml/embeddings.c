@@ -38,6 +38,7 @@
 #include "neurondb_macros.h"
 #include "neurondb_spi.h"
 #include "neurondb_json.h"
+#include "neurondb_constants.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -374,8 +375,8 @@ embed_text(PG_FUNCTION_ARGS)
 		 "sentence-transformers/all-MiniLM-L6-v2");
 	cfg.api_key = neurondb_llm_api_key;
 	cfg.timeout_ms = neurondb_llm_timeout_ms;
-	cfg.prefer_gpu = neurondb_gpu_enabled;
-	cfg.require_gpu = false;
+	cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
+	cfg.require_gpu = NDB_REQUIRE_GPU();
 	if (cfg.provider != NULL &&
 		(pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
 		 pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
@@ -501,7 +502,7 @@ embed_text_batch(PG_FUNCTION_ARGS)
 		}
 		cfg.api_key = neurondb_llm_api_key;
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
-		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 		cfg.require_gpu = false;
 
 		/* Apply stored model configuration if available */
@@ -645,7 +646,7 @@ embed_text_batch(PG_FUNCTION_ARGS)
 							cfg_copy.model = model_str_copy;
 							cfg_copy.api_key = neurondb_llm_api_key;
 							cfg_copy.timeout_ms = neurondb_llm_timeout_ms;
-							cfg_copy.prefer_gpu = neurondb_gpu_enabled;
+							cfg_copy.prefer_gpu = NDB_SHOULD_TRY_GPU();
 							cfg_copy.require_gpu = false;
 							if (cfg_copy.provider != NULL &&
 								(pg_strcasecmp(cfg_copy.provider, "huggingface-local") == 0 ||
@@ -803,8 +804,8 @@ embed_image(PG_FUNCTION_ARGS)
 		 "sentence-transformers/clip-ViT-B-32");
 	cfg.api_key = neurondb_llm_api_key;
 	cfg.timeout_ms = neurondb_llm_timeout_ms;
-	cfg.prefer_gpu = neurondb_gpu_enabled;
-	cfg.require_gpu = false;
+	cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
+	cfg.require_gpu = NDB_REQUIRE_GPU();
 	if (cfg.provider != NULL &&
 		(pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||
 		 pg_strcasecmp(cfg.provider, "hf-local") == 0) &&
@@ -942,7 +943,7 @@ embed_multimodal(PG_FUNCTION_ARGS)
 			 "sentence-transformers/clip-ViT-B-32");
 		cfg.api_key = neurondb_llm_api_key;
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
-		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 		cfg.require_gpu = false;
 		if (cfg.provider != NULL &&
 			(pg_strcasecmp(cfg.provider, "huggingface-local") == 0 ||

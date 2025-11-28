@@ -32,6 +32,7 @@
 #include "neurondb_llm.h"
 #include "neurondb_guc.h"
 #include "neurondb_gpu.h"
+#include "neurondb_constants.h"
 #include "neurondb_safe_memory.h"
 #include "neurondb_macros.h"
 #include "neurondb_validation.h"
@@ -318,7 +319,7 @@ process_llm_job(int job_id, const char *job_type, const char *payload)
 		cfg.model = neurondb_llm_model ? neurondb_llm_model : "gpt2";
 		cfg.api_key = neurondb_llm_api_key ? neurondb_llm_api_key : "";
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
-		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 		cfg.require_gpu = false;
 		if (cfg.provider != NULL
 			&& (pg_strcasecmp(cfg.provider, "huggingface-local")

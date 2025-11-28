@@ -42,6 +42,7 @@
 #include "neurondb_macros.h"
 #include "neurondb_safe_memory.h"
 #include "neurondb_macros.h"
+#include "neurondb_json.h"
 
 #ifdef NDB_GPU_CUDA
 #include "neurondb_cuda_runtime.h"
@@ -1110,7 +1111,17 @@ train_decision_tree_classifier(PG_FUNCTION_ARGS)
 		initStringInfo(&hyperbuf);
 		appendStringInfo(&hyperbuf, "{\"max_depth\":%d,\"min_samples_split\":%d}",
 						 max_depth, min_samples_split);
-		gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(hyperbuf.data)));
+		/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+		gpu_hyperparams = ndb_jsonb_in_cstring(hyperbuf.data);
+		if (gpu_hyperparams == NULL)
+		{
+			NDB_FREE(hyperbuf.data);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("neurondb: train_decision_tree_classifier: failed to parse GPU hyperparameters JSON")));
+		}
+		NDB_FREE(hyperbuf.data);
+		hyperbuf.data = NULL;
 
 		if (ndb_gpu_try_train_model("decision_tree",
 									NULL,
@@ -1152,7 +1163,11 @@ train_decision_tree_classifier(PG_FUNCTION_ARGS)
 			if (gpu_hyperparams)
 				NDB_FREE(gpu_hyperparams);
 			ndb_gpu_free_train_result(&gpu_result);
-			NDB_FREE(hyperbuf.data);
+			if (hyperbuf.data != NULL)
+			{
+				NDB_FREE(hyperbuf.data);
+				hyperbuf.data = NULL;
+			}
 			dt_dataset_free(&dataset);
 			NDB_FREE(tbl_str);
 			NDB_FREE(feat_str);
@@ -1173,7 +1188,11 @@ train_decision_tree_classifier(PG_FUNCTION_ARGS)
 			NDB_FREE(gpu_hyperparams);
 
 		ndb_gpu_free_train_result(&gpu_result);
-		NDB_FREE(hyperbuf.data);
+		if (hyperbuf.data != NULL)
+		{
+			NDB_FREE(hyperbuf.data);
+			hyperbuf.data = NULL;
+		}
 
 	}
 
@@ -1209,7 +1228,24 @@ train_decision_tree_classifier(PG_FUNCTION_ARGS)
 	initStringInfo(&paramsbuf);
 	appendStringInfo(&paramsbuf, "{\"max_depth\":%d,\"min_samples_split\":%d}",
 					 max_depth, min_samples_split);
-	params_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(paramsbuf.data)));
+	/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+	params_jsonb = ndb_jsonb_in_cstring(paramsbuf.data);
+	if (params_jsonb == NULL)
+	{
+		NDB_FREE(paramsbuf.data);
+		dt_free_tree(model->root);
+		NDB_FREE(model);
+		NDB_FREE(indices);
+		dt_dataset_free(&dataset);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
+		NDB_FREE(label_str);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("neurondb: train_decision_tree_classifier: failed to parse parameters JSON")));
+	}
+	NDB_FREE(paramsbuf.data);
+	paramsbuf.data = NULL;
 
 	initStringInfo(&metricsbuf);
 	appendStringInfo(&metricsbuf,
@@ -1220,7 +1256,26 @@ train_decision_tree_classifier(PG_FUNCTION_ARGS)
 					 "\"max_depth\":%d,"
 					 "\"min_samples_split\":%d}",
 					 dataset.feature_dim, dataset.n_samples, max_depth, min_samples_split);
-	metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metricsbuf.data)));
+	/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+	metrics_jsonb = ndb_jsonb_in_cstring(metricsbuf.data);
+	if (metrics_jsonb == NULL)
+	{
+		if (paramsbuf.data != NULL)
+			NDB_FREE(paramsbuf.data);
+		NDB_FREE(metricsbuf.data);
+		dt_free_tree(model->root);
+		NDB_FREE(model);
+		NDB_FREE(indices);
+		dt_dataset_free(&dataset);
+		NDB_FREE(tbl_str);
+		NDB_FREE(feat_str);
+		NDB_FREE(label_str);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("neurondb: train_decision_tree_classifier: failed to parse metrics JSON")));
+	}
+	NDB_FREE(metricsbuf.data);
+	metricsbuf.data = NULL;
 
 	memset(&spec, 0, sizeof(spec));
 	spec.algorithm = "decision_tree";
@@ -1366,20 +1421,25 @@ dt_predict_batch(const DTModel * model,
 		int			pred_class;
 
 		if (!isfinite(y_true))
+		{
+			elog(DEBUG1, "neurondb: dt_predict_batch: sample %d - skipping non-finite y_true=%.6f", i, y_true);
 			continue;
+		}
 
-		true_class = (int) rint(y_true);
-		if (true_class < 0 || true_class > 1)
-			continue;
+		/* Convert label to binary class: values <= 0.5 -> class 0, > 0.5 -> class 1 */
+		true_class = (y_true > 0.5) ? 1 : 0;
 
 		prediction = dt_tree_predict(model->root, row, feature_dim);
-		pred_class = (int) rint(prediction);
-		if (pred_class < 0)
-			pred_class = 0;
-		if (pred_class > 1)
-			pred_class = 1;
+		if (!isfinite(prediction))
+		{
+			elog(DEBUG1, "neurondb: dt_predict_batch: sample %d - skipping non-finite prediction=%.6f", i, prediction);
+			continue;
+		}
+		
+		/* Convert prediction to binary class: values <= 0.5 -> class 0, > 0.5 -> class 1 */
+		pred_class = (prediction > 0.5) ? 1 : 0;
 
-		if (i < 5)
+		if (i < 10 || (i % 100 == 0))
 		{
 			elog(DEBUG1,
 				 "neurondb: dt_predict_batch: sample %d - y_true=%.6f (class=%d), prediction=%.6f (class=%d)",
@@ -1394,6 +1454,24 @@ dt_predict_batch(const DTModel * model,
 			fp++;
 		else if (true_class == 1 && pred_class == 0)
 			fn++;
+	}
+
+	/* Count actual class distribution for debugging */
+	{
+		int class0_count = 0, class1_count = 0;
+		for (int j = 0; j < i; j++)
+		{
+			double y = labels[j];
+			if (isfinite(y))
+			{
+				int c = (y > 0.5) ? 1 : 0;
+				if (c == 0) class0_count++;
+				else class1_count++;
+			}
+		}
+		elog(DEBUG1,
+			 "neurondb: dt_predict_batch: summary - processed=%d, class0=%d, class1=%d, tp=%d, tn=%d, fp=%d, fn=%d",
+			 i, class0_count, class1_count, tp, tn, fp, fn);
 	}
 
 	if (tp_out)
@@ -1834,9 +1912,29 @@ evaluate_decision_tree_by_model_id(PG_FUNCTION_ARGS)
 									 f1_score,
 									 valid_rows);
 
-					result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																	  CStringGetTextDatum(jsonbuf.data)));
-
+					/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+					result_jsonb = ndb_jsonb_in_cstring(jsonbuf.data);
+					if (result_jsonb == NULL)
+					{
+						NDB_FREE(jsonbuf.data);
+						NDB_FREE(h_features);
+						NDB_FREE(h_labels);
+						if (gpu_payload)
+							NDB_FREE(gpu_payload);
+						if (gpu_metrics)
+							NDB_FREE(gpu_metrics);
+						if (gpu_errstr)
+							NDB_FREE(gpu_errstr);
+						NDB_FREE(tbl_str);
+						NDB_FREE(feat_str);
+						NDB_FREE(targ_str);
+						ndb_spi_stringinfo_free(spi_session, &query);
+						NDB_SPI_SESSION_END(spi_session);
+						MemoryContextSwitchTo(oldcontext);
+						ereport(ERROR,
+								(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+								 errmsg("neurondb: evaluate_decision_tree_by_model_id: failed to parse metrics JSON")));
+					}
 					NDB_FREE(jsonbuf.data);
 					NDB_FREE(h_features);
 					NDB_FREE(h_labels);
@@ -2139,9 +2237,19 @@ NDB_FREE(targ_str);
 					 f1_score,
 					 nvec);
 
-	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetTextDatum(jsonbuf.data)));
-
+	/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+	result_jsonb = ndb_jsonb_in_cstring(jsonbuf.data);
+	if (result_jsonb == NULL)
+	{
+		NDB_FREE(jsonbuf.data);
+		/* Note: model, h_features, h_labels, gpu_payload, gpu_metrics, 
+		 * tbl_str, feat_str, targ_str, and query have already been freed above */
+		NDB_SPI_SESSION_END(spi_session);
+		MemoryContextSwitchTo(oldcontext);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("neurondb: evaluate_decision_tree_by_model_id: failed to parse metrics JSON")));
+	}
 	NDB_FREE(jsonbuf.data);
 	MemoryContextSwitchTo(oldcontext);
 	PG_RETURN_JSONB_P(result_jsonb);
@@ -2296,7 +2404,15 @@ dt_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
 						 "{\"algorithm\":\"decision_tree\",\"storage\":\"gpu\",\"n_features\":%d,\"n_samples\":%d}",
 						 state->feature_dim > 0 ? state->feature_dim : 0,
 						 state->n_samples > 0 ? state->n_samples : 0);
-		metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(buf.data)));
+		/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+		metrics_json = ndb_jsonb_in_cstring(buf.data);
+		if (metrics_json == NULL)
+		{
+			NDB_FREE(buf.data);
+			if (errstr != NULL)
+				*errstr = pstrdup("failed to parse metrics JSON");
+			return false;
+		}
 		NDB_FREE(buf.data);
 	}
 	if (out != NULL)

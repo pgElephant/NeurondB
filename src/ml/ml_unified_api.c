@@ -22,10 +22,13 @@
 #include "utils/array.h"
 #include "executor/spi.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_proc.h"
+#include "catalog/pg_language.h"
 #include "access/htup_details.h"
 #include "utils/timestamp.h"
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 
 #include <time.h>
 
@@ -839,6 +842,39 @@ neurondb_build_training_sql(MLAlgorithm algo, StringInfo sql, const char *table_
 							 n_trees, max_depth, min_samples, max_features);
 			return true;
 
+		case ML_ALGO_DECISION_TREE:
+			max_depth = 10;
+			min_samples = 2;
+			neurondb_parse_hyperparams_int(hyperparams, "max_depth", &max_depth, 10);
+			neurondb_parse_hyperparams_int(hyperparams, "min_samples_split", &min_samples, 2);
+			/* Use first feature name if available, otherwise default to "features" */
+			if (feature_name_count > 0 && feature_names != NULL && feature_names[0] != NULL && strlen(feature_names[0]) > 0)
+			{
+				feature_col = feature_names[0];
+			}
+			else if (feature_list != NULL && strlen(feature_list) > 0 && strcmp(feature_list, "*") != 0)
+			{
+				if (strchr(feature_list, ',') == NULL)
+				{
+					feature_col = feature_list;
+				}
+				else
+				{
+					feature_col = "features";
+				}
+			}
+			else
+			{
+				feature_col = "features";
+			}
+			appendStringInfo(sql,
+							 "SELECT train_decision_tree_classifier(%s, %s, %s, %d, %d)",
+							 neurondb_quote_literal_cstr(table_name),
+							 neurondb_quote_literal_cstr(feature_col),
+							 neurondb_quote_literal_or_null(target_column),
+							 max_depth, min_samples);
+			return true;
+
 		case ML_ALGO_RIDGE:
 			{
 				double		alpha = 1.0;
@@ -1430,9 +1466,43 @@ neurondb_train(PG_FUNCTION_ARGS)
 
 	/* Check GPU availability first */
 	gpu_available = neurondb_gpu_is_available();
+	
+	/* GPU mode requires GPU to be available */
+	if (NDB_REQUIRE_GPU() && !gpu_available)
+	{
+		NDB_FREE(feature_list_str);
+		ndb_spi_session_end(&spi_session);
+		MemoryContextSwitchTo(oldcontext);
+		neurondb_cleanup(oldcontext, callcontext);
+		NDB_FREE(project_name);
+		NDB_FREE(algorithm);
+		NDB_FREE(table_name);
+		if (target_column)
+			NDB_FREE(target_column);
+		if (feature_names)
+		{
+			int i;
+			for (i = 0; i < feature_name_count; i++)
+			{
+				if (feature_names[i])
+				{
+					char *ptr = (char *) feature_names[i];
+					NDB_FREE(ptr);
+				}
+			}
+			NDB_FREE(feature_names);
+		}
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg(NDB_ERR_PREFIX_TRAIN " GPU is required but not available"),
+				 errdetail("compute_mode is set to 'gpu' but GPU backend could not be initialized"),
+				 errhint("Check GPU hardware, drivers, and configuration. "
+						 "Set compute_mode='auto' for automatic CPU fallback.")));
+	}
 
 	/* Try to load training data for GPU training */
-	if (gpu_available)
+	/* Only attempt GPU if compute_mode allows it (GPU or AUTO mode) */
+	if (gpu_available && NDB_SHOULD_TRY_GPU())
 	{
 		load_success = neurondb_load_training_data(spi_session, table_name, feature_list_str, target_column,
 														 &feature_matrix, &label_vector,
@@ -1457,15 +1527,68 @@ neurondb_train(PG_FUNCTION_ARGS)
 		}
 		PG_CATCH();
 		{
-			/* GPU training threw an exception - catch it and fall back to CPU */
-			elog(WARNING,
-				 "%s: exception caught during GPU training, falling back to CPU",
-				 algorithm ? algorithm : "unknown");
-			FlushErrorState();
-			gpu_train_result = false;
-			memset(&gpu_result, 0, sizeof(MLGpuTrainResult));
-			if (gpu_errmsg && *gpu_errmsg == NULL)
-				*gpu_errmsg = pstrdup("Exception during GPU training");
+			/* GPU training threw an exception - handle based on compute mode */
+			if (NDB_REQUIRE_GPU())
+			{
+				/* GPU mode: re-raise error, no fallback */
+				ErrorData  *edata = CopyErrorData();
+				char	   *error_msg = edata ? pstrdup(edata->message) : NULL;
+				FlushErrorState();
+				
+				NDB_FREE(feature_list_str);
+				if (feature_names)
+				{
+					int i;
+					for (i = 0; i < feature_name_count; i++)
+					{
+						if (feature_names[i])
+						{
+							char *ptr = (char *) feature_names[i];
+							NDB_FREE(ptr);
+						}
+					}
+					NDB_FREE(feature_names);
+				}
+				if (model_name)
+					NDB_FREE(model_name);
+				if (gpu_errmsg_ptr)
+					NDB_FREE(gpu_errmsg_ptr);
+				ndb_spi_session_end(&spi_session);
+				MemoryContextSwitchTo(oldcontext);
+				neurondb_cleanup(oldcontext, callcontext);
+				NDB_FREE(project_name);
+				NDB_FREE(algorithm);
+				NDB_FREE(table_name);
+				if (target_column)
+					NDB_FREE(target_column);
+				if (data_loaded)
+				{
+					if (feature_matrix)
+						NDB_FREE(feature_matrix);
+					if (label_vector)
+						NDB_FREE(label_vector);
+				}
+				if (edata)
+					FreeErrorData(edata);
+				
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg(NDB_ERR_PREFIX_TRAIN " GPU training failed - GPU mode requires GPU to be available"),
+						 errdetail("Algorithm: %s, Error: %s", algorithm, error_msg ? error_msg : "unknown"),
+						 errhint("Set compute_mode='auto' for automatic CPU fallback.")));
+			}
+			else
+			{
+				/* AUTO mode: fall back to CPU */
+				elog(WARNING,
+					 "%s: exception caught during GPU training, falling back to CPU (auto mode)",
+					 algorithm ? algorithm : "unknown");
+				FlushErrorState();
+				gpu_train_result = false;
+				memset(&gpu_result, 0, sizeof(MLGpuTrainResult));
+				if (gpu_errmsg && *gpu_errmsg == NULL)
+					*gpu_errmsg = pstrdup("Exception during GPU training");
+			}
 		}
 		PG_END_TRY();
 		
@@ -1640,7 +1763,54 @@ neurondb_train(PG_FUNCTION_ARGS)
 	}
 	else
 	{
+		/* GPU training failed or not attempted - handle based on compute mode */
 		
+		/* GPU mode: error if GPU was required but not available */
+		if (NDB_REQUIRE_GPU())
+		{
+			NDB_FREE(feature_list_str);
+			if (feature_names)
+			{
+				int i;
+				for (i = 0; i < feature_name_count; i++)
+				{
+					if (feature_names[i])
+					{
+						char *ptr = (char *) feature_names[i];
+						NDB_FREE(ptr);
+					}
+				}
+				NDB_FREE(feature_names);
+			}
+			if (model_name)
+				NDB_FREE(model_name);
+			if (gpu_errmsg_ptr)
+				NDB_FREE(gpu_errmsg_ptr);
+			ndb_spi_session_end(&spi_session);
+			MemoryContextSwitchTo(oldcontext);
+			neurondb_cleanup(oldcontext, callcontext);
+			NDB_FREE(project_name);
+			NDB_FREE(algorithm);
+			NDB_FREE(table_name);
+			if (target_column)
+				NDB_FREE(target_column);
+			if (data_loaded)
+			{
+				if (feature_matrix)
+					NDB_FREE(feature_matrix);
+				if (label_vector)
+					NDB_FREE(label_vector);
+			}
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg(NDB_ERR_PREFIX_TRAIN " GPU training failed - GPU mode requires GPU to be available"),
+					 errdetail("Algorithm: %s, Project: %s, Table: %s. GPU was not available or training failed.", 
+							   algorithm, project_name, table_name),
+					 errhint("Check GPU hardware, drivers, and configuration. "
+							 "Set compute_mode='auto' for automatic CPU fallback.")));
+		}
+		
+		/* AUTO mode or CPU mode: fall back to CPU training */
 		/* Free loaded training data if it was loaded */
 		if (data_loaded)
 		{
@@ -1653,14 +1823,171 @@ neurondb_train(PG_FUNCTION_ARGS)
 			data_loaded = false;
 		}
 		
-		/* GPU training failed - fall back to CPU training */
+		/* GPU training failed - fall back to CPU training (AUTO mode) */
 		algo_enum = neurondb_algorithm_from_string(algorithm);
 		
 		/* Build SQL for CPU training */
 		ndb_spi_stringinfo_free(spi_session, &sql);
 		ndb_spi_stringinfo_init(spi_session, &sql);
 		
-		if (neurondb_build_training_sql(algo_enum, &sql, table_name, feature_list_str,
+		/* For random_forest, call C function directly to avoid PL/pgSQL wrapper recursion */
+		if (algo_enum == ML_ALGO_RANDOM_FOREST)
+		{
+			/* Call C function directly via function lookup to bypass PL/pgSQL wrapper */
+			List	   *funcname;
+			Oid			func_oid;
+			Oid			argtypes[7];
+			Datum		values[7];
+			FmgrInfo	flinfo;
+			Datum		result_datum;
+			text	   *table_name_text;
+			text	   *feature_col_text;
+			text	   *label_col_text;
+			int			n_trees = 10;
+			int			max_depth = 10;
+			int			min_samples = 100;
+			int			max_features = 0;
+			const char *feature_col;
+			
+			/* Use first feature name if available, otherwise use feature_list_str */
+			if (feature_name_count > 0 && feature_names != NULL && feature_names[0] != NULL)
+				feature_col = feature_names[0];
+			else
+				feature_col = feature_list_str;
+			
+			/* Parse hyperparameters */
+			neurondb_parse_hyperparams_int(hyperparams, "n_trees", &n_trees, 10);
+			neurondb_parse_hyperparams_int(hyperparams, "max_depth", &max_depth, 10);
+			neurondb_parse_hyperparams_int(hyperparams, "min_samples", &min_samples, 100);
+			neurondb_parse_hyperparams_int(hyperparams, "min_samples_split", &min_samples, 100);
+			neurondb_parse_hyperparams_int(hyperparams, "max_features", &max_features, 0);
+			
+			/* Build arguments */
+			table_name_text = cstring_to_text(table_name);
+			feature_col_text = cstring_to_text(feature_col);
+			label_col_text = cstring_to_text(target_column);
+			
+			/* Lookup C function directly (not the PL/pgSQL wrapper) */
+			funcname = list_make1(makeString("train_random_forest_classifier"));
+			argtypes[0] = TEXTOID;	/* table_name */
+			argtypes[1] = TEXTOID;	/* feature_col */
+			argtypes[2] = TEXTOID;	/* label_col */
+			argtypes[3] = INT4OID;	/* n_trees */
+			argtypes[4] = INT4OID;	/* max_depth */
+			argtypes[5] = INT4OID;	/* min_samples_split */
+			argtypes[6] = INT4OID;	/* max_features */
+			
+			/* Look for C function specifically - check if it's a C function */
+			func_oid = LookupFuncName(funcname, 7, argtypes, false);
+			list_free(funcname);
+			
+			if (OidIsValid(func_oid))
+			{
+				/* Assume it's a callable C function if LookupFuncName found it */
+				/* For safety, we could add language check later if needed */
+				/* Prepare function call */
+				fmgr_info(func_oid, &flinfo);
+				
+				/* Set up arguments */
+				values[0] = PointerGetDatum(table_name_text);
+				values[1] = PointerGetDatum(feature_col_text);
+				values[2] = PointerGetDatum(label_col_text);
+				values[3] = Int32GetDatum(n_trees);
+				values[4] = Int32GetDatum(max_depth);
+				values[5] = Int32GetDatum(min_samples);
+				values[6] = Int32GetDatum(max_features);
+				
+				/* Call C function directly */
+				result_datum = FunctionCall7(&flinfo,
+											 values[0], values[1], values[2],
+											 values[3], values[4], values[5], values[6]);
+				
+				/* Extract model_id from result */
+				model_id = DatumGetInt32(result_datum);
+				
+				if (model_id > 0)
+				{
+					/* Update metrics to ensure storage='cpu' is set */
+					ndb_spi_stringinfo_free(spi_session, &sql);
+					ndb_spi_stringinfo_init(spi_session, &sql);
+					appendStringInfo(&sql,
+									 "UPDATE " NDB_FQ_ML_MODELS " SET " NDB_COL_METRICS " = "
+									 "COALESCE(" NDB_COL_METRICS ", '{}'::jsonb) || '{\"training_backend\":0}'::jsonb "
+									 "WHERE " NDB_COL_MODEL_ID " = %d",
+									 model_id);
+					ndb_spi_execute(spi_session, sql.data, false, 0);
+				}
+				else
+				{
+					ndb_spi_stringinfo_free(spi_session, &sql);
+					ndb_spi_session_end(&spi_session);
+					neurondb_cleanup(oldcontext, callcontext);
+					ereport(ERROR,
+							(errcode(ERRCODE_INTERNAL_ERROR),
+							 errmsg(NDB_ERR_PREFIX_TRAIN " CPU training returned invalid model_id: %d", model_id),
+							 errdetail("Algorithm: %s, Project: %s, Table: %s", algorithm, project_name, table_name),
+							 errhint("CPU training function may have failed. Check logs for details.")));
+				}
+			}
+			else
+			{
+				/* Function not found - fall back to SQL generation */
+				if (neurondb_build_training_sql(algo_enum, &sql, table_name, feature_list_str,
+											   target_column, hyperparams, feature_names, feature_name_count))
+				{
+					/* Execute CPU training via SQL */
+					elog(DEBUG1, "neurondb_train: executing CPU training SQL: %s", sql.data);
+					ret = ndb_spi_execute(spi_session, sql.data, true, 0);
+					
+					if (ret == SPI_OK_SELECT && SPI_processed > 0)
+					{
+						int32		model_id_val;
+						/* Get model_id from result */
+						if (ndb_spi_get_int32(spi_session, 0, 1, &model_id_val))
+						{
+							
+							if (model_id_val > 0)
+							{
+								model_id = model_id_val;
+								
+								/* Update metrics to ensure storage='cpu' is set */
+								ndb_spi_stringinfo_free(spi_session, &sql);
+								ndb_spi_stringinfo_init(spi_session, &sql);
+								appendStringInfo(&sql,
+												 "UPDATE " NDB_FQ_ML_MODELS " SET " NDB_COL_METRICS " = "
+												 "COALESCE(" NDB_COL_METRICS ", '{}'::jsonb) || '{\"training_backend\":0}'::jsonb "
+												 "WHERE " NDB_COL_MODEL_ID " = %d",
+												 model_id);
+								ndb_spi_execute(spi_session, sql.data, false, 0);
+							}
+							else
+							{
+								ndb_spi_stringinfo_free(spi_session, &sql);
+								ndb_spi_session_end(&spi_session);
+								neurondb_cleanup(oldcontext, callcontext);
+								ereport(ERROR,
+										(errcode(ERRCODE_INTERNAL_ERROR),
+										 errmsg(NDB_ERR_PREFIX_TRAIN " CPU training returned invalid model_id: %d", model_id_val),
+										 errdetail("Algorithm: %s, Project: %s, Table: %s", algorithm, project_name, table_name),
+										 errhint("CPU training function may have failed. Check logs for details.")));
+							}
+						}
+						else
+						{
+							ndb_spi_stringinfo_free(spi_session, &sql);
+							ndb_spi_session_end(&spi_session);
+							neurondb_cleanup(oldcontext, callcontext);
+							ereport(ERROR,
+									(errcode(ERRCODE_INTERNAL_ERROR),
+									 errmsg(NDB_ERR_PREFIX_TRAIN " CPU training returned NULL model_id"),
+									 errdetail("Algorithm: %s, Project: %s, Table: %s", algorithm, project_name, table_name),
+									 errhint("CPU training function may have failed. Check logs for details.")));
+						}
+					}
+				}
+			}
+		}
+		else if (neurondb_build_training_sql(algo_enum, &sql, table_name, feature_list_str,
 									   target_column, hyperparams, feature_names, feature_name_count))
 		{
 			/* Execute CPU training via SQL */
@@ -2042,8 +2369,8 @@ neurondb_predict(PG_FUNCTION_ARGS)
 					neurondb_cleanup(oldcontext, callcontext);
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("Naive Bayes: model %d was trained on GPU but GPU is not currently enabled", model_id),
-							 errhint("Enable GPU with: SET neurondb.gpu_enabled = on; SELECT neurondb_gpu_enable();")));
+							 errmsg("Naive Bayes: model %d was trained on GPU but GPU is not currently available", model_id),
+							 errhint("Enable GPU with: SET neurondb.compute_mode = 1; or SET neurondb.compute_mode = 2; for auto mode")));
 				}
 
 				/* Use GPU prediction */
@@ -2191,8 +2518,8 @@ neurondb_predict(PG_FUNCTION_ARGS)
 					neurondb_cleanup(oldcontext, callcontext);
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("KNN: model %d was trained on GPU but GPU is not currently enabled", model_id),
-							 errhint("Enable GPU with: SET neurondb.gpu_enabled = on; SELECT neurondb_gpu_enable();")));
+							 errmsg("KNN: model %d was trained on GPU but GPU is not currently available", model_id),
+							 errhint("Enable GPU with: SET neurondb.compute_mode = 1; or SET neurondb.compute_mode = 2; for auto mode")));
 				}
 
 				/* Use GPU prediction */

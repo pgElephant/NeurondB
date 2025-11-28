@@ -31,6 +31,7 @@
 #include "neurondb_safe_memory.h"
 #include "neurondb_macros.h"
 #include "neurondb_spi.h"
+#include "neurondb_json.h"
 
 #include <float.h>
 #include <stdlib.h>
@@ -515,7 +516,19 @@ train_kmeans_model_id(PG_FUNCTION_ARGS)
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json, "{\"storage\": \"cpu\", \"k\": %d, \"dim\": %d, \"max_iters\": %d, \"n_samples\": %d}",
 					 num_clusters, dim, max_iters, nvec);
-	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metrics_json.data)));
+	/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+	metrics = ndb_jsonb_in_cstring(metrics_json.data);
+	if (metrics == NULL)
+	{
+		NDB_FREE(metrics_json.data);
+		NDB_FREE(centers);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
+		NDB_FREE(model_data);
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("neurondb: train_kmeans_model_id: failed to parse metrics JSON")));
+	}
 	NDB_FREE(metrics_json.data);
 
 	/* Store model in catalog */
@@ -918,6 +931,46 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 			jval.val.numeric = n_clusters_num;
 			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
 
+			/* Add n_iterations - extract from model_metrics if available */
+			{
+				int			n_iterations = 100;	/* Default */
+				JsonbIterator *it;
+				JsonbValue	v;
+				int			r;
+
+				if (model_metrics != NULL)
+				{
+					it = JsonbIteratorInit((JsonbContainer *) & model_metrics->root);
+					while ((r = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
+					{
+						if (r == WJB_KEY)
+						{
+							char	   *key = pnstrdup(v.val.string.val, v.val.string.len);
+
+							r = JsonbIteratorNext(&it, &v, false);
+							if (strcmp(key, "max_iters") == 0 && v.type == jbvNumeric)
+								n_iterations = DatumGetInt32(DirectFunctionCall1(numeric_int4,
+																				 NumericGetDatum(v.val.numeric)));
+							else if (strcmp(key, "n_iterations") == 0 && v.type == jbvNumeric)
+								n_iterations = DatumGetInt32(DirectFunctionCall1(numeric_int4,
+																				 NumericGetDatum(v.val.numeric)));
+							NDB_FREE(key);
+						}
+					}
+				}
+
+				jkey.val.string.val = "n_iterations";
+				jkey.val.string.len = 12;
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				{
+					Numeric		n_iterations_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(n_iterations)));
+
+					jval.type = jbvNumeric;
+					jval.val.numeric = n_iterations_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+				}
+			}
+
 			/* End object */
 			final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
 			
@@ -1146,8 +1199,25 @@ kmeans_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 	appendStringInfo(&metrics_json,
 					 "{\"training_backend\":1,\"k\":%d,\"dim\":%d,\"max_iters\":%d,\"n_samples\":%d}",
 					 num_clusters, dim, max_iters, nvec);
-	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-												 CStringGetTextDatum(metrics_json.data)));
+	/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+	metrics = ndb_jsonb_in_cstring(metrics_json.data);
+	if (metrics == NULL)
+	{
+		NDB_FREE(metrics_json.data);
+		/* Cleanup allocated arrays */
+		for (i = 0; i < nvec; i++)
+			NDB_FREE(data[i]);
+		for (c = 0; c < num_clusters; c++)
+			NDB_FREE(centers[c]);
+		NDB_FREE(data);
+		NDB_FREE(centers);
+		NDB_FREE(assignments);
+		NDB_FREE(centroids_idx);
+		NDB_FREE(model_data);
+		if (errstr != NULL)
+			*errstr = pstrdup("kmeans_gpu_train: failed to parse metrics JSON");
+		return false;
+	}
 	NDB_FREE(metrics_json.data);
 
 	/* Store in model state */
@@ -1310,8 +1380,15 @@ kmeans_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
 					 state->dim > 0 ? state->dim : 0,
 					 state->n_samples > 0 ? state->n_samples : 0);
 
-	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetTextDatum(buf.data)));
+	/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+	metrics_json = ndb_jsonb_in_cstring(buf.data);
+	if (metrics_json == NULL)
+	{
+		NDB_FREE(buf.data);
+		if (errstr != NULL)
+			*errstr = pstrdup("failed to parse metrics JSON");
+		return false;
+	}
 	NDB_FREE(buf.data);
 
 	if (out != NULL)

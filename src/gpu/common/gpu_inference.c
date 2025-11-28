@@ -20,6 +20,7 @@
 #include "neurondb_config.h"
 #include "neurondb_gpu.h"
 #include "neurondb_gpu_backend.h"
+#include "neurondb_constants.h"
 
 #ifdef HAVE_ONNXRUNTIME_GPU
 #include <onnxruntime_cxx_api.h>
@@ -42,6 +43,10 @@ neurondb_gpu_onnx_inference(void *model_handle,
 	(void) input_size;
 	(void) output;
 	(void) output_size;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return;
 
 	if (!neurondb_gpu_is_available())
 		return;

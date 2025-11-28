@@ -22,6 +22,7 @@
 #include "utils/memutils.h"
 #include "utils/builtins.h"
 #include "neurondb_gpu_backend.h"
+#include "neurondb_constants.h"
 
 static const char *
 ml_gpu_context_default_tag(void)
@@ -59,7 +60,7 @@ ml_gpu_context_acquire(const char *tag)
 		ctx->gpu_available = false;
 		ctx->tag = pstrdup(tagname);
 
-		if (neurondb_gpu_enabled)
+		if (NDB_SHOULD_TRY_GPU())
 		{
 			ndb_gpu_init_if_needed();
 			if (neurondb_gpu_is_available())

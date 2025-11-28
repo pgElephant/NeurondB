@@ -18,6 +18,7 @@
 #include "neurondb_gpu.h"
 #include "neurondb_gpu_backend.h"
 #include "neurondb_pgcompat.h"
+#include "neurondb_constants.h"
 
 #include <string.h>
 #include <math.h>
@@ -44,6 +45,10 @@ neurondb_gpu_matmul(const float *A,
 	int			i;
 	int			j;
 	int			l;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		use_gpu = false;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{
@@ -124,6 +129,10 @@ neurondb_gpu_vector_add(const float *a,
 {
 	int			i;
 
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		use_gpu = false;
+
 	if (use_gpu && neurondb_gpu_is_available())
 	{
 		const		ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
@@ -188,6 +197,10 @@ neurondb_gpu_activation_relu(const float *input,
 							 bool use_gpu)
 {
 	int			i;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		use_gpu = false;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{
@@ -255,6 +268,10 @@ neurondb_gpu_kmeans_update(const float *data,
 	int			j;
 	int			c;
 	int		   *counts;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		use_gpu = false;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{
@@ -348,6 +365,10 @@ neurondb_gpu_compute_gradient(const float *weights,
 	int			i;
 	int			j;
 
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		use_gpu = false;
+
 	if (use_gpu && neurondb_gpu_is_available())
 	{
 		const		ndb_gpu_backend *backend = ndb_gpu_get_active_backend();
@@ -429,6 +450,10 @@ neurondb_gpu_softmax(const float *input, float *output, int n, bool use_gpu)
 	int			i;
 	float		max_val;
 	float		sum;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		use_gpu = false;
 
 	if (use_gpu && neurondb_gpu_is_available())
 	{

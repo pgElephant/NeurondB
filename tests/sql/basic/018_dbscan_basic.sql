@@ -1,51 +1,106 @@
--- 018_dbscan_basic.sql
--- Basic test for DBSCAN clustering with GPU acceleration
+/*-------------------------------------------------------------------------
+ *
+ * 018_dbscan.sql
+ *    DBSCAN Clustering test
+ *
+ *    Step-by-step test with clean output and timing
+ *
+ *-------------------------------------------------------------------------*/
 
 \set ON_ERROR_STOP on
 \timing on
 \pset footer off
 \pset pager off
 \pset tuples_only off
-SET client_min_messages TO WARNING;
 
-/* Step 1: Verify prerequisites and create views with 1000 rows */
+-- GPU CONFIGURATION
+\echo ''
+\echo 'GPU Configuration'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-SELECT 
-	(SELECT COUNT(*)::bigint FROM test_train_view) AS train_rows,
-	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_rows;
-
-/* Step 2: Configure GPU */
-\echo 'Step 2: Configuring GPU acceleration...'
-
-/* Step 0: Read settings from test_settings table and verify GPU configuration */
 DO $$
 DECLARE
 	gpu_mode TEXT;
 	current_gpu_enabled TEXT;
 BEGIN
-	-- Read GPU mode setting from test_settings
 	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
-	
-	-- Verify GPU configuration matches test_settings (set by test runner)
 	SELECT current_setting('neurondb.gpu_enabled', true) INTO current_gpu_enabled;
-	
 	IF gpu_mode = 'gpu' THEN
-		-- Verify GPU is enabled (should be set by test runner)
-		IF current_gpu_enabled != 'on' THEN
-			RAISE WARNING 'GPU mode expected but neurondb.gpu_enabled = % (expected: on)', current_gpu_enabled;
-		END IF;
-	ELSE
-		-- Verify GPU is disabled (should be set by test runner)
-		IF current_gpu_enabled != 'off' THEN
-			RAISE WARNING 'CPU mode expected but neurondb.gpu_enabled = % (expected: off)', current_gpu_enabled;
-		END IF;
+		SELECT neurondb_gpu_enable();
 	END IF;
 END $$;
 
-\echo '=========================================================================='
-\echo '=========================================================================='
+-- Create test_settings table if it doesn't exist
+CREATE TABLE IF NOT EXISTS test_settings (
+	setting_key TEXT PRIMARY KEY,
+	setting_value TEXT,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-/* Step 3: Test DBSCAN clustering */
+-- Create test_metrics table if it doesn't exist
+CREATE TABLE IF NOT EXISTS test_metrics (
+	test_name TEXT PRIMARY KEY,
+	algorithm TEXT,
+	model_id INTEGER,
+	train_samples BIGINT,
+	test_samples BIGINT,
+	-- Regression metrics
+	mse NUMERIC,
+	rmse NUMERIC,
+	mae NUMERIC,
+	r_squared NUMERIC,
+	-- Classification metrics
+	accuracy NUMERIC,
+	precision NUMERIC,
+	recall NUMERIC,
+	f1_score NUMERIC,
+	-- Clustering metrics
+	silhouette_score NUMERIC,
+	inertia NUMERIC,
+	n_clusters INTEGER,
+	-- Time series metrics
+	mape NUMERIC,
+	-- Predictions (stored as JSONB for flexibility)
+	predictions JSONB,
+	-- Additional metadata
+	metadata JSONB,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- DATASET
+\echo ''
+\echo 'Dataset Information'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+\echo 'Expected split: 80% training, 20% test'
+\echo ''
+
+SELECT 
+	(SELECT COUNT(*)::bigint FROM test_train_view) AS train_rows,
+	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_rows,
+	(SELECT COUNT(*)::bigint FROM test_train_view) + (SELECT COUNT(*)::bigint FROM test_test_view) AS total_rows,
+	ROUND((SELECT COUNT(*)::bigint FROM test_train_view)::numeric / 
+		  NULLIF((SELECT COUNT(*)::bigint FROM test_train_view) + (SELECT COUNT(*)::bigint FROM test_test_view), 0) * 100, 2) AS train_percentage,
+	ROUND((SELECT COUNT(*)::bigint FROM test_test_view)::numeric / 
+		  NULLIF((SELECT COUNT(*)::bigint FROM test_train_view) + (SELECT COUNT(*)::bigint FROM test_test_view), 0) * 100, 2) AS test_percentage;
+
+SELECT 
+	'test_train_view' AS dataset,
+	COUNT(*)::bigint AS total_rows,
+	COUNT(*) FILTER (WHERE features IS NOT NULL)::bigint AS valid_rows
+FROM test_train_view
+UNION ALL
+SELECT 
+	'test_test_view',
+	COUNT(*)::bigint,
+	COUNT(*) FILTER (WHERE features IS NOT NULL)::bigint
+FROM test_test_view;
+
+
+-- TRAINING
+\echo ''
+\echo 'Training'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
 -- Test DBSCAN clustering with eps=0.5, min_pts=5
 -- Note: DBSCAN may return -1 for noise points
@@ -59,4 +114,118 @@ SELECT
 	COUNT(*) FILTER (WHERE cluster_id = -1) AS noise_points
 FROM clusters;
 
+-- PREDICTION
+\echo ''
+\echo 'Prediction Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'DBSCAN clustering uses direct clustering function, prediction not available'
+
+-- EVALUATION
+\echo ''
+\echo 'Evaluation Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'DBSCAN clustering uses direct clustering function, evaluation not available'
+
+-- METRICS
+\echo ''
+
+\echo ''
+\echo 'Evaluation Metrics'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+\echo 'DBSCAN clustering metrics: See training output above'
+
+\echo ''
+\echo 'Summary'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT 
+	NULL::integer AS model_id,
+	(SELECT COUNT(*)::bigint FROM test_train_view) AS train_samples,
+	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_samples,
+	NULL::numeric AS final_silhouette;
+
+-- Store results in test_metrics table (minimal for direct clustering functions)
+INSERT INTO test_metrics (
+	test_name, algorithm, model_id, train_samples, test_samples,
+	updated_at
+)
+SELECT 
+	'018_dbscan_basic',
+	'dbscan',
+	NULL::integer,
+	(SELECT COUNT(*)::bigint FROM test_train_view),
+	(SELECT COUNT(*)::bigint FROM test_test_view),
+	CURRENT_TIMESTAMP
+ON CONFLICT (test_name) DO UPDATE SET
+	algorithm = EXCLUDED.algorithm,
+	train_samples = EXCLUDED.train_samples,
+	test_samples = EXCLUDED.test_samples,
+	updated_at = CURRENT_TIMESTAMP;
+
+-- Only show GPU info if GPU mode is enabled - never call GPU functions in CPU mode
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	
+	IF gpu_mode = 'gpu' THEN
+		-- Display GPU information only when GPU mode is enabled
+		PERFORM NULL; -- Placeholder for GPU info display
+	END IF;
+END $$;
+
+-- Conditionally display GPU info only in GPU mode
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	
+	IF gpu_mode = 'gpu' THEN
+		BEGIN
+			RAISE NOTICE 'GPU Information:';
+			PERFORM device_id, device_name, total_memory_mb, free_memory_mb, 
+					compute_capability_major, compute_capability_minor, is_available
+			FROM neurondb_gpu_info();
+		EXCEPTION WHEN OTHERS THEN
+			RAISE NOTICE 'GPU information not available';
+		END;
+	ELSE
+		RAISE NOTICE 'CPU mode: GPU information skipped';
+	END IF;
+END $$;
+
+SELECT 
+	'test_train_view' AS dataset_name,
+	COUNT(*)::bigint AS total_rows,
+	COUNT(*) FILTER (WHERE features IS NOT NULL)::bigint AS valid_rows,
+	COUNT(*) FILTER (WHERE features IS NULL)::bigint AS null_features,
+	0::bigint AS null_labels
+FROM test_train_view
+UNION ALL
+SELECT 
+	'test_test_view',
+	COUNT(*)::bigint,
+	COUNT(*) FILTER (WHERE features IS NOT NULL)::bigint,
+	COUNT(*) FILTER (WHERE features IS NULL)::bigint,
+	0::bigint
+FROM test_test_view
+ORDER BY dataset_name;
+
+SELECT 
+	tm.test_name,
+	tm.algorithm,
+	tm.model_id,
+	tm.train_samples,
+	tm.test_samples,
+	'Unknown' AS training_status,
+	tm.updated_at AS test_completed_at
+FROM test_metrics tm
+WHERE tm.test_name = '018_dbscan_basic';
+
+\echo ''
 \echo 'Test completed successfully'

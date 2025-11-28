@@ -1088,79 +1088,66 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	if (model_metrics)
 		NDB_FREE(model_metrics);
 
-	/* End SPI session BEFORE creating JSONB to avoid context conflicts */
-	NDB_SPI_SESSION_END(spi_session);
-
-	/* Switch to old context and build JSONB directly using JSONB API */
-	MemoryContextSwitchTo(oldcontext);
+	/* Build JSONB in SPI context first (like naive_bayes does) */
+	/* This ensures the JSONB is accessible when called via SPI from neurondb.evaluate() */
+	/* Use the same pattern as naive_bayes: build JSON string, then parse with jsonb_in */
 	{
-		JsonbParseState *state = NULL;
-		JsonbValue	jkey;
-		JsonbValue	jval;
-		JsonbValue *final_value = NULL;
-		Numeric		inertia_num, silhouette_num, n_samples_num;
+		StringInfoData jsonbuf;
+		double		safe_inertia = inertia;
+		double		safe_silhouette = silhouette;
 
-		/* Start object */
-		PG_TRY();
+		/* Ensure values are finite numbers for JSON */
+		if (!isfinite(safe_inertia))
+			safe_inertia = 0.0;
+		if (!isfinite(safe_silhouette))
+			safe_silhouette = 0.0;
+
+		initStringInfo(&jsonbuf);
+		appendStringInfo(&jsonbuf,
+						 "{\"inertia\":%.6f,\"silhouette_score\":%.6f,\"n_samples\":%d}",
+						 safe_inertia, safe_silhouette, nvec);
+
+		/* Create JSONB in current context (SPI context) using ndb_jsonb_in_cstring */
+		/* This wrapper handles text conversion and error handling properly */
+		result_jsonb = ndb_jsonb_in_cstring(jsonbuf.data);
+		if (result_jsonb == NULL)
 		{
-			(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
-
-			/* Add inertia */
-			jkey.type = jbvString;
-			jkey.val.string.len = 8;
-			jkey.val.string.val = "inertia";
-			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
-			inertia_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(inertia)));
-			jval.type = jbvNumeric;
-			jval.val.numeric = inertia_num;
-			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
-
-			/* Add silhouette_score */
-			jkey.val.string.val = "silhouette_score";
-			jkey.val.string.len = 16;
-			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
-			silhouette_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(silhouette)));
-			jval.type = jbvNumeric;
-			jval.val.numeric = silhouette_num;
-			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
-
-			/* Add n_samples */
-			jkey.val.string.val = "n_samples";
-			jkey.val.string.len = 9;
-			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
-			n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(nvec)));
-			jval.type = jbvNumeric;
-			jval.val.numeric = n_samples_num;
-			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
-
-			/* End object */
-			final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
-			
-			if (final_value == NULL)
-			{
-				elog(ERROR, "neurondb: evaluate_gmm: pushJsonbValue(WJB_END_OBJECT) returned NULL");
-			}
-			
-			result_jsonb = JsonbValueToJsonb(final_value);
+			NDB_FREE(jsonbuf.data);
+			NDB_SPI_SESSION_END(spi_session);
+			NDB_FREE(tbl_str);
+			NDB_FREE(col_str);
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+					 errmsg("neurondb: evaluate_gmm_by_model_id: failed to parse metrics JSON"),
+					 errdetail("JSON string: {\"inertia\":%.6f,\"silhouette_score\":%.6f,\"n_samples\":%d}",
+							   safe_inertia, safe_silhouette, nvec)));
 		}
-		PG_CATCH();
-		{
-			ErrorData *edata = CopyErrorData();
-			elog(ERROR, "neurondb: evaluate_gmm: JSONB construction failed: %s", edata->message);
-			FlushErrorState();
-			result_jsonb = NULL;
-		}
-		PG_END_TRY();
+
+		NDB_FREE(jsonbuf.data);
+		jsonbuf.data = NULL;
 	}
 
 	if (result_jsonb == NULL)
 	{
+		NDB_SPI_SESSION_END(spi_session);
+		NDB_FREE(tbl_str);
+		NDB_FREE(col_str);
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("neurondb: evaluate_gmm_by_model_id: JSONB result is NULL")));
 	}
 
-	/* Now safe to finish SPI session (this switches back to oldcontext automatically) */
+	/*
+	 * Copy result_jsonb to caller's context before SPI_finish().
+	 * This ensures the JSONB remains valid after the SPI context is
+	 * deleted. The JSONB is allocated in SPI context and will be
+	 * invalid after SPI_finish() deletes that context.
+	 * This pattern matches naive_bayes.c for consistency.
+	 */
+	MemoryContextSwitchTo(oldcontext);
+	result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result_jsonb));
+
+	/* Now safe to finish SPI and free SPI-allocated memory */
 	NDB_SPI_SESSION_END(spi_session);
 
 	/* Free strings allocated before SPI_connect (in oldcontext) */
@@ -1168,7 +1155,8 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	NDB_FREE(tbl_str);
 	NDB_FREE(col_str);
 
-	/* Return result (already in oldcontext) */
+	/* Return result (already in oldcontext and properly copied) */
+	/* PG_RETURN_JSONB_P will handle detoasting and copying */
 	PG_RETURN_JSONB_P(result_jsonb);
 }
 

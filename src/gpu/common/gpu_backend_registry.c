@@ -25,6 +25,7 @@
 #include <signal.h>
 
 #include "neurondb_gpu_backend.h"
+#include "neurondb_constants.h"
 #include "ml_gpu_random_forest.h"
 #include "ml_random_forest_internal.h"
 #include "ml_gpu_logistic_regression.h"
@@ -163,6 +164,15 @@ ndb_gpu_set_active_backend(const ndb_gpu_backend * backend)
 {
 	int			rc;
 
+	/* CPU mode: never set or initialize a backend */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+	{
+		if (active_backend && active_backend->shutdown)
+			active_backend->shutdown();
+		active_backend = NULL;
+		return 0;
+	}
+
 	if (active_backend == backend)
 		return 0;
 
@@ -219,6 +229,9 @@ ndb_gpu_set_active_backend(const ndb_gpu_backend * backend)
 const		ndb_gpu_backend *
 ndb_gpu_get_active_backend(void)
 {
+	/* CPU mode: never return a backend */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		return NULL;
 	return active_backend;
 }
 
@@ -234,6 +247,14 @@ ndb_gpu_rf_train(const float *features,
 				 char **errstr)
 {
 	int rc;
+	
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+	{
+		if (errstr)
+			*errstr = NULL;
+		return -1;
+	}
 	
 	ereport(DEBUG1,
 			(errmsg("ndb_gpu_rf_train: function entry"),
@@ -318,6 +339,14 @@ ndb_gpu_lr_train(const float *features,
 				 char **errstr)
 {
 	int			rc;
+
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+	{
+		if (errstr)
+			*errstr = NULL;
+		return -1;
+	}
 
 	if (errstr)
 		*errstr = NULL;
@@ -584,10 +613,18 @@ ndb_gpu_ridge_train(const float *features,
 					int n_samples,
 					int feature_dim,
 					const Jsonb * hyperparams,
-					bytea * *model_data,
-					Jsonb * *metrics,
-					char **errstr)
+				 bytea * *model_data,
+				 Jsonb * *metrics,
+				 char **errstr)
 {
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+	{
+		if (errstr)
+			*errstr = NULL;
+		return -1;
+	}
+
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend)
@@ -647,10 +684,18 @@ ndb_gpu_lasso_train(const float *features,
 					int n_samples,
 					int feature_dim,
 					const Jsonb * hyperparams,
-					bytea * *model_data,
-					Jsonb * *metrics,
-					char **errstr)
+				 bytea * *model_data,
+				 Jsonb * *metrics,
+				 char **errstr)
 {
+	/* CPU mode: never run GPU code */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+	{
+		if (errstr)
+			*errstr = NULL;
+		return -1;
+	}
+
 	if (errstr)
 		*errstr = NULL;
 	if (!active_backend)

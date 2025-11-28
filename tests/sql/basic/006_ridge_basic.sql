@@ -1,66 +1,161 @@
+/*-------------------------------------------------------------------------
+ *
+ * 006_ridge.sql
+ *    Ridge Regression test
+ *
+ *    Step-by-step test with clean output and timing
+ *
+ *-------------------------------------------------------------------------*/
+
+\set ON_ERROR_STOP on
 \timing on
 \pset footer off
 \pset pager off
+\pset tuples_only off
 
--- This test uses test_train_view and test_test_view tables created by ml_dataset.py
--- Run: python ml_dataset.py <dataset_name> to populate the database first
--- Or use the test runner: python run_ml_tests.py
---
--- Verify required tables exist
+-- GPU CONFIGURATION
+\echo ''
+\echo 'GPU Configuration'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
-\set ON_ERROR_STOP on
-
-/* Step 0: Read settings from test_settings table and verify GPU configuration */
 DO $$
 DECLARE
 	gpu_mode TEXT;
 	current_gpu_enabled TEXT;
 BEGIN
-	-- Read GPU mode setting from test_settings
 	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
-	
-	-- Verify GPU configuration matches test_settings (set by test runner)
 	SELECT current_setting('neurondb.gpu_enabled', true) INTO current_gpu_enabled;
-	
 	IF gpu_mode = 'gpu' THEN
-		-- Verify GPU is enabled (should be set by test runner)
-		IF current_gpu_enabled != 'on' THEN
-			RAISE WARNING 'GPU mode expected but neurondb.gpu_enabled = % (expected: on)', current_gpu_enabled;
-		END IF;
-	ELSE
-		-- Verify GPU is disabled (should be set by test runner)
-		IF current_gpu_enabled != 'off' THEN
-			RAISE WARNING 'CPU mode expected but neurondb.gpu_enabled = % (expected: off)', current_gpu_enabled;
-		END IF;
+		SELECT neurondb_gpu_enable();
 	END IF;
 END $$;
 
--- Train model once and store in temp table to reuse
-DROP TABLE IF EXISTS gpu_model_temp;
-CREATE TEMP TABLE gpu_model_temp AS
-SELECT train_ridge_regression(
-	'test_train_view',
-	'features',
-	'label',
-	0.01  -- lambda
-)::integer AS model_id;
+-- Create test_settings table if it doesn't exist
+CREATE TABLE IF NOT EXISTS test_settings (
+	setting_key TEXT PRIMARY KEY,
+	setting_value TEXT,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
--- Debug: Show model_id
+-- Create test_metrics table if it doesn't exist
+CREATE TABLE IF NOT EXISTS test_metrics (
+	test_name TEXT PRIMARY KEY,
+	algorithm TEXT,
+	model_id INTEGER,
+	train_samples BIGINT,
+	test_samples BIGINT,
+	-- Regression metrics
+	mse NUMERIC,
+	rmse NUMERIC,
+	mae NUMERIC,
+	r_squared NUMERIC,
+	-- Classification metrics
+	accuracy NUMERIC,
+	precision NUMERIC,
+	recall NUMERIC,
+	f1_score NUMERIC,
+	-- Clustering metrics
+	silhouette_score NUMERIC,
+	inertia NUMERIC,
+	n_clusters INTEGER,
+	-- Time series metrics
+	mape NUMERIC,
+	-- Predictions (stored as JSONB for flexibility)
+	predictions JSONB,
+	-- Additional metadata
+	metadata JSONB,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- DATASET
+\echo ''
+\echo 'Dataset Information'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+\echo 'Expected split: 80% training, 20% test'
+\echo ''
+
+SELECT 
+	(SELECT COUNT(*)::bigint FROM test_train_view) AS train_rows,
+	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_rows,
+	(SELECT COUNT(*)::bigint FROM test_train_view) + (SELECT COUNT(*)::bigint FROM test_test_view) AS total_rows,
+	ROUND((SELECT COUNT(*)::bigint FROM test_train_view)::numeric / 
+		  NULLIF((SELECT COUNT(*)::bigint FROM test_train_view) + (SELECT COUNT(*)::bigint FROM test_test_view), 0) * 100, 2) AS train_percentage,
+	ROUND((SELECT COUNT(*)::bigint FROM test_test_view)::numeric / 
+		  NULLIF((SELECT COUNT(*)::bigint FROM test_train_view) + (SELECT COUNT(*)::bigint FROM test_test_view), 0) * 100, 2) AS test_percentage;
+
+SELECT 
+	'test_train_view' AS dataset,
+	COUNT(*)::bigint AS total_rows,
+	COUNT(*) FILTER (WHERE features IS NOT NULL AND label IS NOT NULL)::bigint AS valid_rows
+FROM test_train_view
+UNION ALL
+SELECT 
+	'test_test_view',
+	COUNT(*)::bigint,
+	COUNT(*) FILTER (WHERE features IS NOT NULL AND label IS NOT NULL)::bigint
+FROM test_test_view;
+
+
+-- TRAINING
+\echo ''
+\echo 'Training'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+DROP TABLE IF EXISTS gpu_model_temp;
+
+CREATE TEMP TABLE gpu_model_temp AS
+SELECT
+	train_ridge_regression(
+		'test_train_view',
+		'features',
+		'label',
+		0.01  -- lambda
+	)::integer AS model_id;
+
 SELECT model_id FROM gpu_model_temp;
 
--- Use optimized batch evaluation instead of per-row predictions
--- (MSE, RMSE, MAE are already computed in evaluate() below)
+-- PREDICTION
+\echo ''
+\echo 'Prediction Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 
--- Evaluate model and store result
+\echo 'Predict Test 1: Single row prediction'
+SELECT 
+	'Single Row' AS test_type,
+	neurondb.predict((SELECT model_id FROM gpu_model_temp LIMIT 1), features) AS prediction,
+	label AS actual_label
+FROM test_test_view
+LIMIT 1;
+
+\echo 'Predict Test 2: Batch prediction (100 rows)'
+SELECT 
+	'Batch (100 rows)' AS test_type,
+	COUNT(*) AS n_predictions,
+	ROUND(AVG(score)::numeric, 4) AS avg_prediction,
+	ROUND(MIN(score)::numeric, 4) AS min_prediction,
+	ROUND(MAX(score)::numeric, 4) AS max_prediction,
+	ROUND(STDDEV(score)::numeric, 4) AS stddev_prediction
+FROM (
+	SELECT neurondb.predict((SELECT model_id FROM gpu_model_temp LIMIT 1), features) AS score
+	FROM test_test_view
+	LIMIT 100
+) sub;
+
+-- EVALUATION
+\echo ''
+\echo 'Evaluation Tests'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
 DROP TABLE IF EXISTS gpu_metrics_temp;
 CREATE TEMP TABLE gpu_metrics_temp (metrics jsonb);
+
 DO $$
 DECLARE
 	mid integer;
 	metrics_result jsonb;
 	eval_error text;
 BEGIN
-	-- Get model_id with defensive check
 	SELECT model_id INTO mid FROM gpu_model_temp LIMIT 1;
 	IF mid IS NULL THEN
 		RAISE WARNING 'No model_id found in gpu_model_temp';
@@ -68,9 +163,7 @@ BEGIN
 		RETURN;
 	END IF;
 	
-	-- Try evaluation with multiple layers of error handling
 	BEGIN
-		-- Attempt evaluation
 		BEGIN
 			metrics_result := neurondb.evaluate(mid, 'test_test_view', 'features', 'label');
 			
@@ -83,29 +176,88 @@ BEGIN
 		EXCEPTION WHEN OTHERS THEN
 			eval_error := SQLERRM;
 			RAISE WARNING 'Evaluation exception: %', eval_error;
-			-- Properly escape JSON - replace quotes and newlines
 			eval_error := REPLACE(REPLACE(REPLACE(eval_error, '"', '\"'), E'\n', ' '), E'\r', ' ');
 			INSERT INTO gpu_metrics_temp VALUES (jsonb_build_object('error', eval_error));
 		END;
 	EXCEPTION WHEN OTHERS THEN
 		eval_error := SQLERRM;
 		RAISE WARNING 'Outer evaluation exception: %', eval_error;
-		-- Properly escape JSON
 		eval_error := REPLACE(REPLACE(REPLACE(eval_error, '"', '\"'), E'\n', ' '), E'\r', ' ');
 		INSERT INTO gpu_metrics_temp VALUES (jsonb_build_object('error', eval_error));
 	END;
-END
-$$;
+END $$;
 
--- Show metrics (for regression, we show different metrics) (with NULL safety)
+-- METRICS
+\echo ''
+
+SELECT 
+	m.algorithm::text AS algorithm,
+	COALESCE((m.metrics::jsonb->>'n_samples')::bigint, m.num_samples::bigint, 0) AS n_samples,
+	COALESCE((m.metrics::jsonb->>'n_features')::integer, m.num_features, 0) AS n_features,
+	COALESCE(m.metrics::jsonb->>'storage', 'default') AS storage,
+	ROUND(COALESCE((m.metrics::jsonb->>'mse')::numeric, 0), 6) AS mse,
+	ROUND(COALESCE((m.metrics::jsonb->>'mae')::numeric, 0), 6) AS mae,
+	ROUND(COALESCE((m.metrics::jsonb->>'r_squared')::numeric, 0), 6) AS r_squared
+FROM neurondb.ml_models m, gpu_model_temp t
+WHERE m.model_id = t.model_id;
+
+/* Verify GPU was used for training when GPU mode is enabled */
+DO $$
+DECLARE
+	gpu_mode TEXT;
+	storage_val TEXT;
+	gpu_available BOOLEAN;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	SELECT COALESCE(m.metrics::jsonb->>'storage', 'cpu') INTO storage_val
+	FROM neurondb.ml_models m, gpu_model_temp t
+	WHERE m.model_id = t.model_id;
+	
+	-- Only check GPU info if GPU mode is enabled - never call GPU functions in CPU mode
+	IF gpu_mode = 'gpu' THEN
+		BEGIN
+			-- Check if GPU is actually available (use is_available column which matches C code check)
+			SELECT COALESCE(BOOL_OR(is_available), false) INTO gpu_available
+			FROM neurondb_gpu_info();
+			
+			-- If GPU mode is enabled and GPU is detected but model was trained on CPU, warn (not error)
+			-- This can happen if Metal backend isn't properly initialized or GPU training failed
+			IF gpu_available AND storage_val != 'gpu' THEN
+				RAISE WARNING 'GPU mode enabled and GPU detected but model was trained on CPU (storage=%). This may indicate Metal backend initialization issue.', storage_val;
+			END IF;
+			
+			-- If GPU is not available, it's expected to use CPU, so just warn
+			IF NOT gpu_available AND storage_val != 'gpu' THEN
+				RAISE WARNING 'GPU mode enabled but GPU hardware not available, model trained on CPU (storage=%)', storage_val;
+			END IF;
+		EXCEPTION WHEN OTHERS THEN
+			-- If GPU function call fails, silently continue - GPU not available
+			gpu_available := false;
+		END;
+	END IF;
+	
+	-- If CPU mode is enabled, verify model was trained on CPU
+	IF gpu_mode = 'cpu' AND storage_val = 'gpu' THEN
+		RAISE WARNING 'CPU mode enabled but model was trained on GPU (storage=gpu)';
+	END IF;
+END $$;
+
+SELECT COUNT(*)::bigint AS test_samples
+FROM test_test_view
+WHERE features IS NOT NULL AND label IS NOT NULL;
+
+\echo ''
+\echo 'Evaluation Metrics'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
 SELECT
 	format('%-15s', 'MSE') AS metric,
 	CASE 
-		WHEN m.metrics IS NULL THEN NULL
+		WHEN m.metrics IS NULL THEN 'N/A'
 		WHEN (m.metrics::jsonb ? 'error') THEN (m.metrics::jsonb->>'error')
 		WHEN (m.metrics::jsonb ? 'mse')
-			THEN ROUND((m.metrics::jsonb ->> 'mse')::numeric, 4)::text
-		ELSE NULL 
+			THEN ROUND((m.metrics::jsonb ->> 'mse')::numeric, 6)::text
+		ELSE 'N/A' 
 	END AS value
 FROM gpu_metrics_temp m
 UNION ALL
@@ -115,7 +267,7 @@ SELECT
 		WHEN m.metrics IS NULL THEN NULL
 		WHEN (m.metrics::jsonb ? 'error') THEN NULL
 		WHEN (m.metrics::jsonb ? 'rmse')
-			THEN ROUND((m.metrics::jsonb ->> 'rmse')::numeric, 4)::text
+			THEN ROUND((m.metrics::jsonb ->> 'rmse')::numeric, 6)::text
 		ELSE NULL 
 	END
 FROM gpu_metrics_temp m
@@ -126,7 +278,7 @@ SELECT
 		WHEN m.metrics IS NULL THEN NULL
 		WHEN (m.metrics::jsonb ? 'error') THEN NULL
 		WHEN (m.metrics::jsonb ? 'mae')
-			THEN ROUND((m.metrics::jsonb ->> 'mae')::numeric, 4)::text
+			THEN ROUND((m.metrics::jsonb ->> 'mae')::numeric, 6)::text
 		ELSE NULL 
 	END
 FROM gpu_metrics_temp m
@@ -137,9 +289,26 @@ SELECT
 		WHEN m.metrics IS NULL THEN NULL
 		WHEN (m.metrics::jsonb ? 'error') THEN NULL
 		WHEN (m.metrics::jsonb ? 'r_squared')
-			THEN ROUND((m.metrics::jsonb ->> 'r_squared')::numeric, 4)::text
+			THEN ROUND((m.metrics::jsonb ->> 'r_squared')::numeric, 6)::text
 		ELSE NULL 
 	END
+FROM gpu_metrics_temp m
+ORDER BY metric;
+
+\echo ''
+\echo 'Summary'
+\echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+
+SELECT 
+	(SELECT model_id FROM gpu_model_temp) AS model_id,
+	(SELECT COUNT(*)::bigint FROM test_train_view) AS train_samples,
+	(SELECT COUNT(*)::bigint FROM test_test_view) AS test_samples,
+	CASE 
+		WHEN m.metrics IS NULL THEN NULL
+		WHEN (m.metrics::jsonb ? 'error') THEN NULL
+		WHEN (m.metrics::jsonb ? 'mse') THEN ROUND((m.metrics::jsonb->>'mse')::numeric, 6)
+		ELSE NULL 
+	END AS final_mse
 FROM gpu_metrics_temp m;
 
 -- Store results in test_metrics table
@@ -190,8 +359,118 @@ ON CONFLICT (test_name) DO UPDATE SET
 	r_squared = EXCLUDED.r_squared,
 	updated_at = CURRENT_TIMESTAMP;
 
--- Cleanup
 DROP TABLE IF EXISTS gpu_model_temp;
-DROP TABLE IF EXISTS gpu_metrics_temp;
 
+/* Display comprehensive views */
+SELECT 
+	m.model_id,
+	m.algorithm::text AS algorithm,
+	m.project_id,
+	m.version,
+	m.status::text AS status,
+	m.training_table,
+	m.training_column,
+	COALESCE((m.metrics::jsonb->>'n_samples')::bigint, m.num_samples::bigint, 0) AS n_samples,
+	COALESCE((m.metrics::jsonb->>'n_features')::integer, m.num_features, 0) AS n_features,
+	COALESCE(m.metrics::jsonb->>'storage', 'default') AS storage,
+	ROUND(COALESCE((m.metrics::jsonb->>'mse')::numeric, 0), 6) AS mse,
+	ROUND(COALESCE((m.metrics::jsonb->>'rmse')::numeric, 0), 6) AS rmse,
+	ROUND(COALESCE((m.metrics::jsonb->>'mae')::numeric, 0), 6) AS mae,
+	ROUND(COALESCE((m.metrics::jsonb->>'r_squared')::numeric, 0), 6) AS r_squared,
+	m.training_time_ms,
+	m.created_at,
+	m.completed_at
+FROM neurondb.ml_models m
+WHERE m.model_id = (SELECT model_id FROM test_metrics WHERE test_name = '006_ridge_basic')
+ORDER BY m.model_id DESC
+LIMIT 1;
+
+SELECT 
+	tm.test_name,
+	tm.algorithm,
+	tm.model_id,
+	tm.train_samples,
+	tm.test_samples,
+	tm.mse,
+	tm.rmse,
+	tm.mae,
+	tm.r_squared,
+	tm.created_at,
+	tm.updated_at
+FROM test_metrics tm
+WHERE tm.test_name = '006_ridge_basic';
+
+-- Only show GPU info if GPU mode is enabled - never call GPU functions in CPU mode
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	
+	IF gpu_mode = 'gpu' THEN
+		-- Display GPU information only when GPU mode is enabled
+		PERFORM NULL; -- Placeholder for GPU info display
+	END IF;
+END $$;
+
+-- Conditionally display GPU info only in GPU mode
+DO $$
+DECLARE
+	gpu_mode TEXT;
+BEGIN
+	SELECT setting_value INTO gpu_mode FROM test_settings WHERE setting_key = 'gpu_mode';
+	
+	IF gpu_mode = 'gpu' THEN
+		BEGIN
+			RAISE NOTICE 'GPU Information:';
+			PERFORM device_id, device_name, total_memory_mb, free_memory_mb, 
+					compute_capability_major, compute_capability_minor, is_available
+			FROM neurondb_gpu_info();
+		EXCEPTION WHEN OTHERS THEN
+			RAISE NOTICE 'GPU information not available';
+		END;
+	ELSE
+		RAISE NOTICE 'CPU mode: GPU information skipped';
+	END IF;
+END $$;
+
+SELECT 
+	'test_train_view' AS dataset_name,
+	COUNT(*)::bigint AS total_rows,
+	COUNT(*) FILTER (WHERE features IS NOT NULL AND label IS NOT NULL)::bigint AS valid_rows,
+	COUNT(*) FILTER (WHERE features IS NULL)::bigint AS null_features,
+	COUNT(*) FILTER (WHERE label IS NULL)::bigint AS null_labels
+FROM test_train_view
+UNION ALL
+SELECT 
+	'test_test_view',
+	COUNT(*)::bigint,
+	COUNT(*) FILTER (WHERE features IS NOT NULL AND label IS NOT NULL)::bigint,
+	COUNT(*) FILTER (WHERE features IS NULL)::bigint,
+	COUNT(*) FILTER (WHERE label IS NULL)::bigint
+FROM test_test_view
+ORDER BY dataset_name;
+
+SELECT 
+	tm.test_name,
+	tm.algorithm,
+	tm.model_id,
+	m.metrics::jsonb->>'storage' AS training_storage,
+	tm.train_samples,
+	tm.test_samples,
+	ROUND(tm.mse::numeric, 6) AS mse,
+	ROUND(tm.rmse::numeric, 6) AS rmse,
+	ROUND(tm.mae::numeric, 6) AS mae,
+	ROUND(tm.r_squared::numeric, 6) AS r_squared,
+	CASE 
+		WHEN m.metrics::jsonb->>'storage' = 'gpu' THEN 'GPU Training ✓'
+		WHEN m.metrics::jsonb->>'storage' = 'cpu' THEN 'CPU Training'
+		ELSE 'Unknown'
+	END AS training_status,
+	tm.updated_at AS test_completed_at
+FROM test_metrics tm
+LEFT JOIN neurondb.ml_models m ON m.model_id = tm.model_id
+WHERE tm.test_name = '006_ridge_basic';
+
+\echo ''
 \echo 'Test completed successfully'

@@ -1008,14 +1008,14 @@ train_knn_model_id(PG_FUNCTION_ARGS)
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json, "{\"storage\": \"cpu\", \"k\": %d, \"n_samples\": %d, \"n_features\": %d}",
 					 k_value, nvec, dim);
-	/* Use ndb_jsonb_in_cstring like test 006 fix */
-        metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metrics_json.data)));
+	/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+	metrics = ndb_jsonb_in_cstring(metrics_json.data);
 	if (metrics == NULL)
 	{
 		NDB_FREE(metrics_json.data);
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("neurondb: failed to parse metrics JSON")));
+				 errmsg("neurondb: train_knn_model_id: failed to parse metrics JSON")));
 	}
 	NDB_FREE(metrics_json.data);
 
@@ -2721,9 +2721,29 @@ evaluate_knn_by_model_id(PG_FUNCTION_ARGS)
 									 f1_score,
 									 valid_rows);
 
-					result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																	  CStringGetTextDatum(jsonbuf.data)));
-
+					/* Use ndb_jsonb_in_cstring like other ML algorithms fix */
+					result_jsonb = ndb_jsonb_in_cstring(jsonbuf.data);
+					if (result_jsonb == NULL)
+					{
+						NDB_FREE(jsonbuf.data);
+						NDB_FREE(h_features);
+						NDB_FREE(h_labels);
+						if (gpu_payload)
+							NDB_FREE(gpu_payload);
+						if (gpu_metrics)
+							NDB_FREE(gpu_metrics);
+						if (gpu_errstr)
+							NDB_FREE(gpu_errstr);
+						NDB_FREE(tbl_str);
+						NDB_FREE(feat_str);
+						NDB_FREE(targ_str);
+						ndb_spi_stringinfo_free(eval_spi_session, &query);
+						NDB_SPI_SESSION_END(eval_spi_session);
+						MemoryContextSwitchTo(oldcontext);
+						ereport(ERROR,
+								(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+								 errmsg("neurondb: evaluate_knn_by_model_id: failed to parse metrics JSON")));
+					}
 					NDB_FREE(jsonbuf.data);
 
 					MemoryContextSwitchTo(oldcontext);

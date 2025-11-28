@@ -27,14 +27,13 @@ typedef struct NeuronDBConfig
 	/* GPU settings */
 	struct
 	{
-		bool		enabled;
+		int			compute_mode;  /* 0=CPU, 1=GPU, 2=AUTO */
+		int			backend_type;  /* 0=CUDA, 1=ROCm, 2=Metal */
 		int			device;
 		int			batch_size;
 		int			streams;
 		double		memory_pool_mb;
-		bool		fail_open;
 		char	   *kernels;
-		char	   *backend;
 		int			timeout_ms;
 	}			gpu;
 
@@ -118,13 +117,12 @@ extern void neurondb_sync_config_from_gucs(void);
 extern int neurondb_hnsw_ef_search;
 extern int neurondb_ivf_probes;
 extern int neurondb_ef_construction;
-extern bool neurondb_gpu_enabled;
+extern int neurondb_compute_mode;
+extern int neurondb_gpu_backend_type;
 extern int neurondb_gpu_device;
 extern int neurondb_gpu_batch_size;
 extern int neurondb_gpu_streams;
-extern bool neurondb_gpu_fail_open;
 extern char *neurondb_gpu_kernels;
-extern char *neurondb_gpu_backend;
 extern int neurondb_gpu_timeout_ms;
 extern char *neurondb_llm_provider;
 extern char *neurondb_llm_model;

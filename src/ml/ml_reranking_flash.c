@@ -22,6 +22,7 @@
 #include "neurondb.h"
 #include "neurondb_gpu.h"
 #include "neurondb_llm.h"
+#include "neurondb_constants.h"
 #include "neurondb_macros.h"
 #include "neurondb_spi.h"
 #include "neurondb_guc.h"
@@ -174,7 +175,7 @@ rerank_long_context(PG_FUNCTION_ARGS)
 		cfg.model = neurondb_llm_model ? neurondb_llm_model : "cross-encoder/ms-marco-MiniLM-L-6-v2";
 		cfg.api_key = neurondb_llm_api_key;
 		cfg.timeout_ms = neurondb_llm_timeout_ms;
-		cfg.prefer_gpu = neurondb_gpu_enabled;
+		cfg.prefer_gpu = NDB_SHOULD_TRY_GPU();
 		cfg.require_gpu = false;
 
 		call_opts.task = "rerank";
@@ -203,7 +204,7 @@ rerank_long_context(PG_FUNCTION_ARGS)
 		}
 
 		/* Use GPU reranking with Flash Attention if available */
-		if (neurondb_gpu_enabled)
+		if (NDB_SHOULD_TRY_GPU())
 		{
 			/* Try GPU reranking first (uses Flash Attention internally) */
 			const char *model_str = cfg.model ? cfg.model : "cross-encoder/ms-marco-MiniLM-L-6-v2";

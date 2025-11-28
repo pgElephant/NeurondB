@@ -15,6 +15,7 @@
 #include <limits.h>
 #include "neurondb_guc.h"
 #include "neurondb_macros.h"
+#include "neurondb_constants.h"
 
 /* ========================================================================
  * GUC Variable Definitions
@@ -26,14 +27,13 @@ int			neurondb_ivf_probes = 10;
 int			neurondb_ef_construction = 200;
 
 /* GPU GUC variables */
-bool		neurondb_gpu_enabled = false;
+int			neurondb_compute_mode = 2;  /* Default: AUTO (0=CPU, 1=GPU, 2=AUTO) */
+int			neurondb_gpu_backend_type = 0;  /* Default: CUDA (0=CUDA, 1=ROCm, 2=Metal) */
 int			neurondb_gpu_device = 0;
 int			neurondb_gpu_batch_size = 8192;
 int			neurondb_gpu_streams = 2;
 double		neurondb_gpu_memory_pool_mb = 512.0;
-bool		neurondb_gpu_fail_open = true;
 char	   *neurondb_gpu_kernels = NULL;  /* Will be set by GUC system */
-char	   *neurondb_gpu_backend = NULL;  /* Will be set by GUC system */
 int			neurondb_gpu_timeout_ms = 30000;
 
 /* LLM GUC variables */
@@ -95,6 +95,25 @@ NeuronDBConfig *neurondb_config = NULL;
  * ======================================================================== */
 
 /*
+ * Validation hook for neurondb.gpu_backend_type
+ * Only valid when compute_mode is GPU or AUTO
+ */
+static bool
+neurondb_check_gpu_backend_type(int *newval, void **extra, GucSource source)
+{
+	if (neurondb_compute_mode == NDB_COMPUTE_MODE_CPU)
+	{
+		elog(WARNING,
+			 "neurondb.gpu_backend_type is ignored when neurondb.compute_mode is 'cpu'");
+		/* Accept but warn - the value will be stored but not used */
+		return true;
+	}
+	/* Always valid when compute_mode is GPU or AUTO */
+	return true;
+}
+
+
+/*
  * Sync function to update config structure from GUC variables.
  * Called after GUC changes and during initialization.
  */
@@ -110,14 +129,13 @@ neurondb_sync_config_from_gucs(void)
 	neurondb_config->core.ef_construction = neurondb_ef_construction;
 
 	/* GPU settings */
-	neurondb_config->gpu.enabled = neurondb_gpu_enabled;
+	neurondb_config->gpu.compute_mode = neurondb_compute_mode;
+	neurondb_config->gpu.backend_type = neurondb_gpu_backend_type;
 	neurondb_config->gpu.device = neurondb_gpu_device;
 	neurondb_config->gpu.batch_size = neurondb_gpu_batch_size;
 	neurondb_config->gpu.streams = neurondb_gpu_streams;
 	neurondb_config->gpu.memory_pool_mb = neurondb_gpu_memory_pool_mb;
-	neurondb_config->gpu.fail_open = neurondb_gpu_fail_open;
 	neurondb_config->gpu.kernels = neurondb_gpu_kernels;
-	neurondb_config->gpu.backend = neurondb_gpu_backend;
 	neurondb_config->gpu.timeout_ms = neurondb_gpu_timeout_ms;
 
 	/* LLM settings */
@@ -235,16 +253,22 @@ neurondb_init_all_gucs(void)
 	 * GPU GUCs
 	 * ==================================================================== */
 
-	DefineCustomBoolVariable("neurondb.gpu_enabled",
-							 "Enable GPU acceleration for vector operations",
-							 NULL,
-							 &neurondb_gpu_enabled,
-							 false,
-							 PGC_USERSET,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
+	/* Compute mode parameter (0=CPU, 1=GPU, 2=AUTO) */
+	DefineCustomIntVariable("neurondb.compute_mode",
+							"Compute execution mode",
+							"Controls whether ML operations run on CPU, GPU, or auto-select. "
+							"Values: 0 (cpu) - CPU only, don't initialize GPU; "
+							"1 (gpu) - GPU required, error if unavailable; "
+							"2 (auto) - Try GPU first, fallback to CPU. Default is 2 (auto).",
+							&neurondb_compute_mode,
+							2,  /* Default: AUTO */
+							0,  /* Min: CPU */
+							2,  /* Max: AUTO */
+							PGC_USERSET,
+							0,
+							NULL,
+							NULL,
+							NULL);
 
 	DefineCustomIntVariable("neurondb.gpu_device",
 							"GPU device ID to use (0-based)",
@@ -298,16 +322,21 @@ neurondb_init_all_gucs(void)
 							 NULL,
 							 NULL);
 
-	DefineCustomBoolVariable("neurondb.gpu_fail_open",
-							 "Fallback to CPU on GPU errors (true = fail open)",
-							 NULL,
-							 &neurondb_gpu_fail_open,
-							 true,
-							 PGC_USERSET,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
+	/* GPU backend type enum parameter (0=CUDA, 1=ROCm, 2=Metal) */
+	DefineCustomIntVariable("neurondb.gpu_backend_type",
+							"GPU backend type",
+							"Selects GPU backend implementation. Only valid when compute_mode is 'gpu' or 'auto'. "
+							"Values: 0 (cuda) - NVIDIA CUDA; 1 (rocm) - AMD ROCm; 2 (metal) - Apple Metal. "
+							"Default is 0 (cuda). Ignored when compute_mode is 'cpu'.",
+							&neurondb_gpu_backend_type,
+							0,  /* Default: CUDA */
+							0,  /* Min: CUDA */
+							2,  /* Max: Metal */
+							PGC_USERSET,
+							0,
+							neurondb_check_gpu_backend_type,
+							NULL,
+							NULL);
 
 	DefineCustomStringVariable("neurondb.gpu_kernels",
 							   "List of GPU-accelerated kernels (comma-separated: "
@@ -315,18 +344,6 @@ neurondb_init_all_gucs(void)
 							   NULL,
 							   &neurondb_gpu_kernels,
 							   "l2,cosine,ip,rf_split,rf_predict",
-							   PGC_USERSET,
-							   0,
-							   NULL,
-							   NULL,
-							   NULL);
-
-	DefineCustomStringVariable("neurondb.gpu_backend",
-							   "GPU backend: 'cuda' (NVIDIA), 'rocm' (AMD), 'metal' (Apple), "
-							   "'auto' (detect), 'cpu' (disable)",
-							   NULL,
-							   &neurondb_gpu_backend,
-							   "auto",
 							   PGC_USERSET,
 							   0,
 							   NULL,

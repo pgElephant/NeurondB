@@ -22,6 +22,7 @@
 #include "neurondb_config.h"
 #include "neurondb_gpu.h"
 #include "neurondb_gpu_backend.h"
+#include "neurondb_constants.h"
 
 void
 neurondb_gpu_batch_l2_distance(const float *queries,
@@ -37,6 +38,10 @@ neurondb_gpu_batch_l2_distance(const float *queries,
 				d;
 	float		diff,
 				sum;
+
+	/* CPU mode: never attempt GPU code, go straight to CPU fallback */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		goto cpu_fallback;
 
 	if (!neurondb_gpu_is_available())
 	{
@@ -96,6 +101,10 @@ neurondb_gpu_batch_cosine_distance(const float *queries,
 				norm_query,
 				norm_vector,
 				similarity;
+
+	/* CPU mode: never attempt GPU code, go straight to CPU fallback */
+	if (NDB_COMPUTE_MODE_IS_CPU())
+		goto cpu_fallback;
 
 	if (!neurondb_gpu_is_available())
 	{
