@@ -319,15 +319,42 @@ auto_train(PG_FUNCTION_ARGS)
 		PG_CATCH();
 		{
 			/* Individual algorithm failed - log warning and continue */
-			ErrorData  *edata;
-			const char *error_message = NULL;
+			ErrorData  *edata = NULL;
+			char	   *error_message = NULL;
 			
-			edata = CopyErrorData();
-			if (edata && edata->message)
+			PG_TRY();
 			{
-				error_message = edata->message;
+				edata = CopyErrorData();
+				if (edata && edata->message)
+				{
+					/* Copy error message before freeing edata */
+					error_message = pstrdup(edata->message);
+				}
 			}
+			PG_CATCH();
+			{
+				/* If CopyErrorData fails, just continue without error details */
+				FlushErrorState();
+			}
+			PG_END_TRY();
+			
 			FlushErrorState();
+			
+			/* Free error data before using the copied message */
+			if (edata != NULL)
+			{
+				PG_TRY();
+				{
+					FreeErrorData(edata);
+				}
+				PG_CATCH();
+				{
+					/* Ignore errors during cleanup */
+					FlushErrorState();
+				}
+				PG_END_TRY();
+				edata = NULL;
+			}
 			
 			elog(WARNING,
 				 "auto_train: Algorithm '%s' failed, continuing with next algorithm",
@@ -337,9 +364,9 @@ auto_train(PG_FUNCTION_ARGS)
 				elog(WARNING,
 					 "auto_train: Error details for '%s': %s",
 					 algorithms[i], error_message);
+				pfree(error_message);
+				error_message = NULL;
 			}
-			if (edata)
-				FreeErrorData(edata);
 			
 			scores[i].score = -1.0f;
 			scores[i].model_id = 0;
@@ -2133,6 +2160,11 @@ automl_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 		int			i;
 		int			train_size;
 		int			test_size;
+		float	   *train_features = NULL;
+		double	   *train_labels = NULL;
+		float	   *test_features = NULL;
+		double	   *test_labels = NULL;
+		int			j;
 
 		/* Select candidate algorithms based on task type */
 		if (strcmp(task_type, "classification") == 0)
@@ -2152,11 +2184,6 @@ automl_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **errstr)
 
 		/* Full implementation: Train and evaluate each candidate algorithm */
 		/* Split data into train (80%) and test (20%) sets */
-		float	   *train_features = NULL;
-		double	   *train_labels = NULL;
-		float	   *test_features = NULL;
-		double	   *test_labels = NULL;
-		int			j;
 		
 		train_size = (int) (nvec * 0.8);
 		test_size = nvec - train_size;
