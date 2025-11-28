@@ -1076,6 +1076,7 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 		char	   *indexName = NULL;
 		StringInfoData sql;
 		TimestampTz rebuildTime;
+		NDB_DECLARE(NdbSpiSession *, session2);
 
 		/* Get heap relation OID from index */
 		heapOid = IndexGetRelation(indexOid, false);
@@ -1146,8 +1147,8 @@ neurondb_rebuild_index(PG_FUNCTION_ARGS)
 		indexRel = index_open(indexOid, AccessShareLock);
 
 		/* Track rebuild history */
-		NDB_DECLARE(NdbSpiSession *, session2);
 		indexName = pstrdup(RelationGetRelationName(indexRel));
+		session2 = NULL;  /* Initialize */
 		session2 = ndb_spi_session_begin(CurrentMemoryContext, false);
 		if (session2 == NULL)
 		{

@@ -115,6 +115,9 @@ hybrid_search(PG_FUNCTION_ARGS)
 		int spi_ret;
 		int i;
 		int proc;
+		NDB_DECLARE(NdbSpiSession *, session);
+		NDB_DECLARE(HybridSearchState *, state);
+		FuncCallContext *funcctx;
 
 	/* Get vector argument - handle NULL case */
 	if (PG_ARGISNULL(1))
@@ -163,7 +166,6 @@ hybrid_search(PG_FUNCTION_ARGS)
 		vector_weight,
 		limit);
 
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR, (errmsg("hybrid_search: failed to begin SPI session")));
@@ -243,17 +245,16 @@ hybrid_search(PG_FUNCTION_ARGS)
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 		
+		/* Allocate state */
+		NDB_ALLOC(state, HybridSearchState, 1);
+		NDB_CHECK_ALLOC(state, "state");
+		
 		/* Build tuple descriptor */
 		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 			ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("function returning record called in context that cannot accept type record")));
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
-		
-		/* Allocate state */
-		NDB_DECLARE(HybridSearchState *, state);
-		NDB_ALLOC(state, HybridSearchState, 1);
-		NDB_CHECK_ALLOC(state, "state");
 		
 		if (proc == 0)
 		{
@@ -574,6 +575,7 @@ semantic_keyword_search(PG_FUNCTION_ARGS)
 	int i;
 	NDB_DECLARE(Datum *, datums);
 	NDB_DECLARE(bool *, nulls);
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	table_name = PG_GETARG_TEXT_PP(0);
 	semantic_query = PG_GETARG_VECTOR_P(1);
@@ -591,8 +593,6 @@ semantic_keyword_search(PG_FUNCTION_ARGS)
 		kw_str,
 		semantic_query->dim,
 		top_k);
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR, (errmsg("semantic_keyword_search: failed to begin SPI session")));
@@ -711,6 +711,7 @@ multi_vector_search(PG_FUNCTION_ARGS)
 	ArrayType *ret_array;
 	Datum *datums;
 	bool *nulls;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	nvecs = ArrayGetNItems(
 		ARR_NDIM(query_vectors), ARR_DIMS(query_vectors));
@@ -721,8 +722,6 @@ multi_vector_search(PG_FUNCTION_ARGS)
 		nvecs,
 		agg_str,
 		top_k);
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR, (errmsg("multi_vector_search: failed to begin SPI session")));
@@ -883,13 +882,13 @@ faceted_vector_search(PG_FUNCTION_ARGS)
 	Datum *datums;
 	bool *nulls;
 	int i;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	table_name = PG_GETARG_TEXT_PP(0);
 	query_vec = PG_GETARG_VECTOR_P(1);
 	NDB_CHECK_VECTOR_VALID(query_vec);
 	facet_column = PG_GETARG_TEXT_PP(2);
 	per_facet_limit = PG_GETARG_INT32(3);
-
 	tbl_str = text_to_cstring(table_name);
 	facet_str = text_to_cstring(facet_column);
 
@@ -899,8 +898,6 @@ faceted_vector_search(PG_FUNCTION_ARGS)
 		facet_str,
 		per_facet_limit,
 		query_vec->dim);
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR, (errmsg("faceted_vector_search: failed to begin SPI session")));
@@ -1008,6 +1005,7 @@ temporal_vector_search(PG_FUNCTION_ARGS)
 	Datum *datums;
 	bool *nulls;
 	int i;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	table_name = PG_GETARG_TEXT_PP(0);
 	query_vec = PG_GETARG_VECTOR_P(1);
@@ -1015,7 +1013,6 @@ temporal_vector_search(PG_FUNCTION_ARGS)
 	timestamp_col = PG_GETARG_TEXT_PP(2);
 	decay_rate = PG_GETARG_FLOAT8(3);
 	top_k = PG_GETARG_INT32(4);
-
 	tbl_str = text_to_cstring(table_name);
 	ts_str = text_to_cstring(timestamp_col);
 
@@ -1026,8 +1023,6 @@ temporal_vector_search(PG_FUNCTION_ARGS)
 		decay_rate,
 		top_k,
 		query_vec->dim);
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR, (errmsg("temporal_vector_search: failed to begin SPI session")));
@@ -1140,13 +1135,13 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 	int n_candidates;
 	int select_count = 0;
 	mmr_cand_t *cands;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	table_name = PG_GETARG_TEXT_PP(0);
 	query_vec = PG_GETARG_VECTOR_P(1);
 	NDB_CHECK_VECTOR_VALID(query_vec);
 	lambda = PG_GETARG_FLOAT8(2);
 	top_k = PG_GETARG_INT32(3);
-
 	tbl_str = text_to_cstring(table_name);
 
 	elog(DEBUG1,
@@ -1155,8 +1150,6 @@ diverse_vector_search(PG_FUNCTION_ARGS)
 		lambda,
 		top_k,
 		query_vec->dim);
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR, (errmsg("diverse_vector_search: failed to begin SPI session")));

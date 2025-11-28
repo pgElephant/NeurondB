@@ -121,6 +121,7 @@ learn_from_query(PG_FUNCTION_ARGS)
 	uint64		fingerprint = 5381ULL;	/* djb2 init */
 	int			i;
 	bool		found = false;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	/* Defensive: NULL checks */
 	if (PG_ARGISNULL(0))
@@ -155,7 +156,6 @@ learn_from_query(PG_FUNCTION_ARGS)
 		 latency_ms);
 
 	/* SPI connect - recover/exit safely */
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR,
@@ -500,6 +500,7 @@ prefetch_entry_points(PG_FUNCTION_ARGS)
 	text	   *index_name;
 	char	   *idx_str = NULL;
 	int			prefetched_count = 0;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR,
@@ -519,8 +520,6 @@ prefetch_entry_points(PG_FUNCTION_ARGS)
 				(errmsg("prefetch_entry_points: index_name conversion "
 						"failed")));
 
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 	{

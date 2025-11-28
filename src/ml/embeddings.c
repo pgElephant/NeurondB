@@ -174,6 +174,34 @@ parse_vector_from_text(const char *str)
 /* SAFE_PFREE macro removed - use NDB_FREE instead */
 
 /*
+ * Helper: Build SQL safe literal for string input
+ *    Quotes a string for use in SQL with single quotes, escaping embedded quotes.
+ */
+static inline char *
+to_sql_literal(const char *val)
+{
+	StringInfoData buf;
+	const char *p;
+
+	if (val == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("to_sql_literal: cannot quote NULL string")));
+
+	initStringInfo(&buf);
+	appendStringInfoCharMacro(&buf, '\'');
+	for (p = val; *p; p++)
+	{
+		if (*p == '\'')
+			appendStringInfoString(&buf, "''");
+		else
+			appendStringInfoChar(&buf, *p);
+	}
+	appendStringInfoCharMacro(&buf, '\'');
+	return buf.data;
+}
+
+/*
  * get_embedding_model_config_internal
  *    Retrieve stored configuration for a model from catalog table.
  *    Returns Jsonb* in caller's memory context, or NULL if not found.
@@ -185,6 +213,7 @@ get_embedding_model_config_internal(const char *model_name)
 	NDB_DECLARE(Jsonb *, result);
 	NDB_DECLARE(NdbSpiSession *, spi_session);
 	NDB_DECLARE(char *, sql_str);
+	NDB_DECLARE(char *, quoted_model_name);
 	StringInfoData sql;
 	int			spi_ret;
 	MemoryContext oldcontext;
@@ -196,12 +225,18 @@ get_embedding_model_config_internal(const char *model_name)
 
 	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext);
 
+	/* Quote model name for SQL with single quotes */
+	quoted_model_name = to_sql_literal(model_name);
+
 	initStringInfo(&sql);
 	appendStringInfo(&sql,
 					 "SELECT config_json FROM neurondb.embedding_model_config "
 					 "WHERE model_name = %s",
-					 ndb_json_quote_string(model_name));
+					 quoted_model_name);
 	sql_str = sql.data;
+
+	/* Free the quoted string after appending (appendStringInfo copies the content) */
+	NDB_FREE(quoted_model_name);
 
 	spi_ret = ndb_spi_execute(spi_session, sql_str, true, 1);
 

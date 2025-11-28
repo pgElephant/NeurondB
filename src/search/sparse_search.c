@@ -53,14 +53,15 @@ sparse_search(PG_FUNCTION_ARGS)
 	Tuplestorestate *tupstore;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
-	char	   *tbl_str = text_to_cstring(table_name);
-	char	   *col_str = text_to_cstring(sparse_col);
+	NDB_DECLARE(NdbSpiSession *, session);
 	StringInfoData sql;
 	int			ret;
 	Datum		values[2];
 	bool		nulls[2] = {false, false};
 	Oid			argtypes[1];
 	Datum		args[1];
+	char	   *tbl_str = text_to_cstring(table_name);
+	char	   *col_str = text_to_cstring(sparse_col);
 
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
@@ -97,8 +98,6 @@ sparse_search(PG_FUNCTION_ARGS)
 	rsinfo->setDesc = tupdesc;
 
 	MemoryContextSwitchTo(oldcontext);
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR,

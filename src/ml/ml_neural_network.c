@@ -1771,22 +1771,25 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 			continue;
 		}
 		tuple = SPI_tuptable->vals[i];
-		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-		if (tupdesc == NULL)
 		{
-			continue;
-		}
-		Datum		targ_datum;
-		bool		targ_null;
+			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+			Datum		targ_datum;
+			bool		targ_null;
 
-		/* Safe access for target - validate tupdesc has at least 2 columns */
-		if (tupdesc->natts < 2)
-		{
-			continue;
+			if (tupdesc == NULL)
+			{
+				continue;
+			}
+
+			/* Safe access for target - validate tupdesc has at least 2 columns */
+			if (tupdesc->natts < 2)
+			{
+				continue;
+			}
+			targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
+			if (!targ_null)
+				y_mean += DatumGetFloat8(targ_datum);
 		}
-		targ_datum = SPI_getbinval(tuple, tupdesc, 2, &targ_null);
-		if (!targ_null)
-			y_mean += DatumGetFloat8(targ_datum);
 	}
 	y_mean /= nvec;
 
@@ -1802,21 +1805,23 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 			continue;
 		}
 		tuple = SPI_tuptable->vals[i];
-		TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-		if (tupdesc == NULL)
 		{
-			continue;
-		}
-		Datum		feat_datum;
-		Datum		targ_datum;
-		bool		feat_null;
-		bool		targ_null;
-		Vector	   *vec;
-		double		y_true;
-		double		y_pred;
-		double		error;
+			TupleDesc	tupdesc = SPI_tuptable->tupdesc;
+			Datum		feat_datum;
+			Datum		targ_datum;
+			bool		feat_null;
+			bool		targ_null;
+			Vector	   *vec;
+			double		y_true;
+			double		y_pred;
+			double		error;
 
-		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
+			if (tupdesc == NULL)
+			{
+				continue;
+			}
+
+			feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 		/* Safe access for target - validate tupdesc has at least 2 columns */
 		if (tupdesc->natts < 2)
 		{
@@ -1843,6 +1848,7 @@ evaluate_neural_network_by_model_id(PG_FUNCTION_ARGS)
 		mae += fabs(error);
 		ss_res += error * error;
 		ss_tot += (y_true - y_mean) * (y_true - y_mean);
+		}
 	}
 
 	ndb_spi_stringinfo_free(spi_session, &query);

@@ -1329,18 +1329,8 @@ ndb_metal_rf_train(const float *features,
 	size_t		class_bytes;
 	int			i;
 	
-	ereport(DEBUG2,
-			(errmsg("ndb_metal_rf_train: function entry"),
-			 errdetail("features=%p, labels=%p, n_samples=%d, feature_dim=%d, class_count=%d",
-					  (void *)features, (void *)labels, n_samples, feature_dim, class_count)));
-	
 	int			j = 0;
 	int			rc = -1;
-	
-	n_trees = default_n_trees;
-	label_ints = NULL;
-	class_counts = NULL;
-	best_left_counts = NULL;
 	NdbCudaRfModelHeader model_hdr;
 	NdbCudaRfTreeHeader *tree_hdrs;
 	NdbCudaRfNode *nodes;
@@ -1351,6 +1341,16 @@ ndb_metal_rf_train(const float *features,
 	int			majority_class = 0;
 	int			best_count = 0;
 	double		majority_fraction = 0.0;
+
+	ereport(DEBUG2,
+			(errmsg("ndb_metal_rf_train: function entry"),
+			 errdetail("features=%p, labels=%p, n_samples=%d, feature_dim=%d, class_count=%d",
+					  (void *)features, (void *)labels, n_samples, feature_dim, class_count)));
+	
+	n_trees = default_n_trees;
+	label_ints = NULL;
+	class_counts = NULL;
+	best_left_counts = NULL;
 
 	if (errstr)
 		*errstr = NULL;

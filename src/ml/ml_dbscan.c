@@ -360,6 +360,8 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 	int			n_noise;
 	double		eps;
 	int			min_pts;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext_spi;
 
 	/* Validate arguments */
 	if (PG_NARGS() != 3)
@@ -392,11 +394,6 @@ evaluate_dbscan_by_model_id(PG_FUNCTION_ARGS)
 	feat_str = text_to_cstring(feature_col);
 
 	oldcontext = CurrentMemoryContext;
-
-	/* Connect to SPI */
-	NDB_DECLARE(NdbSpiSession *, spi_session);
-	MemoryContext oldcontext_spi;
-	
 	oldcontext_spi = CurrentMemoryContext;
 
 	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);

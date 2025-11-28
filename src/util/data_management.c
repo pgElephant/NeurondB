@@ -70,6 +70,7 @@ vector_time_travel(PG_FUNCTION_ARGS)
 	bool		isnull;
 	MemoryContext oldcontext,
 				tmpcontext;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	/* Get arguments and validate nulls */
 	if (PG_ARGISNULL(0))
@@ -121,7 +122,6 @@ vector_time_travel(PG_FUNCTION_ARGS)
 	oldcontext = MemoryContextSwitchTo(tmpcontext);
 
 	/* Check that table exists */
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(tmpcontext, false);
 	if (session == NULL)
 	{
@@ -257,6 +257,7 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 	bool		coldtable_exists = false;
 	MemoryContext oldcontext,
 				tmpcontext;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	/* Validate inputs */
 	if (PG_ARGISNULL(0))
@@ -283,7 +284,6 @@ compress_cold_tier(PG_FUNCTION_ARGS)
 	oldcontext = MemoryContextSwitchTo(tmpcontext);
 
 	/* Check source table existence */
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(tmpcontext, false);
 	if (session == NULL)
 	{
@@ -530,6 +530,7 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 	bool		isnull;
 	MemoryContext oldcontext,
 				tmpcontext;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		ereport(ERROR,
@@ -558,7 +559,6 @@ vacuum_vectors(PG_FUNCTION_ARGS)
 					 "SELECT 1 FROM information_schema.tables WHERE table_schema = "
 					 "'public' AND table_name = '%s';",
 					 tbl_str);
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(tmpcontext, false);
 	if (session == NULL)
 	{
@@ -764,6 +764,7 @@ rebalance_index(PG_FUNCTION_ARGS)
 	bool		index_exists = false;
 	MemoryContext oldcontext,
 				tmpcontext;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		ereport(ERROR,
@@ -799,7 +800,6 @@ rebalance_index(PG_FUNCTION_ARGS)
 					 "indexname = '%s';",
 					 idx_str);
 
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(tmpcontext, false);
 	if (session == NULL)
 	{

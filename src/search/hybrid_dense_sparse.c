@@ -54,15 +54,16 @@ hybrid_dense_sparse_search(PG_FUNCTION_ARGS)
 	Tuplestorestate *tupstore;
 	MemoryContext per_query_ctx;
 	MemoryContext oldcontext;
-	char	   *tbl_str = text_to_cstring(table_name);
-	char	   *dense_str = text_to_cstring(dense_col);
-	char	   *sparse_str = text_to_cstring(sparse_col);
+	NDB_DECLARE(NdbSpiSession *, session);
 	StringInfoData sql;
 	int			ret;
 	Datum		values[2];
 	bool		nulls[2] = {false, false};
 	Datum		args[2];
 	Oid			argtypes[2];
+	char	   *tbl_str = text_to_cstring(table_name);
+	char	   *dense_str = text_to_cstring(dense_col);
+	char	   *sparse_str = text_to_cstring(sparse_col);
 
 	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
 		ereport(ERROR,
@@ -100,7 +101,6 @@ hybrid_dense_sparse_search(PG_FUNCTION_ARGS)
 
 	MemoryContextSwitchTo(oldcontext);
 
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR,

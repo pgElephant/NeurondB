@@ -381,14 +381,34 @@ ml_catalog_register_model(const MLCatalogModelSpec * spec)
 		NDB_DECLARE (text *, params_text);
 		NDB_DECLARE (text *, quoted_params);
 
-		params_txt = ndb_jsonb_out_cstring(parameters);
-		params_text = cstring_to_text(params_txt);
-		quoted_params = DatumGetTextP(
-										  DirectFunctionCall1(quote_literal,
-															  PointerGetDatum(params_text)));
-		params_quoted = text_to_cstring(quoted_params);
-		NDB_FREE(params_text);
-		NDB_FREE(quoted_params);
+		PG_TRY();
+		{
+			params_txt = ndb_jsonb_out_cstring(parameters);
+			if (params_txt == NULL || strlen(params_txt) == 0)
+			{
+				elog(DEBUG1,
+					 "neurondb: ml_catalog_register_model: parameters JSONB conversion returned NULL or empty, using NULL");
+				params_quoted = NULL;
+			}
+			else
+			{
+				params_text = cstring_to_text(params_txt);
+				quoted_params = DatumGetTextP(
+											  DirectFunctionCall1(quote_literal,
+																  PointerGetDatum(params_text)));
+				params_quoted = text_to_cstring(quoted_params);
+				NDB_FREE(params_text);
+				NDB_FREE(quoted_params);
+			}
+		}
+		PG_CATCH();
+		{
+			elog(WARNING,
+				 "neurondb: ml_catalog_register_model: failed to convert parameters JSONB to text, using NULL");
+			FlushErrorState();
+			params_quoted = NULL;
+		}
+		PG_END_TRY();
 	}
 
 	metrics_txt = NULL;
@@ -398,14 +418,34 @@ ml_catalog_register_model(const MLCatalogModelSpec * spec)
 		NDB_DECLARE (text *, metrics_text);
 		NDB_DECLARE (text *, quoted_metrics);
 
-		metrics_txt = ndb_jsonb_out_cstring(metrics);
-		metrics_text = cstring_to_text(metrics_txt);
-		quoted_metrics = DatumGetTextP(
-										   DirectFunctionCall1(quote_literal,
-															   PointerGetDatum(metrics_text)));
-		metrics_quoted = text_to_cstring(quoted_metrics);
-		NDB_FREE(metrics_text);
-		NDB_FREE(quoted_metrics);
+		PG_TRY();
+		{
+			metrics_txt = ndb_jsonb_out_cstring(metrics);
+			if (metrics_txt == NULL || strlen(metrics_txt) == 0)
+			{
+				elog(DEBUG1,
+					 "neurondb: ml_catalog_register_model: metrics JSONB conversion returned NULL or empty, using NULL");
+				metrics_quoted = NULL;
+			}
+			else
+			{
+				metrics_text = cstring_to_text(metrics_txt);
+				quoted_metrics = DatumGetTextP(
+											   DirectFunctionCall1(quote_literal,
+																   PointerGetDatum(metrics_text)));
+				metrics_quoted = text_to_cstring(quoted_metrics);
+				NDB_FREE(metrics_text);
+				NDB_FREE(quoted_metrics);
+			}
+		}
+		PG_CATCH();
+		{
+			elog(WARNING,
+				 "neurondb: ml_catalog_register_model: failed to convert metrics JSONB to text, using NULL");
+			FlushErrorState();
+			metrics_quoted = NULL;
+		}
+		PG_END_TRY();
 	}
 
 	{
@@ -444,8 +484,8 @@ ml_catalog_register_model(const MLCatalogModelSpec * spec)
 						 algorithm_quoted,
 						 table_quoted,
 						 column_quoted != NULL ? column_quoted : "NULL",
-						 params_quoted != NULL ? params_quoted : "NULL",
-						 metrics_quoted != NULL ? metrics_quoted : "NULL",
+						 params_quoted != NULL && strlen(params_quoted) > 0 ? params_quoted : "NULL",
+						 metrics_quoted != NULL && strlen(metrics_quoted) > 0 ? metrics_quoted : "NULL",
 						 time_ms_str != NULL ? time_ms_str : "NULL",
 						 num_samples_str != NULL ? num_samples_str : "NULL",
 						 num_features_str != NULL ? num_features_str : "NULL");
@@ -707,7 +747,6 @@ ml_catalog_fetch_model_payload(int32 model_id,
 
 	PG_TRY();
 	{
-		elog(DEBUG1, "neurondb: ml_catalog_fetch_model_payload: fetching model_id %d", model_id);
 		ret = ndb_spi_execute(spi_session, sql.data, true, 0);
 
 		if (ret == SPI_OK_SELECT)
@@ -716,7 +755,6 @@ ml_catalog_fetch_model_payload(int32 model_id,
 			{
 				found = true;
 
-				elog(DEBUG1, "neurondb: ml_catalog_fetch_model_payload: found model_id %d in catalog", model_id);
 
 				if (model_data_out != NULL)
 				{

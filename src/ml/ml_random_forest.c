@@ -5088,6 +5088,13 @@ cpu_evaluation_path:
 			for (i = 0; i < nvec; i++)
 			{
 				HeapTuple	tuple;
+				Datum		feat_datum;
+				Datum		targ_datum;
+				bool		feat_null;
+				bool		targ_null;
+				Vector	   *vec;
+				ArrayType  *arr;
+				float	   *feat_row;
 
 				/* Safe access to SPI_tuptable - validate before access */
 				if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
@@ -5100,13 +5107,6 @@ cpu_evaluation_path:
 				{
 					continue;
 				}
-				Datum		feat_datum;
-				Datum		targ_datum;
-				bool		feat_null;
-				bool		targ_null;
-				Vector	   *vec;
-				ArrayType  *arr;
-				float	   *feat_row;
 
 				feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 				/* Safe access for target - validate tupdesc has at least 2 columns */

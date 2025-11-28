@@ -150,6 +150,7 @@ distributed_knn_search(PG_FUNCTION_ARGS)
 				SPITupleTable *tuptable;
 				int			nrows;
 				int			row;
+				NDB_DECLARE(NdbSpiSession *, session);
 
 				initStringInfo(&sql);
 
@@ -158,8 +159,6 @@ distributed_knn_search(PG_FUNCTION_ARGS)
 								 "ORDER BY distance ASC LIMIT %d",
 								 shard_names[i],
 								 k);
-
-				NDB_DECLARE(NdbSpiSession *, session);
 				session = ndb_spi_session_begin(CurrentMemoryContext, false);
 				if (session == NULL)
 					elog(ERROR,
@@ -555,18 +554,16 @@ sync_index_async(PG_FUNCTION_ARGS)
 	int			ret;
 	bool		slot_exists;
 	bool		publication_exists;
-	SPIPlanPtr	plan;
 	Oid			argtypes[3];
 	Datum		values[3];
 	char		nulls[3];
 	int			i;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	elog(DEBUG1,
 		 "neurondb: initiating async WAL streaming (index \"%s\" -> replica \"%s\")",
 		 idx_str,
 		 replica_str);
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR,

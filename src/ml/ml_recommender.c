@@ -206,12 +206,13 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 		{
 			continue;
 		}
-		int32		user = 0,
-					item = 0;
-		float		r = 0.0f;
+		{
+			int32		user = 0,
+						item = 0;
+			float		r = 0.0f;
 
-		/* Use safe function for int32 values */
-		if (!ndb_spi_get_int32(train_als_spi_session, i, 1, &user))
+			/* Use safe function for int32 values */
+			if (!ndb_spi_get_int32(train_als_spi_session, i, 1, &user))
 		{
 			isnull[0] = true;
 		}
@@ -232,47 +233,49 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 					 errmsg("neurondb: train_collaborative_filter: user_col or item_col contains NULL"),
 					 errdetail("Row %d contains NULL values in user or item columns", i + 1),
 					 errhint("Remove NULL values from the user and item columns.")));
-		}
-
-		/* Safe access for rating - validate tupdesc has at least 3 columns */
-		if (tupdesc->natts >= 3)
-		{
-			Datum		rating_datum;
-			
-			rating_datum = SPI_getbinval(tuple, tupdesc, 3, &isnull[2]);
-			if (!isnull[2])
-			{
-				if (SPI_gettypeid(tupdesc, 3) == FLOAT8OID)
-					r = (float) DatumGetFloat8(rating_datum);
-				else
-					r = (float) DatumGetFloat4(rating_datum);
 			}
-		}
-		else
-		{
-			isnull[2] = true;
-		}
 
-		if (isnull[2])
-		{
-			NDB_FREE(sql.data);
-			NDB_FREE(user_ids);
-			NDB_FREE(item_ids);
-			NDB_FREE(ratings);
-			NDB_SPI_SESSION_END(train_als_spi_session);
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("neurondb: train_collaborative_filter: rating_col contains NULL"),
-					 errdetail("Row %d contains NULL value in rating column", i + 1),
-					 errhint("Remove NULL values from the rating column.")));
+			/* Safe access for rating - validate tupdesc has at least 3 columns */
+			if (tupdesc->natts >= 3)
+			{
+				Datum		rating_datum;
+				
+				rating_datum = SPI_getbinval(tuple, tupdesc, 3, &isnull[2]);
+				if (!isnull[2])
+				{
+					if (SPI_gettypeid(tupdesc, 3) == FLOAT8OID)
+						r = (float) DatumGetFloat8(rating_datum);
+					else
+						r = (float) DatumGetFloat4(rating_datum);
+				}
+			}
+			else
+			{
+				isnull[2] = true;
+			}
+
+			if (isnull[2])
+			{
+				NDB_FREE(sql.data);
+				NDB_FREE(user_ids);
+				NDB_FREE(item_ids);
+				NDB_FREE(ratings);
+				NDB_SPI_SESSION_END(train_als_spi_session);
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("neurondb: train_collaborative_filter: rating_col contains NULL"),
+						 errdetail("Row %d contains NULL value in rating column", i + 1),
+						 errhint("Remove NULL values from the rating column.")));
+			}
+			user_ids[i] = user;
+			item_ids[i] = item;
+			ratings[i] = r;
+
+			if (user > max_user_id)
+				max_user_id = user;
+			if (item > max_item_id)
+				max_item_id = item;
 		}
-		user_ids[i] = user;
-		item_ids[i] = item;
-		ratings[i] = r;
-		if (user > max_user_id)
-			max_user_id = user;
-		if (item > max_item_id)
-			max_item_id = item;
 	}
 
 	model_mcxt = AllocSetContextCreate(CurrentMemoryContext,
@@ -889,12 +892,20 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 			{
 				continue;
 			}
-			/* Use safe function for int32 values */
-			bool		user_null = false, item_null = false;
-			Datum		user_datum, item_datum;
-			bool		user_isnull, item_isnull;
-			
-			if (!ndb_spi_get_result_safe(i, 1, NULL, &user_datum, &user_isnull) || user_isnull)
+			{
+				/* Use safe function for int32 values */
+				bool		user_null = false, item_null = false;
+				Datum		user_datum, item_datum;
+				bool		user_isnull, item_isnull;
+				int32		user_id;
+				int32		item_id;
+				Datum		rating_datum;
+				bool		rating_null;
+				float		true_rating;
+				float		pred_rating;
+				float		error;
+				
+				if (!ndb_spi_get_result_safe(i, 1, NULL, &user_datum, &user_isnull) || user_isnull)
 			{
 				user_null = true;
 			}
@@ -910,16 +921,10 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 			{
 				item_id_val = DatumGetInt32(item_datum);
 			}
-			int32		user_id = user_id_val;
-			int32		item_id = item_id_val;
+			user_id = user_id_val;
+			item_id = item_id_val;
 			
 			/* For rating (float), need to use SPI_getbinval with safe access */
-			Datum		rating_datum;
-			bool		rating_null;
-			float		true_rating;
-			float		pred_rating;
-			float		error;
-			
 			/* Safe access for rating - validate tupdesc has at least 3 columns */
 			if (tupdesc->natts < 3)
 			{
@@ -946,6 +951,7 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 			error = true_rating - pred_rating;
 			mse += error * error;
 			mae += fabs(error);
+			}
 		}
 
 		NDB_FREE(query.data);

@@ -20,6 +20,7 @@
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "utils/jsonb.h"
+#include "common/jsonapi.h"
 
 #include "neurondb.h"
 #include "neurondb_ml.h"
@@ -607,7 +608,6 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	double	   *a_scores = NULL;
 	double	   *b_scores = NULL;
 	MemoryContext oldcontext;
-	StringInfoData jsonbuf;
 	Jsonb	   *result_jsonb = NULL;
 	bytea	   *model_payload = NULL;
 	Jsonb	   *model_metrics = NULL;
@@ -855,21 +855,95 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 			davies_bouldin = sum_dbi / (double) valid_clusters;
 	}
 
-	/* Build jsonb result in old context before SPI_finish */
+	/* End SPI session BEFORE creating JSONB to avoid context conflicts */
+	NDB_SPI_SESSION_END(spi_session);
+
+	/* Switch to old context and build JSONB directly using JSONB API */
 	MemoryContextSwitchTo(oldcontext);
-	initStringInfo(&jsonbuf);
-	appendStringInfo(&jsonbuf,
-					 "{\"inertia\":%.6f,\"silhouette_score\":%.6f,\"davies_bouldin_index\":%.6f,\"n_samples\":%d,\"n_clusters\":%d}",
-					 inertia,
-					 silhouette,
-					 davies_bouldin,
-					 nvec,
-					 num_clusters);
+	{
+		JsonbParseState *state = NULL;
+		JsonbValue	jkey;
+		JsonbValue	jval;
+		JsonbValue *final_value = NULL;
+		Numeric		inertia_num, silhouette_num, davies_bouldin_num, n_samples_num, n_clusters_num;
 
-	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetTextDatum(jsonbuf.data)));
+		/* Start object */
+		PG_TRY();
+		{
+			(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
 
-	NDB_FREE(jsonbuf.data);
+			/* Add inertia */
+			jkey.type = jbvString;
+			jkey.val.string.len = 8;
+			jkey.val.string.val = "inertia";
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			inertia_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(inertia)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = inertia_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add silhouette_score */
+			jkey.val.string.val = "silhouette_score";
+			jkey.val.string.len = 16;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			silhouette_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(silhouette)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = silhouette_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add davies_bouldin_index */
+			jkey.val.string.val = "davies_bouldin_index";
+			jkey.val.string.len = 19;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			davies_bouldin_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(davies_bouldin)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = davies_bouldin_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add n_samples */
+			jkey.val.string.val = "n_samples";
+			jkey.val.string.len = 9;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(nvec)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = n_samples_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add n_clusters */
+			jkey.val.string.val = "n_clusters";
+			jkey.val.string.len = 10;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			n_clusters_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(num_clusters)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = n_clusters_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* End object */
+			final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+			
+			if (final_value == NULL)
+			{
+				elog(ERROR, "neurondb: evaluate_kmeans: pushJsonbValue(WJB_END_OBJECT) returned NULL");
+			}
+			
+			result_jsonb = JsonbValueToJsonb(final_value);
+		}
+		PG_CATCH();
+		{
+			ErrorData *edata = CopyErrorData();
+			elog(ERROR, "neurondb: evaluate_kmeans: JSONB construction failed: %s", edata->message);
+			FlushErrorState();
+			result_jsonb = NULL;
+		}
+		PG_END_TRY();
+	}
+
+	if (result_jsonb == NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_kmeans_by_model_id: JSONB result is NULL")));
+	}
 
 	/*
 	 * Cleanup - Note: data[], centers[] allocated by
@@ -883,7 +957,6 @@ evaluate_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	if (model_metrics)
 		NDB_FREE(model_metrics);
 
-	NDB_SPI_SESSION_END(spi_session);
 	PG_RETURN_JSONB_P(result_jsonb);
 }
 

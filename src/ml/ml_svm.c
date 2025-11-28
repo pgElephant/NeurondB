@@ -279,6 +279,9 @@ svm_dataset_load(const char *quoted_tbl,
 			HeapTuple	tuple;
 			TupleDesc	tupdesc;
 			Datum		feat_datum;
+			Datum		label_datum;
+			bool		feat_null;
+			bool		label_null;
 
 			/* Safe access to SPI_tuptable - validate before access */
 			if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
@@ -292,9 +295,6 @@ svm_dataset_load(const char *quoted_tbl,
 			{
 				continue;
 			}
-			Datum		label_datum;
-			bool		feat_null;
-			bool		label_null;
 
 			feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 			/* Safe access for label - validate tupdesc has at least 2 columns */

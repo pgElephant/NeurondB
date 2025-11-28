@@ -234,6 +234,12 @@ dt_dataset_load(const char *quoted_tbl,
 	{
 		HeapTuple	tuple;
 		TupleDesc	tupdesc;
+		Datum		feat_datum;
+		Datum		label_datum;
+		bool		feat_null = false;
+		bool		label_null = false;
+		Oid			feat_type;
+		float	   *row;
 		
 		/* Safe access to SPI_tuptable - validate before access */
 		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
@@ -247,12 +253,6 @@ dt_dataset_load(const char *quoted_tbl,
 		{
 			continue;
 		}
-		Datum		feat_datum;
-		Datum		label_datum;
-		bool		feat_null = false;
-		bool		label_null = false;
-		Oid			feat_type;
-		float	   *row;
 
 		feat_datum = SPI_getbinval(tuple, tupdesc, 1, &feat_null);
 		if (feat_null)

@@ -35,6 +35,7 @@ create_model(PG_FUNCTION_ARGS)
 	char	   *name_str;
 	char	   *type_str;
 	char	   *config_str;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	name_str = text_to_cstring(model_name);
 	type_str = text_to_cstring(model_type);
@@ -47,7 +48,6 @@ create_model(PG_FUNCTION_ARGS)
 		 type_str);
 
 	/* Store model metadata in system catalog */
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR,
@@ -71,6 +71,7 @@ drop_model(PG_FUNCTION_ARGS)
 {
 	text	   *model_name = PG_GETARG_TEXT_PP(0);
 	char	   *name_str;
+	NDB_DECLARE(NdbSpiSession *, session2);
 
 	name_str = text_to_cstring(model_name);
 
@@ -79,9 +80,6 @@ drop_model(PG_FUNCTION_ARGS)
 	 * implementation
 	 */
 	(void) name_str;
-
-
-	NDB_DECLARE(NdbSpiSession *, session2);
 	session2 = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session2 == NULL)
 		ereport(ERROR,

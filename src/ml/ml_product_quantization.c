@@ -674,6 +674,8 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 	int			subquantizers;
 	int			codebook_size;
 	int			bits_per_code;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext_spi;
 
 	/* Validate arguments */
 	if (PG_NARGS() != 3)
@@ -700,10 +702,7 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 	vec_str = text_to_cstring(vector_col);
 
 	oldcontext = CurrentMemoryContext;
-
-	/* Connect to SPI */
-	NDB_DECLARE(NdbSpiSession *, spi_session);
-	MemoryContext oldcontext_spi = CurrentMemoryContext;
+	oldcontext_spi = CurrentMemoryContext;
 
 	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);
 
@@ -805,17 +804,19 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 					{
 						continue;
 					}
-					HeapTuple	tuple = SPI_tuptable->vals[i];
-					if (tupdesc == NULL)
 					{
-						continue;
-					}
-					Datum		vec_datum;
-					bool		vec_null;
-					Vector	   *vec;
-					float	   *vec_data;
-					double		vector_error = 0.0;
-					int			start_dim;
+						HeapTuple	tuple = SPI_tuptable->vals[i];
+						Datum		vec_datum;
+						bool		vec_null;
+						Vector	   *vec;
+						float	   *vec_data;
+						double		vector_error = 0.0;
+						int			start_dim;
+
+						if (tupdesc == NULL)
+						{
+							continue;
+						}
 
 					vec_datum = SPI_getbinval(tuple, tupdesc, 1, &vec_null);
 					if (vec_null)
@@ -878,6 +879,7 @@ evaluate_pq_codebook_by_model_id(PG_FUNCTION_ARGS)
 					}
 
 					total_error += vector_error;
+					}
 				}
 
 				/* Free centroids */

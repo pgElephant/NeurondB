@@ -888,12 +888,13 @@ evaluate_opq_rotation_by_model_id(PG_FUNCTION_ARGS)
 					{
 						continue;
 					}
-					Datum		vec_datum;
-					bool		vec_null;
-					Vector	   *vec;
-					float	   *vec_data;
-					double		vector_error = 0.0;
-					int			start_dim;
+					{
+						Datum		vec_datum;
+						bool		vec_null;
+						Vector	   *vec;
+						float	   *vec_data;
+						double		vector_error = 0.0;
+						int			start_dim;
 
 					vec_datum = SPI_getbinval(tuple, tupdesc, 1, &vec_null);
 					if (vec_null)
@@ -954,6 +955,7 @@ evaluate_opq_rotation_by_model_id(PG_FUNCTION_ARGS)
 					}
 
 					total_error += vector_error;
+					}
 				}
 
 				/* Free centroids */

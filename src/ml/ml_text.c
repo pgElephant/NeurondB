@@ -219,6 +219,11 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 		for (r = 0; r < (int) SPI_processed; r++)
 		{
 			TupleDesc	tupdesc;
+			text	   *cat_text;
+			char	   *cat;
+			text	   *word_text;
+			char	   *word;
+
 			/* Safe access to SPI_tuptable - validate before access */
 			if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
 				r >= (int) SPI_processed || SPI_tuptable->vals[r] == NULL)
@@ -231,10 +236,10 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 				continue;
 			}
 			/* Use safe function to get text */
-			text	   *cat_text = ndb_spi_get_text(spi_session, r, 1, oldcontext);
+			cat_text = ndb_spi_get_text(spi_session, r, 1, oldcontext);
 			if (cat_text == NULL)
 				continue;
-			char	   *cat = text_to_cstring(cat_text);
+			cat = text_to_cstring(cat_text);
 			NDB_FREE(cat_text);
 			
 			/* Safe access for word - validate tupdesc has at least 2 columns */
@@ -243,13 +248,13 @@ neurondb_text_classify(PG_FUNCTION_ARGS)
 				NDB_FREE(cat);
 				continue;
 			}
-			text	   *word_text = ndb_spi_get_text(spi_session, r, 2, oldcontext);
+			word_text = ndb_spi_get_text(spi_session, r, 2, oldcontext);
 			if (word_text == NULL)
 			{
 				NDB_FREE(cat);
 				continue;
 			}
-			char	   *word = text_to_cstring(word_text);
+			word = text_to_cstring(word_text);
 			NDB_FREE(word_text);
 
 			for (t = 0; t < num_tokens; t++)

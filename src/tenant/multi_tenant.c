@@ -174,6 +174,7 @@ create_policy(PG_FUNCTION_ARGS)
 	char	   *name_str = NULL;
 	char	   *rule_str = NULL;
 	volatile bool success = false;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	if (policy_name == NULL || policy_rule == NULL)
 		ereport(ERROR,
@@ -197,8 +198,6 @@ create_policy(PG_FUNCTION_ARGS)
 				 errmsg("policy_rule length out of range "
 						"(1-8192)")));
 
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		elog(ERROR, "failed to begin SPI session in create_policy");
@@ -313,6 +312,10 @@ audit_log_query(PG_FUNCTION_ARGS)
 	char	   *user_str = NULL;
 	volatile	uint32 vector_hash = 0;
 	volatile bool success = false;
+	char	   *hmac_hex = NULL;
+	char	   *hmac_key = NULL;
+	StringInfoData hmac_data;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	if (query_text == NULL || user_id == NULL || result_vectors == NULL)
 		ereport(ERROR,
@@ -337,11 +340,6 @@ audit_log_query(PG_FUNCTION_ARGS)
 		 user_str,
 		 strlen(query_str),
 		 vector_hash);
-
-	char	   *hmac_hex = NULL;
-	char	   *hmac_key = NULL;
-	StringInfoData hmac_data;
-	NDB_DECLARE(NdbSpiSession *, session);
 
 	/* Get HMAC key from GUC or use default */
 	{

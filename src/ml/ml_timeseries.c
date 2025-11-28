@@ -543,6 +543,7 @@ train_arima(PG_FUNCTION_ARGS)
 	/* Save model to database */
 	{
 		int32		model_id;
+		int32		model_id_val = 0;
 		StringInfoData insert_sql;
 		int			ret2;
 		Datum	   *ar_datums = NULL;
@@ -612,7 +613,6 @@ train_arima(PG_FUNCTION_ARGS)
 		}
 
 		/* Get model_id using safe function */
-		int32		model_id_val = 0;
 		if (!ndb_spi_get_int32(spi_session, 0, 1, &model_id_val))
 		{
 			NDB_SPI_SESSION_END(spi_session);
@@ -721,6 +721,8 @@ forecast_arima(PG_FUNCTION_ARGS)
 		HeapTuple	modeltuple;
 		TupleDesc	modeldesc;
 		bool		isnull;
+		int32		p_val = 0, d_val = 0, q_val = 0;
+		bool		p_isnull = false, d_isnull = false, q_isnull = false;
 
 		/* Safe access for complex types - validate before access */
 		if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
@@ -735,8 +737,6 @@ forecast_arima(PG_FUNCTION_ARGS)
 		modeldesc = SPI_tuptable->tupdesc;
 		
 		/* Get int32 values using safe function */
-		int32		p_val = 0, d_val = 0, q_val = 0;
-		bool		p_isnull = false, d_isnull = false, q_isnull = false;
 		
 		if (!ndb_spi_get_int32(spi_session, 0, 1, &p_val))
 			p_isnull = true;

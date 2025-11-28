@@ -543,6 +543,8 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	double		inertia;
 	int			n_clusters;
 	int			n_iterations;
+	NDB_DECLARE(NdbSpiSession *, spi_session);
+	MemoryContext oldcontext_spi;
 
 	/* Validate arguments */
 	if (PG_NARGS() != 3)
@@ -569,10 +571,7 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 	feat_str = text_to_cstring(feature_col);
 
 	oldcontext = CurrentMemoryContext;
-
-	/* Connect to SPI */
-	NDB_DECLARE(NdbSpiSession *, spi_session);
-	MemoryContext oldcontext_spi = CurrentMemoryContext;
+	oldcontext_spi = CurrentMemoryContext;
 
 	NDB_SPI_SESSION_BEGIN(spi_session, oldcontext_spi);
 
@@ -662,22 +661,25 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 					 */
 					for (i = 0; i < n_points; i++)
 					{
+						HeapTuple	tuple;
+
 						/* Safe access to SPI_tuptable - validate before access */
 						if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
 							i >= SPI_processed || SPI_tuptable->vals[i] == NULL)
 						{
 							continue;
 						}
-						HeapTuple	tuple = SPI_tuptable->vals[i];
+						tuple = SPI_tuptable->vals[i];
 						if (tupdesc == NULL)
 						{
 							continue;
 						}
-						Datum		vec_datum;
-						bool		vec_null;
-						Vector	   *vec;
-						float	   *vec_data;
-						double		min_dist = DBL_MAX;
+						{
+							Datum		vec_datum;
+							bool		vec_null;
+							Vector	   *vec;
+							float	   *vec_data;
+							double		min_dist = DBL_MAX;
 
 						vec_datum = SPI_getbinval(tuple, tupdesc, 1, &vec_null);
 						if (vec_null)
@@ -705,6 +707,7 @@ evaluate_minibatch_kmeans_by_model_id(PG_FUNCTION_ARGS)
 						}
 
 						total_inertia += min_dist;
+						}
 					}
 
 					/* Free centroids */

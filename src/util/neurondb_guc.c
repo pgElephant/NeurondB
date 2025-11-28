@@ -180,10 +180,10 @@ void
 neurondb_init_all_gucs(void)
 {
 	MemoryContext oldcontext;
+	NDB_DECLARE(NeuronDBConfig *, config);
 
 	/* Allocate config structure in TopMemoryContext */
 	oldcontext = MemoryContextSwitchTo(TopMemoryContext);
-	NDB_DECLARE(NeuronDBConfig *, config);
 	NDB_ALLOC(config, NeuronDBConfig, 1);
 	neurondb_config = config;
 	MemoryContextSwitchTo(oldcontext);

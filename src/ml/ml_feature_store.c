@@ -390,6 +390,8 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 			HeapTuple	tuple;
 			TupleDesc	tupdesc;
 			int			nf;
+			JsonbPair  *obj_pairs;
+			bool		isnull;
 
 			/* Safe access for complex types - validate before access */
 			if (SPI_tuptable == NULL || SPI_tuptable->vals == NULL || 
@@ -400,9 +402,7 @@ neurondb_get_features(PG_FUNCTION_ARGS)
 			tuple = SPI_tuptable->vals[0];
 			tupdesc = SPI_tuptable->tupdesc;
 			nf = ndefs;
-			JsonbPair  *obj_pairs =
-				(JsonbPair *) palloc(sizeof(JsonbPair) * nf);
-			bool		isnull;
+			obj_pairs = (JsonbPair *) palloc(sizeof(JsonbPair) * nf);
 
 			for (j = 0; j < ndefs; ++j)
 			{

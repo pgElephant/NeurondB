@@ -29,6 +29,7 @@
 #include "ml_catalog.h"
 #include "lib/stringinfo.h"
 #include "utils/jsonb.h"
+#include "common/jsonapi.h"
 #include "vector/vector_types.h"
 #include "neurondb_cuda_gmm.h"
 #include "ml_gpu_registry.h"
@@ -809,7 +810,6 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	double	   *a_scores = NULL;
 	double	   *b_scores = NULL;
 	MemoryContext oldcontext;
-	StringInfoData jsonbuf;
 	Jsonb	   *result_jsonb = NULL;
 	bytea	   *model_payload = NULL;
 	Jsonb	   *model_metrics = NULL;
@@ -1087,72 +1087,77 @@ evaluate_gmm_by_model_id(PG_FUNCTION_ARGS)
 	if (model_metrics)
 		NDB_FREE(model_metrics);
 
-	/* Build jsonb result in SPI context */
-	initStringInfo(&jsonbuf);
-	appendStringInfo(&jsonbuf,
-					 "{\"inertia\":%.6f,\"silhouette_score\":%.6f,\"n_samples\":%d}",
-					 inertia,
-					 silhouette,
-					 nvec);
+	/* End SPI session BEFORE creating JSONB to avoid context conflicts */
+	NDB_SPI_SESSION_END(spi_session);
 
-	PG_TRY();					/* renamed local variables to avoid shadowing */
+	/* Switch to old context and build JSONB directly using JSONB API */
+	MemoryContextSwitchTo(oldcontext);
 	{
-		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-														  CStringGetTextDatum(jsonbuf.data)));
+		JsonbParseState *state = NULL;
+		JsonbValue	jkey;
+		JsonbValue	jval;
+		JsonbValue *final_value = NULL;
+		Numeric		inertia_num, silhouette_num, n_samples_num;
 
-		if (result_jsonb == NULL)
-		{
-			elog(WARNING, "neurondb: evaluate_gmm_by_model_id: jsonb_in returned NULL");
-			/* Create a minimal valid JSONB object */
-			result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-															  CStringGetTextDatum("{}")));
-		}
-	}
-	PG_CATCH();
-	{
-		elog(WARNING, "neurondb: evaluate_gmm_by_model_id: error creating JSONB, using empty object");
-		if (jsonbuf.data)
-			NDB_FREE(jsonbuf.data);
-		FlushErrorState();
-		/* Create a minimal valid JSONB object in a safe way */
-		/* Suppress shadow warnings from nested PG_TRY blocks */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wshadow"
+		/* Start object */
 		PG_TRY();
 		{
-			result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-															  CStringGetTextDatum("{}")));
+			(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+			/* Add inertia */
+			jkey.type = jbvString;
+			jkey.val.string.len = 8;
+			jkey.val.string.val = "inertia";
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			inertia_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(inertia)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = inertia_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add silhouette_score */
+			jkey.val.string.val = "silhouette_score";
+			jkey.val.string.len = 16;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			silhouette_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(silhouette)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = silhouette_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* Add n_samples */
+			jkey.val.string.val = "n_samples";
+			jkey.val.string.len = 9;
+			(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+			n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(nvec)));
+			jval.type = jbvNumeric;
+			jval.val.numeric = n_samples_num;
+			(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+			/* End object */
+			final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+			
+			if (final_value == NULL)
+			{
+				elog(ERROR, "neurondb: evaluate_gmm: pushJsonbValue(WJB_END_OBJECT) returned NULL");
+			}
+			
+			result_jsonb = JsonbValueToJsonb(final_value);
 		}
 		PG_CATCH();
 		{
+			ErrorData *edata = CopyErrorData();
+			elog(ERROR, "neurondb: evaluate_gmm: JSONB construction failed: %s", edata->message);
 			FlushErrorState();
-			/* Last resort: return NULL and let caller handle it */
 			result_jsonb = NULL;
 		}
 		PG_END_TRY();
-#pragma GCC diagnostic pop
 	}
-	PG_END_TRY();
 
-	if (jsonbuf.data)
-		NDB_FREE(jsonbuf.data);
-
-	/*
-	 * Validate and copy result_jsonb to caller's context before SPI_finish().
-	 * The JSONB is allocated in SPI context and will be invalid after
-	 * SPI_finish() deletes that context.
-	 */
 	if (result_jsonb == NULL)
 	{
-		elog(WARNING, "neurondb: evaluate_gmm_by_model_id: result_jsonb is NULL, creating empty object");
-		/* Create empty JSONB as fallback */
-		result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-														  CStringGetTextDatum("{}")));
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("neurondb: evaluate_gmm_by_model_id: JSONB result is NULL")));
 	}
-
-	/* This ensures the JSONB remains valid after the SPI context is deleted */
-	MemoryContextSwitchTo(oldcontext);
-	result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY(JsonbPGetDatum(result_jsonb));
 
 	/* Now safe to finish SPI session (this switches back to oldcontext automatically) */
 	NDB_SPI_SESSION_END(spi_session);

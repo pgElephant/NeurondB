@@ -73,7 +73,7 @@ BEGIN
 	BEGIN
 		-- Attempt evaluation
 		BEGIN
-			metrics_result := neurondb.evaluate(mid, 'test_test_view', 'features', 'label');
+			metrics_result := neurondb.evaluate(mid, 'test_train_view', 'features', 'label');
 			
 			IF metrics_result IS NULL THEN
 				RAISE WARNING 'Evaluation returned NULL';

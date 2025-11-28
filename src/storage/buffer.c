@@ -39,6 +39,7 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 	char	   *idx_str;
 	int64		vectors_processed = 0;
 	int64		checkpoint_id = 0;
+	NDB_DECLARE(NdbSpiSession *, session);
 
 	idx_str = text_to_cstring(index_name);
 
@@ -46,8 +47,6 @@ rebuild_hnsw_safe(PG_FUNCTION_ARGS)
 		 "neurondb: %s HNSW rebuild for '%s'",
 		 resume ? "resuming" : "starting",
 		 idx_str);
-
-	NDB_DECLARE(NdbSpiSession *, session);
 	session = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session == NULL)
 		ereport(ERROR,
@@ -193,6 +192,7 @@ save_rebuild_checkpoint(PG_FUNCTION_ARGS)
 	text	   *state_json = PG_GETARG_TEXT_PP(2);
 	char	   *idx_str;
 	char	   *state_str;
+	NDB_DECLARE(NdbSpiSession *, session2);
 
 	idx_str = text_to_cstring(index_name);
 	state_str = text_to_cstring(state_json);
@@ -202,8 +202,6 @@ save_rebuild_checkpoint(PG_FUNCTION_ARGS)
 		 "neurondb: saving checkpoint for '%s' at offset " NDB_INT64_FMT,
 		 idx_str,
 		 NDB_INT64_CAST(vector_offset));
-
-	NDB_DECLARE(NdbSpiSession *, session2);
 	session2 = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session2 == NULL)
 		ereport(ERROR,
@@ -228,6 +226,7 @@ load_rebuild_checkpoint(PG_FUNCTION_ARGS)
 	text	   *index_name = PG_GETARG_TEXT_PP(0);
 	text	   *checkpoint_data;
 	char	   *idx_str;
+	NDB_DECLARE(NdbSpiSession *, session3);
 
 	idx_str = text_to_cstring(index_name);
 
@@ -236,9 +235,6 @@ load_rebuild_checkpoint(PG_FUNCTION_ARGS)
 	 * implementation
 	 */
 	(void) idx_str;
-
-
-	NDB_DECLARE(NdbSpiSession *, session3);
 	session3 = ndb_spi_session_begin(CurrentMemoryContext, false);
 	if (session3 == NULL)
 		ereport(ERROR,
