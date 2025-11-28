@@ -760,14 +760,52 @@ neurondb_build_training_sql(MLAlgorithm algo, StringInfo sql, const char *table_
 			neurondb_parse_hyperparams_int(hyperparams, "max_iters", &max_iters, 1000);
 			neurondb_parse_hyperparams_float8(hyperparams, "learning_rate", &learning_rate, 0.01);
 			neurondb_parse_hyperparams_float8(hyperparams, "lambda", &lambda, 0.001);
-			feature_col = (feature_name_count > 0 && feature_names != NULL)
-				? feature_names[0] : "features";
-			appendStringInfo(sql,
-							 "SELECT train_logistic_regression(%s, %s, %s, %d, %.6f, %.6f)",
-							 neurondb_quote_literal_cstr(table_name),
-							 neurondb_quote_literal_cstr(feature_col),
-							 neurondb_quote_literal_or_null(target_column),
-							 max_iters, learning_rate, lambda);
+			/* Use first feature name if available, otherwise default to "features" */
+			/* feature_names[0] is allocated in callcontext and should be safe to use */
+			/* But to be extra safe, we'll use feature_list if it's a single column, otherwise use feature_names[0] */
+			if (feature_name_count > 0 && feature_names != NULL && feature_names[0] != NULL && strlen(feature_names[0]) > 0)
+			{
+				/* Use first feature name - it's already a string literal in callcontext */
+				feature_col = feature_names[0];
+			}
+			else if (feature_list != NULL && strlen(feature_list) > 0 && strcmp(feature_list, "*") != 0)
+			{
+				/* Use feature_list if it's a single column (no comma) */
+				if (strchr(feature_list, ',') == NULL)
+				{
+					feature_col = feature_list;
+				}
+				else
+				{
+					/* Multiple columns - default to "features" */
+					feature_col = "features";
+				}
+			}
+			else
+			{
+				/* Default to "features" - this is a string literal, safe to use */
+				feature_col = "features";
+			}
+			{
+				char *quoted_table = neurondb_quote_literal_cstr(table_name);
+				char *quoted_feature = neurondb_quote_literal_cstr(feature_col);
+				char *quoted_target = neurondb_quote_literal_or_null(target_column);
+				
+				
+				appendStringInfo(sql,
+								 "SELECT train_logistic_regression(%s, %s, %s, %d, %.6f, %.6f)",
+								 quoted_table,
+								 quoted_feature,
+								 quoted_target,
+								 max_iters, learning_rate, lambda);
+				
+				
+				/* Free the quoted strings */
+				NDB_FREE(quoted_table);
+				NDB_FREE(quoted_feature);
+				if (quoted_target != NULL && strcmp(quoted_target, "NULL") != 0)
+					NDB_FREE(quoted_target);
+			}
 			return true;
 
 		case ML_ALGO_SVM:
@@ -832,13 +870,30 @@ neurondb_build_training_sql(MLAlgorithm algo, StringInfo sql, const char *table_
 		case ML_ALGO_KMEANS:
 			{
 				int			n_clusters = 3;
+				int			max_iters = 100;
 
 				neurondb_parse_hyperparams_int(hyperparams, "n_clusters", &n_clusters, 3);
+				neurondb_parse_hyperparams_int(hyperparams, "max_iters", &max_iters, 100);
 				appendStringInfo(sql,
-								 "SELECT train_kmeans(%s, %s, %d)",
+								 "SELECT train_kmeans_model_id(%s, %s, %d, %d)",
 								 neurondb_quote_literal_cstr(table_name),
 								 neurondb_quote_literal_cstr(feature_list),
-								 n_clusters);
+								 n_clusters, max_iters);
+				return true;
+			}
+
+		case ML_ALGO_GMM:
+			{
+				int			n_components = 3;
+				int			max_iters = 100;
+
+				neurondb_parse_hyperparams_int(hyperparams, "n_components", &n_components, 3);
+				neurondb_parse_hyperparams_int(hyperparams, "max_iters", &max_iters, 100);
+				appendStringInfo(sql,
+								 "SELECT train_gmm_model_id(%s, %s, %d, %d)",
+								 neurondb_quote_literal_cstr(table_name),
+								 neurondb_quote_literal_cstr(feature_list),
+								 n_components, max_iters);
 				return true;
 			}
 
@@ -883,6 +938,29 @@ neurondb_build_training_sql(MLAlgorithm algo, StringInfo sql, const char *table_
 								 neurondb_quote_literal_cstr(feature_list),
 								 neurondb_quote_literal_or_null(target_column),
 								 n_estimators, max_depth_xgb, learning_rate_xgb);
+				return true;
+			}
+
+		case ML_ALGO_NAIVE_BAYES:
+			appendStringInfo(sql,
+							 "SELECT train_naive_bayes_classifier_model_id(%s, %s, %s)",
+							 neurondb_quote_literal_cstr(table_name),
+							 neurondb_quote_literal_cstr(feature_list),
+							 neurondb_quote_literal_or_null(target_column));
+			return true;
+
+		case ML_ALGO_KNN:
+		case ML_ALGO_KNN_CLASSIFIER:
+			{
+				int			k_value = 5;
+
+				neurondb_parse_hyperparams_int(hyperparams, "k", &k_value, 5);
+				appendStringInfo(sql,
+								 "SELECT train_knn_model_id(%s, %s, %s, %d)",
+								 neurondb_quote_literal_cstr(table_name),
+								 neurondb_quote_literal_cstr(feature_list),
+								 neurondb_quote_literal_or_null(target_column),
+								 k_value);
 				return true;
 			}
 
@@ -1105,6 +1183,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 		strcmp(algorithm, NDB_ALGO_DBSCAN) != 0 &&
 		strcmp(algorithm, NDB_ALGO_NAIVE_BAYES) != 0 &&
 		strcmp(algorithm, NDB_ALGO_DECISION_TREE) != 0 &&
+		strcmp(algorithm, NDB_ALGO_GMM) != 0 &&
 		strcmp(algorithm, "neural_network") != 0)
 	{
 		NDB_FREE(project_name);
@@ -1115,7 +1194,7 @@ neurondb_train(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg(NDB_ERR_PREFIX_TRAIN " unsupported algorithm '%s'", algorithm),
-				 errdetail("Supported algorithms: linear_regression, logistic_regression, svm, random_forest, knn, kmeans, dbscan, naive_bayes, decision_tree, neural_network"),
+				 errdetail("Supported algorithms: linear_regression, logistic_regression, svm, random_forest, knn, kmeans, dbscan, naive_bayes, decision_tree, gmm, neural_network"),
 				 errhint("Choose one of the supported algorithms.")));
 	}
 
@@ -1368,10 +1447,27 @@ neurondb_train(PG_FUNCTION_ARGS)
 	/* Call GPU training with loaded data */
 	if (data_loaded && strcmp(algorithm, NDB_ALGO_LOGISTIC_REGRESSION) != 0)
 	{
-		gpu_train_result = ndb_gpu_try_train_model(algorithm, project_name, model_name, table_name, target_column,
-														feature_names, feature_name_count, hyperparams,
-														feature_matrix, label_vector, n_samples, feature_dim, class_count,
-														&gpu_result, gpu_errmsg);
+		/* Wrap GPU training call in PG_TRY to catch exceptions and prevent JSON parsing errors */
+		PG_TRY();
+		{
+			gpu_train_result = ndb_gpu_try_train_model(algorithm, project_name, model_name, table_name, target_column,
+															feature_names, feature_name_count, hyperparams,
+															feature_matrix, label_vector, n_samples, feature_dim, class_count,
+															&gpu_result, gpu_errmsg);
+		}
+		PG_CATCH();
+		{
+			/* GPU training threw an exception - catch it and fall back to CPU */
+			elog(WARNING,
+				 "%s: exception caught during GPU training, falling back to CPU",
+				 algorithm ? algorithm : "unknown");
+			FlushErrorState();
+			gpu_train_result = false;
+			memset(&gpu_result, 0, sizeof(MLGpuTrainResult));
+			if (gpu_errmsg && *gpu_errmsg == NULL)
+				*gpu_errmsg = pstrdup("Exception during GPU training");
+		}
+		PG_END_TRY();
 		
 		if (gpu_train_result)
 		{
@@ -1472,11 +1568,35 @@ neurondb_train(PG_FUNCTION_ARGS)
 		}
 		else
 		{
-			/* GPU training reported success but no model data - this shouldn't happen */
-			ereport(WARNING,
-					(errmsg("neurondb_train: GPU training reported success but no model data"),
-					 errdetail("algorithm=%s, model_id=%d", algorithm, gpu_result.model_id)));
-			model_id = 0;
+			/* GPU training reported success but no model data - error instead of returning 0 */
+			NDB_FREE(feature_list_str);
+			ndb_spi_session_end(&spi_session);
+			MemoryContextSwitchTo(oldcontext);
+			neurondb_cleanup(oldcontext, callcontext);
+			NDB_FREE(project_name);
+			NDB_FREE(algorithm);
+			NDB_FREE(table_name);
+			if (target_column)
+				NDB_FREE(target_column);
+			if (feature_names)
+			{
+				int i;
+				for (i = 0; i < feature_name_count; i++)
+				{
+					if (feature_names[i])
+					{
+						char *ptr = (char *) feature_names[i];
+						NDB_FREE(ptr);
+					}
+				}
+				NDB_FREE(feature_names);
+			}
+			ndb_gpu_free_train_result(&gpu_result);
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg(NDB_ERR_PREFIX_TRAIN " GPU training reported success but no model data"),
+					 errdetail("algorithm=%s, model_id=%d", algorithm, gpu_result.model_id),
+					 errhint("GPU training may have failed internally. Check logs for details or try CPU training.")));
 		}
 		
 		/* Free loaded training data */
@@ -2428,6 +2548,8 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 	char	   *label_col;
 	NDB_DECLARE (Jsonb *, result);
 	NDB_DECLARE (NdbSpiSession *, spi_session);
+
+	elog(DEBUG1, "neurondb_evaluate: function entry");
 	/* Suppress shadow warnings from nested PG_TRY blocks */
 	_Pragma("GCC diagnostic push")
 	_Pragma("GCC diagnostic ignored \"-Wshadow\"");
@@ -2516,6 +2638,7 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 			NDB_FREE(algo_text);
 			isnull = false;
 		}
+		elog(DEBUG1, "neurondb_evaluate: retrieved algorithm='%s', isnull=%d", temp_algorithm, isnull);
 		if (isnull)
 		{
 			ndb_spi_session_end(&spi_session);
@@ -2759,7 +2882,6 @@ neurondb_evaluate(PG_FUNCTION_ARGS)
 				 errmsg(NDB_ERR_PREFIX_EVALUATE " algorithm '%s' does not support evaluation", algorithm)));
 	}
 
-	elog(DEBUG1, "neurondb_evaluate: executing query: %s", sql.data);
 
 	/* Assertions for crash tracking */
 	Assert(sql.data != NULL);
