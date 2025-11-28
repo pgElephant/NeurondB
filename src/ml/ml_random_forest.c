@@ -1400,15 +1400,66 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			memset(&gpu_result, 0, sizeof(MLGpuTrainResult));
 			gpu_features[0] = feature_col;
 
-			initStringInfo(&hyperbuf);
-			appendStringInfo(&hyperbuf,
-							 "{\"n_trees\":%d,\"max_depth\":%d,"
-							 "\"min_samples_split\":%d}",
-							 forest_trees_arg,
-							 max_depth_arg,
-							 min_samples_arg);
-			gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(
-																 jsonb_in, CStringGetTextDatum(hyperbuf.data)));
+			/* Build hyperparameters JSON using JSONB API */
+			{
+				JsonbParseState *state = NULL;
+				JsonbValue	jkey;
+				JsonbValue	jval;
+				JsonbValue *final_value = NULL;
+				Numeric		n_trees_num, max_depth_num, min_samples_split_num;
+
+				/* Start object */
+				PG_TRY();
+				{
+					(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+					/* Add n_trees */
+					jkey.type = jbvString;
+					jkey.val.string.val = "n_trees";
+					jkey.val.string.len = strlen("n_trees");
+					(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+					n_trees_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(forest_trees_arg)));
+					jval.type = jbvNumeric;
+					jval.val.numeric = n_trees_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+					/* Add max_depth */
+					jkey.val.string.val = "max_depth";
+					jkey.val.string.len = strlen("max_depth");
+					(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+					max_depth_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(max_depth_arg)));
+					jval.type = jbvNumeric;
+					jval.val.numeric = max_depth_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+					/* Add min_samples_split */
+					jkey.val.string.val = "min_samples_split";
+					jkey.val.string.len = strlen("min_samples_split");
+					(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+					min_samples_split_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(min_samples_arg)));
+					jval.type = jbvNumeric;
+					jval.val.numeric = min_samples_split_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+					/* End object */
+					final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+					
+					if (final_value == NULL)
+					{
+						elog(ERROR, "neurondb: train_random_forest: pushJsonbValue(WJB_END_OBJECT) returned NULL for hyperparameters");
+					}
+					
+					gpu_hyperparams = JsonbValueToJsonb(final_value);
+				}
+				PG_CATCH();
+				{
+					ErrorData *edata = CopyErrorData();
+					elog(ERROR, "neurondb: train_random_forest: hyperparameters JSONB construction failed: %s", edata->message);
+					FlushErrorState();
+					gpu_hyperparams = NULL;
+				}
+				PG_END_TRY();
+			}
 
 			if (ndb_gpu_try_train_model("random_forest",
 										NULL,
@@ -3162,8 +3213,6 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			bytea	   *serialized = NULL;
 			Jsonb	   *params_jsonb = NULL;
 			Jsonb	   *metrics_jsonb = NULL;
-			StringInfoData params_buf;
-			StringInfoData metrics_buf;
 			bytea	   *gpu_payload = NULL;
 			Jsonb	   *gpu_metrics = NULL;
 			char	   *gpu_err = NULL;
@@ -3171,25 +3220,127 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 
 			stored_model = &rf_models[rf_model_count - 1];
 
-			initStringInfo(&params_buf);
-			appendStringInfo(&params_buf,
-							 "{\"n_trees\":%d,\"max_depth\":%d,\"min_samples_"
-							 "split\":%d}",
-							 forest_trees_arg,
-							 max_depth_arg,
-							 min_samples_arg);
-			params_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-															  jsonb_in, CStringGetTextDatum(params_buf.data)));
+			/* Build parameters JSON using JSONB API */
+			{
+				JsonbParseState *state = NULL;
+				JsonbValue	jkey;
+				JsonbValue	jval;
+				JsonbValue *final_value = NULL;
+				Numeric		n_trees_num, max_depth_num, min_samples_split_num;
 
-			initStringInfo(&metrics_buf);
-			appendStringInfo(&metrics_buf,
-							 "{\"oob_accuracy\":%.6f,\"gini\":%.6f,"
-							 "\"majority_fraction\":%.6f}",
-							 forest_oob_accuracy,
-							 gini_impurity,
-							 majority_fraction);
-			metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-															   jsonb_in, CStringGetTextDatum(metrics_buf.data)));
+				/* Start object */
+				PG_TRY();
+				{
+					(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+					/* Add n_trees */
+					jkey.type = jbvString;
+					jkey.val.string.val = "n_trees";
+					jkey.val.string.len = strlen("n_trees");
+					(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+					n_trees_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(forest_trees_arg)));
+					jval.type = jbvNumeric;
+					jval.val.numeric = n_trees_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+					/* Add max_depth */
+					jkey.val.string.val = "max_depth";
+					jkey.val.string.len = strlen("max_depth");
+					(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+					max_depth_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(max_depth_arg)));
+					jval.type = jbvNumeric;
+					jval.val.numeric = max_depth_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+					/* Add min_samples_split */
+					jkey.val.string.val = "min_samples_split";
+					jkey.val.string.len = strlen("min_samples_split");
+					(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+					min_samples_split_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(min_samples_arg)));
+					jval.type = jbvNumeric;
+					jval.val.numeric = min_samples_split_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+					/* End object */
+					final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+					
+					if (final_value == NULL)
+					{
+						elog(ERROR, "neurondb: train_random_forest: pushJsonbValue(WJB_END_OBJECT) returned NULL for parameters");
+					}
+					
+					params_jsonb = JsonbValueToJsonb(final_value);
+				}
+				PG_CATCH();
+				{
+					ErrorData *edata = CopyErrorData();
+					elog(ERROR, "neurondb: train_random_forest: parameters JSONB construction failed: %s", edata->message);
+					FlushErrorState();
+					params_jsonb = NULL;
+				}
+				PG_END_TRY();
+			}
+
+			/* Build metrics JSON using JSONB API */
+			{
+				JsonbParseState *state = NULL;
+				JsonbValue	jkey;
+				JsonbValue	jval;
+				JsonbValue *final_value = NULL;
+				Numeric		oob_accuracy_num, gini_num, majority_fraction_num;
+
+				/* Start object */
+				PG_TRY();
+				{
+					(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+					/* Add oob_accuracy */
+					jkey.type = jbvString;
+					jkey.val.string.val = "oob_accuracy";
+					jkey.val.string.len = strlen("oob_accuracy");
+					(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+					oob_accuracy_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(forest_oob_accuracy)));
+					jval.type = jbvNumeric;
+					jval.val.numeric = oob_accuracy_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+					/* Add gini */
+					jkey.val.string.val = "gini";
+					jkey.val.string.len = strlen("gini");
+					(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+					gini_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(gini_impurity)));
+					jval.type = jbvNumeric;
+					jval.val.numeric = gini_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+					/* Add majority_fraction */
+					jkey.val.string.val = "majority_fraction";
+					jkey.val.string.len = strlen("majority_fraction");
+					(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+					majority_fraction_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(majority_fraction)));
+					jval.type = jbvNumeric;
+					jval.val.numeric = majority_fraction_num;
+					(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+					/* End object */
+					final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+					
+					if (final_value == NULL)
+					{
+						elog(ERROR, "neurondb: train_random_forest: pushJsonbValue(WJB_END_OBJECT) returned NULL for metrics");
+					}
+					
+					metrics_jsonb = JsonbValueToJsonb(final_value);
+				}
+				PG_CATCH();
+				{
+					ErrorData *edata = CopyErrorData();
+					elog(ERROR, "neurondb: train_random_forest: metrics JSONB construction failed: %s", edata->message);
+					FlushErrorState();
+					metrics_jsonb = NULL;
+				}
+				PG_END_TRY();
+			}
 
 			if (neurondb_gpu_is_available())
 			{
@@ -3264,16 +3415,6 @@ train_random_forest_classifier(PG_FUNCTION_ARGS)
 			{
 				NDB_FREE(metrics_jsonb);
 				metrics_jsonb = NULL;
-			}
-			if (params_buf.data != NULL)
-			{
-				NDB_FREE(params_buf.data);
-				params_buf.data = NULL;
-			}
-			if (metrics_buf.data != NULL)
-			{
-				NDB_FREE(metrics_buf.data);
-				metrics_buf.data = NULL;
 			}
 			if (gpu_metrics != NULL)
 			{
@@ -4191,6 +4332,14 @@ rf_predict_batch(const RFModel * model,
 		return;
 	}
 
+	/* Ensure n_classes is at least 2 for binary classification */
+	if (vote_classes <= 0)
+	{
+		elog(DEBUG1, "rf_predict_batch: model->n_classes=%d is invalid, defaulting to 2", model->n_classes);
+		vote_classes = 2;
+		n_classes = 2;
+	}
+
 	if (vote_classes > 0)
 		NDB_ALLOC(vote_histogram, double, vote_classes);
 	NDB_CHECK_ALLOC(vote_histogram, "vote_histogram");
@@ -4206,11 +4355,17 @@ rf_predict_batch(const RFModel * model,
 		double		vote_total_weight = 0.0;
 
 		if (!isfinite(y_true))
+		{
+			elog(DEBUG1, "rf_predict_batch: row %d: y_true is not finite (%.6f), skipping", i, y_true);
 			continue;
+		}
 
 		true_class = (int) rint(y_true);
 		if (true_class < 0 || true_class >= n_classes)
+		{
+			elog(DEBUG1, "rf_predict_batch: row %d: true_class=%d is out of range [0, %d), skipping", i, true_class, n_classes);
 			continue;
+		}
 
 		if (vote_histogram != NULL)
 		{
@@ -4302,8 +4457,14 @@ rf_predict_batch(const RFModel * model,
 			pred_class = (int) rint(prediction);
 		}
 
+		/* Ensure pred_class is in valid range for binary classification */
 		if (n_classes == 2)
 		{
+			if (pred_class < 0)
+				pred_class = 0;
+			else if (pred_class > 1)
+				pred_class = 1;
+			
 			if (true_class == 1 && pred_class == 1)
 				tp++;
 			else if (true_class == 0 && pred_class == 0)
@@ -4312,9 +4473,20 @@ rf_predict_batch(const RFModel * model,
 				fp++;
 			else if (true_class == 1 && pred_class == 0)
 				fn++;
+			else
+			{
+				elog(DEBUG1, "rf_predict_batch: row %d: unexpected class combination (true_class=%d, pred_class=%d, n_classes=%d, prediction=%.6f)", 
+					 i, true_class, pred_class, n_classes, prediction);
+			}
 		}
 		else
 		{
+			/* For multi-class, ensure pred_class is in valid range */
+			if (pred_class < 0)
+				pred_class = 0;
+			else if (pred_class >= n_classes)
+				pred_class = n_classes - 1;
+			
 			if (true_class == pred_class)
 				tp++;
 			else
@@ -4324,6 +4496,9 @@ rf_predict_batch(const RFModel * model,
 
 	if (vote_histogram != NULL)
 		NDB_FREE(vote_histogram);
+
+	elog(DEBUG1, "rf_predict_batch: final confusion matrix - tp=%d, tn=%d, fp=%d, fn=%d (n_samples=%d, n_classes=%d)", 
+		 tp, tn, fp, fn, n_samples, n_classes);
 
 	if (tp_out)
 		*tp_out = tp;
@@ -4373,7 +4548,6 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 	NDB_DECLARE (NdbSpiSession *, eval_spi_session);
 	StringInfoData query = {0};
 	RFModel    *model = NULL;
-	StringInfoData jsonbuf = {0};
 	Jsonb	   *result_jsonb = NULL;
 	bytea	   *gpu_payload = NULL;
 	Jsonb	   *gpu_metrics = NULL;
@@ -4808,28 +4982,89 @@ evaluate_random_forest_by_model_id(PG_FUNCTION_ARGS)
 				if (rc == 0)
 				{
 					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] GPU evaluation succeeded, building JSONB result");
-					/* Success - build result and return */
-					initStringInfo(&jsonbuf);
-					appendStringInfo(&jsonbuf,
-									 "{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
-									 accuracy,
-									 precision,
-									 recall,
-									 f1_score,
-									 valid_rows);
+					/* End SPI session BEFORE creating JSONB to avoid context conflicts */
+					ndb_spi_stringinfo_free(eval_spi_session, &query);
+					NDB_SPI_SESSION_END(eval_spi_session);
 
-					result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																	  CStringGetTextDatum(jsonbuf.data)));
+					/* Switch to old context and build JSONB directly using JSONB API */
+					MemoryContextSwitchTo(oldcontext);
+					{
+						JsonbParseState *state = NULL;
+						JsonbValue	jkey;
+						JsonbValue	jval;
+						JsonbValue *final_value = NULL;
+						Numeric		accuracy_num, precision_num, recall_num, f1_score_num, n_samples_num;
 
-					elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] JSONB created, copying to caller context");
+						/* Start object */
+						PG_TRY();
+						{
+							(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
 
-					/*
-					 * Free SPI context allocations before switching contexts.
-					 * Must free StringInfo data before switching memory
-					 * contexts, as it's allocated in the SPI context.
-					 */
-					NDB_FREE(jsonbuf.data);
-					jsonbuf.data = NULL;
+							/* Add accuracy */
+							jkey.type = jbvString;
+							jkey.val.string.val = "accuracy";
+							jkey.val.string.len = strlen("accuracy");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							accuracy_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(accuracy)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = accuracy_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add precision */
+							jkey.val.string.val = "precision";
+							jkey.val.string.len = strlen("precision");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							precision_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(precision)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = precision_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add recall */
+							jkey.val.string.val = "recall";
+							jkey.val.string.len = strlen("recall");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							recall_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(recall)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = recall_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add f1_score */
+							jkey.val.string.val = "f1_score";
+							jkey.val.string.len = strlen("f1_score");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							f1_score_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(f1_score)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = f1_score_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add n_samples */
+							jkey.val.string.val = "n_samples";
+							jkey.val.string.len = strlen("n_samples");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(valid_rows)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = n_samples_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* End object */
+							final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+							
+							if (final_value == NULL)
+							{
+								elog(ERROR, "neurondb: evaluate_random_forest: pushJsonbValue(WJB_END_OBJECT) returned NULL");
+							}
+							
+							result_jsonb = JsonbValueToJsonb(final_value);
+						}
+						PG_CATCH();
+						{
+							ErrorData *edata = CopyErrorData();
+							elog(ERROR, "neurondb: evaluate_random_forest: JSONB construction failed: %s", edata->message);
+							FlushErrorState();
+							result_jsonb = NULL;
+						}
+						PG_END_TRY();
+					}
 					{
 						Jsonb	   *temp_jsonb = result_jsonb;
 
@@ -5223,6 +5458,9 @@ cpu_evaluation_path:
 					 errhint("Add more data rows to the evaluation table.")));
 		}
 
+		elog(DEBUG1, "evaluate_random_forest_by_model_id: before GPU model check - is_gpu_model=%d, model=%p, valid_rows=%d", 
+			 is_gpu_model, (void *)model, valid_rows);
+
 		/* For GPU models, we need to load CPU model for evaluation */
 		if (is_gpu_model && model == NULL)
 		{
@@ -5305,75 +5543,195 @@ cpu_evaluation_path:
 						 errdetail("GPU model format is incompatible with CPU evaluation"),
 						 errhint("Use GPU-enabled evaluation or retrain the model for CPU evaluation.")));
 			}
-
-			/* Use batch prediction helper */
-			rf_predict_batch(model,
-							 h_features,
-							 h_labels,
-							 valid_rows,
-							 feat_dim,
-							 &tp,
-							 &tn,
-							 &fp,
-							 &fn);
-
-			/* Compute metrics */
-			if (valid_rows > 0)
-			{
-				accuracy = (double) (tp + tn) / (double) valid_rows;
-
-				if ((tp + fp) > 0)
-					precision = (double) tp / (double) (tp + fp);
-				else
-					precision = 0.0;
-
-				if ((tp + fn) > 0)
-					recall = (double) tp / (double) (tp + fn);
-				else
-					recall = 0.0;
-
-				if ((precision + recall) > 0.0)
-					f1_score = 2.0 * (precision * recall) / (precision + recall);
-				else
-					f1_score = 0.0;
-			}
-
-			/* Cleanup */
-			if (h_features != NULL)
-			{
-				NDB_FREE(h_features);
-				h_features = NULL;
-			}
-			if (h_labels != NULL)
-			{
-				NDB_FREE(h_labels);
-				h_labels = NULL;
-			}
-			if (model != NULL)
-				rf_free_deserialized_model(model);
-			if (gpu_payload != NULL)
-			{
-				NDB_FREE(gpu_payload);
-				gpu_payload = NULL;
-			}
-			if (gpu_metrics != NULL)
-			{
-				NDB_FREE(gpu_metrics);
-				gpu_metrics = NULL;
-			}
 		}
 
-		/*
-		 * Free SPI context allocations before SPI_finish(). StringInfo data
-		 * and other allocations in SPI context must be freed before
-		 * SPI_finish() deletes the context.
-		 */
-		elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: freeing SPI context allocations before SPI_finish()");
-		if (query.data)
+		elog(DEBUG1, "evaluate_random_forest_by_model_id: after GPU model check - is_gpu_model=%d, model=%p, valid_rows=%d", 
+			 is_gpu_model, (void *)model, valid_rows);
+
+		/* Use batch prediction helper - this should run for both GPU and CPU models */
+		if (model == NULL)
 		{
-			NDB_FREE(query.data);
-			query.data = NULL;
+			elog(ERROR, "evaluate_random_forest_by_model_id: model is NULL before rf_predict_batch");
 		}
+		if (model->n_classes <= 0)
+		{
+			elog(WARNING, "evaluate_random_forest_by_model_id: model->n_classes=%d is invalid, predictions may be incorrect", model->n_classes);
+		}
+		if (model->tree_count <= 0 || model->trees == NULL)
+		{
+			elog(WARNING, "evaluate_random_forest_by_model_id: model has no trees (tree_count=%d, trees=%p), predictions will use majority_value", 
+				 model->tree_count, (void *)model->trees);
+		}
+		if (valid_rows <= 0)
+		{
+			elog(ERROR, "evaluate_random_forest_by_model_id: valid_rows=%d is invalid", valid_rows);
+		}
+		elog(DEBUG1, "evaluate_random_forest_by_model_id: calling rf_predict_batch with valid_rows=%d, feat_dim=%d, model->n_classes=%d, model->tree_count=%d", 
+			 valid_rows, feat_dim, model ? model->n_classes : -1, model ? model->tree_count : -1);
+		rf_predict_batch(model,
+						 h_features,
+						 h_labels,
+						 valid_rows,
+						 feat_dim,
+						 &tp,
+						 &tn,
+						 &fp,
+						 &fn);
+		elog(DEBUG1, "evaluate_random_forest_by_model_id: rf_predict_batch returned tp=%d, tn=%d, fp=%d, fn=%d", tp, tn, fp, fn);
+
+		/* Compute metrics */
+		if (valid_rows > 0)
+		{
+			accuracy = (double) (tp + tn) / (double) valid_rows;
+
+			if ((tp + fp) > 0)
+				precision = (double) tp / (double) (tp + fp);
+			else
+				precision = 0.0;
+
+			if ((tp + fn) > 0)
+				recall = (double) tp / (double) (tp + fn);
+			else
+				recall = 0.0;
+
+			if ((precision + recall) > 0.0)
+				f1_score = 2.0 * (precision * recall) / (precision + recall);
+			else
+				f1_score = 0.0;
+		}
+
+		/* Cleanup */
+		if (h_features != NULL)
+		{
+			NDB_FREE(h_features);
+			h_features = NULL;
+		}
+		if (h_labels != NULL)
+		{
+			NDB_FREE(h_labels);
+			h_labels = NULL;
+		}
+		if (model != NULL)
+			rf_free_deserialized_model(model);
+		if (gpu_payload != NULL)
+		{
+			NDB_FREE(gpu_payload);
+			gpu_payload = NULL;
+		}
+		if (gpu_metrics != NULL)
+		{
+			NDB_FREE(gpu_metrics);
+			gpu_metrics = NULL;
+		}
+	}
+
+		/* End SPI session BEFORE creating JSONB to avoid context conflicts */
+		ndb_spi_stringinfo_free(eval_spi_session, &query);
+		NDB_SPI_SESSION_END(eval_spi_session);
+
+		/* Switch to old context and build JSONB directly using JSONB API */
+		MemoryContextSwitchTo(oldcontext);
+		{
+			JsonbParseState *state = NULL;
+			JsonbValue	jkey;
+			JsonbValue	jval;
+			JsonbValue *final_value = NULL;
+			Numeric		accuracy_num, precision_num, recall_num, f1_score_num, n_samples_num;
+
+			/* Start object */
+			PG_TRY();
+			{
+				(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+				/* Add accuracy */
+				jkey.type = jbvString;
+				jkey.val.string.val = "accuracy";
+				jkey.val.string.len = strlen("accuracy");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				accuracy_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(accuracy)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = accuracy_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add precision */
+				jkey.val.string.val = "precision";
+				jkey.val.string.len = strlen("precision");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				precision_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(precision)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = precision_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add recall */
+				jkey.val.string.val = "recall";
+				jkey.val.string.len = strlen("recall");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				recall_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(recall)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = recall_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add f1_score */
+				jkey.val.string.val = "f1_score";
+				jkey.val.string.len = strlen("f1_score");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				f1_score_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(f1_score)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = f1_score_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add n_samples */
+				jkey.val.string.val = "n_samples";
+				jkey.val.string.len = strlen("n_samples");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(nvec)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = n_samples_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* End object */
+				final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+				
+				if (final_value == NULL)
+				{
+					elog(ERROR, "neurondb: evaluate_random_forest: pushJsonbValue(WJB_END_OBJECT) returned NULL");
+				}
+				
+				result_jsonb = JsonbValueToJsonb(final_value);
+			}
+			PG_CATCH();
+			{
+				ErrorData *edata = CopyErrorData();
+				elog(ERROR, "neurondb: evaluate_random_forest: JSONB construction failed: %s", edata->message);
+				FlushErrorState();
+				result_jsonb = NULL;
+			}
+			PG_END_TRY();
+		}
+
+		if (result_jsonb == NULL)
+		{
+			if (tbl_str)
+			{
+				NDB_FREE(tbl_str);
+				tbl_str = NULL;
+			}
+			if (feat_str)
+			{
+				NDB_FREE(feat_str);
+				feat_str = NULL;
+			}
+			if (targ_str)
+			{
+				NDB_FREE(targ_str);
+				targ_str = NULL;
+			}
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: evaluate_random_forest_by_model_id: JSONB result is NULL")));
+		}
+
+		/* Cleanup */
 		if (tbl_str)
 		{
 			NDB_FREE(tbl_str);
@@ -5389,41 +5747,9 @@ cpu_evaluation_path:
 			NDB_FREE(targ_str);
 			targ_str = NULL;
 		}
-		NDB_SPI_SESSION_END(eval_spi_session);
 
-		/* Build jsonb result */
-		elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: building JSONB result, accuracy=%.6f, precision=%.6f, recall=%.6f, f1_score=%.6f, nvec=%d", accuracy, precision, recall, f1_score, nvec);
-		initStringInfo(&jsonbuf);
-		appendStringInfo(&jsonbuf,
-						 "{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
-						 accuracy,
-						 precision,
-						 recall,
-						 f1_score,
-						 nvec);
-
-		elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: JSONB string created, length=%d", jsonbuf.len);
-		{
-			Jsonb	   *temp_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																		CStringGetTextDatum(jsonbuf.data)));
-
-			elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: JSONB created, copying to caller context");
-
-			/*
-			 * Copy JSONB to caller's context before SPI_finish(). The JSONB
-			 * is allocated in SPI context and will be invalid after
-			 * SPI_finish() deletes that context.
-			 */
-			MemoryContextSwitchTo(oldcontext);
-			result_jsonb = (Jsonb *) PG_DETOAST_DATUM_COPY((Datum) temp_jsonb);
-			if (temp_jsonb != (Jsonb *) DatumGetPointer((Datum) temp_jsonb))
-				NDB_FREE(temp_jsonb);
-		}
-		NDB_FREE(jsonbuf.data);
-		elog(DEBUG1, "evaluate_random_forest_by_model_id: [DEBUG] CPU path: returning JSONB result");
 		PG_RETURN_JSONB_P(result_jsonb);
 	}
-}
 
 static void
 rf_serialize_tree(StringInfo buf, const GTree * tree)
@@ -6372,11 +6698,19 @@ rf_dataset_load(const char *quoted_tbl,
 					 quoted_feat,
 					 quoted_label);
 
-	if (ndb_spi_execute_safe(query->data, true, 0) != SPI_OK_SELECT)
-		NDB_CHECK_SPI_TUPTABLE();
-	ereport(ERROR,
-			(errmsg("random_forest: failed to fetch training "
-					"data")));
+	{
+		int			ret = ndb_spi_execute_safe(query->data, true, 0);
+		
+		if (ret != SPI_OK_SELECT)
+		{
+			NDB_CHECK_SPI_TUPTABLE();
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("random_forest: failed to fetch training data"),
+					 errdetail("SPI execution returned code %d (expected %d), query: %s", ret, SPI_OK_SELECT, query->data),
+					 errhint("Verify the table '%s' exists and contains valid feature and label columns.", quoted_tbl)));
+		}
+	}
 
 	n_samples = SPI_processed;
 	dataset->n_samples = n_samples;

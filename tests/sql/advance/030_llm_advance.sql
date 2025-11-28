@@ -25,7 +25,7 @@ SET client_min_messages TO WARNING;
 SELECT * FROM ndb_llm_cache_stats();
 
 \echo 'Test 2: Cache Clear'
-SELECT ndb_llm_cache_clear() AS cache_cleared;
+SELECT ndb_llm_cache_clear(NULL) AS cache_cleared;
 
 \echo 'Test 3: Cache Statistics After Clear'
 SELECT * FROM ndb_llm_cache_stats();
@@ -42,7 +42,7 @@ SELECT ndb_llm_cache_warm(ARRAY[
 	'What is machine learning?',
 	'Explain neural networks',
 	'What is vector search?'
-]) AS cache_warmed;
+], 'default') AS cache_warmed;
 
 \echo 'Test 7: Cache Statistics After Warm'
 SELECT * FROM ndb_llm_cache_stats();
@@ -256,10 +256,9 @@ SELECT
 	job_id,
 	operation,
 	retry_count,
-	max_retries,
 	status,
 	CASE 
-		WHEN retry_count >= max_retries THEN 'Max retries reached'
+		WHEN retry_count >= 3 THEN 'Max retries reached'
 		ELSE 'Can retry'
 	END AS retry_status
 FROM neurondb.llm_jobs
@@ -331,12 +330,12 @@ END$$;
 \echo 'Test 23: Provider Selection Logic'
 -- Test router selects correct provider based on configuration
 SELECT 
-	config_name,
-	provider,
 	model_name,
-	is_default
+	config_json,
+	created_at,
+	updated_at
 FROM list_embedding_model_configs()
-ORDER BY is_default DESC, config_name;
+ORDER BY created_at DESC, model_name;
 
 \echo 'Test 24: Default Provider Fallback'
 -- Test default provider selection

@@ -74,7 +74,7 @@ FROM test_train_view;
 \echo 'GPU Configuration'
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 SELECT neurondb_gpu_enable() AS gpu_available;
-SELECT neurondb_gpu_info() AS gpu_info;
+SELECT * FROM neurondb_gpu_info();
 
 /*
  * ---- RAG OPERATIONS TESTS ----

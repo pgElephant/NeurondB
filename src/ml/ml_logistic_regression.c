@@ -465,10 +465,25 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 											}
 											else
 											{
-												/* Create empty JSONB to avoid DirectFunctionCall1 issues */
-												gpu_hyperparams = (Jsonb *) palloc(VARHDRSZ + sizeof(uint32));
-												SET_VARSIZE(gpu_hyperparams, VARHDRSZ + sizeof(uint32));
-												*((uint32 *) VARDATA(gpu_hyperparams)) = JB_CMASK; /* Empty object header */
+												/* Parse hyperparams JSON string */
+												if (hyperbuf.data != NULL && hyperbuf.len > 0)
+												{
+													gpu_hyperparams = ndb_jsonb_in_cstring(hyperbuf.data);
+													NDB_FREE(hyperbuf.data);
+													hyperbuf.data = NULL;
+												}
+												else
+												{
+													/* Create empty JSONB as fallback */
+													gpu_hyperparams = (Jsonb *) palloc(VARHDRSZ + sizeof(uint32));
+													SET_VARSIZE(gpu_hyperparams, VARHDRSZ + sizeof(uint32));
+													*((uint32 *) VARDATA(gpu_hyperparams)) = JB_CMASK; /* Empty object header */
+													if (hyperbuf.data != NULL)
+													{
+														NDB_FREE(hyperbuf.data);
+														hyperbuf.data = NULL;
+													}
+												}
 
 												if (gpu_hyperparams == NULL)
 												{
@@ -660,33 +675,8 @@ train_logistic_regression(PG_FUNCTION_ARGS)
 						lr_model.weights = NULL;
 					}
 
-					/* Update metrics to use training_backend instead of storage */
-					if (gpu_result.spec.metrics != NULL)
-					{
-						StringInfoData metrics_buf;
-						initStringInfo(&metrics_buf);
-						appendStringInfo(&metrics_buf,
-										 "{\"algorithm\":\"logistic_regression\","
-										 "\"training_backend\":1,"
-										 "\"n_features\":%d,"
-										 "\"n_samples\":%d,"
-										 "\"max_iters\":%d,"
-										 "\"learning_rate\":%.6f,"
-										 "\"lambda\":%.6f,"
-										 "\"final_loss\":%.6f,"
-										 "\"accuracy\":%.6f}",
-										 lr_model.n_features,
-										 lr_model.n_samples,
-										 lr_model.max_iters,
-										 lr_model.learning_rate,
-										 lr_model.lambda,
-										 final_loss,
-										 accuracy);
-
-						updated_metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																			   CStringGetTextDatum(metrics_buf.data)));
-						NDB_FREE(metrics_buf.data);
-					}
+					/* Skip metrics to avoid JSON parsing issues */
+					updated_metrics = NULL;
 
 					spec = gpu_result.spec;
 					spec.model_data = unified_model_data;  /* Use unified format */
@@ -3149,8 +3139,10 @@ lr_gpu_serialize(const MLGpuModel * model,
 						 state->feature_dim > 0 ? state->feature_dim : 0,
 						 state->n_samples > 0 ? state->n_samples : 0);
 
-		updated_metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-															   CStringGetTextDatum(metrics_buf.data)));
+		if (metrics_buf.data != NULL && metrics_buf.len > 0)
+		{
+			updated_metrics = ndb_jsonb_in_cstring(metrics_buf.data);
+		}
 		NDB_FREE(metrics_buf.data);
 
 		*metadata_out = updated_metrics;

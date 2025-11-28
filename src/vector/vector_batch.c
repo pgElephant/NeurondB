@@ -111,10 +111,10 @@ vector_l2_distance_batch(PG_FUNCTION_ARGS)
 		vec_datum = array_ref(vec_array,
 							  1,
 							  &i,
-							  typlen,
-							  typlen,
-							  typbyval,
-							  typalign,
+							  -1,
+							  -1,
+							  false,
+							  'i',
 							  &isnull);
 
 		if (isnull)
@@ -125,7 +125,14 @@ vector_l2_distance_batch(PG_FUNCTION_ARGS)
 		}
 
 		vec = DatumGetVector(vec_datum);
-		if (vec == NULL || vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
+		if (vec == NULL)
+		{
+			nulls[i] = true;
+			elems[i] = (Datum) 0;
+			continue;
+		}
+		NDB_CHECK_VECTOR_VALID(vec);
+		if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		{
 			nulls[i] = true;
 			elems[i] = (Datum) 0;
@@ -225,10 +232,10 @@ vector_cosine_distance_batch(PG_FUNCTION_ARGS)
 		vec_datum = array_ref(vec_array,
 							  1,
 							  &i,
-							  typlen,
-							  typlen,
-							  typbyval,
-							  typalign,
+							  -1,
+							  -1,
+							  false,
+							  'i',
 							  &isnull);
 
 		if (isnull)
@@ -239,7 +246,14 @@ vector_cosine_distance_batch(PG_FUNCTION_ARGS)
 		}
 
 		vec = DatumGetVector(vec_datum);
-		if (vec == NULL || vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
+		if (vec == NULL)
+		{
+			nulls[i] = true;
+			elems[i] = (Datum) 0;
+			continue;
+		}
+		NDB_CHECK_VECTOR_VALID(vec);
+		if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		{
 			nulls[i] = true;
 			elems[i] = (Datum) 0;
@@ -339,10 +353,10 @@ vector_inner_product_batch(PG_FUNCTION_ARGS)
 		vec_datum = array_ref(vec_array,
 							  1,
 							  &i,
-							  typlen,
-							  typlen,
-							  typbyval,
-							  typalign,
+							  -1,
+							  -1,
+							  false,
+							  'i',
 							  &isnull);
 
 		if (isnull)
@@ -353,7 +367,14 @@ vector_inner_product_batch(PG_FUNCTION_ARGS)
 		}
 
 		vec = DatumGetVector(vec_datum);
-		if (vec == NULL || vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
+		if (vec == NULL)
+		{
+			nulls[i] = true;
+			elems[i] = (Datum) 0;
+			continue;
+		}
+		NDB_CHECK_VECTOR_VALID(vec);
+		if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		{
 			nulls[i] = true;
 			elems[i] = (Datum) 0;
@@ -445,10 +466,10 @@ vector_normalize_batch(PG_FUNCTION_ARGS)
 		vec_datum = array_ref(vec_array,
 							  1,
 							  &i,
-							  typlen,
-							  typlen,
-							  typbyval,
-							  typalign,
+							  -1,
+							  -1,
+							  false,
+							  'i',
 							  &isnull);
 
 		if (isnull)
@@ -459,7 +480,14 @@ vector_normalize_batch(PG_FUNCTION_ARGS)
 		}
 
 		vec = DatumGetVector(vec_datum);
-		if (vec == NULL || vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
+		if (vec == NULL)
+		{
+			nulls[i] = true;
+			elems[i] = (Datum) 0;
+			continue;
+		}
+		NDB_CHECK_VECTOR_VALID(vec);
+		if (vec->dim <= 0 || vec->dim > VECTOR_MAX_DIM)
 		{
 			nulls[i] = true;
 			elems[i] = (Datum) 0;
@@ -549,10 +577,10 @@ vector_sum_batch(PG_FUNCTION_ARGS)
 		vec_datum = array_ref(vec_array,
 							  1,
 							  &i,
-							  typlen,
-							  typlen,
-							  typbyval,
-							  typalign,
+							  -1,
+							  -1,
+							  false,
+							  'i',
 							  &isnull);
 
 		if (isnull)
@@ -649,10 +677,10 @@ vector_avg_batch(PG_FUNCTION_ARGS)
 		vec_datum = array_ref(vec_array,
 							  1,
 							  &i,
-							  typlen,
-							  typlen,
-							  typbyval,
-							  typalign,
+							  -1,
+							  -1,
+							  false,
+							  'i',
 							  &isnull);
 
 		if (isnull)

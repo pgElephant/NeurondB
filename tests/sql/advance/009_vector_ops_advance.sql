@@ -27,7 +27,7 @@ SELECT
 \echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 /* GPU configuration via GUC (ALTER SYSTEM) */
 SELECT neurondb_gpu_enable() AS gpu_available;
-SELECT neurondb_gpu_info() AS gpu_info;
+SELECT * FROM neurondb_gpu_info();
 
 /*
  * ---- VECTOR OPERATIONS TESTS ----

@@ -26,6 +26,7 @@
 #include "neurondb_safe_memory.h"
 #include "neurondb_macros.h"
 #include "neurondb_spi.h"
+#include "neurondb_json.h"
 #include "ml_catalog.h"
 #include "lib/stringinfo.h"
 #include "utils/jsonb.h"
@@ -595,7 +596,7 @@ train_gmm_model_id(PG_FUNCTION_ARGS)
 	initStringInfo(&metrics_json);
 	appendStringInfo(&metrics_json, "{\"training_backend\":0, \"k\": %d, \"dim\": %d, \"max_iters\": %d}",
 					 model.k, model.dim, max_iters);
-	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(metrics_json.data)));
+	metrics = ndb_jsonb_in_cstring(metrics_json.data);
 	NDB_FREE(metrics_json.data);
 
 	memset(&spec, 0, sizeof(MLCatalogModelSpec));
@@ -1405,8 +1406,7 @@ gmm_gpu_evaluate(const MLGpuModel * model,
 						 state->n_samples > 0 ? state->n_samples : 0,
 						 state->n_components);
 
-		metrics_json = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetTextDatum(buf.data)));
+		metrics_json = ndb_jsonb_in_cstring(buf.data);
 		NDB_FREE(buf.data);
 	}
 

@@ -31,6 +31,7 @@
 #include "neurondb_validation.h"
 #include "neurondb_spi_safe.h"
 #include "neurondb_spi.h"
+#include "neurondb_json.h"
 #include "neurondb_safe_memory.h"
 #include "neurondb_macros.h"
 
@@ -160,7 +161,8 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 	NDB_SPI_SESSION_BEGIN(train_als_spi_session, oldcontext);
 
 	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	if (ret == SPI_OK_SELECT)
+		NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 	{
 		NDB_FREE(sql.data);
@@ -375,7 +377,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 						 "CREATE TABLE IF NOT EXISTS neurondb_cf_user_factors "
 						 "(model_id integer, user_id int, factors float4[])");
 		ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		/* CREATE TABLE doesn't return a result set, so don't check SPI_tuptable */
 		/* Use safe free/reinit to handle potential memory context changes */
 		NDB_FREE(sql.data);
 		initStringInfo(&sql);
@@ -383,7 +385,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 						 "CREATE TABLE IF NOT EXISTS neurondb_cf_item_factors "
 						 "(model_id integer, item_id int, factors float4[])");
 		ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		/* CREATE TABLE doesn't return a result set, so don't check SPI_tuptable */
 
 		/* Use safe free/reinit to handle potential memory context changes */
 		NDB_FREE(sql.data);
@@ -392,7 +394,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 						 "DELETE FROM neurondb_cf_user_factors WHERE model_id = %d",
 						 model_id);
 		ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		/* DELETE doesn't return a result set, so don't check SPI_tuptable */
 		/* Use safe free/reinit to handle potential memory context changes */
 		NDB_FREE(sql.data);
 		initStringInfo(&sql);
@@ -400,7 +402,7 @@ train_collaborative_filter(PG_FUNCTION_ARGS)
 						 "DELETE FROM neurondb_cf_item_factors WHERE model_id = %d",
 						 model_id);
 		ndb_spi_execute_safe(sql.data, false, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		/* DELETE doesn't return a result set, so don't check SPI_tuptable */
 
 		{
 			Oid			arg_types[3] = {INT4OID, INT4OID, 1021};
@@ -757,6 +759,10 @@ predict_collaborative_filter(PG_FUNCTION_ARGS)
 	for (i = 0; i < n_factors; i++)
 		prediction += user_factors[i] * item_factors[0][i];
 
+	/* Check for NaN/Inf and return default value (mean rating) if invalid */
+	if (isnan(prediction) || isinf(prediction))
+		prediction = 3.0;  /* Default to middle of 1-5 scale */
+
 	/* Clamp prediction to valid rating range (assuming 1-5 scale) */
 	if (prediction < 1.0)
 		prediction = 1.0;
@@ -943,7 +949,7 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 															 Int32GetDatum(user_id),
 															 Int32GetDatum(item_id)));
 
-			/* Skip NaN/Inf predictions */
+			/* Skip NaN/Inf predictions (shouldn't happen now, but keep as safety check) */
 			if (isnan(pred_rating) || isinf(pred_rating))
 				continue;
 
@@ -988,7 +994,7 @@ evaluate_collaborative_filter_by_model_id(PG_FUNCTION_ARGS)
 					 "{\"mse\":%.6f,\"mae\":%.6f,\"rmse\":%.6f,\"n_ratings\":%d}",
 					 mse, mae, rmse, n_ratings);
 
-	result = DatumGetJsonbP(DirectFunctionCall1(jsonb_in, CStringGetTextDatum(jsonbuf.data)));
+	result = ndb_jsonb_in_cstring(jsonbuf.data);
 	NDB_FREE(jsonbuf.data);
 
 	/* Cleanup */
@@ -1117,7 +1123,8 @@ recommend_items(PG_FUNCTION_ARGS)
 					 model_id);
 
 	ret = ndb_spi_execute_safe(sql.data, true, 0);
-	NDB_CHECK_SPI_TUPTABLE();
+	if (ret == SPI_OK_SELECT)
+		NDB_CHECK_SPI_TUPTABLE();
 	if (ret != SPI_OK_SELECT)
 	{
 		NDB_FREE(sql.data);
@@ -2270,8 +2277,7 @@ recommender_gpu_train(MLGpuModel * model, const MLGpuTrainSpec * spec, char **er
 	appendStringInfo(&metrics_json,
 					 "{\"storage\":\"cpu\",\"n_users\":%d,\"n_items\":%d,\"n_factors\":%d,\"lambda\":%.6f,\"n_samples\":%d}",
 					 n_users, n_items, n_factors, lambda, nvec);
-	metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-												 CStringGetTextDatum(metrics_json.data)));
+	metrics = ndb_jsonb_in_cstring(metrics_json.data);
 	NDB_FREE(metrics_json.data);
 
 	state = (RecommenderGpuModelState *) palloc0(sizeof(RecommenderGpuModelState));
@@ -2409,8 +2415,7 @@ recommender_gpu_evaluate(const MLGpuModel * model, const MLGpuEvalSpec * spec,
 					 state->lambda > 0.0f ? state->lambda : 0.1f,
 					 state->n_samples > 0 ? state->n_samples : 0);
 
-	metrics_json = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetTextDatum(buf.data)));
+	metrics_json = ndb_jsonb_in_cstring(buf.data);
 	NDB_FREE(buf.data);
 
 	if (out != NULL)

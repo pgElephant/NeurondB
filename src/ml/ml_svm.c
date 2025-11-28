@@ -762,8 +762,6 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 	char	   *tbl_str = NULL;
 	char	   *feat_str = NULL;
 	char	   *label_str = NULL;
-	StringInfoData hyperbuf_cpu;
-	StringInfoData metricsbuf;
 	MemoryContext oldcontext;
 	int			nvec = 0;
 	int			dim = 0;
@@ -959,13 +957,57 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 	/* Try GPU training first */
 	if (neurondb_gpu_is_available() && nvec > 0 && dim > 0)
 	{
-		/* Create hyperparameters Jsonb using simple string parsing */
-		char		hyper_str[256];
+		/* Create hyperparameters JSONB using JSONB API */
+		{
+			JsonbParseState *state = NULL;
+			JsonbValue	jkey;
+			JsonbValue	jval;
+			JsonbValue *final_value = NULL;
+			Numeric		C_num, max_iters_num;
 
-		snprintf(hyper_str, sizeof(hyper_str), "{\"C\":%.6f,\"max_iters\":%d}",
-				 c_param, max_iters);
-		gpu_hyperparams = DatumGetJsonbP(DirectFunctionCall1(
-															 jsonb_in, CStringGetTextDatum(hyper_str)));
+			/* Start object */
+			PG_TRY();
+			{
+				(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+				/* Add C */
+				jkey.type = jbvString;
+				jkey.val.string.val = "C";
+				jkey.val.string.len = strlen("C");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				C_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(c_param)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = C_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add max_iters */
+				jkey.val.string.val = "max_iters";
+				jkey.val.string.len = strlen("max_iters");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				max_iters_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(max_iters)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = max_iters_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* End object */
+				final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+				
+				if (final_value == NULL)
+				{
+					elog(ERROR, "neurondb: train_svm: pushJsonbValue(WJB_END_OBJECT) returned NULL for hyperparameters");
+				}
+				
+				gpu_hyperparams = JsonbValueToJsonb(final_value);
+			}
+			PG_CATCH();
+			{
+				ErrorData *edata = CopyErrorData();
+				elog(ERROR, "neurondb: train_svm: hyperparameters JSONB construction failed: %s", edata->message);
+				FlushErrorState();
+				gpu_hyperparams = NULL;
+			}
+			PG_END_TRY();
+		}
 
 		if (gpu_hyperparams == NULL)
 		{
@@ -1053,25 +1095,101 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			/* Update metrics to use training_backend=1 */
 			if (gpu_result.spec.metrics != NULL)
 			{
-				StringInfoData metrics_buf;
-				initStringInfo(&metrics_buf);
-				appendStringInfo(&metrics_buf,
-								 "{\"algorithm\":\"svm\","
-								 "\"training_backend\":1,"
-								 "\"n_features\":%d,"
-								 "\"n_samples\":%d,"
-								 "\"n_support_vectors\":%d,"
-								 "\"C\":%.6f,"
-								 "\"max_iters\":%d}",
-								 svm_model.n_features > 0 ? svm_model.n_features : 0,
-								 svm_model.n_samples > 0 ? svm_model.n_samples : 0,
-								 svm_model.n_support_vectors > 0 ? svm_model.n_support_vectors : 0,
-								 svm_model.C,
-								 svm_model.max_iters);
+				/* Build metrics JSON using JSONB API */
+				{
+					JsonbParseState *state = NULL;
+					JsonbValue	jkey;
+					JsonbValue	jval;
+					JsonbValue *final_value = NULL;
+					Numeric		n_features_num, n_samples_num, n_support_vectors_num, C_num, max_iters_num;
 
-				updated_metrics = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																	 CStringGetTextDatum(metrics_buf.data)));
-				NDB_FREE(metrics_buf.data);
+					/* Start object */
+					PG_TRY();
+					{
+						(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+						/* Add algorithm */
+						jkey.type = jbvString;
+						jkey.val.string.val = "algorithm";
+						jkey.val.string.len = strlen("algorithm");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						jval.type = jbvString;
+						jval.val.string.val = "svm";
+						jval.val.string.len = strlen("svm");
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add training_backend */
+						jkey.val.string.val = "training_backend";
+						jkey.val.string.len = strlen("training_backend");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						jval.type = jbvNumeric;
+						jval.val.numeric = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(1)));
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add n_features */
+						jkey.val.string.val = "n_features";
+						jkey.val.string.len = strlen("n_features");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						n_features_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(svm_model.n_features > 0 ? svm_model.n_features : 0)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = n_features_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add n_samples */
+						jkey.val.string.val = "n_samples";
+						jkey.val.string.len = strlen("n_samples");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(svm_model.n_samples > 0 ? svm_model.n_samples : 0)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = n_samples_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add n_support_vectors */
+						jkey.val.string.val = "n_support_vectors";
+						jkey.val.string.len = strlen("n_support_vectors");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						n_support_vectors_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(svm_model.n_support_vectors > 0 ? svm_model.n_support_vectors : 0)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = n_support_vectors_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add C */
+						jkey.val.string.val = "C";
+						jkey.val.string.len = strlen("C");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						C_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(svm_model.C)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = C_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add max_iters */
+						jkey.val.string.val = "max_iters";
+						jkey.val.string.len = strlen("max_iters");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						max_iters_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(svm_model.max_iters)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = max_iters_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* End object */
+						final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+						
+						if (final_value == NULL)
+						{
+							elog(ERROR, "neurondb: train_svm: pushJsonbValue(WJB_END_OBJECT) returned NULL for metrics");
+						}
+						
+						updated_metrics = JsonbValueToJsonb(final_value);
+					}
+					PG_CATCH();
+					{
+						ErrorData *edata = CopyErrorData();
+						elog(ERROR, "neurondb: train_svm: metrics JSONB construction failed: %s", edata->message);
+						FlushErrorState();
+						updated_metrics = NULL;
+					}
+					PG_END_TRY();
+				}
 			}
 
 			spec = gpu_result.spec;
@@ -1110,6 +1228,7 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			if (spec.training_column == NULL)
 				spec.training_column = label_str;
 
+			/* Ensure parameters are set - use gpu_hyperparams if spec.parameters is NULL */
 			if (spec.parameters == NULL)
 			{
 				spec.parameters = gpu_hyperparams;
@@ -1117,7 +1236,112 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 			}
 			else
 			{
-				gpu_hyperparams = NULL;
+				/* spec.parameters already set by GPU, but ensure it's valid JSONB */
+				if (gpu_hyperparams != NULL)
+				{
+					NDB_FREE(gpu_hyperparams);
+					gpu_hyperparams = NULL;
+				}
+			}
+
+			/* Ensure metrics are set - build if missing */
+			if (spec.metrics == NULL)
+			{
+				/* Build metrics JSON using JSONB API */
+				{
+					JsonbParseState *state = NULL;
+					JsonbValue	jkey;
+					JsonbValue	jval;
+					JsonbValue *final_value = NULL;
+					Numeric		n_features_num, n_samples_num, n_support_vectors_num, C_num, max_iters_num;
+
+					/* Start object */
+					PG_TRY();
+					{
+						(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+						/* Add algorithm */
+						jkey.type = jbvString;
+						jkey.val.string.val = "algorithm";
+						jkey.val.string.len = strlen("algorithm");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						jval.type = jbvString;
+						jval.val.string.val = "svm";
+						jval.val.string.len = strlen("svm");
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add training_backend */
+						jkey.val.string.val = "training_backend";
+						jkey.val.string.len = strlen("training_backend");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						jval.type = jbvNumeric;
+						jval.val.numeric = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(1)));
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add n_features */
+						jkey.val.string.val = "n_features";
+						jkey.val.string.len = strlen("n_features");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						n_features_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(dim)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = n_features_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add n_samples */
+						jkey.val.string.val = "n_samples";
+						jkey.val.string.len = strlen("n_samples");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(nvec)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = n_samples_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add n_support_vectors */
+						jkey.val.string.val = "n_support_vectors";
+						jkey.val.string.len = strlen("n_support_vectors");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						n_support_vectors_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(0)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = n_support_vectors_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add C */
+						jkey.val.string.val = "C";
+						jkey.val.string.len = strlen("C");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						C_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(c_param)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = C_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* Add max_iters */
+						jkey.val.string.val = "max_iters";
+						jkey.val.string.len = strlen("max_iters");
+						(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+						max_iters_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(max_iters)));
+						jval.type = jbvNumeric;
+						jval.val.numeric = max_iters_num;
+						(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+						/* End object */
+						final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+						
+						if (final_value == NULL)
+						{
+							elog(ERROR, "neurondb: train_svm: pushJsonbValue(WJB_END_OBJECT) returned NULL for metrics");
+						}
+						
+						spec.metrics = JsonbValueToJsonb(final_value);
+					}
+					PG_CATCH();
+					{
+						ErrorData *edata = CopyErrorData();
+						elog(ERROR, "neurondb: train_svm: metrics JSONB construction failed: %s", edata->message);
+						FlushErrorState();
+						spec.metrics = NULL;
+					}
+					PG_END_TRY();
+				}
 			}
 
 			spec.algorithm = "svm";
@@ -1690,14 +1914,57 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 		 * format for proper deserialization.
 		 */
 
-		/* Build hyperparameters JSON */
-		initStringInfo(&hyperbuf_cpu);
-		appendStringInfo(&hyperbuf_cpu,
-						 "{\"C\":%.6f,\"max_iters\":%d}",
-						 c_param,
-						 actual_max_iters);
-		params_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-														  jsonb_in, CStringGetTextDatum(hyperbuf_cpu.data)));
+		/* Build hyperparameters JSON using JSONB API */
+		{
+			JsonbParseState *state = NULL;
+			JsonbValue	jkey;
+			JsonbValue	jval;
+			JsonbValue *final_value = NULL;
+			Numeric		C_num, max_iters_num;
+
+			/* Start object */
+			PG_TRY();
+			{
+				(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+				/* Add C */
+				jkey.type = jbvString;
+				jkey.val.string.val = "C";
+				jkey.val.string.len = strlen("C");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				C_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(c_param)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = C_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add max_iters */
+				jkey.val.string.val = "max_iters";
+				jkey.val.string.len = strlen("max_iters");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				max_iters_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(actual_max_iters)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = max_iters_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* End object */
+				final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+				
+				if (final_value == NULL)
+				{
+					elog(ERROR, "neurondb: train_svm: pushJsonbValue(WJB_END_OBJECT) returned NULL for hyperparameters");
+				}
+				
+				params_jsonb = JsonbValueToJsonb(final_value);
+			}
+			PG_CATCH();
+			{
+				ErrorData *edata = CopyErrorData();
+				elog(ERROR, "neurondb: train_svm: hyperparameters JSONB construction failed: %s", edata->message);
+				FlushErrorState();
+				params_jsonb = NULL;
+			}
+			PG_END_TRY();
+		}
 
 		if (params_jsonb == NULL)
 		{
@@ -1736,28 +2003,120 @@ train_svm_classifier(PG_FUNCTION_ARGS)
 							"hyperparameters JSONB")));
 		}
 
-		/* Build metrics JSON */
-		initStringInfo(&metricsbuf);
-		appendStringInfo(&metricsbuf,
-						 "{\"algorithm\":\"svm\","
-						 "\"n_samples\":%d,"
-						 "\"n_features\":%d,"
-						 "\"n_support_vectors\":%d,"
-						 "\"C\":%.6f,"
-						 "\"max_iters\":%d,"
-						 "\"actual_iters\":%d,"
-						 "\"accuracy\":%.6f,"
-						 "\"bias\":%.6f}",
-						 nvec,
-						 dim,
-						 sv_count,
-						 c_param,
-						 max_iters,
-						 iter,
-						 accuracy,
-						 bias);
-		metrics_jsonb = DatumGetJsonbP(DirectFunctionCall1(
-														   jsonb_in, CStringGetTextDatum(metricsbuf.data)));
+		/* Build metrics JSON using JSONB API */
+		{
+			JsonbParseState *state = NULL;
+			JsonbValue	jkey;
+			JsonbValue	jval;
+			JsonbValue *final_value = NULL;
+			Numeric		n_samples_num, n_features_num, n_support_vectors_num, C_num, max_iters_num, actual_iters_num, accuracy_num, bias_num;
+
+			/* Start object */
+			PG_TRY();
+			{
+				(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+				/* Add algorithm */
+				jkey.type = jbvString;
+				jkey.val.string.val = "algorithm";
+				jkey.val.string.len = strlen("algorithm");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				jval.type = jbvString;
+				jval.val.string.val = "svm";
+				jval.val.string.len = strlen("svm");
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add n_samples */
+				jkey.val.string.val = "n_samples";
+				jkey.val.string.len = strlen("n_samples");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(nvec)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = n_samples_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add n_features */
+				jkey.val.string.val = "n_features";
+				jkey.val.string.len = strlen("n_features");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				n_features_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(dim)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = n_features_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add n_support_vectors */
+				jkey.val.string.val = "n_support_vectors";
+				jkey.val.string.len = strlen("n_support_vectors");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				n_support_vectors_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(sv_count)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = n_support_vectors_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add C */
+				jkey.val.string.val = "C";
+				jkey.val.string.len = strlen("C");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				C_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(c_param)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = C_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add max_iters */
+				jkey.val.string.val = "max_iters";
+				jkey.val.string.len = strlen("max_iters");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				max_iters_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(max_iters)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = max_iters_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add actual_iters */
+				jkey.val.string.val = "actual_iters";
+				jkey.val.string.len = strlen("actual_iters");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				actual_iters_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(iter)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = actual_iters_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add accuracy */
+				jkey.val.string.val = "accuracy";
+				jkey.val.string.len = strlen("accuracy");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				accuracy_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(accuracy)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = accuracy_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add bias */
+				jkey.val.string.val = "bias";
+				jkey.val.string.len = strlen("bias");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				bias_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(bias)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = bias_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* End object */
+				final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+				
+				if (final_value == NULL)
+				{
+					elog(ERROR, "neurondb: train_svm: pushJsonbValue(WJB_END_OBJECT) returned NULL for metrics");
+				}
+				
+				metrics_jsonb = JsonbValueToJsonb(final_value);
+			}
+			PG_CATCH();
+			{
+				ErrorData *edata = CopyErrorData();
+				elog(ERROR, "neurondb: train_svm: metrics JSONB construction failed: %s", edata->message);
+				FlushErrorState();
+				metrics_jsonb = NULL;
+			}
+			PG_END_TRY();
+		}
 
 		if (metrics_jsonb == NULL)
 		{
@@ -2520,19 +2879,89 @@ evaluate_svm_by_model_id(PG_FUNCTION_ARGS)
 					Jsonb	   *result_copy;
 					MemoryContext spi_context;
 
-					/* Success - build result BEFORE freeing resources */
-					initStringInfo(&jsonbuf);
-					appendStringInfo(&jsonbuf,
-									 "{\"accuracy\":%.6f,\"precision\":%.6f,\"recall\":%.6f,\"f1_score\":%.6f,\"n_samples\":%d}",
-									 accuracy,
-									 precision,
-									 recall,
-									 f1_score,
-									 valid_rows);
+					/* End SPI session BEFORE creating JSONB to avoid context conflicts */
+					ndb_spi_stringinfo_free(eval_spi_session, &query);
+					NDB_SPI_SESSION_END(eval_spi_session);
 
-					/* Create JSONB in SPI memory context */
-					result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-																	  CStringGetTextDatum(jsonbuf.data)));
+					/* Switch to old context and build JSONB directly using JSONB API */
+					MemoryContextSwitchTo(oldcontext);
+					{
+						JsonbParseState *state = NULL;
+						JsonbValue	jkey;
+						JsonbValue	jval;
+						JsonbValue *final_value = NULL;
+						Numeric		accuracy_num, precision_num, recall_num, f1_score_num, n_samples_num;
+
+						/* Start object */
+						PG_TRY();
+						{
+							(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+							/* Add accuracy */
+							jkey.type = jbvString;
+							jkey.val.string.val = "accuracy";
+							jkey.val.string.len = strlen("accuracy");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							accuracy_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(accuracy)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = accuracy_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add precision */
+							jkey.val.string.val = "precision";
+							jkey.val.string.len = strlen("precision");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							precision_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(precision)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = precision_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add recall */
+							jkey.val.string.val = "recall";
+							jkey.val.string.len = strlen("recall");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							recall_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(recall)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = recall_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add f1_score */
+							jkey.val.string.val = "f1_score";
+							jkey.val.string.len = strlen("f1_score");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							f1_score_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(f1_score)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = f1_score_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* Add n_samples */
+							jkey.val.string.val = "n_samples";
+							jkey.val.string.len = strlen("n_samples");
+							(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+							n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(valid_rows)));
+							jval.type = jbvNumeric;
+							jval.val.numeric = n_samples_num;
+							(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+							/* End object */
+							final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+							
+							if (final_value == NULL)
+							{
+								elog(ERROR, "neurondb: evaluate_svm: pushJsonbValue(WJB_END_OBJECT) returned NULL");
+							}
+							
+							result_jsonb = JsonbValueToJsonb(final_value);
+						}
+						PG_CATCH();
+						{
+							ErrorData *edata = CopyErrorData();
+							elog(ERROR, "neurondb: evaluate_svm: JSONB construction failed: %s", edata->message);
+							FlushErrorState();
+							result_jsonb = NULL;
+						}
+						PG_END_TRY();
+					}
 
 					/*
 					 * Switch to parent context and copy JSONB before
@@ -3006,12 +3435,130 @@ cpu_evaluation_path:
 					 f1_score,
 					 valid_rows);
 
-	result_jsonb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
-													  CStringGetTextDatum(jsonbuf.data)));
+		/* End SPI session BEFORE creating JSONB to avoid context conflicts */
+		ndb_spi_stringinfo_free(eval_spi_session, &query);
+		NDB_SPI_SESSION_END(eval_spi_session);
 
-	NDB_FREE(jsonbuf.data);
-	MemoryContextSwitchTo(oldcontext);
-	PG_RETURN_JSONB_P(result_jsonb);
+		/* Switch to old context and build JSONB directly using JSONB API */
+		MemoryContextSwitchTo(oldcontext);
+		{
+			JsonbParseState *state = NULL;
+			JsonbValue	jkey;
+			JsonbValue	jval;
+			JsonbValue *final_value = NULL;
+			Numeric		accuracy_num, precision_num, recall_num, f1_score_num, n_samples_num;
+
+			/* Start object */
+			PG_TRY();
+			{
+				(void) pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+				/* Add accuracy */
+				jkey.type = jbvString;
+				jkey.val.string.val = "accuracy";
+				jkey.val.string.len = strlen("accuracy");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				accuracy_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(accuracy)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = accuracy_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add precision */
+				jkey.val.string.val = "precision";
+				jkey.val.string.len = strlen("precision");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				precision_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(precision)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = precision_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add recall */
+				jkey.val.string.val = "recall";
+				jkey.val.string.len = strlen("recall");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				recall_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(recall)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = recall_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add f1_score */
+				jkey.val.string.val = "f1_score";
+				jkey.val.string.len = strlen("f1_score");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				f1_score_num = DatumGetNumeric(DirectFunctionCall1(float8_numeric, Float8GetDatum(f1_score)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = f1_score_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* Add n_samples */
+				jkey.val.string.val = "n_samples";
+				jkey.val.string.len = strlen("n_samples");
+				(void) pushJsonbValue(&state, WJB_KEY, &jkey);
+				n_samples_num = DatumGetNumeric(DirectFunctionCall1(int4_numeric, Int32GetDatum(valid_rows)));
+				jval.type = jbvNumeric;
+				jval.val.numeric = n_samples_num;
+				(void) pushJsonbValue(&state, WJB_VALUE, &jval);
+
+				/* End object */
+				final_value = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+				
+				if (final_value == NULL)
+				{
+					elog(ERROR, "neurondb: evaluate_svm: pushJsonbValue(WJB_END_OBJECT) returned NULL");
+				}
+				
+				result_jsonb = JsonbValueToJsonb(final_value);
+			}
+			PG_CATCH();
+			{
+				ErrorData *edata = CopyErrorData();
+				elog(ERROR, "neurondb: evaluate_svm: JSONB construction failed: %s", edata->message);
+				FlushErrorState();
+				result_jsonb = NULL;
+			}
+			PG_END_TRY();
+		}
+
+		if (result_jsonb == NULL)
+		{
+			if (tbl_str)
+			{
+				NDB_FREE(tbl_str);
+				tbl_str = NULL;
+			}
+			if (feat_str)
+			{
+				NDB_FREE(feat_str);
+				feat_str = NULL;
+			}
+			if (targ_str)
+			{
+				NDB_FREE(targ_str);
+				targ_str = NULL;
+			}
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("neurondb: evaluate_svm_by_model_id: JSONB result is NULL")));
+		}
+
+		/* Cleanup */
+		if (tbl_str)
+		{
+			NDB_FREE(tbl_str);
+			tbl_str = NULL;
+		}
+		if (feat_str)
+		{
+			NDB_FREE(feat_str);
+			feat_str = NULL;
+		}
+		if (targ_str)
+		{
+			NDB_FREE(targ_str);
+			targ_str = NULL;
+		}
+
+		PG_RETURN_JSONB_P(result_jsonb);
 }
 
 /*

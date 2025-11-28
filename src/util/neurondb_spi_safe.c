@@ -343,7 +343,9 @@ ndb_spi_exec_select_one_row_safe(const char *query,
 	PG_TRY();
 	{
 		ret = ndb_spi_execute_safe(query, read_only, 0);
-		NDB_CHECK_SPI_TUPTABLE();
+		/* Only check SPI_tuptable if this is a SELECT query */
+		if (ret == SPI_OK_SELECT)
+			NDB_CHECK_SPI_TUPTABLE();
 	}
 	PG_CATCH();
 	{
