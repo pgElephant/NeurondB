@@ -1,0 +1,55 @@
+version: '3.9'
+
+# NeuronMCP Docker Compose Configuration
+# Standalone service that connects to external NeuronDB instance
+# MCP protocol uses stdio for communication
+
+services:
+  neurondb-mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: neurondb-mcp:latest
+    container_name: neurondb-mcp
+    environment:
+      # Database connection - point to external NeuronDB instance
+      # When connecting to NeuronDB in Docker, use container name or host.docker.internal
+      NEURONDB_HOST: ${NEURONDB_HOST:-localhost}
+      NEURONDB_PORT: ${NEURONDB_PORT:-5433}
+      NEURONDB_DATABASE: ${NEURONDB_DATABASE:-neurondb}
+      NEURONDB_USER: ${NEURONDB_USER:-neurondb}
+      NEURONDB_PASSWORD: ${NEURONDB_PASSWORD:-neurondb}
+      
+      # Alternative: use connection string
+      NEURONDB_CONNECTION_STRING: ${NEURONDB_CONNECTION_STRING:-}
+      
+      # Optional: path to config file (inside container)
+      NEURONDB_MCP_CONFIG: ${NEURONDB_MCP_CONFIG:-/app/mcp-config.json}
+      
+      # Logging
+      NEURONDB_LOG_LEVEL: ${NEURONDB_LOG_LEVEL:-info}
+      NEURONDB_LOG_FORMAT: ${NEURONDB_LOG_FORMAT:-text}
+      NEURONDB_LOG_OUTPUT: ${NEURONDB_LOG_OUTPUT:-stderr}
+      
+      # Feature flags
+      NEURONDB_ENABLE_GPU: ${NEURONDB_ENABLE_GPU:-false}
+    
+    # MCP uses stdio, so we need to keep stdin open and use tty for interactive mode
+    stdin_open: true
+    tty: true
+    
+    # Keep container running
+    restart: unless-stopped
+    
+    networks:
+      - default
+    
+    # Optional: mount config file for custom configuration
+    # volumes:
+    #   - ./mcp-config.json:/app/mcp-config.json:ro
+
+networks:
+  default:
+    name: neuronmcp-network
+    driver: bridge
+
