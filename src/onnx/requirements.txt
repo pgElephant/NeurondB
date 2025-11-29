@@ -1,9 +1,0 @@
-# Requirements for exporting HuggingFace models to ONNX format
-# Install with: pip install -r requirements.txt
-
-transformers>=4.35.0
-optimum[onnxruntime]>=1.16.0
-onnx>=1.15.0
-torch>=2.1.0
-
-
