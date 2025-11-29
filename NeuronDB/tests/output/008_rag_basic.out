@@ -1,0 +1,74 @@
+Timing is on.
+Pager usage is off.
+==========================================================================
+==========================================================================
+
+NOTE: embed_text() warnings are expected if LLM is not configured.
+      To generate real embeddings, configure:
+      - neurondb.llm_api_key (Hugging Face API key)
+      - Or enable GPU embedding via GUC (ALTER SYSTEM SET neurondb.gpu_enabled = on)
+      Without configuration, embed_text() returns zero vectors (graceful fallback).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        note                         
+-----------------------------------------------------
+ Chunking test requires neurondb_chunk_text function
+
+Time: 0.188 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTE: Warnings about embed_text() failing are expected if LLM is not configured.
+      The function gracefully returns zero vectors as fallback.
+
+ id |                     text                     | embedding_dims |                   embedding_preview                   
+----+----------------------------------------------+----------------+-------------------------------------------------------
+  1 | Machine learning in databases is powerful    |            384 | [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0...
+  2 | PostgreSQL extensions enable ML capabilities |            384 | [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0...
+  3 | Vector search with HNSW indexes is fast      |            384 | [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0...
+
+Time: 975.554 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ idx |   score    |                     document                     
+-----+------------+--------------------------------------------------
+   1 |          1 | PostgreSQL is a powerful relational database
+   2 |        0.8 | Machine learning models can be trained in SQL
+   3 |        0.6 | Vector search enables semantic similarity
+   4 | 0.39999998 | RAG pipelines combine retrieval and generation
+   5 | 0.19999999 | NeuronDB extends PostgreSQL with ML capabilities
+
+Time: 1.718 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ idx |   score    |                     document                     
+-----+------------+--------------------------------------------------
+   1 |          1 | PostgreSQL is a powerful relational database
+   2 |        0.8 | Machine learning models can be trained in SQL
+   3 |        0.6 | Vector search enables semantic similarity
+   4 | 0.39999998 | RAG pipelines combine retrieval and generation
+   5 | 0.19999999 | NeuronDB extends PostgreSQL with ML capabilities
+
+Time: 0.182 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     transformation     |            values             
+------------------------+-------------------------------
+ Original               | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+ Normalized (L2)        | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+ Standardized (Z-score) | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+ Min-Max Scaled         | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+
+Time: 0.645 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                                                                                           document                                                                                           | similarity_score 
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------------------
+ PostgreSQL is a powerful open-source relational database management system. It provides advanced features including ACID compliance, full-text search, and extensibility through extensions. |                0
+ NeuronDB extends PostgreSQL with vector search, machine learning inference, and RAG pipeline support. This enables building AI-powered applications directly within the database.            |                0
+ Vector search enables semantic similarity queries. HNSW indexes provide fast approximate nearest neighbor search for high-dimensional vectors.                                               |                0
+
+Time: 1079.156 ms (00:01.079)
+
+==========================================================================
+Test completed successfully

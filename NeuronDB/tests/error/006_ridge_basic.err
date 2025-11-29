@@ -1,0 +1,4 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/006_ridge_basic.sql:39: NOTICE:  table "gpu_model_temp" does not exist, skipping
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/006_ridge_basic.sql:46: INFO:  neurondb: ml_catalog_register_model: registering model for project 'ridge_test_train_view_project', algorithm 'ridge', type 'regression'
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/006_ridge_basic.sql:46: INFO:  neurondb: ml_catalog_register_model: successfully registered model_id 595 for project_id 564, version 1
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/006_ridge_basic.sql:55: NOTICE:  table "gpu_metrics_temp" does not exist, skipping

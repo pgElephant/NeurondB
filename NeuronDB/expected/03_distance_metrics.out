@@ -1,0 +1,43 @@
+-- Test distance functions
+SELECT vector_l2_distance('[0.0, 0.0]'::vector, '[3.0, 4.0]'::vector) > 0 AS l2_positive;
+ l2_positive 
+-------------
+ t
+(1 row)
+
+SELECT vector_cosine_distance('[1.0, 0.0]'::vector, '[0.0, 1.0]'::vector) >= 0 AS cosine_valid;
+ cosine_valid 
+--------------
+ t
+(1 row)
+
+SELECT vector_inner_product('[1.0, 2.0, 3.0]'::vector, '[4.0, 5.0, 6.0]'::vector) > 0 AS inner_product_positive;
+ inner_product_positive 
+------------------------
+ f
+(1 row)
+
+SELECT vector_l1_distance('[1.0, 2.0]'::vector, '[4.0, 6.0]'::vector) > 0 AS l1_positive;
+ l1_positive 
+-------------
+ t
+(1 row)
+
+SELECT vector_hamming_distance('[1.0, 0.0, 1.0]'::vector, '[1.0, 1.0, 0.0]'::vector) >= 0 AS hamming_valid;
+ hamming_valid 
+---------------
+ t
+(1 row)
+
+SELECT vector_chebyshev_distance('[1.0, 2.0]'::vector, '[4.0, 6.0]'::vector);
+ vector_chebyshev_distance 
+---------------------------
+                         4
+(1 row)
+
+SELECT vector_minkowski_distance('[1.0, 2.0]'::vector, '[4.0, 6.0]'::vector, 3.0) > 0 AS minkowski_positive;
+ minkowski_positive 
+--------------------
+ t
+(1 row)
+

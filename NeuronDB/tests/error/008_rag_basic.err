@@ -1,0 +1,4 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/008_rag_basic.sql:49: ERROR:  column "sentence-transformers/all-MiniLM-L6-v2" does not exist
+LINE 1: ...eurondb.embedding_model_config WHERE model_name = "sentence-...
+                                                             ^
+QUERY:  SELECT config_json FROM neurondb.embedding_model_config WHERE model_name = "sentence-transformers/all-MiniLM-L6-v2"

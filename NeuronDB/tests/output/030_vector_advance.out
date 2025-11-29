@@ -1,0 +1,153 @@
+SET
+Timing is on.
+Pager usage is off.
+==========================================================================
+Vector Module: Exhaustive SIMD, Quantization, Sparse, Graph, WAL Coverage
+==========================================================================
+
+SIMD Optimization Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 1: SIMD L2 Distance (should use SIMD if available)
+ test_type | n_computations | avg_distance 
+-----------+----------------+--------------
+ SIMD L2   |           1000 |    11.200170
+
+Time: 1.279 ms
+Test 2: SIMD Cosine Distance
+  test_type  | n_computations | avg_distance 
+-------------+----------------+--------------
+ SIMD Cosine |           1000 |     0.900087
+
+Time: 0.612 ms
+Test 3: SIMD Inner Product
+     test_type      | n_computations | avg_product 
+--------------------+----------------+-------------
+ SIMD Inner Product |           1000 |   -1.736584
+
+Time: 0.539 ms
+Test 4: SIMD L1 Distance
+ test_type | n_computations | avg_distance 
+-----------+----------------+--------------
+ SIMD L1   |           1000 |    50.312695
+
+Time: 0.534 ms
+
+Quantization Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 5: INT8 Quantization
+   test_type   | n_quantized | avg_quantized_size  
+---------------+-------------+---------------------
+ INT8 Quantize |         100 | 34.0000000000000000
+
+Time: 0.271 ms
+Test 6: FP16 Quantization
+   test_type   | n_quantized | avg_quantized_size  
+---------------+-------------+---------------------
+ FP16 Quantize |         100 | 62.0000000000000000
+
+Time: 0.103 ms
+Test 7: Binary Quantization
+    test_type    | n_quantized | avg_quantized_size 
+-----------------+-------------+--------------------
+ Binary Quantize |           0 |                  0
+
+Time: 0.055 ms
+Test 8: Quantization Round-trip (INT8)
+    test_type    | n_tested | avg_reconstruction_error 
+-----------------+----------+--------------------------
+ INT8 Round-trip |       10 |              10.18465948
+
+Time: 0.144 ms
+Test 9: Quantization Round-trip (FP16)
+    test_type    | n_tested | avg_reconstruction_error 
+-----------------+----------+--------------------------
+ FP16 Round-trip |       10 |               0.00336667
+
+Time: 0.088 ms
+
+Sparse Vector Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 10: Sparse Vector Creation
+DO
+Time: 0.577 ms
+
+Graph Operations Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 11: Vector Graph Operations
+ test_type | n_operations 
+-----------+--------------
+ Graph Ops |           72
+
+Time: 0.450 ms
+
+WAL Operations Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 12: WAL Compression
+  test_type   | n_compressed | avg_compressed_size 
+--------------+--------------+---------------------
+ WAL Compress |            0 |                   0
+
+Time: 0.092 ms
+Test 13: WAL Decompression
+   test_type    | n_decompressed 
+----------------+----------------
+ WAL Decompress |              0
+
+Time: 0.077 ms
+Test 14: WAL Size Estimation
+     test_type     | n_estimated | avg_estimated_size 
+-------------------+-------------+--------------------
+ WAL Estimate Size |           0 |                  0
+
+Time: 0.066 ms
+Test 15: WAL Compression Settings
+ compression_enabled 
+---------------------
+ f
+
+Time: 0.065 ms
+ wal_stats 
+-----------
+ {}
+
+Time: 0.076 ms
+ compression_disabled 
+----------------------
+ f
+
+Time: 0.059 ms
+
+Batch Operations Tests (Various Sizes)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 16: Small Batch (1 vector)
+  batch_type  | n_operations | avg_distance 
+--------------+--------------+--------------
+ Batch Size 1 |            1 |    11.047237
+
+Time: 0.304 ms
+Test 17: Medium Batch (100 vectors)
+   batch_type   | n_operations | avg_distance 
+----------------+--------------+--------------
+ Batch Size 100 |          100 |     9.797425
+
+Time: 0.310 ms
+Test 18: Large Batch (1000 vectors)
+   batch_type    | n_operations | avg_distance 
+-----------------+--------------+--------------
+ Batch Size 1000 |         1000 |     8.850695
+
+Time: 0.564 ms
+
+All Distance Metrics Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 19: Comprehensive Distance Metrics
+  test_type  |    l2    |  cosine  | inner_product |    l1     | hamming | chebyshev | minkowski_p3 
+-------------+----------+----------+---------------+-----------+---------+-----------+--------------
+ All Metrics | 9.826342 | 1.100438 |     -4.487422 | 42.155856 |   28.00 |  4.293596 |     6.495443
+
+Time: 0.511 ms
+
+==========================================================================
+✓ Vector Module: Full exhaustive code-path test complete
+==========================================================================
+Test completed successfully

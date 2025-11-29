@@ -1,0 +1,7 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/025_automl_basic.sql:48: NOTICE:  table "automl_model_temp" does not exist, skipping
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/025_automl_basic.sql:77: WARNING:  auto_train: Algorithm 'logistic_regression' failed, continuing with next algorithm
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/025_automl_basic.sql:77: WARNING:  auto_train: Error details for 'logistic_regression': invalid input syntax for type json
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/025_automl_basic.sql:77: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/025_automl_basic.sql:77: error: connection to server was lost

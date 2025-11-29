@@ -1,0 +1,34 @@
+Timing is on.
+Pager usage is off.
+DO
+Time: 1.152 ms
+DROP TABLE
+Time: 0.106 ms
+SELECT 1
+Time: 123.709 ms
+ model_id 
+----------
+      531
+
+Time: 0.289 ms
+DROP TABLE
+Time: 0.071 ms
+CREATE TABLE
+Time: 0.787 ms
+DO
+Time: 0.993 ms
+     metric      | value  
+-----------------+--------
+ MSE             | 0.5467
+ RMSE            | 0.7394
+ MAE             | 0.6777
+ R²              | 0.0000
+
+Time: 0.226 ms
+INSERT 0 1
+Time: 0.407 ms
+DROP TABLE
+Time: 0.332 ms
+DROP TABLE
+Time: 0.395 ms
+Test completed successfully

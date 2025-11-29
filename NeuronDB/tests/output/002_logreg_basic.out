@@ -1,0 +1,84 @@
+Timing is on.
+Pager usage is off.
+DO
+Time: 1.028 ms
+DROP TABLE
+Time: 0.121 ms
+DO
+Time: 44.893 ms
+ train_rows | test_rows 
+------------+-----------
+       1000 |      1000
+
+Time: 0.556 ms
+     dataset     | total_rows | valid_rows 
+-----------------+------------+------------
+ test_train_view |       1000 |       1000
+ test_test_view  |       1000 |       1000
+
+Time: 0.491 ms
+SELECT 1
+Time: 294.477 ms
+ model_id 
+----------
+       36
+
+Time: 0.306 ms
+      algorithm      | n_samples | n_features | storage | final_loss | accuracy 
+---------------------+-----------+------------+---------+------------+----------
+ logistic_regression |      1000 |         28 | default |   0.000000 | 0.000000
+
+Time: 0.324 ms
+DO
+Time: 0.341 ms
+ test_samples 
+--------------
+         1000
+
+Time: 0.283 ms
+DO
+Time: 0.109 ms
+SELECT 1
+Time: 0.885 ms
+  metric  |          value          
+----------+-------------------------
+ Accuracy | N/A (evaluation failed)
+
+Time: 0.318 ms
+ model_id | train_samples | test_samples | final_accuracy 
+----------+---------------+--------------+----------------
+       36 |          1000 |         1000 |               
+
+Time: 0.209 ms
+INSERT 0 1
+Time: 0.643 ms
+DROP TABLE
+Time: 0.377 ms
+ model_id |      algorithm      | project_id | version |  status   | training_table  | training_column | n_samples | n_features | storage | final_loss | accuracy | training_time_ms |          created_at           |         completed_at         
+----------+---------------------+------------+---------+-----------+-----------------+-----------------+-----------+------------+---------+------------+----------+------------------+-------------------------------+------------------------------
+       36 | logistic_regression |         36 |       1 | completed | test_train_view | label           |      1000 |         28 | default |   0.000000 | 0.000000 |                  | 2025-11-27 18:10:59.428458+05 | 2025-11-28 16:37:35.19588+05
+
+Time: 0.231 ms
+    test_name     |      algorithm      | model_id | train_samples | test_samples | accuracy | precision | recall | f1_score |         created_at         |         updated_at         
+------------------+---------------------+----------+---------------+--------------+----------+-----------+--------+----------+----------------------------+----------------------------
+ 002_logreg_basic | logistic_regression |       36 |          1000 |         1000 |          |           |        |          | 2025-11-28 16:37:35.493373 | 2025-11-28 16:37:35.493373
+
+Time: 0.124 ms
+ device_id | device_name  | total_memory_mb | free_memory_mb | compute_capability_major | compute_capability_minor | is_available 
+-----------+--------------+-----------------+----------------+--------------------------+--------------------------+--------------
+         0 | Apple M2 Max |           21845 |              0 |                        3 |                        0 | t
+
+Time: 0.119 ms
+  dataset_name   | total_rows | valid_rows | null_features | null_labels 
+-----------------+------------+------------+---------------+-------------
+ test_test_view  |       1000 |       1000 |             0 |           0
+ test_train_view |       1000 |       1000 |             0 |           0
+
+Time: 0.481 ms
+    test_name     |      algorithm      | model_id | training_storage | train_samples | test_samples | accuracy | precision | recall | f1_score | training_status |     test_completed_at      
+------------------+---------------------+----------+------------------+---------------+--------------+----------+-----------+--------+----------+-----------------+----------------------------
+ 002_logreg_basic | logistic_regression |       36 |                  |          1000 |         1000 |          |           |        |          | Unknown         | 2025-11-28 16:37:35.493373
+
+Time: 0.185 ms
+
+Test completed successfully

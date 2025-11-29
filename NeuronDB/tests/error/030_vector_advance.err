@@ -1,0 +1,4 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/030_vector_advance.sql:270: ERROR:  function vector_wal_estimate_size(text, text) does not exist
+LINE 4:  AVG(vector_wal_estimate_size(
+             ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.

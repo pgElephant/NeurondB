@@ -1,0 +1,29 @@
+Timing is on.
+Pager usage is off.
+==========================================================================
+==========================================================================
+
+Hugging Face Embedding Models Comprehensive Test
+
+This test covers TEXT, IMAGE, and MULTIMODAL embedding models.
+Note: These tests require neurondb.llm_api_key to be configured.
+Each model is tested individually to verify compatibility.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 17: Hugging Face Embedding Models Comprehensive Test
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 17a: TEXT Embedding Models (384-dim, Fast & Efficient)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Testing Model 1/16: sentence-transformers/all-MiniLM-L6-v2 (384 dim)
+               model_name               | expected_dims | actual_dims | non_zero |  norm  
+----------------------------------------+---------------+-------------+----------+--------
+ sentence-transformers/all-MiniLM-L6-v2 |           384 |         384 | f        | 0.0000
+
+Time: 453.191 ms
+
+Testing Model 2/16: sentence-transformers/all-MiniLM-L12-v2 (384 dim)

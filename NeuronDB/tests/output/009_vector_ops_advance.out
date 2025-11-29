@@ -1,0 +1,99 @@
+SET
+Timing is on.
+Pager usage is off.
+==========================================================================
+Vector Operations: Exhaustive Advanced Test
+==========================================================================
+
+Dataset Information
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+       test_type        |   dataset_status    
+------------------------+---------------------
+ Vector Operations Test | No dataset required
+
+Time: 0.171 ms
+
+GPU Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ gpu_available 
+---------------
+ t
+
+Time: 43.321 ms
+ device_id | device_name  | total_memory_mb | free_memory_mb | compute_capability_major | compute_capability_minor | is_available 
+-----------+--------------+-----------------+----------------+--------------------------+--------------------------+--------------
+         0 | Apple M2 Max |           21845 |              0 |                        3 |                        0 | t
+
+Time: 0.243 ms
+
+Vector Operations Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 1: Vector Normalization and Scaling
+      norm_v1      |      norm_v2      | normalized_norm_v1 | normalized_norm_check |              normalized_v1               
+-------------------+-------------------+--------------------+-----------------------+------------------------------------------
+ 7.416198487095663 | 74.16198487095663 | 0.9999999946402497 |              1.000000 | [0.13484,0.26968,0.40452,0.53936,0.6742]
+
+Time: 0.266 ms
+Test 2: Multiple Distance Metrics Comparison
+ l2_distance | cosine_distance | inner_product | l1_distance | minkowski_p3 | chebyshev_distance 
+-------------+-----------------+---------------+-------------+--------------+--------------------
+    5.196150 |        0.025368 |     32.000000 |    9.000000 |     4.326749 |           3.000000
+
+Time: 0.199 ms
+Test 3: Vector Concatenation
+ concatenated  | concat_dims | expected_dims |     dim_check      
+---------------+-------------+---------------+--------------------
+ [1,2,3,4,5,6] |           6 |             6 | ✓ Dimensions match
+
+Time: 0.184 ms
+Test 4: Vector Conversion Operations
+ binary_representation | binary_size | int8_representation | original_dims 
+-----------------------+-------------+---------------------+---------------
+ \x05001f              |           7 | \x050019334c667f    |             5
+
+Time: 0.124 ms
+Test 5: Vector Operations on Large Vectors
+ dims_v1 | dims_v2 | l2_distance | cosine_distance 
+---------+---------+-------------+-----------------
+     100 |     100 |   1000.0000 |        0.053886
+
+Time: 0.261 ms
+Test 6: Vector Normalization Edge Cases
+ zero_vector_normalized | unit_vector_x | unit_vector_y | normalized_norm |       norm_check        
+------------------------+---------------+---------------+-----------------+-------------------------
+ [0,0,0]                | [1,0,0]       | [0,1,0]       |        1.000000 | ✓ Normalization correct
+
+Time: 0.278 ms
+Test 7: Vector Arithmetic Properties
+ addition_commutative | addition_associative | scalar_distributive 
+----------------------+----------------------+---------------------
+ t                    | t                    | t
+
+Time: 0.158 ms
+Test 8: GPU vs CPU Distance Functions
+     function_name      | cpu_result | gpu_result | difference 
+------------------------+------------+------------+------------
+ vector_l2_distance     |  11.180300 |  11.180300 | 0.00000000
+ vector_cosine_distance |   0.035050 |   0.035050 | 0.00000000
+
+Time: 0.197 ms
+
+Error Handling Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Error Test 1: Dimension mismatch in distance
+DO
+Time: 0.637 ms
+Error Test 2: NULL vector in distance
+DO
+Time: 0.097 ms
+Error Test 3: Dimension mismatch in concatenation
+DO
+Time: 0.087 ms
+Error Test 4: Invalid Minkowski p parameter
+DO
+Time: 0.083 ms
+
+==========================================================================
+✓ Vector Operations: Full exhaustive test complete
+==========================================================================
+Test completed successfully

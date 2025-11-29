@@ -1,0 +1,20 @@
+Timing is on.
+Pager usage is off.
+SET
+Time: 0.116 ms
+ train_rows | test_rows 
+------------+-----------
+       1000 |      1000
+
+Time: 0.648 ms
+Step 2: Configuring GPU acceleration...
+DO
+Time: 0.894 ms
+==========================================================================
+==========================================================================
+ total_rows | num_clusters_plus_noise | num_clusters | noise_points 
+------------+-------------------------+--------------+--------------
+       1000 |                       1 |            0 |         1000
+
+Time: 26.635 ms
+Test completed successfully

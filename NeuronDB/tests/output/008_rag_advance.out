@@ -1,0 +1,56 @@
+SET
+Timing is on.
+Pager usage is off.
+==========================================================================
+rag: Exhaustive RAG Operations Test (1000 rows sample)
+==========================================================================
+DO
+Time: 3.037 ms
+
+Dataset Information
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ train_count | test_count | feature_dim 
+-------------+------------+-------------
+        1000 |       1000 |          28
+
+Time: 0.424 ms
+
+GPU Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ gpu_available 
+---------------
+ t
+
+Time: 42.093 ms
+ device_id | device_name  | total_memory_mb | free_memory_mb | compute_capability_major | compute_capability_minor | is_available 
+-----------+--------------+-----------------+----------------+--------------------------+--------------------------+--------------
+         0 | Apple M2 Max |           21845 |              0 |                        3 |                        0 | t
+
+Time: 0.148 ms
+
+RAG Operations Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 1: RAG setup and configuration
+DO
+Time: 0.077 ms
+Test 2: Verify RAG-related functions exist
+  function_name   |                                                             arguments                                                             
+------------------+-----------------------------------------------------------------------------------------------------------------------------------
+ neurandefrag_run | 
+ rag_query        | query_text text, document_table text, vector_col text, text_col text, model text DEFAULT 'default'::text, top_k integer DEFAULT 5
+
+Time: 4.937 ms
+Test 3: RAG metadata and configuration
+DO
+Time: 0.412 ms
+
+Error Handling Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Error Test 1: Invalid table name (if RAG functions exist)
+DO
+Time: 0.083 ms
+
+==========================================================================
+✓ rag: RAG operations test complete (functionality may vary by implementation)
+==========================================================================
+Test completed successfully

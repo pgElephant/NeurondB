@@ -1,0 +1,6 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/002_logreg_basic.sql:41: NOTICE:  table "gpu_model_temp" does not exist, skipping
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/002_logreg_basic.sql:86: NOTICE:  GPU initialization check (attempt 1): GPU is available and ready (device: Apple M2 Max)
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/002_logreg_basic.sql:113: INFO:  neurondb: ml_catalog_register_model: registering model for project 'logistic_regression_test_train_view_project', algorithm 'logistic_regression', type 'classification'
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/002_logreg_basic.sql:113: INFO:  neurondb: ml_catalog_register_model: successfully registered model_id 36 for project_id 36, version 1
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/002_logreg_basic.sql:157: WARNING:  GPU mode enabled and GPU detected but model was trained on CPU (storage=cpu). This may indicate Metal backend initialization issue.
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/002_logreg_basic.sql:170: NOTICE:  table "gpu_metrics_temp" does not exist, skipping

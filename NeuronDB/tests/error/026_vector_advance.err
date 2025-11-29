@@ -1,0 +1,1 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/026_vector_advance.sql:58: ERROR:  type with OID 0 does not exist

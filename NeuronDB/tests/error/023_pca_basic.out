@@ -1,0 +1,17 @@
+Timing is on.
+Pager usage is off.
+SET
+Time: 0.108 ms
+DROP TABLE
+Time: 0.106 ms
+CREATE TABLE
+Time: 2.087 ms
+INSERT 0 100
+Time: 0.902 ms
+ data_rows 
+-----------
+       100
+
+Time: 0.129 ms
+Step 2: Configuring GPU acceleration...
+Time: 0.607 ms

@@ -1,0 +1,3 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/pgvector_compatibility.sql:28: ERROR:  sparsevec index 10 out of range [0, 10)
+LINE 1: SELECT '{dim:10,1:0.5,5:0.3,10:0.8}'::sparsevec AS sparsevec...
+               ^

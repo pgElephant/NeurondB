@@ -1,0 +1,3 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/015_kmeans_basic.sql:44: ERROR:  invalid input syntax for type json
+DETAIL:  Token "" is invalid.
+CONTEXT:  JSON data, line 1: 8

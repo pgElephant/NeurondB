@@ -1,0 +1,5 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/014_knn_basic.sql:40: NOTICE:  table "gpu_model_temp" does not exist, skipping
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/014_knn_basic.sql:49: ERROR:  invalid input syntax for type json
+DETAIL:  Token "" is invalid.
+CONTEXT:  JSON data, line 1: ...
+SQL statement "SELECT train_knn_model_id('test_train_view', 'features', 'label', 5)"

@@ -1,0 +1,3 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/018_dbscan_basic.sql:15: ERROR:  relation "test_train_view" does not exist
+LINE 3:  (SELECT COUNT(*)::bigint FROM test_train_view) AS train_row...
+                                       ^

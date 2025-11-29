@@ -1,0 +1,43 @@
+Timing is on.
+Pager usage is off.
+==========================================================================
+==========================================================================
+
+NOTE: embed_text_batch() warnings are expected if LLM is not configured.
+      To generate real embeddings, configure:
+      - neurondb.llm_api_key (Hugging Face API key)
+      - Or enable GPU embedding via GUC (ALTER SYSTEM SET neurondb.gpu_enabled = on)
+      Without configuration, embed_text_batch() returns zero vectors (graceful fallback).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 3: Batch text embedding (embed_text_batch)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    test_name    | batch_size | first_dim 
+-----------------+------------+-----------
+ Batch embedding |          3 |       384
+
+Time: 1115.268 ms (00:01.115)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 4: Batch embedding with NULL elements
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    test_name     | batch_size 
+------------------+------------
+ Batch with NULLs |          3
+
+Time: 498.896 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 5: Empty batch embedding
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  test_name  | batch_size 
+-------------+------------
+ Empty batch |           
+
+Time: 1.689 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Batch embedding tests completed!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test completed successfully

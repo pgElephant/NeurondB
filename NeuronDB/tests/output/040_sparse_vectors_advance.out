@@ -1,0 +1,35 @@
+Timing is on.
+Pager usage is off.
+==========================================================================
+Test: Sparse Vectors Advance Tests
+==========================================================================
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 1: Sparse index creation
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+       test_name       | created 
+-----------------------+---------
+ Sparse index creation | f
+
+Time: 0.211 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 2: Hybrid dense+sparse search
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   test_name   | result_count 
+---------------+--------------
+ Hybrid search |            0
+
+Time: 0.083 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 3: RRF fusion
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ test_name  | rrf_score 
+------------+-----------
+ RRF fusion |       0.0
+
+Time: 0.074 ms
+
+✅ Advance sparse vectors tests completed
+Test completed successfully

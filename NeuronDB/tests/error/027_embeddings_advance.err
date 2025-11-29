@@ -1,0 +1,10 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:37: NOTICE:  Large batch (100 items) completed in 00:00:19.902915
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:70: NOTICE:  Mixed batch: 6 valid, 4 NULL
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:120: NOTICE:  Cache miss: 00:00:00.198418, Cache hit: 00:00:00.183311
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:221: NOTICE:  Image embedding test skipped: compressed pglz data is corrupt
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:248: NOTICE:  Multimodal embedding test skipped: compressed pglz data is corrupt
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:283: NOTICE:  Config updated: batch_size 16 -> 64
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:311: NOTICE:  Cache warmed: 3 entries
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:329: NOTICE:  Evicted stale entries: 0
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:329: NOTICE:  Evicted for size limit: 0
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/027_embeddings_advance.sql:352: NOTICE:  neurondb.embed_batch completed in 00:00:01.065938

@@ -1,0 +1,55 @@
+-- Test catalog table creation
+SELECT tablename FROM pg_tables 
+WHERE tablename LIKE 'neurondb_%' 
+ORDER BY tablename;
+          tablename          
+-----------------------------
+ neurondb_embedding_cache
+ neurondb_histograms
+ neurondb_index_maintenance
+ neurondb_job_queue
+ neurondb_llm_cache
+ neurondb_llm_config
+ neurondb_llm_jobs
+ neurondb_llm_stats
+ neurondb_prometheus_metrics
+ neurondb_query_metrics
+(10 rows)
+
+-- Test job queue table
+INSERT INTO neurondb_job_queue (job_type, payload, tenant_id) 
+VALUES ('test_job', '{"key": "value"}'::jsonb, 1);
+ERROR:  relation "neurondb_job_queue" does not exist
+LINE 1: INSERT INTO neurondb_job_queue (job_type, payload, tenant_id...
+                    ^
+SELECT job_type, tenant_id, status FROM neurondb_job_queue;
+ERROR:  relation "neurondb_job_queue" does not exist
+LINE 1: SELECT job_type, tenant_id, status FROM neurondb_job_queue;
+                                                ^
+-- Test query metrics table
+INSERT INTO neurondb_query_metrics (query_type, latency_ms, recall_at_k, ef_search)
+VALUES ('knn_search', 25.5, 0.95, 64);
+ERROR:  relation "neurondb_query_metrics" does not exist
+LINE 1: INSERT INTO neurondb_query_metrics (query_type, latency_ms, ...
+                    ^
+SELECT query_type, ef_search FROM neurondb_query_metrics;
+ERROR:  relation "neurondb_query_metrics" does not exist
+LINE 1: SELECT query_type, ef_search FROM neurondb_query_metrics;
+                                          ^
+-- Test embedding cache table
+INSERT INTO neurondb_embedding_cache (cache_key, embedding, model_name)
+VALUES ('test_key', '[1.0, 2.0, 3.0]'::vector, 'test_model');
+ERROR:  relation "neurondb_embedding_cache" does not exist
+LINE 1: INSERT INTO neurondb_embedding_cache (cache_key, embedding, ...
+                    ^
+SELECT cache_key, model_name FROM neurondb_embedding_cache;
+ERROR:  relation "neurondb_embedding_cache" does not exist
+LINE 1: SELECT cache_key, model_name FROM neurondb_embedding_cache;
+                                          ^
+-- Count all catalog tables
+SELECT COUNT(*) AS catalog_table_count FROM pg_tables WHERE tablename LIKE 'neurondb_%';
+ catalog_table_count 
+---------------------
+                  10
+(1 row)
+

@@ -1,0 +1,174 @@
+# syntax=docker/dockerfile:1.6
+#
+# NeuronDB reference image (CUDA GPU)
+# Compiles the extension with CUDA/TensorRT-enabled ONNX Runtime.
+#
+# Supports:
+#   - PostgreSQL: 16, 17, 18 (via PG_MAJOR build arg)
+#   - Architectures: amd64, arm64
+#   - CUDA: Configurable version (default: 12.4.1)
+#   - OS: Ubuntu 22.04 (via nvidia/cuda base image)
+#
+# Build args:
+#   PG_MAJOR: PostgreSQL major version (16, 17, or 18, default: 17)
+#   CUDA_VERSION: CUDA version (default: 12.4.1)
+#   ONNX_VERSION: ONNX Runtime version (default: 1.17.0)
+#   ENABLE_RAPIDS: Enable RAPIDS/cuML stack (0 or 1, default: 0)
+
+ARG PG_MAJOR=17
+ARG CUDA_VERSION=12.4.1
+ARG ONNX_VERSION=1.17.0
+ARG ENABLE_RAPIDS=0
+
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS builder
+
+ARG PG_MAJOR
+ARG CUDA_VERSION
+ARG ONNX_VERSION
+ARG ENABLE_RAPIDS
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    PG_MAJOR=${PG_MAJOR} \
+    CUDA_PATH=/usr/local/cuda \
+    ONNX_VERSION=${ONNX_VERSION} \
+    ONNX_PATH=/usr/local/onnxruntime \
+    PG_CONFIG=/usr/lib/postgresql/${PG_MAJOR}/bin/pg_config
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        build-essential \
+        clang \
+        cmake \
+        curl \
+        git \
+        gnupg \
+        libcurl4-openssl-dev \
+        libssl-dev \
+        pkg-config \
+        python3 \
+        python3-pip \
+        software-properties-common \
+        wget \
+        zlib1g-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install PostgreSQL client/server headers
+RUN install -d /usr/share/postgresql-common/pgdg && \
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg && \
+    sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] http://apt.postgresql.org/pub/repos/apt jammy-pgdg main" > /etc/apt/sources.list.d/pgdg.list' && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        postgresql-${PG_MAJOR} \
+        postgresql-server-dev-${PG_MAJOR} \
+        postgresql-client-${PG_MAJOR} && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install ONNX Runtime with GPU providers (CUDA/TensorRT)
+# Architecture-aware installation for amd64 and arm64
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        amd64) onnx_pkg="onnxruntime-linux-x64-gpu-${ONNX_VERSION}.tgz" ;; \
+        arm64) onnx_pkg="onnxruntime-linux-aarch64-gpu-${ONNX_VERSION}.tgz" ;; \
+        *) echo "Unsupported architecture for ONNX Runtime GPU: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${onnx_pkg}" -o /tmp/onnxruntime.tgz; \
+    mkdir -p /tmp/onnxruntime; \
+    tar -xzf /tmp/onnxruntime.tgz -C /tmp/onnxruntime --strip-components=1; \
+    mv /tmp/onnxruntime ${ONNX_PATH}; \
+    rm -f /tmp/onnxruntime.tgz
+
+# Optional RAPIDS/cuML stack (requires ENABLE_RAPIDS=1, CUDA 12.x)
+RUN if [ "${ENABLE_RAPIDS}" = "1" ]; then \
+        python3 -m pip install --upgrade pip setuptools wheel && \
+        python3 -m pip install --extra-index-url https://pypi.nvidia.com \
+            cudf-cu12==24.06.00 \
+            cuml-cu12==24.06.00 \
+            cugraph-cu12==24.06.00 \
+            cupy-cuda12x \
+            xgboost-cu12 ; \
+    fi
+
+# Capture cuML / XGBoost include + lib directories when installed
+RUN if [ "${ENABLE_RAPIDS}" = "1" ]; then \
+        python3 - <<'PY' > /tmp/gpu_paths.env; \
+import os, cuml, xgboost; \
+import importlib.util; \
+def resolve(pkg): \
+    path = os.path.dirname(pkg.__file__); \
+    inc = os.path.join(path, "include"); \
+    lib64 = os.path.join(path, "lib64"); \
+    lib = os.path.join(path, "lib"); \
+    libs = lib if os.path.isdir(lib) else lib64 if os.path.isdir(lib64) else path; \
+    inc = inc if os.path.isdir(inc) else path; \
+    return inc, libs; \
+cuml_inc, cuml_lib = resolve(cuml); \
+xgb_inc, xgb_lib = resolve(xgboost); \
+print(f"CUML_INCLUDE_PATH={cuml_inc}"); \
+print(f"CUML_LIBRARY_PATH={cuml_lib}"); \
+print(f"XGBOOST_INCLUDE_PATH={xgb_inc}"); \
+print(f"XGBOOST_LIBRARY_PATH={xgb_lib}"); \
+PY \
+    ; fi
+
+WORKDIR /build/Neurondb
+
+COPY . .
+
+# Build NeuronDB with CUDA (and optional RAPIDS) support
+# Architecture is automatically detected and handled by the build system
+RUN if [ -f /tmp/gpu_paths.env ]; then . /tmp/gpu_paths.env; fi && \
+    make clean && \
+    make CUDA_PATH=${CUDA_PATH} ONNX_PATH=${ONNX_PATH} \
+         $(if [ -f /tmp/gpu_paths.env ]; then . /tmp/gpu_paths.env; echo "WITH_CUML=1 WITH_XGBOOST_GPU=1 CUML_INCLUDE_PATH=${CUML_INCLUDE_PATH} CUML_LIBRARY_PATH=${CUML_LIBRARY_PATH} XGBOOST_INCLUDE_PATH=${XGBOOST_INCLUDE_PATH} XGBOOST_LIBRARY_PATH=${XGBOOST_LIBRARY_PATH}"; fi) && \
+    make install
+
+# -----------------------------------------------------------------------------
+
+FROM postgres:${PG_MAJOR}-bookworm
+
+ARG PG_MAJOR
+ARG ONNX_VERSION
+
+ENV CUDA_HOME=/usr/local/cuda \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/onnxruntime/lib:${LD_LIBRARY_PATH} \
+    ONNX_PATH=/usr/local/onnxruntime \
+    NEURONDB_HOME=/usr/local/share/neurondb \
+    LANG=C.UTF-8
+
+RUN mkdir -p ${NEURONDB_HOME} /docker-entrypoint-initdb.d
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libcurl4 \
+        libssl3 \
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy runtime assets from builder
+COPY --from=builder /usr/lib/postgresql/${PG_MAJOR}/lib/neurondb*.so /usr/lib/postgresql/${PG_MAJOR}/lib/
+COPY --from=builder /usr/share/postgresql/${PG_MAJOR}/extension/neurondb* /usr/share/postgresql/${PG_MAJOR}/extension/
+COPY --from=builder /usr/local/onnxruntime ${ONNX_PATH}
+COPY --from=builder /usr/local/cuda /usr/local/cuda
+# cuDNN etc are already in CUDA base image; ensure compatibility by copying libs
+# Architecture-aware library path
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+        amd64) lib_path="/usr/lib/x86_64-linux-gnu" ;; \
+        arm64) lib_path="/usr/lib/aarch64-linux-gnu" ;; \
+        *) lib_path="/usr/lib" ;; \
+    esac; \
+    mkdir -p ${lib_path} && \
+    cp -r ${lib_path}/libcudnn* ${lib_path}/ 2>/dev/null || true
+
+COPY docker/docker-entrypoint-initdb.d/ /docker-entrypoint-initdb.d/
+
+LABEL com.nvidia.volumes.needed="nvidia_driver"
+
+VOLUME ["/var/lib/postgresql/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=5 CMD pg_isready -U "${POSTGRES_USER:-postgres}"
+
+# Default entrypoint inherited from postgres image
+

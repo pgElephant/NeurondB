@@ -1,0 +1,5 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/012_nb_basic.sql:16: NOTICE:  table "gpu_model_temp" does not exist, skipping
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/012_nb_basic.sql:25: INFO:  neurondb: ml_catalog_register_model: registering model for project 'naive_bayes_test_train_view_project', algorithm 'naive_bayes', type 'classification'
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/012_nb_basic.sql:25: INFO:  neurondb: ml_catalog_register_model: successfully registered model_id 1038 for project_id 1043, version 1
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/012_nb_basic.sql:25: ERROR:  pfree called with invalid pointer 0x152053d10 (header 0x0000010000000000)
+CONTEXT:  SQL statement "SELECT train_naive_bayes_classifier_model_id('test_train_view', 'features', 'label')"

@@ -1,0 +1,38 @@
+SET
+Timing is on.
+Pager usage is off.
+Null display is "[NULL]".
+Output format is aligned.
+==========================================================================
+==========================================================================
+DROP VIEW
+Time: 0.095 ms
+DROP VIEW
+Time: 0.052 ms
+DROP TABLE
+Time: 0.056 ms
+CREATE TABLE
+Time: 1.159 ms
+INSERT 0 1000
+Time: 1.613 ms
+DROP VIEW
+Time: 0.066 ms
+CREATE VIEW
+Time: 0.509 ms
+
+Dataset Information
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ vector_count | feature_dim 
+--------------+-------------
+         1000 |          28
+
+Time: 0.239 ms
+
+GPU Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ gpu_available 
+---------------
+ t
+
+Time: 36.919 ms
+Time: 0.249 ms

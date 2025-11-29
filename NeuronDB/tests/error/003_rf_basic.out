@@ -1,0 +1,13 @@
+Timing is on.
+Pager usage is off.
+SET
+Time: 0.162 ms
+DO
+Time: 1.375 ms
+DROP TABLE
+Time: 0.180 ms
+SELECT 1000
+Time: 2.292 ms
+DROP TABLE
+Time: 0.478 ms
+Time: 1.388 ms

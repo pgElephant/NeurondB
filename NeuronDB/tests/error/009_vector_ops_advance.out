@@ -1,0 +1,23 @@
+SET
+Timing is on.
+Pager usage is off.
+==========================================================================
+Vector Operations: Exhaustive Advanced Test
+==========================================================================
+
+Dataset Information
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+       test_type        |   dataset_status    
+------------------------+---------------------
+ Vector Operations Test | No dataset required
+
+Time: 0.149 ms
+
+GPU Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ gpu_available 
+---------------
+ t
+
+Time: 43.547 ms
+Time: 0.304 ms

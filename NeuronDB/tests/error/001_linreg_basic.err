@@ -1,0 +1,4 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/001_linreg_basic.sql:117: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/001_linreg_basic.sql:117: error: connection to server was lost

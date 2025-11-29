@@ -1,0 +1,5 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/016_minibatch_kmeans_basic.sql:36: ERROR:  relation "test_settings" does not exist
+LINE 1: SELECT setting_value               FROM test_settings WHERE ...
+                                                ^
+QUERY:  SELECT setting_value               FROM test_settings WHERE setting_key = 'gpu_mode'
+CONTEXT:  PL/pgSQL function inline_code_block line 7 at SQL statement

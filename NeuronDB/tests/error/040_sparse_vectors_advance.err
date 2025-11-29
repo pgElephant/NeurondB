@@ -1,0 +1,3 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/advance/040_sparse_vectors_advance.sql:21: ERROR:  type "sparse_vector" does not exist
+LINE 4:  sparse_embedding sparse_vector
+                          ^

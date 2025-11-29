@@ -1,0 +1,141 @@
+SET
+Timing is on.
+Pager usage is off.
+==========================================================================
+LLM Module: Exhaustive HTTP, Cache, Router, and Job Queue Coverage
+==========================================================================
+
+LLM Cache Operations Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 1: Cache Statistics
+                                                                                ndb_llm_cache_stats                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"ttl_seconds": 600, "newest_entry": "2025-11-28 17:35:45.661414+05", "oldest_entry": "2025-11-28 17:34:59.730337+05", "stale_entries": 0, "total_entries": 7, "valid_entries": 7}
+
+Time: 1.161 ms
+Test 2: Cache Clear
+ cache_cleared 
+---------------
+             7
+
+Time: 0.294 ms
+Test 3: Cache Statistics After Clear
+                               ndb_llm_cache_stats                                
+----------------------------------------------------------------------------------
+ {"ttl_seconds": 600, "stale_entries": 0, "total_entries": 0, "valid_entries": 0}
+
+Time: 0.224 ms
+Test 4: Cache Evict Stale Entries
+ stale_evicted 
+---------------
+             0
+
+Time: 0.105 ms
+Test 5: Cache Evict by Size
+ evicted_by_size 
+-----------------
+               0
+
+Time: 0.109 ms
+Test 6: Cache Warm Operation
+ cache_warmed 
+--------------
+            3
+
+Time: 531.331 ms
+Test 7: Cache Statistics After Warm
+                                                                                ndb_llm_cache_stats                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"ttl_seconds": 600, "newest_entry": "2025-11-28 17:35:49.247749+05", "oldest_entry": "2025-11-28 17:35:49.247749+05", "stale_entries": 0, "total_entries": 3, "valid_entries": 3}
+
+Time: 0.293 ms
+
+LLM Router Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 8: Router with OpenAI Provider
+DO
+Time: 0.766 ms
+Test 9: Router with HuggingFace Provider
+DO
+Time: 0.119 ms
+Test 10: Router with GPU Fallback
+DO
+Time: 193.753 ms
+
+HTTP Request Handling Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 11: HTTP Batch Embedding
+DO
+Time: 791.556 ms
+Test 12: HTTP Request Timeout Handling
+DO
+Time: 0.350 ms
+
+Image Processing Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 13: Image Embedding
+DO
+Time: 0.614 ms
+Test 14: Multimodal Embedding
+DO
+Time: 0.260 ms
+Test 15: Image Analysis
+DO
+Time: 0.191 ms
+
+LLM Job Queue Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 16: Job Queue Status
+ operation | status | job_count | avg_retries 
+-----------+--------+-----------+-------------
+
+Time: 2.051 ms
+Test 17: Job Queue Statistics
+ total_jobs | pending | completed | failed | processing | avg_duration_seconds 
+------------+---------+-----------+--------+------------+----------------------
+          0 |       0 |         0 |      0 |          0 |                     
+
+Time: 0.667 ms
+Test 18: Job Queue Retry Logic
+ job_id | operation | retry_count | status | retry_status 
+--------+-----------+-------------+--------+--------------
+
+Time: 0.472 ms
+
+LLM Configuration Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 19: List Embedding Model Configs
+    model_name     |                        config_json                         |          created_at           |          updated_at           
+-------------------+------------------------------------------------------------+-------------------------------+-------------------------------
+ update_test_model | {"normalize": true, "batch_size": 64, "timeout_ms": 10000} | 2025-11-28 17:34:32.721324+05 | 2025-11-28 17:35:45.660346+05
+
+Time: 0.363 ms
+Test 20: Get Embedding Model Config
+ get_embedding_model_config 
+----------------------------
+ 
+
+Time: 0.266 ms
+Test 21: Configure Multiple Models
+DO
+Time: 0.252 ms
+Test 22: Delete Embedding Model Config
+DO
+Time: 0.357 ms
+
+LLM Provider Routing Tests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 23: Provider Selection Logic
+    model_name     |                        config_json                         |          created_at           |          updated_at           
+-------------------+------------------------------------------------------------+-------------------------------+-------------------------------
+ update_test_model | {"normalize": true, "batch_size": 64, "timeout_ms": 10000} | 2025-11-28 17:34:32.721324+05 | 2025-11-28 17:35:45.660346+05
+
+Time: 0.326 ms
+Test 24: Default Provider Fallback
+DO
+Time: 173.374 ms
+
+==========================================================================
+✓ LLM Module: Full exhaustive code-path test complete
+==========================================================================
+Test completed successfully

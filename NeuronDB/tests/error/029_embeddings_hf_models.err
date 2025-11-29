@@ -1,0 +1,7 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/029_embeddings_hf_models.sql:54: WARNING:  terminating connection because of crash of another server process
+DETAIL:  The postmaster has commanded this server process to roll back the current transaction and exit, because another server process exited abnormally and possibly corrupted shared memory.
+HINT:  In a moment you should be able to reconnect to the database and repeat your command.
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/029_embeddings_hf_models.sql:54: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/029_embeddings_hf_models.sql:54: error: connection to server was lost

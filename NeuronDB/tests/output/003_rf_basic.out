@@ -1,0 +1,44 @@
+Timing is on.
+Pager usage is off.
+SET
+Time: 0.110 ms
+DO
+Time: 1.061 ms
+DROP TABLE
+Time: 0.115 ms
+SELECT 1000
+Time: 2.541 ms
+DROP TABLE
+Time: 0.155 ms
+SELECT 1
+Time: 6.397 ms
+ model_id 
+----------
+       71
+
+Time: 0.210 ms
+DROP TABLE
+Time: 0.110 ms
+SELECT 1000
+Time: 1.186 ms
+DROP TABLE
+Time: 0.125 ms
+CREATE TABLE
+Time: 0.546 ms
+DO
+Time: 0.898 ms
+     metric      | value 
+-----------------+-------
+ Accuracy        |      
+ Precision       |      
+ Recall          |      
+ F1 Score        |      
+
+Time: 0.279 ms
+INSERT 0 1
+Time: 0.457 ms
+DROP TABLE
+Time: 0.375 ms
+DROP TABLE
+Time: 0.580 ms
+Test completed successfully

@@ -1,0 +1,3 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/049_sparse_vectors_basic.sql:32: ERROR:  pfree called with invalid pointer 0x15c00ac88 (header 0x0000000000000000)
+LINE 3:  sparse_vector_dot_product(
+         ^

@@ -1,0 +1,36 @@
+Timing is on.
+Pager usage is off.
+==========================================================================
+==========================================================================
+DROP TABLE
+Time: 0.122 ms
+CREATE TABLE
+Time: 4.910 ms
+INSERT 0 5
+Time: 747.809 ms
+Sample documents inserted
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ id |        title        |                                  content                                   |    score     
+----+---------------------+----------------------------------------------------------------------------+--------------
+  2 | Machine Learning    | Machine learning algorithms learn patterns from data to make predictions   | 2.720083e+23
+  3 | Vector Search       | Vector databases enable semantic similarity search using embeddings        | 2.720083e+23
+  4 | GPU Computing       | GPU acceleration speeds up parallel processing tasks significantly         | 2.720083e+23
+  5 | Database Systems    | Database systems store and manage structured data efficiently              |        -11.2
+  1 | PostgreSQL Database | PostgreSQL is a powerful open-source relational database management system |   -78643.195
+
+Time: 153.719 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ id |        title        |                                  content                                   
+----+---------------------+----------------------------------------------------------------------------
+  5 | Database Systems    | Database systems store and manage structured data efficiently
+  1 | PostgreSQL Database | PostgreSQL is a powerful open-source relational database management system
+  2 | Machine Learning    | Machine learning algorithms learn patterns from data to make predictions
+  3 | Vector Search       | Vector databases enable semantic similarity search using embeddings
+  4 | GPU Computing       | GPU acceleration speeds up parallel processing tasks significantly
+
+Time: 753.687 ms
+
+==========================================================================
+Test completed successfully

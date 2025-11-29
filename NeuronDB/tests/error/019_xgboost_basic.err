@@ -1,0 +1,2 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/019_xgboost_basic.sql:47: WARNING:  neurondb.train: GPU training requested but GPU hardware not available, falling back to CPU training
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/019_xgboost_basic.sql:107: WARNING:  neurondb.train: GPU training requested but GPU hardware not available, falling back to CPU training

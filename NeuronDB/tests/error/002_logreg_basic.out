@@ -1,0 +1,21 @@
+Timing is on.
+Pager usage is off.
+DO
+Time: 0.988 ms
+Step 1: Verifying prerequisites...
+ train_rows | test_rows 
+------------+-----------
+          1 |      1000
+
+Time: 0.331 ms
+Step 3: Dataset statistics...
+     dataset     | total_rows | valid_rows 
+-----------------+------------+------------
+ test_train_view |       1000 |       1000
+ test_test_view  |       1000 |       1000
+
+Time: 0.644 ms
+Step 4: Training logistic regression model...
+DROP TABLE
+Time: 0.097 ms
+Time: 0.667 ms

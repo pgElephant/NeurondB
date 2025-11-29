@@ -1,0 +1,24 @@
+Timing is on.
+Pager usage is off.
+==========================================================================
+==========================================================================
+
+NOTE: embed_text() warnings are expected if LLM is not configured.
+      To generate real embeddings, configure:
+      - neurondb.llm_api_key (Hugging Face API key)
+      - Or enable GPU embedding via GUC (ALTER SYSTEM SET neurondb.gpu_enabled = on)
+      Without configuration, embed_text() returns zero vectors (graceful fallback).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        note                         
+-----------------------------------------------------
+ Chunking test requires neurondb_chunk_text function
+
+Time: 0.197 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTE: Warnings about embed_text() failing are expected if LLM is not configured.
+      The function gracefully returns zero vectors as fallback.
+
+Time: 0.614 ms

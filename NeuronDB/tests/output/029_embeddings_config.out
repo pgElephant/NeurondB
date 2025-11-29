@@ -1,0 +1,72 @@
+Timing is on.
+Pager usage is off.
+==========================================================================
+==========================================================================
+
+Embedding Model Configuration and Function Aliases Tests
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 12: Model configuration (configure_embedding_model)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  test_name   | config_success 
+--------------+----------------
+ Model config | t
+
+Time: 2.386 ms
+   test_name   | batch_size | normalize 
+---------------+------------+-----------
+ Config stored | 32         | true
+
+Time: 0.784 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 13: Function name aliases (neurondb_embed, neurondb_embed_batch)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      test_name       | dims | not_null 
+----------------------+------+----------
+ Alias neurondb_embed |  384 | t
+
+Time: 294.852 ms
+         test_name          | batch_size 
+----------------------------+------------
+ Alias neurondb_embed_batch |          2
+
+Time: 488.782 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 14: Get embedding model configuration (get_embedding_model_config)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ test_name  | config_exists | batch_size 
+------------+---------------+------------
+ Get config | f             | 
+
+Time: 2.123 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 15: List embedding model configurations (list_embedding_model_configs)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  test_name   | config_count 
+--------------+--------------
+ List configs |            1
+
+Time: 2.055 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test 16: Delete embedding model configuration (delete_embedding_model_config)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   test_name   | deleted 
+---------------+---------
+ Delete config | t
+
+Time: 0.381 ms
+   test_name    | remaining_configs 
+----------------+-------------------
+ Config deleted |                 0
+
+Time: 0.144 ms
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Configuration and aliases tests completed!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Test completed successfully

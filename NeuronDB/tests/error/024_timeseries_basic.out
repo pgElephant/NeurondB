@@ -1,0 +1,22 @@
+Timing is on.
+Pager usage is off.
+SET
+Time: 0.106 ms
+DROP TABLE
+Time: 0.110 ms
+CREATE TABLE
+Time: 2.312 ms
+INSERT 0 30
+Time: 0.701 ms
+ data_rows 
+-----------
+        30
+
+Time: 0.135 ms
+==========================================================================
+==========================================================================
+DO
+Time: 1.031 ms
+DO
+Time: 0.418 ms
+Time: 0.144 ms

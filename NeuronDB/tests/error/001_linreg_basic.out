@@ -1,0 +1,33 @@
+SET
+Timing is on.
+Pager usage is off.
+
+GPU Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DO
+Time: 1.026 ms
+CREATE TABLE
+Time: 0.099 ms
+CREATE TABLE
+Time: 0.094 ms
+
+Dataset Information
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Expected split: 80% training, 20% test
+
+ train_rows | test_rows | total_rows | train_percentage | test_percentage 
+------------+-----------+------------+------------------+-----------------
+       1000 |      1000 |       2000 |            50.00 |           50.00
+
+Time: 1.035 ms
+     dataset     | total_rows | valid_rows 
+-----------------+------------+------------
+ test_train_view |       1000 |       1000
+ test_test_view  |       1000 |       1000
+
+Time: 0.561 ms
+
+Training
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DROP TABLE
+Time: 0.091 ms

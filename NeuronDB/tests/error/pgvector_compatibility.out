@@ -1,0 +1,50 @@
+ l2_distance 
+-------------
+    5.196152
+(1 row)
+
+ cosine_distance 
+-----------------
+     0.025368154
+(1 row)
+
+ inner_product 
+---------------
+            32
+(1 row)
+
+ l1_distance 
+-------------
+           9
+(1 row)
+
+ hamming_distance 
+------------------
+                3
+(1 row)
+
+  jaccard_distance  
+--------------------
+ 0.6666666666666667
+(1 row)
+
+ halfvec_test 
+--------------
+ [1,2,3]
+(1 row)
+
+ vector_to_halfvec 
+-------------------
+ [1,2,3]
+(1 row)
+
+ halfvec_to_vector 
+-------------------
+ [1,2,3]
+(1 row)
+
+ halfvec_l2 
+------------
+   2.828427
+(1 row)
+

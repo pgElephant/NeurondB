@@ -1,0 +1,155 @@
+-- NeurondB Type System Tests
+CREATE EXTENSION IF NOT EXISTS neurondb;
+-- Test vector creation and I/O
+SELECT '[1,2,3]'::vector;
+ vector  
+---------
+ [1,2,3]
+(1 row)
+
+SELECT '{1.5, 2.5, 3.5}'::vector;
+     vector     
+----------------
+ [1.5,2.5,3.5]
+(1 row)
+
+SELECT '[-1, 0, 1]'::vector;
+  vector   
+-----------
+ [-1,0,1]
+(1 row)
+
+-- Test vector dimensions
+SELECT vector_dims('[1,2,3,4,5]'::vector);
+ vector_dims 
+-------------
+           5
+(1 row)
+
+-- Test vector norms
+SELECT vector_norm('[3,4]'::vector);  -- Should be 5.0
+ vector_norm 
+-------------
+           5
+(1 row)
+
+SELECT vector_norm('[1,1,1,1]'::vector);  -- Should be 2.0
+ vector_norm 
+-------------
+           2
+(1 row)
+
+-- Test vector arithmetic
+SELECT '[1,2,3]'::vector + '[4,5,6]'::vector;
+ ?column? 
+----------
+ [5,7,9]
+(1 row)
+
+SELECT '[10,20,30]'::vector - '[1,2,3]'::vector;
+  ?column?   
+-------------
+ [9,18,27]
+(1 row)
+
+SELECT '[1,2,3]'::vector * 2.0;
+ ?column? 
+----------
+ [2,4,6]
+(1 row)
+
+-- Test normalization
+SELECT vector_normalize('[3,4]'::vector);
+ vector_normalize 
+------------------
+ [0.6,0.8]
+(1 row)
+
+-- Test concatenation
+SELECT vector_concat('[1,2]'::vector, '[3,4]'::vector);
+ vector_concat 
+---------------
+ [1,2,3,4]
+(1 row)
+
+-- Test array conversion
+SELECT vector_to_array('[1,2,3]'::vector);
+ vector_to_array 
+-----------------
+ {1,2,3}
+(1 row)
+
+SELECT array_to_vector(ARRAY[1.0, 2.0, 3.0]);
+ array_to_vector 
+-----------------
+ [1,2,3]
+(1 row)
+
+-- Test error handling
+\set ON_ERROR_STOP off
+-- Dimension mismatch
+SELECT '[1,2]'::vector + '[1,2,3]'::vector;
+ERROR:  vector dimensions must match
+-- Invalid input
+SELECT '[1,2,a]'::vector;
+ERROR:  invalid input syntax for type vector: "[1,2,a]"
+SELECT '[]'::vector;
+ERROR:  vector must have at least 1 dimension
+\set ON_ERROR_STOP on
+-- Test quantization
+SELECT pg_column_size('[1,2,3,4,5]'::vector) as original_size;
+ original_size 
+---------------
+            28
+(1 row)
+
+SELECT pg_column_size(vector_to_int8('[1,2,3,4,5]'::vector)) as int8_size;
+ int8_size 
+-----------
+        13
+(1 row)
+
+SELECT pg_column_size(vector_to_binary('[1,2,3,4,5]'::vector)) as binary_size;
+ binary_size 
+-------------
+          11
+(1 row)
+
+-- Test binary operations
+WITH binary_vecs AS (
+    SELECT 
+        vector_to_binary('[1, -1, 1, -1]'::vector) as v1,
+        vector_to_binary('[1, 1, -1, -1]'::vector) as v2
+)
+SELECT binary_hamming_distance(v1, v2) FROM binary_vecs;
+ binary_hamming_distance 
+-------------------------
+                       2
+(1 row)
+
+-- Performance test: create table with vectors
+CREATE TEMP TABLE test_vectors (
+    id serial PRIMARY KEY,
+    vec vector(128)
+);
+-- Insert random-ish vectors
+INSERT INTO test_vectors (vec)
+SELECT ('[' || string_agg((random() * 2 - 1)::text, ',') || ']')::vector
+FROM generate_series(1, 128) dim
+CROSS JOIN generate_series(1, 1000) row
+GROUP BY row;
+SELECT COUNT(*) FROM test_vectors;
+ count 
+-------
+  1000
+(1 row)
+
+SELECT AVG(vector_norm(vec)) FROM test_vectors;
+        avg         
+--------------------
+ 6.5283203125000000
+(1 row)
+
+-- Cleanup
+DROP TABLE test_vectors;
+

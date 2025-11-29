@@ -1,0 +1,8 @@
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/003_rf_basic.sql:41: NOTICE:  table "sample_train_subset" does not exist, skipping
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/003_rf_basic.sql:45: NOTICE:  table "gpu_model_temp" does not exist, skipping
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/003_rf_basic.sql:54: INFO:  neurondb: ml_catalog_register_model: registering model for project 'random_forest_sample_train_subset_project', algorithm 'random_forest', type 'classification'
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/003_rf_basic.sql:54: INFO:  neurondb: ml_catalog_register_model: successfully registered model_id 71 for project_id 71, version 1
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/003_rf_basic.sql:64: NOTICE:  table "sample_test_subset" does not exist, skipping
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/003_rf_basic.sql:68: NOTICE:  table "gpu_metrics_temp" does not exist, skipping
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/003_rf_basic.sql:111: WARNING:  resource was not closed: snapshot reference 0x151854f38
+psql:/Users/ibrarahmed/pgelephant/pge/NeuronDB/tests/sql/basic/003_rf_basic.sql:111: WARNING:  resource was not closed: snapshot reference 0x151854f38
