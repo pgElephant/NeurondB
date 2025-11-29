@@ -1,8 +1,0 @@
-node_modules/
-dist/
-*.log
-.env
-.DS_Store
-*.backup*
-fix_*.js
-
