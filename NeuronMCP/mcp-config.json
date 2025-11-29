@@ -1,0 +1,118 @@
+{
+<<<<<<< HEAD
+  "mcpServers": {
+    "neurondb": {
+      "command": "node",
+      "args": ["/Users/ibrarahmed/pgelephant/pge/Neurondb/bin/mcp/dist/index.js"],
+      "env": {
+        "NEURONDB_HOST": "localhost",
+        "NEURONDB_PORT": "5432",
+        "NEURONDB_DATABASE": "postgres",
+        "NEURONDB_USER": "ibrarahmed"
+      }
+    }
+  }
+}
+=======
+  "database": {
+    "host": "localhost",
+    "port": 5438,
+    "database": "postgres",
+    "user": "ibrarahmed",
+    "password": "",
+    "pool": {
+      "min": 2,
+      "max": 10,
+      "idleTimeoutMillis": 30000,
+      "connectionTimeoutMillis": 5000
+    },
+    "ssl": false
+  },
+  "server": {
+    "name": "neurondb-mcp-server",
+    "version": "1.0.0",
+    "timeout": 30000,
+    "maxRequestSize": 10485760,
+    "enableMetrics": true,
+    "enableHealthCheck": true
+  },
+  "logging": {
+    "level": "info",
+    "format": "text",
+    "output": "stderr",
+    "enableRequestLogging": true,
+    "enableResponseLogging": false,
+    "enableErrorStack": false
+  },
+  "features": {
+    "vector": {
+      "enabled": true,
+      "defaultDistanceMetric": "l2",
+      "maxVectorDimension": 16384,
+      "defaultLimit": 10
+    },
+    "ml": {
+      "enabled": true,
+      "algorithms": [
+        "linear_regression",
+        "ridge",
+        "lasso",
+        "logistic",
+        "random_forest",
+        "svm",
+        "knn",
+        "decision_tree",
+        "naive_bayes",
+        "gmm"
+      ],
+      "maxTrainingTime": 3600000,
+      "gpuEnabled": true
+    },
+    "analytics": {
+      "enabled": true,
+      "maxClusters": 1000,
+      "maxIterations": 10000
+    },
+    "rag": {
+      "enabled": true,
+      "defaultChunkSize": 500,
+      "defaultOverlap": 50
+    },
+    "reranking": {
+      "enabled": true
+    },
+    "gpu": {
+      "enabled": true
+    },
+    "quantization": {
+      "enabled": true
+    },
+    "dimensionality": {
+      "enabled": true
+    },
+    "drift": {
+      "enabled": true
+    },
+    "metrics": {
+      "enabled": true
+    },
+    "hybrid": {
+      "enabled": true
+    },
+    "indexing": {
+      "enabled": true
+    },
+    "dataManagement": {
+      "enabled": true
+    },
+    "workers": {
+      "enabled": true
+    },
+    "projects": {
+      "enabled": true,
+      "maxProjects": 1000
+    }
+  }
+}
+
+>>>>>>> 4d2acd8 (Fix MCP server: Complete reranking tools implementation and PostgreSQL configuration)
